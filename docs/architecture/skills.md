@@ -3,7 +3,7 @@ document_type: architecture
 architecture: skills
 authority: current-skills-source-configuration-and-delivery-boundaries
 status: accepted
-last_updated: 2026-09-25
+last_updated: 2026-09-27
 ---
 
 # Skills 来源、配置与模型投递
@@ -16,7 +16,7 @@ Skills 是模型可按需读取的文件指南，不改变工具、权限、消�
 | --- | --- | --- |
 | Rovai 平台两项 | 新 Native Session 的固定 `ROVAI_PLATFORM_SKILLS` 索引 | Core 从执行 Host 的受管根读取；`cli-operations`、`memory-stewardship` 固定存在于集合中，缺源或无效 frontmatter 阻止新 Bootstrap 准备。 |
 | Rovai 工具箱五项 | 每队员配置和本 Run 显式选用，形成 `ROVAI_ADDITIONAL_SKILLS` | Core 数据库 `member_toolbox_skill` 是长期选择真源；每次 preparation 冻结完整 section，不向项目创建新投影。 |
-| Harness 原生用户／项目 Skill | Settings 只读用户来源；当前 Camp `/` 候选读全队相关 Runtime 的用户和项目来源 | 文件在 Harness 原址；Core 只读发现、按规范路径去重、按来源记录身份。候选缓存仅在本 Core 实例内有界有效，不是模型输入或加载证明。 |
+| Harness 原生用户／项目 Skill | Settings 只读用户来源；当前 Camp `/` 候选读全队相关 Runtime 的用户和项目来源 | 文件在 Harness 原址；Core 只读发现、按规范路径去重、按来源记录身份。现有发现模块在本 Core 实例内按目录共享有界原始元数据，队员规则与 Camp 聚合按需重算；缓存不是模型输入或加载证明。 |
 | 旧 Skill Library／Revision／项目投影 | 历史数据、审计和旧 Run 恢复 | `skill`、`skill_revision`、受管 Revision 与 observation 保留；不进入新索引或候选。启动和升级不扫描或清理项目文件；项目入口仅在用户显式操作时按所有权、active Run 和 root access 规则处理。 |
 
 受管文件同步仅操作九个 Rovai 发布目录，且不跟随来源或目标的符号链接。受管根来自执行 Host 的 Core data-dir 规则，不能使用 Renderer 前台路径或模型侧 `~`。旧 Library 的启停和 Runtime group assignment 不转为队员配置；迁移及新建队员只默认选择 `member-studio`。用户显式关闭后，Core 重启不重新开启。
