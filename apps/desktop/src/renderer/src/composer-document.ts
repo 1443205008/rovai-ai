@@ -25,6 +25,15 @@ export interface ComposerLocalStatus {
   hasContent: boolean
   hasExplicitRecipient: boolean
   hasUnavailableAtom: boolean
+  memberAgentIds: string[]
+}
+
+export function composerMemberMentionIds(document: ComposerDocument): string[] {
+  return [...new Set(document.segments.flatMap((segment) =>
+    segment.kind === 'atom' && segment.atom.type === 'member'
+      ? [segment.atom.agentId]
+      : []
+  ))]
 }
 
 export function emptyComposerDocument(): ComposerDocument {
@@ -266,7 +275,12 @@ export function composerDocumentStatus(
     // Skill selection records the sender's source identity. A source can
     // disappear before sending; Core preserves that intent and omits the link.
   }
-  return { hasContent, hasExplicitRecipient, hasUnavailableAtom }
+  return {
+    hasContent,
+    hasExplicitRecipient,
+    hasUnavailableAtom,
+    memberAgentIds: composerMemberMentionIds(document)
+  }
 }
 
 export function composerDocumentFromLegacyContent(

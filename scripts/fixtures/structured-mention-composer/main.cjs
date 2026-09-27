@@ -152,6 +152,46 @@ app.whenReady().then(async () => {
       assert.deepEqual(current.atomTypes, ['member'])
     })
 
+    await run('invite layer inserts an outsider Atom without changing the draft until selection', async () => {
+      await reset('')
+      await evaluate('window.composerTest.includeOutsideMember()')
+      await frames()
+      await insert('@')
+      const root = await state(false)
+      assert.equal(root.menuKind, 'mention')
+      assert.ok(root.options.some((option) => option.includes('邀请其他队员')), JSON.stringify(root))
+      await key('ArrowDown', 40)
+      await key('ArrowDown', 40)
+      await key('Enter', 13)
+      const layer = await state(false)
+      assert.ok(layer.options.some((option) => option.includes('返回本会话')), JSON.stringify(layer))
+      assert.deepEqual(layer.atomTypes, [])
+      assert.deepEqual(layer.localStatus.memberAgentIds, [])
+      await key('ArrowDown', 40)
+      await key('Enter', 13)
+      const selected = await expectSegments([
+        { kind: 'atom', atom: { type: 'member', agentId: 'agent-outside', labelFallback: '爱丽丝' } },
+        { kind: 'text', text: ' ' }
+      ])
+      assert.deepEqual(selected.localStatus.memberAgentIds, ['agent-outside'])
+      assert.equal(selected.submitCount, 0)
+    })
+
+    await run('repeated outsider mentions remain in text while the last deletion clears pending identity', async () => {
+      const atom = { kind: 'atom', atom: { type: 'member', agentId: 'agent-outside', labelFallback: '爱丽丝' } }
+      await reset({ version: 2, segments: [atom, atom] })
+      await evaluate('window.composerTest.includeOutsideMember()')
+      await frames()
+      assert.deepEqual((await state(false)).localStatus.memberAgentIds, ['agent-outside'])
+      await key('Backspace', 8)
+      const one = await state(true)
+      assert.deepEqual(one.atomTypes, ['member'])
+      assert.deepEqual(one.localStatus.memberAgentIds, ['agent-outside'])
+      await key('Backspace', 8)
+      const none = await expectSegments([])
+      assert.deepEqual(none.localStatus.memberAgentIds, [])
+    })
+
     await run('All Members Typeahead creates the broadcast Atom', async () => {
       await reset('')
       await insert('@所有')

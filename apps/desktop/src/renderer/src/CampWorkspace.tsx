@@ -77,9 +77,11 @@ import {
 import {
   composerDocumentsEqualDirect,
   composerDocumentFromText,
+  composerMemberMentionIds,
   emptyComposerDocument,
   type ComposerLocalStatus
 } from './composer-document'
+import { composerInvitationTargets } from './composer-invitations'
 import {
   composerBodyForContent,
   emptyLocalCampComposerDraft,
@@ -1715,7 +1717,8 @@ export function CampWorkspace({
   const [composerLocalStatus, setComposerLocalStatus] = useState<ComposerLocalStatus>({
     hasContent: false,
     hasExplicitRecipient: false,
-    hasUnavailableAtom: false
+    hasUnavailableAtom: false,
+    memberAgentIds: []
   })
   const singleChatLeaveGuardRef = useRef<(() => CampLeavePreparation) | null>(null)
   const bindSingleChatLeaveGuard = useCallback((guard: (() => CampLeavePreparation) | null): void => {
@@ -1725,6 +1728,7 @@ export function CampWorkspace({
   const [failedAttachments, setFailedAttachments] = useState<Array<{ id: string; name: string; kind: AttachmentKind; error: string }>>([])
   const [attachmentDragState, setAttachmentDragState] = useState<AttachmentDragKind | null>(null)
   const [composerSubmitting, setComposerSubmitting] = useState(false)
+  const [composerInviteMessage, setComposerInviteMessage] = useState<string | null>(null)
   const [routingMutating, setRoutingMutating] = useState(false)
   const mobile = useMobileLayout()
   const composerSubmittingRef = useRef(false)
@@ -2109,7 +2113,7 @@ export function CampWorkspace({
   )
   const memberFast = useCampMemberFast(snapshot, profileById, installations,
     inspectorVisible && inspectorSurfaceTab === 'members' ? 'members' : executionDrawerAgentId, onNotify)
-  const composerMembers = useMemo(
+  const composerRosterMembers = useMemo(
     () => snapshot.members.map((member) => ({
       agentId: member.agentId,
       displayName: member.displayName,
@@ -2119,6 +2123,25 @@ export function CampWorkspace({
     })),
     [snapshot.members]
   )
+  const canInviteFromComposer = snapshot.camp.activationState === 'active' && Boolean(onAddMembers)
+  const composerMentionCandidates = useMemo(() => {
+    if (!canInviteFromComposer) return composerRosterMembers
+    const activeIds = new Set(snapshot.members
+      .filter((member) => member.membershipStatus === 'active')
+      .map((member) => member.agentId))
+    const current = composerRosterMembers.filter((member) => activeIds.has(member.agentId))
+    const outside = agents.filter((agent) => agent.presence === 'present' && !activeIds.has(agent.agentId))
+      .sort((left, right) => left.memberOrder - right.memberOrder || left.agentId.localeCompare(right.agentId))
+      .map((agent) => ({
+        agentId: agent.agentId,
+        displayName: agent.displayName,
+        teamRole: agent.teamRole,
+        avatarRef: agent.avatarRef,
+        mentionable: true,
+        inCamp: false
+      }))
+    return [...current, ...outside]
+  }, [agents, canInviteFromComposer, composerRosterMembers, snapshot.members])
   useEffect(() => {
     let cancelled = false
     let requestSequence = 0
@@ -2328,7 +2351,17 @@ export function CampWorkspace({
     fallback?.focus({ preventScroll: true })
   }, [executionDrawerAgentId, executionPlacement])
 
+  const composerInviteTargets = composerInvitationTargets(
+    composerLocalStatus.memberAgentIds,
+    snapshot.members,
+    agents,
+    canInviteFromComposer
+  )
+  const pendingInviteIds = composerInviteTargets.inviteAgentIds
+  const pendingInviteNames = pendingInviteIds.map((agentId) =>
+    profileById.get(agentId)?.displayName ?? agentId)
   const hasUnavailableMention = composerLocalStatus.hasUnavailableAtom
+    || composerInviteTargets.unavailableAgentIds.length > 0
   const runById = useMemo(
     () => new Map(snapshot.agentRuns.map((run) => [run.id, run])),
     [snapshot.agentRuns]
@@ -2411,7 +2444,7 @@ export function CampWorkspace({
   const replyRepairRequired = composerDraftNeedsReplyRepair(composerDraft)
   const hasExplicitRecipient = composerLocalStatus.hasExplicitRecipient
   const continuationIntent = composerDraft?.continuationIntent ?? null
-  const continuationReplacementMembers = composerMembers.filter((member) =>
+  const continuationReplacementMembers = composerRosterMembers.filter((member) =>
     member.mentionable !== false
       && member.agentId !== continuationIntent?.recipient.agentId
   )
@@ -3262,10 +3295,12 @@ export function CampWorkspace({
     let cancelled = false
     setDraftLoadState({ state: 'loading' })
     setComposerPersistenceError(null)
+    setComposerInviteMessage(null)
     setComposerLocalStatus({
       hasContent: false,
       hasExplicitRecipient: false,
-      hasUnavailableAtom: false
+      hasUnavailableAtom: false,
+      memberAgentIds: []
     })
     initializedComposerRoute.current = null
     setPreparingAttachments([])
@@ -3858,15 +3893,45 @@ export function CampWorkspace({
     composerSubmittingRef.current = true
     setComposerSubmitting(true)
     let restoreEditorFocus = true
+    let addedAgentIds: string[] = []
+    let sendAttempted = false
+    let sendAccepted = false
     composerHandle.setInteractionLocked(true)
+    setComposerInviteMessage(null)
     try {
       await attachmentPreparationQueue.current
       const flushed = await composerHandle.flush()
       const frozenDraft = flushed.draft ?? draftCoordinator.getCurrentDraft()
       if (!frozenDraft) throw new Error(uiAttribute('Composer Draft 尚未就绪。'))
       const routedDraft = materializeLocalContinuation(frozenDraft, snapshot.members)
+      const currentSnapshot = activeSnapshotRef.current
+      const inviteTargets = composerInvitationTargets(
+        composerMemberMentionIds(routedDraft.content),
+        currentSnapshot.members,
+        agents,
+        currentSnapshot.camp.activationState === 'active' && Boolean(onAddMembers)
+      )
+      if (inviteTargets.unavailableAgentIds.length > 0) {
+        throw new Error(uiAttribute('提及的队员当前不可接收，请调整后重试。'))
+      }
+      if (inviteTargets.inviteAgentIds.length > 0) {
+        if (!onAddMembers) throw new Error(uiAttribute('当前无法邀请队员，请稍后重试。'))
+        const outcome = await onAddMembers(inviteTargets.inviteAgentIds)
+        addedAgentIds = outcome.addedAgentIds
+        if (outcome.failures.length > 0) {
+          const failed = outcome.failures.map(({ agentId, message }) =>
+            `${profileById.get(agentId)?.displayName ?? agentId}：${message}`).join('；')
+          const added = addedAgentIds.map((agentId) => profileById.get(agentId)?.displayName ?? agentId)
+          setComposerInviteMessage(added.length > 0
+            ? uiAttribute('已邀请 {0}；{1}。消息未发送，草稿已保留。', added.join('、'), failed)
+            : uiAttribute('{0}。消息未发送，草稿已保留。', failed))
+          return
+        }
+      }
+      sendAttempted = true
       const sendReceipt = await onSend(routedDraft)
       if (!sendReceipt) throw new Error(uiAttribute('消息未被当前 Camp 接受。'))
+      sendAccepted = true
       if (mountedCampId.current === campId
         && (sendReceipt.deliveryIds.length || sendReceipt.agentRunIds.length)) {
         setSubmittedExecutionRequests((current) => [...current, sendReceipt])
@@ -3881,7 +3946,7 @@ export function CampWorkspace({
           sent: routedDraft,
           campMessageId: sendReceipt.campMessageId,
           addressedAgentIds: sendReceipt.addressedAgentIds,
-          members: snapshot.members
+          members: activeSnapshotRef.current.members
         })
         if (draftCampId.current === campId) {
           draftCoordinator.acceptAuthoritativeDraft(nextDraft)
@@ -3909,9 +3974,18 @@ export function CampWorkspace({
         }
         throw error
       }
-    } catch {
-      // onSend owns send failure presentation. A post-send Draft load failure is
-      // represented by draftLoadState and recovered only through an explicit reload.
+    } catch (error) {
+      if (!sendAccepted && addedAgentIds.length > 0 && sendAttempted) {
+        const names = addedAgentIds.map((agentId) => profileById.get(agentId)?.displayName ?? agentId)
+        setComposerInviteMessage(uiAttribute(
+          '已邀请 {0}；消息发送结果未确认。请先查看会话，再决定是否重试。草稿已保留。',
+          names.join('、')
+        ))
+      } else if (!sendAttempted) {
+        setComposerInviteMessage(readErrorMessage(error, uiAttribute('邀请未完成，消息未发送。草稿已保留。')))
+      }
+      // onSend owns ordinary send failure presentation. A post-send Draft load
+      // failure is represented by draftLoadState and recovered by explicit reload.
     } finally {
       if (!composerLockAwaitingDisabledCommitRef.current) {
         composerHandle.setInteractionLocked(false)
@@ -4101,7 +4175,7 @@ export function CampWorkspace({
     body: string,
     content: StructuredCampMessageContent | null
   ): void => {
-    const structuredClipboard = createStructuredMessageClipboardData(content, composerMembers, currentUserName)
+    const structuredClipboard = createStructuredMessageClipboardData(content, composerRosterMembers, currentUserName)
     void writeClipboardText(
       structuredClipboard?.text ?? body,
       structuredClipboard?.html
@@ -5491,12 +5565,23 @@ export function CampWorkspace({
             <span className="composer-route-placeholder" aria-hidden="true"><span /><span /></span>
           </div>
         )}
-        {(continuationVisible && continuationIntent) || (
+        {draftLoadState.state === 'ready' && pendingInviteNames.length > 0 && (
+          <div className="composer-route-rail composer-invite-rail"
+            aria-label={uiAttribute('发送时邀请 {0}', pendingInviteNames.join('、'))}
+            title={uiAttribute('发送时邀请 {0}', pendingInviteNames.join('、'))}>
+            <span className="pending-invite-summary">
+              <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M6.5 8.5a2.75 2.75 0 1 0 0-5.5 2.75 2.75 0 0 0 0 5.5ZM2 13.5v-1c0-1.7 1.8-3 4.5-3s4.5 1.3 4.5 3v1M12.5 4v5M10 6.5h5" /></svg>
+              <span><UiText zh={'发送时邀请'} /></span>
+              <strong>{pendingInviteNames.join('、')}</strong>
+            </span>
+          </div>
+        )}
+        {pendingInviteNames.length === 0 && ((continuationVisible && continuationIntent) || (
           composerDraft
           && recipientSummary
           && !composerDraft.replyIntent
           && !continuationRepairRequired
-        )
+        ))
           ? (
               <div className="composer-route-rail" aria-label={uiAttribute("接收者路由")}>
                 {continuationVisible && continuationIntent
@@ -5624,7 +5709,7 @@ export function CampWorkspace({
                               <span><UiText zh={"引用会保留；只有你显式选择新接收者后才能发送。"} /></span>
                             </div>
                             <div className="reply-recipient-options" aria-label={uiAttribute("选择替代接收者")}>
-                              {composerMembers.filter((member) => member.mentionable !== false).map((member, index) => (
+                              {composerRosterMembers.filter((member) => member.mentionable !== false).map((member, index) => (
                                 <button
                                   ref={index === 0 ? recipientRepairFirstOptionRef : undefined}
                                   className="quiet-button compact"
@@ -5640,7 +5725,7 @@ export function CampWorkspace({
                                 </button>
                               ))}
                               <button
-                                ref={composerMembers.every((member) => member.mentionable === false)
+                                ref={composerRosterMembers.every((member) => member.mentionable === false)
                                   ? recipientRepairFirstOptionRef
                                   : undefined}
                                 className="quiet-button compact"
@@ -5721,7 +5806,8 @@ export function CampWorkspace({
                 files.map((file) => ({ file, kindHint: 'file' }))
               )}
               onSubmit={submitMessage}
-              members={composerMembers}
+              members={composerMentionCandidates}
+              pendingInviteIds={pendingInviteIds}
               skills={composerSkills}
               skillCatalogStatus={composerSkillCatalog.status}
               skillCatalogErrors={composerSkillCatalog.candidates.errors}
@@ -5741,7 +5827,7 @@ export function CampWorkspace({
               onActivateAllMembersMention={(trigger, focusPanel) =>
                 openAllMembersMentionPopover(
                   'composer',
-                  composerMembers
+                  composerRosterMembers
                     .filter((member) => member.mentionable !== false)
                     .map((member) => member.agentId),
                   trigger,
@@ -5760,6 +5846,11 @@ export function CampWorkspace({
             )}
             {composerPersistenceError && (
               <span className="composer-reply-status" role="status" aria-live="polite"><UiText zh={"本机草稿保存失败；当前窗口内内容仍保留。"} />{composerPersistenceError.message}
+              </span>
+            )}
+            {composerInviteMessage && (
+              <span className="composer-reply-status composer-invite-error" role="alert">
+                {composerInviteMessage}
               </span>
             )}
           </div>
@@ -5800,7 +5891,8 @@ export function CampWorkspace({
                   <span className="sr-only"><UiText zh={"Enter 发送，Shift+Enter 换行"} /></span>
                   <span className="composer-hint-visual" aria-hidden="true">
                     <kbd>↵</kbd>
-                    <span><UiText zh={"发送"} /></span>
+                    <span>{pendingInviteIds.length > 0
+                      ? <UiText zh={'邀请并发送'} /> : <UiText zh={'发送'} />}</span>
                     <span className="composer-hint-separator">·</span>
                     <kbd>⇧↵</kbd>
                     <span><UiText zh={"换行"} /></span>
@@ -5812,6 +5904,7 @@ export function CampWorkspace({
                 type="submit"
                 disabled={composerSendDisabled}
                 busy={Boolean(busy || composerSubmitting || preparingAttachments.length > 0)}
+                invite={pendingInviteIds.length > 0}
               />
             </div>
           </div>

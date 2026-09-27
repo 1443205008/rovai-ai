@@ -2,7 +2,7 @@
 document_type: ui-component-contract
 authority: renderer-camp-workspace
 status: accepted
-last_updated: 2026-09-24
+last_updated: 2026-09-28
 ---
 
 # Camp 会话工作区
@@ -937,7 +937,8 @@ Composer 与消息轨道共享中心轴但拥有独立宽度；`.composer-box` �
 不创建 focus trap。鼠标点击 Composer 任意位置都不增加编辑器内层描边；键盘进入保留输入光标，不增加局部焦点框或光晕。
 
 接收者提示始终预留一行 34px 高度及 5px 底部间距。草稿首次 loading 时显示无接收者文案、无循环动画的模糊占位；
-ready 后原位显示默认 Lead 或 continuation。显式 Mention、reply 或错误状态不显示路由时保留空白行，
+ready 后原位显示默认 Lead 或 continuation。队外 Mention 存在时在同一轨显示去重后的“发送时邀请”及姓名，
+按钮显示“邀请并发送”；删去最后一个相应 Atom 后立即恢复原路由提示。显式 Mention、reply 或错误状态不显示路由时保留空白行，
 避免路由加载或显隐挤动会话内容。占位不提前声明接收者，也不提前启用编辑或发送。
 
 新建会话成功后的首次打开，把该 Camp 的本地 snapshot 与 Open 投影并行准备，在首次绘制前一次性交给
@@ -947,7 +948,9 @@ Draft Coordinator，因此直接呈现已恢复内容或就绪的默认接收人
 Draft 首次读取只有 loading、ready 和 error。loading 与 error 时正文、附件、Reply/Continuation 和发送不可操作；
 error 在 Composer 上方原位显示“草稿无法加载”、具体错误与“重新加载草稿”，不能渲染可编辑的 revision-zero 空
 Draft。发送和路由 mutation 在第一个异步等待前同步禁用编辑器；本地路由 mutation 改变正文时在解除禁用前回写
-Lexical。发送失败保留正文并恢复交互，成功则以空 Draft/continuation 替换。导航或卸载前的同步本地保存失败时，
+Lexical。发送前需要邀请队员时，先冻结并保存草稿，逐人沿用 Camp 成员加入命令；全部成功后沿用原发送入口。
+邀请部分成功时显示已加入与失败名单，消息不发送，草稿与每处 Mention 保留。加入成功后发送失败时提示先查会话
+再重试；成员加入不回滚。发送失败保留正文并恢复交互，成功则以空 Draft/continuation 替换。导航或卸载前的同步本地保存失败时，
 留在当前 Camp、显示保存错误并恢复交互；打开新会话 Dialog、展开或选择 Project 等未卸载 Composer 的动作不
 伪装成已离开。附件预览、打开与 reveal 由 Main 的 Camp+attachment authority 重验，不依赖 Core Draft locator。
 
