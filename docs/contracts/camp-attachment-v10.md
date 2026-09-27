@@ -55,7 +55,7 @@ HTML 依赖按实际来源边界解析。刷新失败保留已加载内容并说
 
 ## 文件归属与删除
 
-飞书与钉钉入站下载由 Host 暂存后，经 Core 写入本 Camp 默认输出目录的 `feishu/` 或 `dingtalk/` 子目录，作为普通 Source Ref 发布。
+飞书、Lark 与钉钉入站下载由 Host 暂存后，经 Core 写入本 Camp 默认输出目录的 `feishu/`、`lark/` 或 `dingtalk/` 子目录，作为普通 Source Ref 发布。
 这属于远端资源首次落地；不改变本地用户/Agent 现有路径不复制的规则。目录下未发布的中间文件同属 Camp，
 删除走相同生命周期，不沿外部源引用清理。投递准入与重试见
 [Channel Message Bridge v1](channel-message-bridge-v1.md#inbound-attachments)。

@@ -11642,14 +11642,6 @@ fn assemble_external_content(
 
 fn validate_observation_input(command: &ObserveChannelInboundCommand) -> Result<()> {
     inbound_attachments::validate_resources(&command.resources)?;
-    anyhow::ensure!(
-        command.resources.is_empty()
-            || matches!(
-                command.provider.as_str(),
-                FEISHU_PROVIDER | DINGTALK_PROVIDER
-            ),
-        "channel resource downloads currently require Feishu or DingTalk"
-    );
     if !matches!(
         command.provider.as_str(),
         FEISHU_PROVIDER | LARK_PROVIDER | DINGTALK_PROVIDER
@@ -13709,7 +13701,164 @@ mod tests {
                 "connected"
             );
         }
+        lark_inbound_attachments_require_lark_host(&mut database, &quick_chat_path, &feishu, &lark);
         lark_disconnect_is_owner_only_and_provider_scoped(&mut database, &feishu, &lark);
+    }
+
+    fn lark_inbound_attachments_require_lark_host(
+        database: &mut Database,
+        quick_chat_path: &std::path::Path,
+        feishu: &ProviderWorld,
+        lark: &ProviderWorld,
+    ) {
+        use inbound_attachments::{CompleteAttachmentsCommand, InboundResource};
+
+        let service = ChannelService::default();
+        let mut observation = observation_command(
+            &lark.app_id,
+            "lark-file-message",
+            "oc_lark_file_chat",
+            "",
+            "p2p",
+            "Read this file",
+            &[("agent_1", &lark.app_id)],
+            true,
+        );
+        observation.provider = LARK_PROVIDER.to_string();
+        observation.resources = vec![InboundResource {
+            file_key: "lark-file-key".into(),
+            download_code: None,
+            name: "note.txt".into(),
+            kind: "file".into(),
+        }];
+        let observed = service
+            .observe_inbound(
+                database,
+                &host_envelope_for(lark.spec, "lark-file-observe", observation),
+            )
+            .unwrap();
+        assert_ne!(observed.result.status, CommandResultStatus::Rejected);
+        let aggregate_id = observed.result.payload["aggregateId"].as_str().unwrap();
+        let finalized = service
+            .finalize_inbound(
+                database,
+                quick_chat_path,
+                &host_envelope_for(
+                    lark.spec,
+                    "lark-file-finalize",
+                    FinalizeChannelInboundCommand {
+                        aggregate_id: aggregate_id.to_string(),
+                    },
+                ),
+            )
+            .unwrap();
+        assert_eq!(finalized.result.status, CommandResultStatus::Accepted);
+
+        let pending = inbound_attachments::pending(
+            database.connection(),
+            LARK_PROVIDER,
+            std::slice::from_ref(&lark.app_id),
+        )
+        .unwrap();
+        assert_eq!(pending.len(), 1);
+        let camp_id: String = database
+            .connection()
+            .query_row(
+                "SELECT camp_id FROM channel_turn_request WHERE id = ?1",
+                [&pending[0].request_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let message_count: i64 = database
+            .connection()
+            .query_row(
+                "SELECT count(*) FROM camp_message WHERE camp_id = ?1",
+                [&camp_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(message_count, 0);
+        assert!(
+            inbound_attachments::pending(
+                database.connection(),
+                FEISHU_PROVIDER,
+                std::slice::from_ref(&lark.app_id),
+            )
+            .unwrap()
+            .is_empty()
+        );
+        let source = quick_chat_path.join("lark-file-download.txt");
+        std::fs::write(&source, b"Lark file bytes").unwrap();
+        let command = CompleteAttachmentsCommand {
+            request_id: pending[0].request_id.clone(),
+            app_id: lark.app_id.clone(),
+            attempt: pending[0].attempt,
+            files: vec![source.to_string_lossy().into_owned()],
+            failure_code: None,
+        };
+        let wrong = inbound_attachments::complete(
+            database,
+            &host_envelope_for(feishu.spec, "lark-file-wrong-host", command.clone()),
+        )
+        .unwrap();
+        assert_eq!(wrong.result.code, "channel.attachments.closed");
+        let completed = inbound_attachments::complete(
+            database,
+            &host_envelope_for(lark.spec, "lark-file-complete", command),
+        )
+        .unwrap();
+        assert_eq!(completed.result.payload["ready"], true);
+        service
+            .host_tick(
+                database,
+                &ActorRef::System {
+                    component_id: lark.spec.host_component.into(),
+                },
+                &ChannelHostTickRequest {
+                    worker_id: "lark-file-host".into(),
+                    inbound_attachment_app_ids: Vec::new(),
+                    limit: 20,
+                },
+            )
+            .unwrap();
+        let (message_id, sequence, encoded): (String, i64, String) = database
+            .connection()
+            .query_row(
+                "SELECT message.id, message.sequence, message.source_attachments_json
+                 FROM camp_message AS message
+                 JOIN channel_turn_request AS request ON request.camp_id = message.camp_id
+                 WHERE request.id = ?1",
+                [&pending[0].request_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        let sources: Vec<crate::local_attachment_source::LocalAttachmentSourceRef> =
+            serde_json::from_str(&encoded).unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(
+            std::fs::read(&sources[0].source_path).unwrap(),
+            b"Lark file bytes"
+        );
+        assert!(
+            std::path::Path::new(&sources[0].source_path)
+                .components()
+                .any(|component| component.as_os_str() == "lark")
+        );
+        let transaction = database.connection_mut().transaction().unwrap();
+        let projection = crate::context::project_batch_run_input_for_claim(
+            &transaction,
+            &camp_id,
+            "agent_1",
+            sequence,
+            &[message_id],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            projection["messages"][0]["attachments"][0]["path"],
+            sources[0].source_path
+        );
+        transaction.rollback().unwrap();
     }
 
     // C3: disconnect is an Owner command for Lark as for Feishu and DingTalk.

@@ -1767,8 +1767,7 @@ export class ChannelSettingsService {
         name: resource.fileName || resource.type,
         mediaType: resource.type
       })),
-      // The durable inbound-download queue is currently owned by Feishu.
-      resources: this.#profile.kind === 'feishu' ? feishuInboundResources(message) : [],
+      resources: feishuInboundResources(message),
       quote,
       canonicalAgentIds,
       canonicalMentionsComplete,
@@ -2307,7 +2306,7 @@ export class ChannelSettingsService {
   ): Promise<void> {
     const complete = (files: string[], failureCode: string | null): Promise<StoredCommandResult> => {
       signal.throwIfAborted()
-      return this.#commandWithId('channels.inbound.attachments.complete', randomUUID(), {
+      return this.#commandWithId(this.#hostMethod('inbound.attachments.complete'), randomUUID(), {
         requestId: pending.requestId, appId: pending.appId, attempt: pending.attempt, files, failureCode
       }, false)
     }
