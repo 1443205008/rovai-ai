@@ -28,7 +28,7 @@ use crate::runtime_startup::RuntimeStartupConfiguration;
 use crate::skill::{SkillContentFile, SkillContentView};
 
 const DIRECTORY_CACHE_CAPACITY: usize = 128;
-const DIRECTORY_CACHE_TTL: Duration = Duration::from_secs(60);
+const DIRECTORY_CACHE_TTL: Duration = Duration::from_secs(300);
 const MAX_SKILLS_PER_ROOT: usize = 512;
 const MAX_NATIVE_PREVIEW_FILES: usize = 512;
 const MAX_NATIVE_PREVIEW_BYTES: u64 = 1024 * 1024;
