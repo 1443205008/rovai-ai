@@ -1,12 +1,15 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, expectTypeOf, it } from 'vitest'
+import { DEFAULT_GENERAL_PREFERENCES } from '../../shared/general-preferences-model'
+import { changeInterfaceLanguage } from './interface-language'
 import type {
   AgentProfile,
   ChannelKind,
   ChannelsApi,
   ChannelSettingsSnapshot,
-  ExecutionWebSettingsSnapshot
+  ExecutionWebSettingsSnapshot,
+  GeneralPreferencesApi
 } from '@contracts'
 import {
   ChannelSettings,
@@ -359,6 +362,31 @@ describe('Channel settings', () => {
       }))
       expect(other).not.toContain('channel-qualification-note')
       expect(other).not.toContain('Lark 支持尚未完成真实租户验收')
+    }
+  })
+
+  it('keeps Lark provider copy and actions in English mode', async () => {
+    const languageApi = {
+      setInterfaceLanguage: async (language: 'zh-CN' | 'en') =>
+        ({ ...DEFAULT_GENERAL_PREFERENCES, interfaceLanguage: language })
+    } as GeneralPreferencesApi
+    await changeInterfaceLanguage(languageApi, 'en')
+    try {
+      const markup = renderToStaticMarkup(createElement(ChannelSettingsView, {
+        agents: [agent('agent-a', 0)],
+        snapshot: threeProviderSnapshot(),
+        selectedKind: 'lark',
+        onConnect: () => undefined
+      }))
+      expect(markup).toContain('<h1>Channels</h1>')
+      expect(markup).toContain('Connect Feishu, Lark, or DingTalk')
+      expect(markup).toContain('<strong>Feishu</strong>')
+      expect(markup).toContain('Lark Connection')
+      expect(markup).toContain('Lark support has not yet been validated with a real tenant')
+      expect(markup).toContain('Owner messages in Lark do not grant local administration access.')
+      expect(markup).toContain('>Manage Lark</a>')
+    } finally {
+      await changeInterfaceLanguage(languageApi, 'zh-CN')
     }
   })
 

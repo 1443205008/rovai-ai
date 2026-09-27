@@ -65,6 +65,7 @@ export function browserPreferences(scope: string, transport: ConsoleClient): {
       },
       generalPreferences: withHostConversationPreferences({
         get: async () => structuredClone(general),
+        setInterfaceLanguage: interfaceLanguage => commitGeneral({ interfaceLanguage }),
         setStartupLocationMode: startupLocationMode => commitGeneral({ startupLocationMode }),
         setLastSettingsSection: lastSettingsSection => commitGeneral({ lastSettingsSection }),
         setExecutionConsolePlacement: executionConsolePlacement => commitGeneral({ executionConsolePlacement }),

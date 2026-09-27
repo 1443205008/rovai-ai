@@ -31,6 +31,7 @@ import {
 } from './runtime-status'
 import { identityColorToken } from './theme'
 import { useMemberRosterLayout } from './MemberRosterLayout'
+import { UiText, uiAttribute } from './interface-language'
 
 export type MemberWorkspaceTab = 'identity' | 'runtime'
 
@@ -190,35 +191,35 @@ export function MemberSidebar({
   }
 
   return (
-    <section id={id} className={`member-sidebar ${collapsed ? 'is-collapsed' : ''} ${sorting ? 'is-sorting' : ''}`} aria-label="队员名册">
+    <section id={id} className={`member-sidebar ${collapsed ? 'is-collapsed' : ''} ${sorting ? 'is-sorting' : ''}`} aria-label={uiAttribute("队员名册")}>
       {personalEntry}
       <div className="member-sidebar-heading">
         <div className="member-sidebar-title">
-          <strong>队员</strong>
+          <strong><UiText zh={"队员"} /></strong>
           <span>{query.trim() ? `${visibleAgents.length} / ${members.length}` : members.length}</span>
         </div>
         <div className="member-sidebar-actions">
           <button
             className="optional-action"
             type="button"
-            aria-label="新增队员"
-            title="新增队员"
+            aria-label={uiAttribute("新增队员")}
+            title={uiAttribute("新增队员")}
             onClick={(event) => onCreate(event.currentTarget)}
           ><SidebarIcon name="plus" /></button>
           {members.length > 0 && (sorting ? (
             <button
               className="optional-action"
               type="button"
-              aria-label="完成调整队员顺序"
-              title="完成调整顺序"
+              aria-label={uiAttribute("完成调整队员顺序")}
+              title={uiAttribute("完成调整顺序")}
               aria-pressed="true"
               onClick={toggleSorting}
-            >完成</button>
+            ><UiText zh={"完成"} /></button>
           ) : <MemberRosterOptions onSort={toggleSorting} />)}
           <button
             type="button"
-            aria-label={collapsed ? '展开队员名册' : '折叠队员名册'}
-            title={collapsed ? '展开队员名册' : '折叠队员名册'}
+            aria-label={collapsed ? uiAttribute("展开队员名册") : uiAttribute("折叠队员名册")}
+            title={collapsed ? uiAttribute("展开队员名册") : uiAttribute("折叠队员名册")}
             disabled={sorting}
             onClick={toggleCollapsed}
           ><PanelToggleIcon side="left" visible={!collapsed} /></button>
@@ -227,24 +228,24 @@ export function MemberSidebar({
 
       {members.length > 8 && !sorting && (
         <div className="member-sidebar-filter">
-          <label htmlFor="member-sidebar-filter">筛选队员</label>
+          <label htmlFor="member-sidebar-filter"><UiText zh={"筛选队员"} /></label>
           <div>
             <svg className="member-roster-search-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5" /><path d="m12.2 12.2 4 4" /></svg>
             <input
               id="member-sidebar-filter"
               type="search"
               value={query}
-              placeholder="搜索队员"
+              placeholder={uiAttribute("搜索队员")}
               onChange={(event) => setQuery(event.target.value)}
             />
-            {query && <button type="button" aria-label="清除队员筛选" onClick={() => setQuery('')}>×</button>}
+            {query && <button type="button" aria-label={uiAttribute("清除队员筛选")} onClick={() => setQuery('')}>×</button>}
           </div>
         </div>
       )}
 
-      {sorting && <p className="member-sidebar-mode-note">拖动队员排序；聚焦右侧把手后也可按 ↑↓ 移动。</p>}
+      {sorting && <p className="member-sidebar-mode-note"><UiText zh={"拖动队员排序；聚焦右侧把手后也可按 ↑↓ 移动。"} /></p>}
       {selectedHidden && (
-        <p className="member-sidebar-selection-note">当前队员未出现在筛选结果中。<button type="button" onClick={() => setQuery('')}>清除筛选</button></p>
+        <p className="member-sidebar-selection-note"><UiText zh={"当前队员未出现在筛选结果中。"} /><button type="button" onClick={() => setQuery('')}><UiText zh={"清除筛选"} /></button></p>
       )}
       {error && <div className="member-sidebar-error" role="alert">{error}</div>}
 
@@ -255,9 +256,9 @@ export function MemberSidebar({
             if (group.length === 0) return null
             const total = members.filter((agent) => agent.presence === presence).length
             return (
-              <section className="member-sidebar-group" key={presence} aria-label={presence === 'present' ? '在队队员' : '暂离队员'}>
+              <section className="member-sidebar-group" key={presence} aria-label={presence === 'present' ? uiAttribute("在队队员") : uiAttribute("暂离队员")}>
                 {members.some((member) => member.presence === 'away') && <div className="member-sidebar-group-heading">
-                  <span>{presence === 'present' ? '在队' : '暂离'}</span><small>{query.trim() ? `${group.length}/${total}` : total}</small>
+                  <span>{presence === 'present' ? uiAttribute("在队") : uiAttribute("暂离")}</span><small>{query.trim() ? `${group.length}/${total}` : total}</small>
                 </div>}
                 {group.map((agent) => (
                   <MemberSidebarRow
@@ -296,15 +297,15 @@ export function MemberSidebar({
           {members.length === 0 && (
             <div className="member-sidebar-empty">
               <span aria-hidden="true">◎</span>
-              <strong>还没有队员</strong>
-              <p>创建一个长期身份后，可为其配置 Agent 运行时。</p>
-              <button className="primary-button conversation-primary-button" type="button" onClick={(event) => onCreate(event.currentTarget)}>新增队员</button>
+              <strong><UiText zh={"还没有队员"} /></strong>
+              <p><UiText zh={"创建一个长期身份后，可为其配置 Agent 运行时。"} /></p>
+              <button className="primary-button conversation-primary-button" type="button" onClick={(event) => onCreate(event.currentTarget)}><UiText zh={"新增队员"} /></button>
             </div>
           )}
           {members.length > 0 && visibleAgents.length === 0 && (
             <div className="member-sidebar-empty compact">
-              <strong>没有匹配的队员</strong>
-              <button className="quiet-button" type="button" onClick={() => setQuery('')}>清除筛选</button>
+              <strong><UiText zh={"没有匹配的队员"} /></strong>
+              <button className="quiet-button" type="button" onClick={() => setQuery('')}><UiText zh={"清除筛选"} /></button>
             </div>
           )}
         </div>
@@ -361,10 +362,10 @@ function MemberSidebarRow({
   const compact = compactRuntimeState(runtime.status)
   const product = agent.runtimeConfiguration?.adapterKind
     ? adapterLabel(agent.runtimeConfiguration.adapterKind)
-    : 'Agent 运行时'
+    : uiAttribute('Agent 运行时')
   const configured = Boolean(agent.runtimeConfiguration?.adapterKind)
-  const runtimeLabel = configured ? `${agent.displayName}，${product}，${runtime.label}；打开运行配置` : `${agent.displayName}，未配置运行时；打开运行配置`
-  const runtimeTooltip = configured ? `${product} · ${runtime.label}${runtime.detail ? ` · ${runtime.detail}` : ''}` : '未配置运行时'
+  const runtimeLabel = configured ? uiAttribute("{0}，{1}，{2}；打开运行配置", String(agent.displayName), String(product), String(runtime.label)) : uiAttribute("{0}，未配置运行时；打开运行配置", String(agent.displayName))
+  const runtimeTooltip = configured ? `${product} · ${runtime.label}${runtime.detail ? ` · ${runtime.detail}` : ''}` : uiAttribute('未配置运行时')
   return (
     <div
       className={`member-sidebar-row presence-${agent.presence} ${selected ? 'selected' : ''} ${dragOver ? 'drag-over' : ''}`}
@@ -392,8 +393,8 @@ function MemberSidebarRow({
         className="member-sidebar-select"
         type="button"
         aria-current={selected ? 'true' : undefined}
-        aria-label={`${agent.displayName}，${agent.teamRole || '团队角色未设置'}${dirty ? '，有未保存更改' : ''}`}
-        title={`${agent.displayName} · ${agent.teamRole || '团队角色未设置'}`}
+        aria-label={`${agent.displayName}，${agent.teamRole ||uiAttribute("团队角色未设置")}${dirty ? uiAttribute("，有未保存更改") : ''}`}
+        title={`${agent.displayName} · ${agent.teamRole ||uiAttribute("团队角色未设置")}`}
         onClick={() => onSelect(agent.agentId, 'identity', false)}
       >
         <span className="member-sidebar-accent" aria-hidden="true" />
@@ -406,7 +407,7 @@ function MemberSidebarRow({
         />
         <span className="member-sidebar-copy">
           <strong><span className="member-editor-member-name">{agent.displayName}</span>{dirty && <i className="member-editor-unsaved-mark" aria-hidden="true" />}</strong>
-          <small>{agent.teamRole || '团队角色未设置'}</small>
+          <small>{agent.teamRole ||uiAttribute("团队角色未设置")}</small>
         </span>
       </button>
       {sorting
@@ -415,8 +416,8 @@ function MemberSidebarRow({
               className="member-order-handle"
               type="button"
               data-member-order-handle={agent.agentId}
-              aria-label={`调整 ${agent.displayName} 的顺序；上、下方向键移动`}
-              title="拖拽；聚焦后按上、下方向键移动"
+              aria-label={uiAttribute("调整 {0} 的顺序；上、下方向键移动", String(agent.displayName))}
+              title={uiAttribute("拖拽；聚焦后按上、下方向键移动")}
               disabled={busy}
               onKeyDown={(event) => {
                 if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
@@ -447,19 +448,19 @@ function MemberRosterOptions({ onSort }: { onSort(): void }): React.JSX.Element 
   return (
     <Menu.Root>
       <Menu.Trigger asChild>
-        <button className="optional-action" type="button" aria-label="名册选项" title="名册选项">
+        <button className="optional-action" type="button" aria-label={uiAttribute("名册选项")} title={uiAttribute("名册选项")}>
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="10" r=".8" /><circle cx="10" cy="10" r=".8" /><circle cx="16" cy="10" r=".8" /></svg>
         </button>
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Content className="member-editor-menu member-roster-options" sideOffset={6} align="end" collisionPadding={12}>
-          <Menu.Item className="member-editor-menu-item" onSelect={onSort}>调整队员顺序</Menu.Item>
+          <Menu.Item className="member-editor-menu-item" onSelect={onSort}><UiText zh={"调整队员顺序"} /></Menu.Item>
           <Menu.Separator className="member-editor-menu-separator" />
-          <Menu.Label className="member-roster-options-label">列表宽度</Menu.Label>
+          <Menu.Label className="member-roster-options-label"><UiText zh={"列表宽度"} /></Menu.Label>
           <Menu.RadioGroup value={String(width)} onValueChange={(value) => setWidth(Number(value))}>
             {([[192, '较窄'], [256, '默认'], [320, '较宽']] as const).map(([size, name]) => (
               <Menu.RadioItem key={size} value={String(size)} disabled={size > maxWidth} className="member-editor-menu-item member-roster-width-option">
-                <span>{name}</span><small>{size} px</small>
+                <span>{uiAttribute(name)}</span><small>{size} px</small>
                 <span className="member-roster-option-check"><Menu.ItemIndicator>✓</Menu.ItemIndicator></span>
               </Menu.RadioItem>
             ))}
@@ -488,7 +489,7 @@ function assertApplied(result: StoredCommandResult): void {
     : typeof result.payload.detail === 'string'
       ? result.payload.detail
       : null
-  throw new Error(detail ?? `排序未完成：${result.code}`)
+  throw new Error(detail ?? uiAttribute("排序未完成：{0}", String(result.code)))
 }
 
 function errorMessage(error: unknown): string {

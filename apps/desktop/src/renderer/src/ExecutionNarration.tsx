@@ -1,3 +1,4 @@
+import { UiText, uiAttribute } from './interface-language'
 import { useCampClient } from './camp-client'
 import { useContext, useEffect, useState } from 'react'
 import type { AgentRunExecutionEvidenceView } from '@contracts'
@@ -25,7 +26,7 @@ export function ExecutionNarration({ campId, evidence, preview }: {
     setFailed(false)
     const read = async () => {
       const result = await client.request<{ payload: { text?: string } }>('agentRunEvidence.getContent', { campId, evidenceId: evidence.id })
-      if (typeof result.payload.text !== 'string') throw new Error('执行正文格式不兼容')
+      if (typeof result.payload.text !== 'string') throw new Error(uiAttribute('执行正文格式不兼容'))
       return result.payload.text
     }
     void (cache ? cache.load(`body:${stamp}`, read) : read()).then(text => {
@@ -35,6 +36,6 @@ export function ExecutionNarration({ campId, evidence, preview }: {
     return () => { disposed = true }
   }, [client, campId, stamp, cache, retry])
   return <><SafeMarkdown>{body?.stamp === stamp ? body.text : preview}</SafeMarkdown>
-    {failed && <button className="camp-history-text-button" type="button" onClick={() => setRetry(value => value + 1)}>正文读取失败，重试</button>}
+    {failed && <button className="camp-history-text-button" type="button" onClick={() => setRetry(value => value + 1)}><UiText zh={"正文读取失败，重试"} /></button>}
   </>
 }

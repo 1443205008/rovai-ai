@@ -13,6 +13,7 @@ import type {
   RuntimeModelCatalogCache,
   RuntimeModelCatalogView
 } from '@contracts'
+import { UiText, uiAttribute } from './interface-language'
 
 export type MemberRuntimeDraft = {
   model: ModelSelection
@@ -140,15 +141,13 @@ export function MemberRuntimeParameters({
         onChange
       })
     : (
-        <p className="runtime-parameter-empty">
-          当前还没有可编辑的能力快照。你仍可保存 Agent 运行时选择；检查完成后需要回来保存运行参数。
-        </p>
+        <p className="runtime-parameter-empty"><UiText zh={"当前还没有可编辑的能力快照。你仍可保存 Agent 运行时选择；检查完成后需要回来保存运行参数。"} /></p>
       )
   return (
-    <section className={inline ? 'member-runtime-parameters member-editor-runtime-fields' : 'member-runtime-parameters'} aria-label={inline ? '运行参数' : undefined} aria-labelledby={inline ? undefined : titleId}>
+    <section className={inline ? 'member-runtime-parameters member-editor-runtime-fields' : 'member-runtime-parameters'} aria-label={inline ? uiAttribute("运行参数") : undefined} aria-labelledby={inline ? undefined : titleId}>
       {!inline && <header className="member-runtime-parameters-heading">
-        <strong id={titleId}>运行参数</strong>
-        <small>模型、模型参数与 Agent 运行时原生权限。</small>
+        <strong id={titleId}><UiText zh={"运行参数"} /></strong>
+        <small><UiText zh={"模型、模型参数与 Agent 运行时原生权限。"} /></small>
       </header>}
       <div className="member-runtime-parameters-body" aria-labelledby={inline ? undefined : titleId}>
         {content}
@@ -176,9 +175,7 @@ export function MemberModelParameters({
   const defaults = installation?.memberRuntimeDefaults ?? null
   if (!installation || !snapshot || !defaults || !model) {
     return (
-      <p className="runtime-parameter-empty">
-        当前没有可编辑的模型目录；如果 Agent 运行时已准备好，将使用它的默认模型。
-      </p>
+      <p className="runtime-parameter-empty"><UiText zh={"当前没有可编辑的模型目录；如果 Agent 运行时已准备好，将使用它的默认模型。"} /></p>
     )
   }
   const draft: MemberRuntimeDraft = {
@@ -234,7 +231,7 @@ function runtimeParametersFor(
     case 'deepseek-harness':
       return <DeepseekHarnessRuntimeParameters {...props} />
     case 'zcode-app':
-      return <div className="runtime-parameter-form">{modelFieldsFor('zcode-app', props)}<PermissionSelect {...props} fieldKey="permission_mode" label="权限模式" /></div>
+      return <div className="runtime-parameter-form">{modelFieldsFor('zcode-app', props)}<PermissionSelect {...props} fieldKey="permission_mode" label={uiAttribute("权限模式")} /></div>
     case 'antigravity-app':
       return <AntigravityRuntimeParameters {...props} />
   }
@@ -279,8 +276,8 @@ function CodexRuntimeParameters(props: RuntimeParameterProps): React.JSX.Element
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('codex-cli', props)}
-      <PermissionSelect {...props} fieldKey="sandbox_mode" label="文件系统访问" />
-      <PermissionSelect {...props} fieldKey="approval_policy" label="审批策略" />
+      <PermissionSelect {...props} fieldKey="sandbox_mode" label={uiAttribute("文件系统访问")} />
+      <PermissionSelect {...props} fieldKey="approval_policy" label={uiAttribute("审批策略")} />
     </div>
   )
 }
@@ -289,7 +286,7 @@ function OpenCodeRuntimeParameters(props: RuntimeParameterProps): React.JSX.Elem
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('opencode-cli', props)}
-      <PermissionSelect {...props} fieldKey="permission" label="工具权限" />
+      <PermissionSelect {...props} fieldKey="permission" label={uiAttribute("工具权限")} />
     </div>
   )
 }
@@ -298,7 +295,7 @@ function CopilotRuntimeParameters(props: RuntimeParameterProps): React.JSX.Eleme
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('copilot-cli', props)}
-      <PermissionSwitch {...props} fieldKey="allow_all" label="自动允许全部操作" />
+      <PermissionSwitch {...props} fieldKey="allow_all" label={uiAttribute("自动允许全部操作")} />
     </div>
   )
 }
@@ -307,7 +304,7 @@ function ClaudeRuntimeParameters(props: RuntimeParameterProps): React.JSX.Elemen
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('claude-code-cli', props)}
-      <PermissionSelect {...props} fieldKey="permission_mode" label="权限模式" />
+      <PermissionSelect {...props} fieldKey="permission_mode" label={uiAttribute("权限模式")} />
     </div>
   )
 }
@@ -316,7 +313,7 @@ function KiroRuntimeParameters(props: RuntimeParameterProps): React.JSX.Element 
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('kiro-cli', props)}
-      <PermissionSwitch {...props} fieldKey="trust_all_tools" label="自动允许全部工具" />
+      <PermissionSwitch {...props} fieldKey="trust_all_tools" label={uiAttribute("自动允许全部工具")} />
     </div>
   )
 }
@@ -325,7 +322,7 @@ function QoderRuntimeParameters(props: RuntimeParameterProps): React.JSX.Element
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('qoder-cli', props)}
-      <PermissionSelect {...props} fieldKey="permission_mode" label="权限模式" />
+      <PermissionSelect {...props} fieldKey="permission_mode" label={uiAttribute("权限模式")} />
     </div>
   )
 }
@@ -334,7 +331,7 @@ function CodeBuddyRuntimeParameters(props: RuntimeParameterProps): React.JSX.Ele
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('codebuddy-cli', props)}
-      <PermissionSelect {...props} fieldKey="permission_mode" label="权限模式" />
+      <PermissionSelect {...props} fieldKey="permission_mode" label={uiAttribute("权限模式")} />
     </div>
   )
 }
@@ -343,7 +340,7 @@ function QwenRuntimeParameters(props: RuntimeParameterProps): React.JSX.Element 
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('qwen-code', props)}
-      <PermissionSelect {...props} fieldKey="approval_mode" label="审批模式" />
+      <PermissionSelect {...props} fieldKey="approval_mode" label={uiAttribute("审批模式")} />
     </div>
   )
 }
@@ -352,7 +349,7 @@ function TraeRuntimeParameters(props: RuntimeParameterProps): React.JSX.Element 
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('trae-cn-cli', props)}
-      <PermissionSelect {...props} fieldKey="permission_mode" label="权限模式" />
+      <PermissionSelect {...props} fieldKey="permission_mode" label={uiAttribute("权限模式")} />
     </div>
   )
 }
@@ -361,8 +358,8 @@ function CursorRuntimeParameters(props: RuntimeParameterProps): React.JSX.Elemen
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('cursor-agent', props)}
-      <PermissionSelect {...props} fieldKey="execution_mode" label="执行模式" />
-      <PermissionSelect {...props} fieldKey="approval_policy" label="审批策略" />
+      <PermissionSelect {...props} fieldKey="execution_mode" label={uiAttribute("执行模式")} />
+      <PermissionSelect {...props} fieldKey="approval_policy" label={uiAttribute("审批策略")} />
     </div>
   )
 }
@@ -371,7 +368,7 @@ function KimiRuntimeParameters(props: RuntimeParameterProps): React.JSX.Element 
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('kimi-code-cli', props)}
-      <PermissionSelect {...props} fieldKey="permission_mode" label="权限模式" />
+      <PermissionSelect {...props} fieldKey="permission_mode" label={uiAttribute("权限模式")} />
     </div>
   )
 }
@@ -380,7 +377,7 @@ function GrokRuntimeParameters(props: RuntimeParameterProps): React.JSX.Element 
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('grok-build', props)}
-      <PermissionSelect {...props} fieldKey="permission_mode" label="权限模式" />
+      <PermissionSelect {...props} fieldKey="permission_mode" label={uiAttribute("权限模式")} />
     </div>
   )
 }
@@ -389,12 +386,12 @@ function AntigravityRuntimeParameters(props: RuntimeParameterProps): React.JSX.E
   return (
     <div className="runtime-parameter-form">
       {modelFieldsFor('antigravity-app', props)}
-      <PermissionSelect {...props} fieldKey="mode" label="执行模式" />
-      <PermissionSelect {...props} fieldKey="sandbox" label="终端沙箱" />
+      <PermissionSelect {...props} fieldKey="mode" label={uiAttribute("执行模式")} />
+      <PermissionSelect {...props} fieldKey="sandbox" label={uiAttribute("终端沙箱")} />
       <PermissionSwitch
         {...props}
         fieldKey="dangerously_skip_permissions"
-        label="自动通过权限请求"
+        label={uiAttribute("自动通过权限请求")}
       />
     </div>
   )
@@ -406,7 +403,7 @@ function modelFieldsFor(
 ): React.JSX.Element {
   switch (adapterKind) {
     case 'claude-code-cli':
-      return <ModelFields {...props} optionKey="effort" optionLabel="思考强度" />
+      return <ModelFields {...props} optionKey="effort" optionLabel={uiAttribute("思考强度")} />
     case 'codex-cli':
     case 'opencode-cli':
     case 'copilot-cli':
@@ -414,7 +411,7 @@ function modelFieldsFor(
     case 'codebuddy-cli':
     case 'qwen-code':
     case 'deepseek-harness':
-      return <ModelFields {...props} optionKey="reasoning_effort" optionLabel="推理强度" />
+      return <ModelFields {...props} optionKey="reasoning_effort" optionLabel={uiAttribute("推理强度")} />
     case 'kiro-cli':
     case 'pi':
     case 'trae-cn-cli':
@@ -489,9 +486,9 @@ function ModelFields({
           value={optionValue}
           disabled={disabled}
           onChange={setOption}
-          defaultChoice={{ value: '', label: '跟随模型默认值' }}
+          defaultChoice={{ value: '', label:uiAttribute("跟随模型默认值") }}
           choices={[
-            ...(optionInvalid ? [{ value: optionValue, label: `当前目录未提供 · ${optionValue}`, disabled: true }] : []),
+            ...(optionInvalid ? [{ value: optionValue, label: uiAttribute("当前目录未提供 · {0}", String(optionValue)), disabled: true }] : []),
             ...(option?.values ?? [])
           ]}
         />
@@ -596,12 +593,12 @@ function RuntimeModelPicker({
     ? missingModelLabel(explicit.modelId, cache.status)
     : null
   const triggerLabel = draft.model.mode === 'runtime_default'
-    ? '默认'
+    ? uiAttribute('默认')
     : selectedModel?.displayName ?? draft.model.modelId
 
   return (
     <div className="field-label runtime-model-field">
-      <span>模型</span>
+      <span><UiText zh={"模型"} /></span>
       <RuntimeModelSearch
         open={open}
         onOpenChange={(nextOpen) => {
@@ -680,9 +677,9 @@ function missingModelLabel(
   modelId: string,
   status: RuntimeModelCatalogCache['status']
 ): string {
-  if (status === 'fresh') return `当前目录未提供 · ${modelId}`
-  if (status === 'stale') return `缓存中未找到 · ${modelId}`
-  return `尚未核对 · ${modelId}`
+  if (status === 'fresh') return uiAttribute("当前目录未提供 · {0}", String(modelId))
+  if (status === 'stale') return uiAttribute("缓存中未找到 · {0}", String(modelId))
+  return uiAttribute("尚未核对 · {0}", String(modelId))
 }
 
 export function modelCatalogStatusCopy(
@@ -694,19 +691,19 @@ export function modelCatalogStatusCopy(
     refreshStatus: RuntimeModelCatalogView['refreshStatus'] | null
   }
 ): string {
-  if (state.loading) return '正在获取模型列表…'
+  if (state.loading) return uiAttribute("正在获取模型列表…")
   if (state.refreshFailed) {
     return state.servingCachedModels
-      ? '暂时无法更新模型列表，已保留上次结果。'
-      : '暂时无法获取模型列表，请重试。'
+      ?uiAttribute("暂时无法更新模型列表，已保留上次结果。")
+      :uiAttribute("暂时无法获取模型列表，请重试。")
   }
   if (state.refreshStatus === 'scheduled' || state.refreshStatus === 'joined') {
-    return '正在更新模型列表…'
+    return uiAttribute("正在更新模型列表…")
   }
   if (state.refreshStatus === 'deferred') {
     return state.servingCachedModels
-      ? '运行环境正在更新，继续显示上次成功结果'
-      : '运行环境正在更新，稍后重新获取'
+      ?uiAttribute("运行环境正在更新，继续显示上次成功结果")
+      :uiAttribute("运行环境正在更新，稍后重新获取")
   }
   return ''
 }
@@ -734,7 +731,7 @@ function PermissionSelect({
 }): React.JSX.Element {
   const descriptor = permissionDescriptor(snapshot.permissionOptions, fieldKey)
   if (!descriptor) {
-    return <p className="runtime-parameter-unavailable">当前能力快照未提供“{label}”。</p>
+    return <p className="runtime-parameter-unavailable"><UiText zh={"当前能力快照未提供“"} />{label}”。</p>
   }
   const currentValue = stringValue(draft.permissions.values[fieldKey])
   const invalid = Boolean(currentValue)
@@ -746,11 +743,11 @@ function PermissionSelect({
       disabled={disabled}
       onChange={(value) => updatePermission(draft, fieldKey, value, onChange)}
       choices={[
-        ...(!currentValue ? [{ value: '', label: '请选择' }] : []),
-        ...(invalid ? [{ value: currentValue, label: `已失效 · ${currentValue}`, disabled: true }] : []),
+        ...(!currentValue ? [{ value: '', label:uiAttribute("请选择") }] : []),
+        ...(invalid ? [{ value: currentValue, label: uiAttribute("已失效 · {0}", String(currentValue)), disabled: true }] : []),
         ...descriptor.choices.map((choice) => ({
           ...choice,
-          description: choiceDescriptions?.[choice.value]
+          description: choiceDescriptions?.[choice.value] ? uiAttribute(choiceDescriptions[choice.value]) : undefined
         }))
       ]}
     />
@@ -775,7 +772,7 @@ function PermissionSwitch({
       <span>{label}</span>
       <span className="runtime-parameter-switch">
         <span className="runtime-parameter-switch-state" aria-hidden="true">
-          {checked ? '开启' : '关闭'}
+          {checked ? uiAttribute("开启") : uiAttribute("关闭")}
         </span>
         <input
           type="checkbox"

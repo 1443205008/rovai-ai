@@ -38,6 +38,7 @@ import {
   type CampWorldMapPathEdge,
   type CampWorldMapRendezvous
 } from './camp-world-map-model'
+import { UiText, uiAttribute } from './interface-language'
 
 type WorldMapPoint = { x: number; y: number }
 type WorldMapFrameSize = { width: number; height: number }
@@ -724,7 +725,7 @@ export function CampWorldMap({
       data-population={agents.length > 6 ? 'crowded' : 'normal'}
       data-ambient-kind={visibleAmbientEvent?.kind ?? 'none'}
       data-ambient-beat-id={visibleAmbientEvent?.beatId}
-      aria-label="会话世界地图"
+      aria-label={uiAttribute("会话世界地图")}
     >
       <div
         className="camp-world-map-backdrop"
@@ -736,7 +737,7 @@ export function CampWorldMap({
           <img
             className="camp-world-map-image"
             src={harborCityMapUrl}
-            alt="港湾城市协作世界地图"
+            alt={uiAttribute("港湾城市协作世界地图")}
             draggable={false}
           />
           <svg
@@ -761,8 +762,8 @@ export function CampWorldMap({
                 && visibleAmbientEvent.agentIds[0] === agent.agentId
                 ? {
                     key: visibleAmbientEvent.eventId,
-                    label: '闲时 · 环境预设',
-                    text: visibleAmbientEvent.text
+                    label:uiAttribute("闲时 · 环境预设"),
+                    text: uiAttribute(visibleAmbientEvent.text)
                   }
                 : null
               const speech = agent.speech ?? ambient
@@ -788,8 +789,8 @@ export function CampWorldMap({
                     className="camp-world-map-agent-button"
                     type="button"
                     aria-label={canOpenProcess
-                      ? `打开${agent.displayName}的执行过程`
-                      : `${agent.displayName}，当前没有执行过程`}
+                      ? uiAttribute("打开{0}的执行过程", String(agent.displayName))
+                      : uiAttribute("{0}，当前没有执行过程", String(agent.displayName))}
                     aria-disabled={canOpenProcess ? undefined : true}
                     tabIndex={canOpenProcess ? 0 : -1}
                     onClick={(event) => {
@@ -844,7 +845,7 @@ export function CampWorldMap({
               className="camp-world-map-ambient-encounter"
               data-beat-id={visibleAmbientEvent.beatId}
               key={visibleAmbientEvent.eventId}
-              title={visibleAmbientEvent.text}
+              title={uiAttribute(visibleAmbientEvent.text)}
               style={{
                 '--world-map-encounter-shift': encounterNode.x < 225
                   ? '-18%'
@@ -855,7 +856,7 @@ export function CampWorldMap({
                 top: `${encounterNode.y / CAMP_WORLD_MAP_HEIGHT * 100}%`
               } as CSSProperties}
             >
-              <span className="camp-world-map-speech-text">{visibleAmbientEvent.text}</span>
+              <span className="camp-world-map-speech-text">{uiAttribute(visibleAmbientEvent.text)}</span>
             </div>
           )}
           {caption && (caption.interactive
@@ -880,9 +881,7 @@ export function CampWorldMap({
                 </div>
               ))}
           {agents.length === 0 && (
-            <div className="camp-world-map-empty">
-              当前会话暂无可在地图中呈现的队员。
-            </div>
+            <div className="camp-world-map-empty"><UiText zh={"当前会话暂无可在地图中呈现的队员。"} /></div>
           )}
         </div>
       </div>

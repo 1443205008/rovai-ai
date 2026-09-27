@@ -47,6 +47,7 @@ import {
   NAVIGATION_MORE_CAMPS_STEP,
   type NavigationGroupLimits
 } from './navigation-window-reader'
+import { UiText, uiAttribute } from './interface-language'
 
 export type NavigationSettingsSection = SettingsSection
 
@@ -59,7 +60,7 @@ type NavigationAction = {
 } | null
 
 export function campNavigationMenuLabels(pinned: boolean): string[] {
-  return [pinned ? '取消置顶' : '置顶', '重命名', '复制会话 ID', '删除']
+  return [pinned ? uiAttribute('取消置顶') : uiAttribute('置顶'), uiAttribute('重命名'), uiAttribute('复制会话 ID'), uiAttribute('删除')]
 }
 
 export async function copyCampIdToClipboard(
@@ -72,11 +73,11 @@ export async function copyCampIdToClipboard(
   } catch {
     copied = false
   }
-  if (!copied) throw new Error('无法复制会话 ID，请重试。')
+  if (!copied) throw new Error(uiAttribute('无法复制会话 ID，请重试。'))
 }
 
 export function projectNavigationMenuLabels(pinned: boolean): string[] {
-  return [pinned ? '取消置顶项目' : '置顶项目', '重命名', '移除项目']
+  return [pinned ? uiAttribute('取消置顶项目') : uiAttribute('置顶项目'), uiAttribute('重命名'), uiAttribute('移除项目')]
 }
 
 export function toggleNavigationGroup(groups: ReadonlySet<string>, groupKey: string): Set<string> {
@@ -345,7 +346,7 @@ export function CampNavigation({
 
   return (
     <>
-      <aside id={navigationId} className={`unified-sidebar ${view === 'settings' && !mobile ? 'settings-navigation-mode' : ''}${navigationCollapsed ? ' is-collapsed' : ''}`} inert={disabled || navigationCollapsed} aria-label={view === 'settings' && !mobile ? '设置分类' : '全局导航'}>
+      <aside id={navigationId} className={`unified-sidebar ${view === 'settings' && !mobile ? 'settings-navigation-mode' : ''}${navigationCollapsed ? ' is-collapsed' : ''}`} inert={disabled || navigationCollapsed} aria-label={view === 'settings' && !mobile ? uiAttribute("设置分类") : uiAttribute("全局导航")}>
         <div className="unified-sidebar-drag" aria-hidden="true" />
         <div className="unified-brand">
           <span className="rail-logo" role="img" aria-label="Rovai AI">
@@ -377,52 +378,52 @@ export function CampNavigation({
             )
           : (
               <>
-                <nav className="unified-primary-nav" aria-label="主要页面">
-                  <button className={`rail-button ${view === 'compose' ? 'active' : ''}`} type="button" aria-label="新对话" title="新对话" onClick={onNewConversation} disabled={state !== 'ready' || creatingConversation}>
-                    <span className="rail-glyph" aria-hidden="true"><NavigationIcon name="square-pen" /></span><span className="rail-label">新对话</span>
+                <nav className="unified-primary-nav" aria-label={uiAttribute("主要页面")}>
+                  <button className={`rail-button ${view === 'compose' ? 'active' : ''}`} type="button" aria-label={uiAttribute("新对话")} title={uiAttribute("新对话")} onClick={onNewConversation} disabled={state !== 'ready' || creatingConversation}>
+                    <span className="rail-glyph" aria-hidden="true"><NavigationIcon name="square-pen" /></span><span className="rail-label"><UiText zh={"新对话"} /></span>
                   </button>
-                  <button className={`rail-button ${view === 'members' ? 'active' : ''}`} type="button" aria-current={view === 'members' ? 'page' : undefined} aria-label="队员" title="队员" onClick={onMembers}>
-                    <span className="rail-glyph" aria-hidden="true"><NavigationIcon name="users" /></span><span className="rail-label">队员</span>
+                  <button className={`rail-button ${view === 'members' ? 'active' : ''}`} type="button" aria-current={view === 'members' ? 'page' : undefined} aria-label={uiAttribute("队员")} title={uiAttribute("队员")} onClick={onMembers}>
+                    <span className="rail-glyph" aria-hidden="true"><NavigationIcon name="users" /></span><span className="rail-label"><UiText zh={"队员"} /></span>
                   </button>
                   <button
                     className={`rail-button ${view === 'memory' ? 'active' : ''}`}
                     type="button"
                     aria-current={view === 'memory' ? 'page' : undefined}
-                    aria-label={pendingMemoryCount > 0 ? `记忆，${pendingMemoryCount} 条普通提案待确认` : '记忆'}
-                    title={pendingMemoryCount > 0 ? `记忆 · ${pendingMemoryCount} 条普通提案待确认` : '记忆'}
+                    aria-label={pendingMemoryCount > 0 ? uiAttribute("记忆，{0} 条普通提案待确认", String(pendingMemoryCount)) : uiAttribute("记忆")}
+                    title={pendingMemoryCount > 0 ? uiAttribute("记忆 · {0} 条普通提案待确认", String(pendingMemoryCount)) : uiAttribute("记忆")}
                     onClick={onMemory}
                   >
-                    <span className="rail-glyph" aria-hidden="true"><NavigationIcon name="brain" /></span><span className="rail-label">记忆</span>
+                    <span className="rail-glyph" aria-hidden="true"><NavigationIcon name="brain" /></span><span className="rail-label"><UiText zh={"记忆"} /></span>
                     {pendingMemoryCount > 0 && <i className="rail-badge-dot" aria-hidden="true" />}
                   </button>
                   <button
                     className={`rail-button ${view === 'missions' ? 'active' : ''}`}
                     type="button"
                     aria-current={view === 'missions' ? 'page' : undefined}
-                    aria-label={unreadMissionCount > 0 ? `使命板，${unreadMissionCount} 个使命有未读回复` : '使命板'}
-                    title={unreadMissionCount > 0 ? `使命板 · ${unreadMissionCount} 个使命有未读回复` : '使命板'}
+                    aria-label={unreadMissionCount > 0 ? uiAttribute("使命板，{0} 个使命有未读回复", String(unreadMissionCount)) : uiAttribute("使命板")}
+                    title={unreadMissionCount > 0 ? uiAttribute("使命板 · {0} 个使命有未读回复", String(unreadMissionCount)) : uiAttribute("使命板")}
                     onClick={onMissions}
                   >
-                    <span className="rail-glyph" aria-hidden="true"><MissionIcon /></span><span className="rail-label">使命板</span>
+                    <span className="rail-glyph" aria-hidden="true"><MissionIcon /></span><span className="rail-label"><UiText zh={"使命板"} /></span>
                     {unreadMissionCount > 0 && <i className="mission-rail-badge-dot" aria-hidden="true" />}
                   </button>
-                  <button className={`rail-button ${view === 'automations' ? 'active' : ''}`} type="button" aria-current={view === 'automations' ? 'page' : undefined} aria-label="定时任务" title="定时任务" onClick={onAutomations}>
-                    <span className="rail-glyph" aria-hidden="true"><NavigationIcon name="calendar-clock" /></span><span className="rail-label">定时任务</span>
+                  <button className={`rail-button ${view === 'automations' ? 'active' : ''}`} type="button" aria-current={view === 'automations' ? 'page' : undefined} aria-label={uiAttribute("定时任务")} title={uiAttribute("定时任务")} onClick={onAutomations}>
+                    <span className="rail-glyph" aria-hidden="true"><NavigationIcon name="calendar-clock" /></span><span className="rail-label"><UiText zh={"定时任务"} /></span>
                   </button>
                 </nav>
                 <button className="conversation-jump" type="button" onClick={() => setPaletteOpen(true)}>
-                  <span>跳转到对话…</span><kbd aria-hidden="true">{primaryShortcutLabel(platform, 'K')}</kbd>
+                  <span><UiText zh={"跳转到对话…"} /></span><kbd aria-hidden="true">{primaryShortcutLabel(platform, 'K')}</kbd>
                 </button>
 
       <div className="navigation-scroll">
-        {mobile && <header className="mobile-navigation-heading"><h2>对话</h2><div>
-          <button className="mobile-icon-button" type="button" aria-label="选择工作目录" disabled={state !== 'ready'} onClick={onOpenProject}><NavigationIcon name="folder-open" /></button>
-          <button className="mobile-icon-button" type="button" aria-label="搜索对话" onClick={() => setPaletteOpen(true)}><NavigationIcon name="search" /></button>
+        {mobile && <header className="mobile-navigation-heading"><h2><UiText zh={"对话"} /></h2><div>
+          <button className="mobile-icon-button" type="button" aria-label={uiAttribute("选择工作目录")} disabled={state !== 'ready'} onClick={onOpenProject}><NavigationIcon name="folder-open" /></button>
+          <button className="mobile-icon-button" type="button" aria-label={uiAttribute("搜索对话")} onClick={() => setPaletteOpen(true)}><NavigationIcon name="search" /></button>
         </div></header>}
         {(pinnedCamps.length > 0 || pinnedProjects.length > 0) && (
           <section className="pinned-navigation" aria-labelledby="pinned-heading">
             <div className="sidebar-group-title navigation-section-title">
-              <span id="pinned-heading">置顶</span>
+              <span id="pinned-heading"><UiText zh={"置顶"} /></span>
             </div>
             {pinnedCamps.map((camp) => (
               <CampRow
@@ -475,7 +476,7 @@ export function CampNavigation({
           </section>
         )}
         <section className="navigation-projects" aria-labelledby="projects-heading">
-          <div className="sidebar-group-title navigation-section-title"><span id="projects-heading">项目</span><button className="section-create-button" type="button" aria-label="选择工作目录" title="选择工作目录" onClick={onOpenProject} disabled={state !== 'ready'}>＋</button></div>
+          <div className="sidebar-group-title navigation-section-title"><span id="projects-heading"><UiText zh={"项目"} /></span><button className="section-create-button" type="button" aria-label={uiAttribute("选择工作目录")} title={uiAttribute("选择工作目录")} onClick={onOpenProject} disabled={state !== 'ready'}>＋</button></div>
           {navigation?.projects.map((project) => {
             const groupKey = projectKey(project)
             if (pins.some((pin) => pin.kind === 'project' && pin.targetKey === project.projectKey)) return null
@@ -514,10 +515,10 @@ export function CampNavigation({
               />
             )
           })}
-          {navigation && navigation.projects.length === 0 && <p className="sidebar-empty">选择工作目录后，对话会在这里成组显示。</p>}
+          {navigation && navigation.projects.length === 0 && <p className="sidebar-empty"><UiText zh={"选择工作目录后，对话会在这里成组显示。"} /></p>}
           {navigation && <CampGroup
             groupKey="quick-chat"
-            label="快速对话"
+            label={uiAttribute("快速对话")}
             totalCount={quickChatTotalCount}
             visibleCount={quickChatVisibleCount}
             camps={quickChatRecentCamps.slice(0, quickChatVisibleCount)
@@ -542,23 +543,23 @@ export function CampNavigation({
           </div>
       <div className="unified-sidebar-footer">
         {footer}
-        <div className="sidebar-settings-entry" role="group" aria-label="设置与应用更新">
+        <div className="sidebar-settings-entry" role="group" aria-label={uiAttribute("设置与应用更新")}>
           <button
             className={`rail-button sidebar-settings-main${mobile && view === 'settings' ? ' active' : ''}`}
             aria-current={mobile && view === 'settings' ? 'page' : undefined}
             type="button"
-            aria-label={mobile ? '设置' : '设置，打开上次保留的设置页面'}
+            aria-label={mobile ? uiAttribute("设置") : uiAttribute("设置，打开上次保留的设置页面")}
             onClick={() => {
               onSettings()
             }}
           >
-            <span className="rail-glyph" aria-hidden="true"><NavigationIcon name="settings" /></span><span className="rail-label">设置</span>
+            <span className="rail-glyph" aria-hidden="true"><NavigationIcon name="settings" /></span><span className="rail-label"><UiText zh={"设置"} /></span>
           </button>
           {updateBadge && (
             <button
               className={`app-update-badge is-${updateBadge.kind}`}
               type="button"
-              aria-label={`打开关于与更新，${updateBadge.accessibleLabel}`}
+              aria-label={uiAttribute("打开关于与更新，{0}", String(updateBadge.accessibleLabel))}
               title={updateBadge.accessibleLabel}
               onClick={() => {
                 onOpenUpdates()
@@ -596,46 +597,46 @@ export function CampNavigation({
             {action?.kind === 'rename' ? (
               <>
                 <AppDialogHeader
-                  title="重命名对话"
-                  description="仅更新侧栏中的对话名称。项目归属、队员、消息与活动顺序保持不变。"
+                  title={uiAttribute("重命名对话")}
+                  description={uiAttribute("仅更新侧栏中的对话名称。项目归属、队员、消息与活动顺序保持不变。")}
                   icon="pencil"
                   closeDisabled={actionBusy}
             hideDescription
                 />
                 <form className="app-dialog-form" onSubmit={(event) => void submitRename(event)}>
                   <AppDialogBody>
-                    <label className="field-label" htmlFor="rename-camp-title">对话名称<input id="rename-camp-title" autoFocus data-dialog-autofocus value={renameTitle} onChange={(event) => setRenameTitle(event.target.value)} disabled={actionBusy} /></label>
+                    <label className="field-label" htmlFor="rename-camp-title"><UiText zh={"对话名称"} /><input id="rename-camp-title" autoFocus data-dialog-autofocus value={renameTitle} onChange={(event) => setRenameTitle(event.target.value)} disabled={actionBusy} /></label>
                   </AppDialogBody>
                   <AppDialogFooter>
-                    <Dialog.Close asChild><button className="quiet-button" type="button" disabled={actionBusy}>取消</button></Dialog.Close>
-                    <button className="primary-button conversation-primary-button" type="submit" disabled={!renameTitle.trim() || actionBusy}>{actionBusy ? '保存中…' : '保存名称'}</button>
+                    <Dialog.Close asChild><button className="quiet-button" type="button" disabled={actionBusy}><UiText zh={"取消"} /></button></Dialog.Close>
+                    <button className="primary-button conversation-primary-button" type="submit" disabled={!renameTitle.trim() || actionBusy}>{actionBusy ? uiAttribute("保存中…") : uiAttribute("保存名称")}</button>
                   </AppDialogFooter>
                 </form>
               </>
             ) : action?.kind === 'delete' ? (
               <>
                 <AppDialogHeader
-                  title="删除对话？"
-                  description="会一并删除此对话保存的附件，包含已编辑内容。原始工作区文件和外部引用文件不受影响。"
+                  title={uiAttribute("删除对话？")}
+                  description={uiAttribute("会一并删除此对话保存的附件，包含已编辑内容。原始工作区文件和外部引用文件不受影响。")}
                   icon="trash"
                   closeDisabled={actionBusy}
                 />
                 <AppDialogFooter>
-                  <Dialog.Close asChild><button className="quiet-button" type="button" autoFocus data-dialog-autofocus disabled={actionBusy}>取消</button></Dialog.Close>
-                  <button className="danger-button" type="button" onClick={() => void confirmDelete()} disabled={actionBusy}>{actionBusy ? '正在删除…' : '删除'}</button>
+                  <Dialog.Close asChild><button className="quiet-button" type="button" autoFocus data-dialog-autofocus disabled={actionBusy}><UiText zh={"取消"} /></button></Dialog.Close>
+                  <button className="danger-button" type="button" onClick={() => void confirmDelete()} disabled={actionBusy}>{actionBusy ? uiAttribute("正在删除…") : uiAttribute("删除")}</button>
                 </AppDialogFooter>
               </>
             ) : action?.kind === 'remove_project' ? (
               <>
                 <AppDialogHeader
-                  title={`从侧栏移除“${action.project.name}”？`}
-                  description="文件、会话记录和正在进行的执行都会保留。重新选择同一目录即可恢复显示。"
+                  title={uiAttribute("从侧栏移除“{0}”？", String(action.project.name))}
+                  description={uiAttribute("文件、会话记录和正在进行的执行都会保留。重新选择同一目录即可恢复显示。")}
                   icon="folder"
                   closeDisabled={actionBusy}
                 />
                 <AppDialogFooter>
-                  <Dialog.Close asChild><button className="quiet-button" type="button" autoFocus data-dialog-autofocus disabled={actionBusy}>取消</button></Dialog.Close>
-                  <button className="danger-button" type="button" onClick={() => void confirmProjectRemoval()} disabled={actionBusy}>{actionBusy ? '正在移除…' : '移除'}</button>
+                  <Dialog.Close asChild><button className="quiet-button" type="button" autoFocus data-dialog-autofocus disabled={actionBusy}><UiText zh={"取消"} /></button></Dialog.Close>
+                  <button className="danger-button" type="button" onClick={() => void confirmProjectRemoval()} disabled={actionBusy}>{actionBusy ? uiAttribute("正在移除…") : uiAttribute("移除")}</button>
                 </AppDialogFooter>
               </>
             ) : null}
@@ -661,32 +662,32 @@ export type SettingsSidebarGroup<Section extends string = NavigationSettingsSect
 export const SETTINGS_SIDEBAR_GROUPS: SettingsSidebarGroup[] = [
   {
     key: 'application',
-    label: '应用',
+    label:"应用",
     items: [
-      { key: 'general', icon: 'sliders-horizontal', label: '通用' },
-      { key: 'appearance', icon: 'sun-moon', label: '外观' },
-      { key: 'notifications', icon: 'bell-ring', label: '提醒' }
+      { key: 'general', icon: 'sliders-horizontal', label:"通用" },
+      { key: 'appearance', icon: 'sun-moon', label:"外观" },
+      { key: 'notifications', icon: 'bell-ring', label:"提醒" }
     ]
   },
   {
     key: 'capabilities',
-    label: '能力',
+    label:"能力",
     items: [
       { key: 'mcp', icon: 'blocks', label: 'MCP' },
       { key: 'skills', icon: 'sparkles', label: 'Skills' },
-      { key: 'toolbox', icon: 'briefcase-business', label: '工具箱' },
-      { key: 'runtime', icon: 'cpu', label: '运行时' },
-      { key: 'remote', icon: 'monitor-smartphone', label: '远程连接' },
-      { key: 'channels', icon: 'radio-tower', label: '渠道' }
+      { key: 'toolbox', icon: 'briefcase-business', label:"工具箱" },
+      { key: 'runtime', icon: 'cpu', label:"运行时" },
+      { key: 'remote', icon: 'monitor-smartphone', label:"远程连接" },
+      { key: 'channels', icon: 'radio-tower', label:"渠道" }
     ]
   },
   {
     key: 'support',
-    label: '支持',
+    label:"支持",
     items: [
-      { key: 'monitoring', icon: 'chart-line', label: '运行监控' },
-      { key: 'diagnostics', icon: 'stethoscope', label: '诊断与修复' },
-      { key: 'about', icon: 'info', label: '关于与更新' }
+      { key: 'monitoring', icon: 'chart-line', label:"运行监控" },
+      { key: 'diagnostics', icon: 'stethoscope', label:"诊断与修复" },
+      { key: 'about', icon: 'info', label:"关于与更新" }
     ]
   }
 ]
@@ -709,32 +710,32 @@ export function SettingsSidebarNavigation<Section extends string>({
       <div className="settings-sidebar-heading">
         <button className="settings-sidebar-back" type="button" onClick={onBack}>
           <span aria-hidden="true"><NavigationIcon name="arrow-left" /></span>
-          <strong>返回 App</strong>
+          <strong><UiText zh={"返回 App"} /></strong>
         </button>
         <div className="settings-sidebar-title">
-          <strong>设置</strong>
-          <span>应用级偏好与本机能力</span>
+          <strong><UiText zh={"设置"} /></strong>
+          <span><UiText zh={"应用级偏好与本机能力"} /></span>
         </div>
       </div>
-      <nav className="settings-sidebar-menu" aria-label="设置页面">
+      <nav className="settings-sidebar-menu" aria-label={uiAttribute("设置页面")}>
         {groups.map((group) => {
           const headingId = `settings-sidebar-group-${group.key}`
           return (
             <section className="settings-sidebar-group" aria-labelledby={headingId} key={group.key}>
-              <h2 id={headingId} className="settings-sidebar-group-title">{group.label}</h2>
+              <h2 id={headingId} className="settings-sidebar-group-title">{uiAttribute(group.label)}</h2>
               {group.items.map((item) => (
                 <button
                   className={`${section === item.key ? 'active' : ''} ${item.key === 'about' && updateBadge ? 'has-update-badge' : ''}`.trim()}
                   type="button"
                   aria-current={section === item.key ? 'page' : undefined}
                   aria-label={item.key === 'about' && updateBadge
-                    ? `关于与更新，${updateBadge.accessibleLabel}`
+                    ? uiAttribute("关于与更新，{0}", String(updateBadge.accessibleLabel))
                     : undefined}
                   key={item.key}
                   onClick={() => onSectionChange(item.key)}
                 >
                   <span aria-hidden="true"><NavigationIcon name={item.icon} /></span>
-                  <strong>{item.label}</strong>
+                  <strong>{uiAttribute(item.label)}</strong>
                   {item.key === 'about' && updateBadge && (
                     <span
                       className={`app-update-badge settings-app-update-badge is-${updateBadge.kind}`}
@@ -819,14 +820,14 @@ function CommandPalette({
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
         <Dialog.Content className="command-palette" onCloseAutoFocus={(event) => event.preventDefault()}>
-          <Dialog.Title className="command-palette-title">跳转到对话</Dialog.Title>
-          <Dialog.Description className="sr-only">输入对话或项目关键字，或粘贴完整会话 ID 精确查找；方向键选择，回车打开。</Dialog.Description>
+          <Dialog.Title className="command-palette-title"><UiText zh={"跳转到对话"} /></Dialog.Title>
+          <Dialog.Description className="sr-only"><UiText zh={"输入对话或项目关键字，或粘贴完整会话 ID 精确查找；方向键选择，回车打开。"} /></Dialog.Description>
           <input
             className="command-palette-input"
             autoFocus
             value={query}
-            placeholder="搜索对话、项目或完整会话 ID…"
-            aria-label="搜索对话"
+            placeholder={uiAttribute("搜索对话、项目或完整会话 ID…")}
+            aria-label={uiAttribute("搜索对话")}
             onChange={(event) => {
               setQuery(event.target.value)
               setActiveIndex(0)
@@ -845,7 +846,7 @@ function CommandPalette({
               }
             }}
           />
-          <div className="command-palette-list" aria-label="匹配的对话" aria-busy={loading}>
+          <div className="command-palette-list" aria-label={uiAttribute("匹配的对话")} aria-busy={loading}>
             {visible.map((camp, index) => (
               <button
                 className={`command-palette-item ${index === selectedIndex ? 'active' : ''}`}
@@ -855,16 +856,16 @@ function CommandPalette({
                 onMouseEnter={() => setActiveIndex(index)}
               >
                 <span className="truncate" title={formatCampTitle(camp)}>{formatCampTitle(camp)}</span>
-                <small>{camp.projectBindingKind === 'directory' ? projectNameByPath.get(camp.projectPath) ?? '项目' : '快速对话'}</small>
+                <small>{camp.projectBindingKind === 'directory' ? projectNameByPath.get(camp.projectPath) ?? uiAttribute('项目') : uiAttribute("快速对话")}</small>
               </button>
             ))}
             {visible.length === 0 && (
               <p className="command-palette-empty" role="status">
-                {loading ? '正在查找会话…' : error ?? '没有匹配的对话。'}
+                {loading ? uiAttribute("正在查找会话…") : error ?? uiAttribute("没有匹配的对话。")}
               </p>
             )}
           </div>
-          <footer className="command-palette-footer"><span><kbd>↑ ↓</kbd> 选择</span><span><kbd>↵</kbd> 打开</span><span><kbd>Esc</kbd> 关闭</span></footer>
+          <footer className="command-palette-footer"><span><kbd>↑ ↓</kbd><UiText zh={" 选择"} /></span><span><kbd>↵</kbd><UiText zh={" 打开"} /></span><span><kbd>Esc</kbd><UiText zh={" 关闭"} /></span></footer>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -981,13 +982,13 @@ function CampGroup({
         {pinTargetKey && projectMenuItems.length > 0 && (
           <SidebarActionMenu
             target={`project:${pinTargetKey}`}
-            label={`管理项目“${label}”`}
+            label={uiAttribute("管理项目“{0}”", String(label))}
             triggerClassName="group-menu-trigger"
             items={projectMenuItems}
             pressMenu={mobile ? pressMenu : undefined}
           />
         )}
-        <button className="group-create-button" type="button" aria-label={`在“${label}”中新建对话`} title="新建对话" disabled={createDisabled} onClick={onCreate}>{mobile ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg> : '＋'}</button>
+        <button className="group-create-button" type="button" aria-label={uiAttribute("在“{0}”中新建对话", String(label))} title={uiAttribute("新建对话")} disabled={createDisabled} onClick={onCreate}>{mobile ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg> : '＋'}</button>
       </div>
       <div id={contentId} className="camp-group-children" hidden={!projectExpanded}>
         {projectExpanded && camps.map((camp) => (
@@ -1003,11 +1004,11 @@ function CampGroup({
             onAction={onAction}
           />
         ))}
-        {projectExpanded && camps.length === 0 && totalCount === 0 && <p className="sidebar-empty">还没有对话</p>}
+        {projectExpanded && camps.length === 0 && totalCount === 0 && <p className="sidebar-empty"><UiText zh={"还没有对话"} /></p>}
         {projectExpanded && (paginationControls.showMore || paginationControls.showCollapse) && (
           <div className="camp-pagination-actions">
-            {paginationControls.showMore && <button className="show-more-camps" type="button" onClick={onShowMore} disabled={loadingMore}>{loadingMore ? '正在读取…' : '查看更多'}</button>}
-            {paginationControls.showCollapse && <button className="collapse-camps" type="button" onClick={onCollapseCamps} disabled={loadingMore}>收起</button>}
+            {paginationControls.showMore && <button className="show-more-camps" type="button" onClick={onShowMore} disabled={loadingMore}>{loadingMore ? uiAttribute("正在读取…") : uiAttribute("查看更多")}</button>}
+            {paginationControls.showCollapse && <button className="collapse-camps" type="button" onClick={onCollapseCamps} disabled={loadingMore}><UiText zh={"收起"} /></button>}
           </div>
         )}
       </div>
@@ -1077,13 +1078,13 @@ function CampRow({
         type="button"
         aria-current={active ? 'page' : undefined}
         aria-busy={opening || undefined}
-        aria-label={`${title}${hasNewReply ? '，有新回复' : ''}${opening ? '，正在打开' : camp.marker === 'loading' ? '，正在运行' : ''}`}
-        title={hasNewReply ? `${title} · 有新回复` : title}
+        aria-label={`${title}${hasNewReply ? uiAttribute("，有新回复") : ''}${opening ? uiAttribute("，正在打开") : camp.marker === 'loading' ? uiAttribute("，正在运行") : ''}`}
+        title={hasNewReply ? uiAttribute("{0} · 有新回复", String(title)) : title}
         onClick={() => onCamp(camp)}
       >
         {pinned && <span className="pinned-camp-icon" aria-hidden="true"><NavigationIcon name="messages" /></span>}
         <span className="truncate">{title}</span>
-        {camp.activationState === 'pending' && <span className="camp-draft-badge">草稿</span>}
+        {camp.activationState === 'pending' && <span className="camp-draft-badge"><UiText zh={"草稿"} /></span>}
         <span className="camp-status-slot" data-status={status} aria-hidden="true">
           {loadingStatus
             ? <span className={`camp-loading-spinner ${opening ? 'camp-open-spinner' : 'camp-marker-loading'}`} />
@@ -1092,7 +1093,7 @@ function CampRow({
       </button>
       <SidebarActionMenu
         target={`camp:${camp.id}`}
-        label={`管理“${title}”`}
+        label={uiAttribute("管理“{0}”", String(title))}
         triggerClassName="camp-menu-trigger"
         items={menuItems}
         pressMenu={mobile ? pressMenu : undefined}
@@ -1131,10 +1132,10 @@ function SidebarActionMenu({
           className={`sidebar-menu-trigger ${triggerClassName}${pressMenu ? ' mobile-context-trigger' : ''}`}
           type="button"
           aria-label={label}
-          title="更多操作"
+          title={uiAttribute("更多操作")}
           data-sidebar-menu-target={target}
         >
-          {pressMenu ? '操作' : <svg className="more-icon" viewBox="0 0 24 24" aria-hidden="true">
+          {pressMenu ? uiAttribute("操作") : <svg className="more-icon" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="5" cy="12" r="1.8" />
             <circle cx="12" cy="12" r="1.8" />
             <circle cx="19" cy="12" r="1.8" />

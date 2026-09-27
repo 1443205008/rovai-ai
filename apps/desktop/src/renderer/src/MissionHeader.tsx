@@ -5,6 +5,7 @@ import { useMobileLayout } from './MobileLayout'
 import { DialogControlIcon } from './AppDialog'
 import { Icon } from './MissionControls'
 import { useFilePreview } from './FilePreviewContext'
+import { UiText, uiAttribute } from './interface-language'
 
 export function MissionHeader({ mission, drawer, projectName, camp, openRequest, executionTakesPreviewPriority = false, onExpand, onFold, onClose, onFocusApprovals, detailEntryHostRef }: {
   mission: MissionRecord; drawer: boolean; projectName: string | null; camp: CampSnapshot; openRequest: number
@@ -32,20 +33,20 @@ export function MissionHeader({ mission, drawer, projectName, camp, openRequest,
   ])
   if (mobile) return <AppHeader campTitle={mission.title} contextLabel={projectName} camp={camp}
     detailEntryHostRef={detailEntryHostRef} onFocusApprovals={onFocusApprovals}
-    onOpenConversationList={onClose} conversationListLabel="返回使命板" />
+    onOpenConversationList={onClose} conversationListLabel={uiAttribute("返回使命板")} />
   return <AppHeader campTitle={mission.title} contextLabel={projectName} camp={camp} detailEntryHostRef={detailEntryHostRef}
     onFocusApprovals={onFocusApprovals} hideTitle={drawer}
     leading={<div className="mission-session-leading">
-      <button className="file-preview-toggle" aria-label={drawer ? '关闭使命抽屉' : '返回使命板'} title={drawer ? '关闭使命抽屉' : '返回使命板'} onClick={onClose}>
+      <button className="file-preview-toggle" aria-label={drawer ? uiAttribute("关闭使命抽屉") : uiAttribute("返回使命板")} title={drawer ? uiAttribute("关闭使命抽屉") : uiAttribute("返回使命板")} onClick={onClose}>
         {drawer ? <DialogControlIcon name="close"/> : <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m9 4-6 6 6 6M3 10h14"/></svg>}
       </button>
-      <button className="file-preview-toggle" aria-label={drawer ? '展开为完整会话' : '折叠为使命抽屉'} title={drawer ? '展开为完整会话' : '折叠为使命抽屉'} onClick={drawer ? onExpand : onFold}>
+      <button className="file-preview-toggle" aria-label={drawer ? uiAttribute("展开为完整会话") : uiAttribute("折叠为使命抽屉")} title={drawer ? uiAttribute("展开为完整会话") : uiAttribute("折叠为使命抽屉")} onClick={drawer ? onExpand : onFold}>
         <Icon name={drawer ? 'expand' : 'collapse'}/>
       </button>
     </div>}
     conversationActions={<button className="mission-activity-entry" aria-pressed={activitySelected} onClick={() => {
       if (activitySelected && activityTab) preview.close(activityTab.id)
       else preview.openMissionActivity(mission.missionId)
-    }}><Icon name="history"/><span>活动</span></button>}
+    }}><Icon name="history"/><span><UiText zh={"活动"} /></span></button>}
   />
 }

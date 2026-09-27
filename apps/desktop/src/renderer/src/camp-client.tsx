@@ -1,3 +1,4 @@
+import { uiAttribute } from './interface-language'
 import { createContext, useContext, type ReactNode } from 'react'
 import type { RovaiApi } from '@contracts'
 import { desktopCampClient } from './desktop-camp-client'
@@ -59,7 +60,7 @@ export function useCampClient(): CampClient {
   const client = useContext(CampClientContext)
   if (client) return client
   if (typeof window === 'undefined' || window.rovai) return desktopCampClient
-  throw new Error('共享页面缺少 CampClientProvider；浏览器不能使用 Desktop 默认适配。')
+  throw new Error(uiAttribute('共享页面缺少 CampClientProvider；浏览器不能使用 Desktop 默认适配。'))
 }
 
 export function useEditingRecovery(): EditingRecovery | undefined { return useContext(CampClientContext)?.editingRecovery }
