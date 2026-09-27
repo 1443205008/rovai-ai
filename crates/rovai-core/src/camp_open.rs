@@ -21,6 +21,12 @@ pub struct CampOpenOutcome {
 #[derive(Debug, Default)]
 pub struct CampOpenService;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EnterDisposition {
+    ReadOnly,
+    Reconcile,
+}
+
 impl CampOpenService {
     pub fn enter(
         &self,
@@ -28,33 +34,9 @@ impl CampOpenService {
         envelope: &CommandEnvelope<ReconcileDefaultLeadCommand>,
     ) -> Result<CampOpenOutcome> {
         let camp_id = envelope.payload.camp_id.clone();
-        let activation_state = database
-            .connection()
-            .query_row(
-                "SELECT activation_state FROM camp WHERE id = ?1 AND deletion_operation_id IS NULL",
-                [&camp_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
-        if activation_state.is_none() {
-            anyhow::bail!("Camp does not exist or is being deleted");
-        }
-        let pending = activation_state.as_deref() == Some("pending");
-        // Enter may be a pure read. A real, previously submitted reconciliation still
-        // replays its original receipt (including rejection) even if membership changed.
-        let recorded = if pending {
-            None
-        } else {
-            DomainCommandGateway.replay_if_recorded(database, envelope)?
-        };
-        let lead_valid: bool = database.connection().query_row(
-            "SELECT EXISTS(SELECT 1 FROM camp JOIN camp_member ON camp_member.camp_id=camp.id AND camp_member.agent_id=camp.default_lead_agent_id JOIN agent_profile ON agent_profile.id=camp_member.agent_id WHERE camp.id=?1 AND camp_member.status='active' AND camp_member.leave_requested_at IS NULL AND agent_profile.profile_status='present')",
-            [&camp_id], |row| row.get(0),
-        )?;
+        let disposition = self.enter_disposition(database, envelope)?;
         let mut navigation_changed = false;
-        let reconcile_duration = if pending
-            || (recorded.is_none() && lead_valid && matches!(envelope.actor, ActorRef::User { .. }))
-        {
+        let reconcile_duration = if disposition == EnterDisposition::ReadOnly {
             None
         } else {
             let reconcile_started_at = Instant::now();
@@ -79,6 +61,58 @@ impl CampOpenService {
             navigation_changed,
             projection_duration: projection_started_at.elapsed(),
         })
+    }
+
+    // The caller holds the shared Database mutex through classification and projection.
+    // Any uncertain state returns to enter() on the ordered command path, where it is
+    // checked again before a possible reconciliation write.
+    pub fn try_enter_read_only(
+        &self,
+        database: &mut Database,
+        envelope: &CommandEnvelope<ReconcileDefaultLeadCommand>,
+    ) -> Result<Option<CampOpenOutcome>> {
+        if !matches!(
+            self.enter_disposition(database, envelope),
+            Ok(EnterDisposition::ReadOnly)
+        ) {
+            return Ok(None);
+        }
+        self.open(database, &envelope.payload.camp_id).map(Some)
+    }
+
+    fn enter_disposition(
+        &self,
+        database: &Database,
+        envelope: &CommandEnvelope<ReconcileDefaultLeadCommand>,
+    ) -> Result<EnterDisposition> {
+        let camp_id = &envelope.payload.camp_id;
+        let activation_state = database
+            .connection()
+            .query_row(
+                "SELECT activation_state FROM camp WHERE id = ?1 AND deletion_operation_id IS NULL",
+                [camp_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if activation_state.is_none() {
+            anyhow::bail!("Camp does not exist or is being deleted");
+        }
+        let pending = activation_state.as_deref() == Some("pending");
+        if pending {
+            return Ok(EnterDisposition::ReadOnly);
+        }
+        // Enter may be a pure read. A real, previously submitted reconciliation still
+        // replays its original receipt (including rejection) even if membership changed.
+        let recorded = DomainCommandGateway.replay_if_recorded(database, envelope)?;
+        let lead_valid: bool = database.connection().query_row(
+            "SELECT EXISTS(SELECT 1 FROM camp JOIN camp_member ON camp_member.camp_id=camp.id AND camp_member.agent_id=camp.default_lead_agent_id JOIN agent_profile ON agent_profile.id=camp_member.agent_id WHERE camp.id=?1 AND camp_member.status='active' AND camp_member.leave_requested_at IS NULL AND agent_profile.profile_status='present')",
+            [camp_id], |row| row.get(0),
+        )?;
+        if recorded.is_none() && lead_valid && matches!(envelope.actor, ActorRef::User { .. }) {
+            Ok(EnterDisposition::ReadOnly)
+        } else {
+            Ok(EnterDisposition::Reconcile)
+        }
     }
 
     pub fn open(&self, database: &mut Database, camp_id: &str) -> Result<CampOpenOutcome> {
@@ -201,6 +235,23 @@ mod slow_tests {
             )
             .unwrap();
         assert_eq!(receipt_count, 0);
+        let fast_read = CampOpenService
+            .try_enter_read_only(
+                &mut database,
+                &user_envelope(
+                    "camp-open-fast-read",
+                    Some(&camp_id),
+                    ReconcileDefaultLeadCommand {
+                        camp_id: camp_id.clone(),
+                    },
+                ),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fast_read.projection.through_global_sequence,
+            stable_sequence
+        );
         let replay = CampOpenService
             .enter(
                 &mut database,
@@ -215,9 +266,71 @@ mod slow_tests {
             .unwrap();
         assert!(replay.reconcile_duration.is_some());
         assert_eq!(replay.projection.through_global_sequence, stable_sequence);
+        assert!(
+            CampOpenService
+                .try_enter_read_only(
+                    &mut database,
+                    &user_envelope(
+                        "camp-open-enter",
+                        Some(&camp_id),
+                        ReconcileDefaultLeadCommand {
+                            camp_id: camp_id.clone()
+                        },
+                    ),
+                )
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             outcome.projection.schema_version,
             crate::read_model::CAMP_OPEN_SCHEMA_VERSION
+        );
+
+        let rejected_envelope = CommandEnvelope {
+            command_id: "camp-open-rejected".to_string(),
+            actor: ActorRef::System {
+                component_id: "test".to_string(),
+            },
+            camp_id: Some(camp_id.clone()),
+            expected_versions: Vec::new(),
+            execution_epoch: None,
+            payload: ReconcileDefaultLeadCommand {
+                camp_id: camp_id.clone(),
+            },
+        };
+        assert!(
+            CampOpenService
+                .enter(&mut database, &rejected_envelope)
+                .is_err()
+        );
+        assert!(
+            CampOpenService
+                .try_enter_read_only(&mut database, &rejected_envelope)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            CampOpenService
+                .enter(&mut database, &rejected_envelope)
+                .is_err()
+        );
+        let conflicting_envelope = user_envelope(
+            "camp-open-rejected",
+            Some(&camp_id),
+            ReconcileDefaultLeadCommand {
+                camp_id: camp_id.clone(),
+            },
+        );
+        assert!(
+            CampOpenService
+                .try_enter_read_only(&mut database, &conflicting_envelope)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            CampOpenService
+                .enter(&mut database, &conflicting_envelope)
+                .is_err()
         );
 
         drop(database);

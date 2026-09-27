@@ -1333,6 +1333,7 @@ export function BusinessApp({
     snapshot: CampSurfaceSnapshot
     traceId: string
     startedAt: number
+    receivedAt: number
   }> => {
     const traceId = newCommandId()
     const startedAt = performance.now()
@@ -1346,9 +1347,10 @@ export function BusinessApp({
         })
       : await requestAuthoritativeCampOpenProjection(client, campId, traceId)
     if (projection.schemaVersion !== 8) throw new Error('会话打开数据版本不兼容。')
+    const receivedAt = performance.now()
     console.info(
       `[camp-open] trace=${traceId} stage=renderer_received method=${method} `
-      + `elapsed_ms=${(performance.now() - startedAt).toFixed(1)} `
+      + `elapsed_ms=${(receivedAt - startedAt).toFixed(1)} `
       + `schema=${projection.schemaVersion} high_water=${projection.throughGlobalSequence} `
       + `messages=${projection.messages.length} runs=${projection.agentRuns.length} `
       + `evidence=${projection.executionEvidence.length}`
@@ -1356,7 +1358,8 @@ export function BusinessApp({
     return {
       snapshot: campOpenProjectionAsSnapshot(projection, campSnapshotRef.current),
       traceId,
-      startedAt
+      startedAt,
+      receivedAt
     }
   }, [])
 
@@ -1824,7 +1827,7 @@ export function BusinessApp({
       }, CAMP_OPEN_FEEDBACK_DELAY_MS)
     }
     try {
-      const { snapshot, traceId, startedAt } = await requestCampProjection(
+      const { snapshot, traceId, startedAt, receivedAt } = await requestCampProjection(
         campId,
         options.reconcileDefaultLead === false ? 'open' : 'enter'
       )
@@ -1835,9 +1838,11 @@ export function BusinessApp({
       commitCampSurface(snapshot, false, null)
       await afterNextPaint()
       if (selectionGeneration !== campSelectionGeneration.current) return false
+      const paintedAt = performance.now()
       console.info(
         `[camp-open] trace=${traceId} stage=renderer_meaningful_paint `
-        + `elapsed_ms=${(performance.now() - startedAt).toFixed(1)}`
+        + `elapsed_ms=${(paintedAt - startedAt).toFixed(1)} `
+        + `paint_ms=${(paintedAt - receivedAt).toFixed(1)}`
       )
       void (async () => {
         await navigationRefreshCoordinator.refreshCamps([campId], 'explicit')
@@ -2206,7 +2211,7 @@ export function BusinessApp({
           throw snapshotError
         }
         if (cancelled) return
-        const { snapshot, traceId, startedAt } = opened
+        const { snapshot, traceId, startedAt, receivedAt } = opened
         cancelPendingCampActivation()
         const selectionGeneration = campSelectionGeneration.current
         campEventSequenceMarker.current = snapshot.throughGlobalSequence
@@ -2220,13 +2225,15 @@ export function BusinessApp({
         completeStartup(startupSnapshot.sessionId)
         await afterNextPaint()
         if (cancelled || selectionGeneration !== campSelectionGeneration.current) return
+        const paintedAt = performance.now()
         console.info(
           `[startup] trace=${startupTraceId.current} stage=renderer_route_content_paint `
           + `target=camp elapsed_ms=${(performance.now() - startupStartedAt.current).toFixed(1)}`
         )
         console.info(
           `[camp-open] trace=${traceId} stage=renderer_meaningful_paint source=startup `
-          + `elapsed_ms=${(performance.now() - startedAt).toFixed(1)}`
+          + `elapsed_ms=${(paintedAt - startedAt).toFixed(1)} `
+          + `paint_ms=${(paintedAt - receivedAt).toFixed(1)}`
         )
         void (async () => {
           await loadNavigation()
