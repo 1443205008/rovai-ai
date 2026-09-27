@@ -3,7 +3,7 @@ document_type: protocol-contract
 contract: channel-message-bridge-v1
 status: accepted
 target_version: v1.60
-last_updated: 2026-09-26
+last_updated: 2026-09-27
 ---
 
 # Channel Message Bridge v1
@@ -84,6 +84,10 @@ Once all resources are ready, ordinary FIFO admission atomically publishes the C
 `source_attachments_json` and the existing per-target Deliveries. Thus `CURRENT_INPUT` receives actual local
 attachment paths through the same projection as local messages. Subsequent reads follow the existing live
 Source Ref semantics; Camp deletion owns downloaded files, including unfinished imports.
+Current-message `attachmentSummaries` remain accepted for compatibility but are not appended to the
+CampMessage body. Feishu, Lark and DingTalk present downloaded files through Source Refs instead.
+External Quote attachment summaries stay in their structured quote segment; already published messages
+retain their stored body.
 
 Transient failures receive at most three attempts, with 5/10-second retry delays persisted in the aggregate.
 Too-large, unsupported and HTTP authorization failures end immediately. Terminal failure closes the Request
