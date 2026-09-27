@@ -86,6 +86,8 @@ attachment paths through the same projection as local messages. Subsequent reads
 Source Ref semantics; Camp deletion owns downloaded files, including unfinished imports.
 Current-message `attachmentSummaries` remain accepted for compatibility but are not appended to the
 CampMessage body. Feishu, Lark and DingTalk present downloaded files through Source Refs instead.
+Feishu and Lark remove SDK-generated `![image](fileKey)` placeholders from the inbound body only
+when `fileKey` matches a normalized image resource; other Markdown remains user text.
 External Quote attachment summaries stay in their structured quote segment; already published messages
 retain their stored body.
 

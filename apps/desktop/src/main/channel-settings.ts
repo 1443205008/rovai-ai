@@ -2931,6 +2931,13 @@ function canonicalInboundBody(
   expectedBotNames: ReadonlySet<string>
 ): string {
   let body = message.content
+  // The SDK represents rich-post image nodes as Markdown even though the same
+  // image is already delivered through the structured resource list.
+  for (const resource of message.resources) {
+    if (resource.type === 'image') {
+      body = body.replaceAll(`![image](${resource.fileKey})`, '')
+    }
+  }
   for (const mention of message.mentions) {
     if (mention.isBot || !mention.name || !expectedBotNames.has(mention.name)) continue
     const token = `@${mention.name}`

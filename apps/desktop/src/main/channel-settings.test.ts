@@ -276,6 +276,7 @@ function normalizedMessage(input: {
   content: string
   rawContentType?: string
   rawEncodedContent?: string
+  resources?: Array<{ fileKey: string; fileName: string; type: string }>
   mentions?: Array<{ key: string; openId?: string; name?: string; isBot?: boolean }>
   rootId?: string
   threadId?: string
@@ -290,7 +291,7 @@ function normalizedMessage(input: {
     senderName: '飞书成员',
     content: input.content,
     rawContentType: input.rawContentType ?? 'text',
-    resources: [],
+    resources: input.resources ?? [],
     mentions,
     mentionAll: false,
     mentionedBot: (input.chatType ?? 'p2p') === 'p2p' || mentions.some((mention) => mention.isBot),
@@ -3615,7 +3616,9 @@ describe('channel settings service', () => {
           { tag: 'at', user_id: '@_user_3', user_name: '爱丽丝' },
           { tag: 'text', text: ' ' },
           { tag: 'at', user_id: '@_user_4', user_name: '小王' },
-          { tag: 'text', text: ' 你们报个数' }
+          { tag: 'text', text: ' ' },
+          { tag: 'img', image_key: 'img_one' },
+          { tag: 'text', text: ' ![image](example) 你们报个数' }
         ]]
       },
       en_us: {
@@ -3628,7 +3631,9 @@ describe('channel settings service', () => {
           { tag: 'at', user_id: '@_user_3', user_name: '爱丽丝' },
           { tag: 'text', text: ' ' },
           { tag: 'at', user_id: '@_user_4', user_name: '小王' },
-          { tag: 'text', text: ' 你们报个数' }
+          { tag: 'text', text: ' ' },
+          { tag: 'img', image_key: 'img_one' },
+          { tag: 'text', text: ' ![image](example) 你们报个数' }
         ]]
       }
     })
@@ -3640,13 +3645,13 @@ describe('channel settings service', () => {
     ]
     const cases = [{
       appId: 'cli_alice',
-      content: '@药师寺惠 @雾切响子 @小王 你们报个数'
+      content: '@药师寺惠 @雾切响子 @小王 ![image](img_one) ![image](example) 你们报个数'
     }, {
       appId: 'cli_kirigiri',
-      content: '@药师寺惠 @爱丽丝 @小王 你们报个数'
+      content: '@药师寺惠 @爱丽丝 @小王 ![image](img_one) ![image](example) 你们报个数'
     }, {
       appId: 'cli_megumi',
-      content: '@雾切响子 @爱丽丝 @小王 你们报个数'
+      content: '@雾切响子 @爱丽丝 @小王 ![image](img_one) ![image](example) 你们报个数'
     }]
     for (const current of cases) {
       await harness.handlers.get(`${current.appId}:message`)!(normalizedMessage({
@@ -3655,6 +3660,7 @@ describe('channel settings service', () => {
         chatType: 'group',
         senderUserId: 'owner-user-id',
         content: current.content,
+        resources: [{ fileKey: 'img_one', fileName: 'image', type: 'image' }],
         rawContentType: 'post',
         rawEncodedContent: rawPost,
         mentions: rawMentions.map((mention) => ({
@@ -3670,10 +3676,14 @@ describe('channel settings service', () => {
 
     expect(observations).toHaveLength(3)
     expect(observations.map((observation) => observation.body)).toEqual([
-      '@小王 你们报个数',
-      '@小王 你们报个数',
-      '@小王 你们报个数'
+      '@小王 ![image](example) 你们报个数',
+      '@小王 ![image](example) 你们报个数',
+      '@小王 ![image](example) 你们报个数'
     ])
+    expect(observations[0]).toMatchObject({
+      resources: [{ fileKey: 'img_one', name: 'image', kind: 'image' }],
+      attachmentSummaries: [{ name: 'image', mediaType: 'image' }]
+    })
     expect(observations).toEqual(expect.arrayContaining([
       expect.objectContaining({
         expectedAppIds: ['cli_alice', 'cli_kirigiri', 'cli_megumi'],
