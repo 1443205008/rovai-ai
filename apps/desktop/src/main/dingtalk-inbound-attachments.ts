@@ -15,9 +15,10 @@ export function withDingTalkInboundFiles<T>(
     const url = new URL(await api.messageFileDownloadUrl({
       robotCode, downloadCode: resource.downloadCode, signal: downloadSignal
     }))
-    if (url.protocol !== 'https:' || url.username || url.password) {
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
       throw new Error('channel.attachments.download_failed')
     }
+    // DingTalk also returns HTTP signed storage URLs. Use the URL it issued.
     // The signed URL carries its own grant. Never forward App tokens to storage.
     const response = await fetch(url, { signal: downloadSignal })
     if (!response.ok || !response.body) {

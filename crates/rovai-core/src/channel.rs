@@ -9459,11 +9459,11 @@ fn try_admit_request(
             now,
         ],
     )?;
-    update_queue_ack_on_admission(transaction, request_id, &ack_app_id, now)?;
+    close_queue_ack_for_request(transaction, request_id, &ack_app_id, now)?;
     Ok(AdmissionAttempt::Admitted)
 }
 
-fn update_queue_ack_on_admission(
+fn close_queue_ack_for_request(
     transaction: &Transaction<'_>,
     request_id: &str,
     ack_app_id: &str,
@@ -9522,6 +9522,7 @@ fn fail_queued_request(
         "#,
         params![request_id, failure_code, now],
     )?;
+    close_queue_ack_for_request(transaction, request_id, ack_app_id, now)?;
     insert_delivery(
         transaction,
         request_id,
@@ -14828,6 +14829,15 @@ mod tests {
                     }
                     .into(),
                 );
+                if scenario != "retry" {
+                    let sent_ack = database.connection().execute(
+                        "UPDATE channel_delivery SET status='sent', ended_at='2026-09-27T00:00:00Z',
+                         external_delivery_message_id='carrier-id'
+                         WHERE request_id=?1 AND delivery_kind='queue_ack' AND status='pending'",
+                        [&request.request_id],
+                    ).unwrap();
+                    assert_eq!(sent_ack, 1);
+                }
                 let failures = if scenario == "failed" { 3 } else { 1 };
                 for attempt in 0..failures {
                     command.attempt = attempt;
@@ -14842,6 +14852,20 @@ mod tests {
                     .unwrap();
                     assert_eq!(completed.result.status, CommandResultStatus::Applied);
                     assert_eq!(count(&database), 0);
+                    let recall_count: i64 = database
+                        .connection()
+                        .query_row(
+                            "SELECT COUNT(*) FROM channel_delivery WHERE request_id=?1
+                         AND delivery_kind='queue_ack'
+                         AND json_extract(payload_json,'$.action')='recall'",
+                            [&request.request_id],
+                            |r| r.get(0),
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        recall_count,
+                        i64::from(scenario != "retry" && attempt + 1 == failures)
+                    );
                     if scenario == "folder" {
                         assert!(completed.result.payload["retryAt"].is_null());
                     }

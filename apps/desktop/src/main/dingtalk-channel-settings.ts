@@ -1747,13 +1747,13 @@ export class DingTalkChannelSettingsService {
           })
         } else {
           cardFallback = {
-            title: delivery.deliveryKind === 'attention' ? 'Rovai 需要你确认' : 'Rovai',
+            title: delivery.deliveryKind === 'attention' ? 'Rovai 未能处理' : 'Rovai',
             text: String(delivery.payload.text ?? '状态已更新')
           }
           const params = dingtalkCardParams({
-            title: delivery.deliveryKind === 'attention' ? 'Rovai 需要你确认' : 'Rovai 已接收',
+            title: delivery.deliveryKind === 'attention' ? 'Rovai 未能处理' : 'Rovai 已接收',
             content: String(delivery.payload.text ?? '状态已更新'),
-            flowStatus: '1'
+            flowStatus: delivery.deliveryKind === 'attention' ? '5' : '1'
           })
           if (externalId) {
             await api.updateCard(externalId, params)

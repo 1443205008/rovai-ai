@@ -58,7 +58,8 @@ For DingTalk, the normalizer retains `picture` and ordered `richText` text/image
 `downloadCode` (falling back to legacy `pictureDownloadCode`); a missing grant still gates admission and
 settles as download failure instead of running text alone. Quoted images remain summaries.
 The acknowledgement Bot's App client sends `{robotCode, downloadCode}` to
-`POST /v1.0/robot/messageFiles/download`, then streams the returned HTTPS `downloadUrl` without forwarding
+`POST /v1.0/robot/messageFiles/download`, then streams the returned HTTP or HTTPS signed `downloadUrl` as issued,
+without forwarding
 App tokens to storage. The receiving Bot's published `robotCode` is used, not another Bot's identity.
 Token retrieval, grant exchange and body streaming all accept the message cancellation/deadline signal.
 Each retry exchanges the persisted grant again; temporary URLs are never persisted. Expired grants that
@@ -86,10 +87,11 @@ attachment paths through the same projection as local messages. Subsequent reads
 Source Ref semantics; Camp deletion owns downloaded files, including unfinished imports.
 
 Transient failures receive at most three attempts, with 5/10-second retry delays persisted in the aggregate.
-Too-large, unsupported and HTTP authorization failures end immediately. Terminal failure closes the Request
-and enqueues a visible attention message explaining that the message was not dispatched and can be resent
+Too-large, unsupported and HTTP authorization failures end immediately. Terminal failure closes the Request,
+recalls an already-sent queue acknowledgement, and enqueues a visible attention message explaining that the message was not dispatched and can be resent
 after correcting the cause. It never silently executes only the text. Startup re-reads queued resource state;
 download retry and late completion remain separate from Agent execution retry.
+DingTalk presents the attention card as a terminal failure, not an in-progress card.
 
 ## Provider references and validation
 
