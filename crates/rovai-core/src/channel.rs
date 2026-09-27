@@ -11624,19 +11624,6 @@ fn assemble_external_content(
     content.push(StructuredCampMessageSegment::Text {
         text: command.body.clone(),
     });
-    for attachment in &command.attachment_summaries {
-        content.push(StructuredCampMessageSegment::Text {
-            text: format!(
-                "\n[附件] {}{}",
-                attachment.name,
-                attachment
-                    .media_type
-                    .as_deref()
-                    .map(|media_type| format!(" ({media_type})"))
-                    .unwrap_or_default()
-            ),
-        });
-    }
     let content = normalize_content(content);
     Ok(content)
 }
@@ -13721,11 +13708,15 @@ mod tests {
             "oc_lark_file_chat",
             "",
             "p2p",
-            "Read this file",
+            "",
             &[("agent_1", &lark.app_id)],
             true,
         );
         observation.provider = LARK_PROVIDER.to_string();
+        observation.attachment_summaries = vec![ChannelAttachmentSummaryInput {
+            name: "note.txt".into(),
+            media_type: Some("file".into()),
+        }];
         observation.resources = vec![InboundResource {
             file_key: "lark-file-key".into(),
             download_code: None,
@@ -13822,17 +13813,18 @@ mod tests {
                 },
             )
             .unwrap();
-        let (message_id, sequence, encoded): (String, i64, String) = database
+        let (message_id, sequence, body, encoded): (String, i64, String, String) = database
             .connection()
             .query_row(
-                "SELECT message.id, message.sequence, message.source_attachments_json
+                "SELECT message.id, message.sequence, message.body, message.source_attachments_json
                  FROM camp_message AS message
                  JOIN channel_turn_request AS request ON request.camp_id = message.camp_id
                  WHERE request.id = ?1",
                 [&pending[0].request_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .unwrap();
+        assert!(!body.contains("[附件]") && !body.contains("note.txt"));
         let sources: Vec<crate::local_attachment_source::LocalAttachmentSourceRef> =
             serde_json::from_str(&encoded).unwrap();
         assert_eq!(sources.len(), 1);
@@ -14680,13 +14672,27 @@ mod tests {
                 "image-chat",
                 "",
                 "p2p",
-                "Please read these attachments",
+                if scenario == "ready" {
+                    ""
+                } else {
+                    "Please read these attachments"
+                },
                 &[("agent_1", app_id)],
                 true,
             );
             if provider == DINGTALK_PROVIDER {
                 use_dingtalk_observation_identity(&mut observation);
             }
+            observation.attachment_summaries = vec![
+                ChannelAttachmentSummaryInput {
+                    name: "参考图.png".into(),
+                    media_type: Some("image".into()),
+                },
+                ChannelAttachmentSummaryInput {
+                    name: "说明.txt".into(),
+                    media_type: Some("file".into()),
+                },
+            ];
             observation.resources = vec![
                 InboundResource {
                     file_key: "img_key".into(),
@@ -14970,14 +14976,15 @@ mod tests {
             );
             assert_eq!(sources[0].media_type.as_deref(), Some("image/png"));
             assert_eq!(sources[0].display_name, "参考图.png");
-            let (message_id, boundary): (String, i64) = database
+            let (message_id, boundary, body): (String, i64, String) = database
                 .connection()
                 .query_row(
-                    "SELECT id, sequence FROM camp_message WHERE camp_id=?1",
+                    "SELECT id, sequence, body FROM camp_message WHERE camp_id=?1",
                     [&camp_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .unwrap();
+            assert!(!body.contains("[附件]") && !body.contains("参考图.png"));
             let transaction = database.connection_mut().transaction().unwrap();
             let projection = crate::context::project_batch_run_input_for_claim(
                 &transaction,
@@ -22756,7 +22763,10 @@ mod tests {
                 sender_display_name: "小明".to_string(),
                 body: "继续".to_string(),
                 resources: Vec::new(),
-                attachment_summaries: Vec::new(),
+                attachment_summaries: vec![ChannelAttachmentSummaryInput {
+                    name: "新图片.png".to_string(),
+                    media_type: Some("image".to_string()),
+                }],
                 quote: Some(ExternalQuoteInput {
                     sender_display_name: "小红".to_string(),
                     body: "原始问题".to_string(),
@@ -22775,7 +22785,8 @@ mod tests {
         .unwrap();
         assert!(matches!(
             content.first(),
-            Some(StructuredCampMessageSegment::ExternalQuote { body, .. }) if body == "原始问题"
+            Some(StructuredCampMessageSegment::ExternalQuote { body, attachment_summaries, .. })
+                if body == "原始问题" && attachment_summaries.len() == 1
         ));
         assert!(matches!(
             content.get(1),
@@ -22787,6 +22798,14 @@ mod tests {
         ));
         let serialized = serde_json::to_value(&content).unwrap();
         assert!(!serialized.to_string().contains("externalMessageId"));
+        let current_text = content
+            .iter()
+            .filter_map(|segment| match segment {
+                StructuredCampMessageSegment::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(current_text, "\n\n 继续");
 
         let mut tampered = content.clone();
         let Some(StructuredCampMessageSegment::ExternalQuote { content_digest, .. }) =
