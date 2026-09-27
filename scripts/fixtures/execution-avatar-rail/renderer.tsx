@@ -128,7 +128,7 @@ Object.assign(window, { rovai: {
 } })
 
 let configureNotificationFixture: (() => void) | null = null
-let focusNotificationRun: ((requestId: number) => void) | null = null
+let focusNotificationRun: ((requestId: number, runId: string) => void) | null = null
 let focusNotificationSubject: ((kind: 'task' | 'mission', requestId: number) => void) | null = null
 let notificationFixtureEnabled = false
 let latestVisibleNotificationSources: VisibleNotificationSources | null = null
@@ -156,10 +156,12 @@ Object.assign(window, { executionNotificationTest: {
   configureRight: () => configureNotificationFixture?.(),
   openExecution: () => previewHarness?.openExecution(),
   hideExecution: () => previewHarness?.hidePane(),
-  focusRun: (requestId: number) => focusNotificationRun?.(requestId),
+  focusRun: (requestId: number, runId = 'run-agent-1') => focusNotificationRun?.(requestId, runId),
   focusSubject: (kind: 'task' | 'mission', requestId: number) => focusNotificationSubject?.(kind, requestId),
   state: () => {
     const target = document.querySelector<HTMLElement>('[data-agent-run-id="run-agent-1"]')
+    const terminalTarget = document.querySelector<HTMLElement>('[data-agent-run-id="run-agent-1-history"]')
+    const otherTerminalTarget = document.querySelector<HTMLElement>('[data-agent-run-id="run-agent-4"]')
     const preview = document.querySelector<HTMLElement>('[data-preview-camp]')
     const executionPortal = document.querySelector<HTMLElement>('.execution-drawer-portal')
     const viewport = target?.closest<HTMLElement>('.execution-drawer-body') ?? null
@@ -173,6 +175,11 @@ Object.assign(window, { executionNotificationTest: {
       targetPresent: target !== null,
       targetVisible: Boolean(target?.getClientRects().length),
       targetFocused: document.activeElement === target,
+      terminalTargetVisible: Boolean(terminalTarget?.getClientRects().length),
+      terminalTargetFocused: document.activeElement === terminalTarget,
+      otherTerminalTargetVisible: Boolean(otherTerminalTarget?.getClientRects().length),
+      otherTerminalTargetFocused: document.activeElement === otherTerminalTarget,
+      historyExpanded: document.querySelector('.execution-history-toggle')?.getAttribute('aria-expanded') === 'true',
       targetInsideWorkspace: Boolean(target?.closest('.workspace-shell')),
       targetInsideExecutionPortal: Boolean(target && executionPortal?.contains(target)),
       portalRunCount: executionPortal?.querySelectorAll('.execution-drawer [data-agent-run-id]').length ?? 0,
@@ -210,15 +217,19 @@ function Fixture(): React.JSX.Element {
     visibleNotificationSourceReports.length = 0
     presentedNotificationRequests.length = 0
   }
-  focusNotificationRun = (requestId) => setNotificationFocus({
+  focusNotificationRun = (requestId, runId) => setNotificationFocus({
     requestId,
     kind: 'agent_run',
-    agentRunId: 'run-agent-1',
+    agentRunId: runId,
     campTurnId: null,
     active: true
   })
   focusNotificationSubject = (kind, requestId) => setNotificationFocus({ requestId, kind, subjectId: kind === 'task' ? 'task-rail' : 'mission-rail', campTurnId: null, active: true })
   const snapshot = snapshotFor(count, revision, recipientCount)
+  if (notificationFixtureEnabled && snapshot.agentRuns[0]) {
+    snapshot.agentRuns.push({ ...snapshot.agentRuns[0], id: 'run-agent-1-history',
+      status: 'succeeded', createdAt: '2026-08-30T04:00:00Z', endedAt: now })
+  }
   if (longTitleScenario) {
     snapshot.turns = snapshot.agentRuns.map(run => ({ id: run.campTurnId!, triggerType: 'camp_message',
       triggerId: run.anchorMessageId!, status: 'running', aggregateReasonCode: null,
