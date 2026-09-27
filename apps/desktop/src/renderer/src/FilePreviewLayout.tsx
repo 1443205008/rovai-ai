@@ -26,6 +26,7 @@ import {
   filePreviewWidthForRatio,
   maximumFilePreviewWidth
 } from './file-preview-layout'
+import { UiText, uiAttribute } from './interface-language'
 
 interface FilePreviewLayoutValue {
   visible: boolean
@@ -231,9 +232,9 @@ export function FilePreviewResizeHandle({ onClose }: { onClose(): void }): React
   const maximum = maximumFilePreviewWidth(layout.availableWidth)
   const closeArmed = layout.resizing && layout.width < filePreviewCloseThreshold(layout.activityMode)
   const atConversationMinimum = layout.width >= maximum
-  const hint = closeArmed ? '松开关闭文件预览'
-    : atConversationMinimum ? `会话区已达最小宽度 ${MIN_CONVERSATION_WIDTH}px`
-      : `会话 ${Math.round(layout.availableWidth - layout.width)}px · 文件 ${Math.round(layout.width)}px`
+  const hint = closeArmed ? uiAttribute('松开关闭文件预览')
+    : atConversationMinimum ? uiAttribute("会话区已达最小宽度 {0}px", String(MIN_CONVERSATION_WIDTH))
+      : uiAttribute("会话 {0}px · 文件 {1}px", String(Math.round(layout.availableWidth - layout.width)), String(Math.round(layout.width)))
 
   const closePreview = (): void => {
     cancelGesture()
@@ -272,7 +273,7 @@ export function FilePreviewResizeHandle({ onClose }: { onClose(): void }): React
     className={`file-preview-resize-handle${shell ? ' is-shell-divider' : ''}${layout.resizing ? ' is-resizing' : ''}${closeArmed ? ' is-close-armed' : ''}`}
     style={layout.style}
     role="separator"
-    aria-label="调整文件预览宽度"
+    aria-label={uiAttribute("调整文件预览宽度")}
     aria-orientation="vertical"
     aria-valuemin={layout.resizing ? 0 : MIN_FILE_PREVIEW_WIDTH}
     aria-valuemax={Math.round(maximum)}
@@ -280,7 +281,7 @@ export function FilePreviewResizeHandle({ onClose }: { onClose(): void }): React
     aria-valuetext={hint}
     aria-describedby={hintId}
     tabIndex={0}
-    title="拖动调整 · 双击恢复 44/56 · 方向键调整 · Delete 关闭"
+    title={uiAttribute("拖动调整 · 双击恢复 44/56 · 方向键调整 · Delete 关闭")}
     onPointerDown={(event) => {
       if (event.button !== 0 || gestureRef.current) return
       const workspace = layout.workspace
@@ -345,8 +346,8 @@ export function FilePreviewResizeHandle({ onClose }: { onClose(): void }): React
   >
     <span className="file-preview-splitter-grip" aria-hidden="true" />
     <span className="file-preview-splitter-tip" aria-hidden="true">{hint}</span>
-    <span className="sr-only" id={hintId}>左右方向键调整 24px，按住 Shift 调整 80px；Delete 或 Backspace 关闭；双击恢复默认比例；Escape 取消拖动。</span>
-    <span className="sr-only" role="status">{closeArmed ? '松开关闭文件预览' : ''}</span>
+    <span className="sr-only" id={hintId}><UiText zh={"左右方向键调整 24px，按住 Shift 调整 80px；Delete 或 Backspace 关闭；双击恢复默认比例；Escape 取消拖动。"} /></span>
+    <span className="sr-only" role="status">{closeArmed ? uiAttribute("松开关闭文件预览") : ''}</span>
   </div>
   return shell ? createPortal(handle, shell) : handle
 }

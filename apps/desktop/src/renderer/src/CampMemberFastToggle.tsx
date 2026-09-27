@@ -1,3 +1,4 @@
+import { uiAttribute } from './interface-language'
 import type { CampMemberFastView } from '@contracts'
 
 export function effectiveCampMemberFast(value: CampMemberFastView): boolean {
@@ -14,12 +15,12 @@ export function CampMemberFastToggle({
 }): React.JSX.Element {
   const enabled = effectiveCampMemberFast(value)
   const unknown = value.fastOverride === null && value.runtimeDefaultFast === null
-  const stateLabel = unknown ? '跟随运行时默认' : enabled ? '后续执行请求 Fast' : '后续执行请求标准速度'
+  const stateLabel = unknown ? uiAttribute('跟随运行时默认') : enabled ? uiAttribute('后续执行请求 Fast') : uiAttribute('后续执行请求标准速度')
   return <span className="camp-fast-control">
     <button
       type="button"
       className={`camp-fast-toggle ${enabled ? 'is-on' : ''}`}
-      aria-label={`${displayName}的 Fast，${stateLabel}`}
+      aria-label={uiAttribute("{0}的 Fast，{1}", String(displayName), String(stateLabel))}
       aria-pressed={unknown ? 'mixed' : enabled}
       aria-disabled={pending}
       aria-busy={pending}

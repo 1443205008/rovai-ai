@@ -85,6 +85,7 @@ import {
 } from './MemberIdentityEditor'
 import { saveMemberIdentity } from './member-identity-save'
 import type { IdentityDraft } from './member-identity-draft'
+import { UiText, uiAttribute } from './interface-language'
 export { hasDuplicateMemberDisplayName } from './member-identity-draft'
 
 type MembersViewProps = {
@@ -293,25 +294,24 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
             <button
               type="button"
               className={`member-editor-draft-row ${creating && !personalSelected ? 'is-selected' : ''}`}
-              aria-label="继续编辑新队员草稿"
+              aria-label={uiAttribute("继续编辑新队员草稿")}
               aria-current={creating && !personalSelected ? 'true' : undefined}
               onClick={create}
             >
               <MemberAvatar
                 agentId="new-member"
                 avatarRef={null}
-                displayName="新队员"
+                displayName={uiAttribute("新队员")}
                 size="list"
                 decorative
               />
-              <span>
-                新队员草稿<small>尚未创建</small>
+              <span><UiText zh={"新队员草稿"} /><small><UiText zh={"尚未创建"} /></small>
               </span>
             </button>
           )}
         </MemberRosterLayout>
         <section className="members-view member-editor-view" data-mobile-detail={mobile && mobileDetail || undefined}>
-          {mobile && <div className="mobile-member-back"><MobileBack label="返回队员列表" onClick={() => setMobileDetail(false)} /><span>队员</span></div>}
+          {mobile && <div className="mobile-member-back"><MobileBack label={uiAttribute("返回队员列表")} onClick={() => setMobileDetail(false)} /><span><UiText zh={"队员"} /></span></div>}
           {personalVisited && <div className="member-editor-page personal-editor-page" hidden={!personalSelected}>
             {props.topNotices}
             <CurrentUserProfileEditor
@@ -368,15 +368,13 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
           {!personalSelected && !creating && !ids.includes(selectedAgentId ?? '') && (
             <div className="member-editor-empty">
               {props.topNotices}
-              <h1>建立第一位队员</h1>
-              <p>从名称和职责开始，运行配置可以稍后补充。</p>
+              <h1><UiText zh={"建立第一位队员"} /></h1>
+              <p><UiText zh={"从名称和职责开始，运行配置可以稍后补充。"} /></p>
               <button
                 className="member-editor-primary"
                 type="button"
                 onClick={create}
-              >
-                新增队员
-              </button>
+              ><UiText zh={"新增队员"} /></button>
             </div>
           )}
         </section>
@@ -392,11 +390,11 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
               aria-describedby="member-leave-description"
             >
               <AppDialogHeader
-                title="放弃未保存的更改？"
-                description="个人资料、队员信息或运行配置尚未保存，离开后这些修改将丢失。"
+                title={uiAttribute("放弃未保存的更改？")}
+                description={uiAttribute("个人资料、队员信息或运行配置尚未保存，离开后这些修改将丢失。")}
                 descriptionId="member-leave-description"
                 icon="warning"
-                closeLabel="继续编辑"
+                closeLabel={uiAttribute("继续编辑")}
               />
               <AppDialogFooter>
                 <button
@@ -405,17 +403,13 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
                   autoFocus
                   data-dialog-autofocus
                   onClick={continueEditing}
-                >
-                  继续编辑
-                </button>
+                ><UiText zh={"继续编辑"} /></button>
                 <button
                   className="danger-button"
                   type="button"
                   disabled={busy}
                   onClick={() => void discardAndContinue()}
-                >
-                  放弃更改
-                </button>
+                ><UiText zh={"放弃更改"} /></button>
               </AppDialogFooter>
             </AppDialogContent>
           </Dialog.Portal>
@@ -594,7 +588,7 @@ const MemberEditor = forwardRef<
             }
           : {})
       },
-      '运行配置已保存，但页面未能重新载入最新值'
+      uiAttribute('运行配置已保存，但页面未能重新载入最新值')
     )
   }
 
@@ -607,7 +601,7 @@ const MemberEditor = forwardRef<
         agentId: selectedAgent.agentId,
         expectedVersion: selectedAgent.version
       },
-      '运行配置已清除，但页面未能重新载入最新值'
+      uiAttribute('运行配置已清除，但页面未能重新载入最新值')
     )
   }
 
@@ -622,8 +616,8 @@ const MemberEditor = forwardRef<
     })
     setNotice(
       presence === 'present'
-        ? `${selectedAgent.displayName} 已归队。`
-        : `${selectedAgent.displayName} 已暂离。`
+        ? uiAttribute("{0} 已归队。", String(selectedAgent.displayName))
+        : uiAttribute("{0} 已暂离。", String(selectedAgent.displayName))
     )
   }
 
@@ -658,7 +652,7 @@ const MemberEditor = forwardRef<
       expectedVersion: removal.preview.version,
       confirmationName: removal.displayName
     })
-    setNotice(`${removal.displayName} 已移除，历史身份与记录继续保留。`)
+    setNotice(uiAttribute("{0} 已移除，历史身份与记录继续保留。", String(removal.displayName)))
     setRemoval(null)
   }
 
@@ -702,7 +696,7 @@ const MemberEditor = forwardRef<
       try {
         await onReload()
       } catch (issue) {
-        setNotice(`队员信息已保存，列表暂未刷新：${errorMessage(issue)}`)
+        setNotice(uiAttribute("队员信息已保存，列表暂未刷新：{0}", String(errorMessage(issue))))
       }
       if (!selectedAgentId) onCreated(profile)
       return profile
@@ -743,13 +737,13 @@ const MemberEditor = forwardRef<
                 <MemberAvatar
                   agentId="new-member"
                   avatarRef={draftAvatar}
-                  displayName="新队员"
+                  displayName={uiAttribute("新队员")}
                   size="profile"
                   decorative
                 />
                 <div>
-                  <h1>新增队员</h1>
-                  <p>设置这位队员的长期身份</p>
+                  <h1><UiText zh={"新增队员"} /></h1>
+                  <p><UiText zh={"设置这位队员的长期身份"} /></p>
                 </div>
               </div>
             </header>
@@ -777,11 +771,11 @@ const MemberEditor = forwardRef<
           />
           <section
             className="member-editor-section member-editor-runtime"
-            aria-label="运行配置"
+            aria-label={uiAttribute("运行配置")}
           >
             <div className="member-editor-section-heading">
-              <h2>运行配置</h2>
-              {selectedAgent && <span>用于之后开始的新执行</span>}
+              <h2><UiText zh={"运行配置"} /></h2>
+              {selectedAgent && <span><UiText zh={"用于之后开始的新执行"} /></span>}
             </div>
             {selectedAgent ? (
               <MemberRuntimeForm
@@ -800,9 +794,7 @@ const MemberEditor = forwardRef<
                 onOpenRuntimeSettings={onOpenRuntimeSettings}
               />
             ) : (
-              <p className="member-editor-new-runtime">
-                创建队员后，可在这里选择 Agent 运行时、模型与权限。
-              </p>
+              <p className="member-editor-new-runtime"><UiText zh={"创建队员后，可在这里选择 Agent 运行时、模型与权限。"} /></p>
             )}
           </section>
         </div>
@@ -820,11 +812,11 @@ const MemberEditor = forwardRef<
             aria-describedby="remove-member-description"
           >
             <AppDialogHeader
-              title={`永久移除“${removal?.displayName ?? '队员'}”？`}
-              description="移除后将不能继续参与协作；历史身份与记录保留。"
+              title={uiAttribute("永久移除“{0}”？", String(removal?.displayName ?? uiAttribute('队员')))}
+              description={uiAttribute("移除后将不能继续参与协作；历史身份与记录保留。")}
               descriptionId="remove-member-description"
               icon="user"
-              kicker="需要名称确认"
+              kicker={uiAttribute("需要名称确认")}
               closeDisabled={busy === 'remove'}
             />
             {removal && (
@@ -836,28 +828,20 @@ const MemberEditor = forwardRef<
                     </div>
                   )}
                   <AppDialogFactGrid>
-                    <AppDialogFact label="当前会话">
-                      {removal.preview.currentCampMembershipCount} 个
-                    </AppDialogFact>
-                    <AppDialogFact label="未完成任务">
-                      {removal.preview.openAssignedTaskCount} 个将释放
-                    </AppDialogFact>
-                    <AppDialogFact label="默认负责人">
-                      {removal.preview.defaultLeadCampCount} 个将重选
-                    </AppDialogFact>
+                    <AppDialogFact label={uiAttribute("当前会话")}>
+                      {removal.preview.currentCampMembershipCount}<UiText zh={" 个"} /></AppDialogFact>
+                    <AppDialogFact label={uiAttribute("未完成任务")}>
+                      {removal.preview.openAssignedTaskCount}<UiText zh={" 个将释放"} /></AppDialogFact>
+                    <AppDialogFact label={uiAttribute("默认负责人")}>
+                      {removal.preview.defaultLeadCampCount}<UiText zh={" 个将重选"} /></AppDialogFact>
                   </AppDialogFactGrid>
                   {removal.preview.nonTerminalAgentRunCount > 0 && (
                     <div
                       className="inline-error app-dialog-blocker"
                       role="alert"
-                    >
-                      仍有 {removal.preview.nonTerminalAgentRunCount}{' '}
-                      个未结束的执行，当前不能移除。
-                    </div>
+                    ><UiText zh={"仍有 "} />{removal.preview.nonTerminalAgentRunCount}{' '}<UiText zh={"个未结束的执行，当前不能移除。"} /></div>
                   )}
-                  <label className="field-label app-dialog-confirm-field">
-                    输入 <code>{removal.displayName}</code> 以确认
-                    <input
+                  <label className="field-label app-dialog-confirm-field"><UiText zh={"输入 "} /><code>{removal.displayName}</code><UiText zh={" 以确认"} /><input
                       value={removal.confirmationName}
                       onChange={(event) =>
                         setRemoval({
@@ -869,7 +853,7 @@ const MemberEditor = forwardRef<
                       data-dialog-autofocus
                       autoComplete="off"
                     />
-                    <small>区分大小写</small>
+                    <small><UiText zh={"区分大小写"} /></small>
                   </label>
                 </AppDialogBody>
                 <AppDialogFooter>
@@ -877,9 +861,7 @@ const MemberEditor = forwardRef<
                     className="quiet-button"
                     type="button"
                     disabled={busy === 'remove'}
-                  >
-                    取消
-                  </Dialog.Close>
+                  ><UiText zh={"取消"} /></Dialog.Close>
                   <button
                     className="danger-button"
                     type="button"
@@ -890,7 +872,7 @@ const MemberEditor = forwardRef<
                     }
                     onClick={() => void confirmRemoval().catch(() => undefined)}
                   >
-                    {busy === 'remove' ? '正在移除…' : '永久移除队员'}
+                    {busy === 'remove' ? uiAttribute("正在移除…") : uiAttribute("永久移除队员")}
                   </button>
                 </AppDialogFooter>
               </>
@@ -965,7 +947,7 @@ function MemberDetailHeader({
         />
         <div>
           <h1>{agent.displayName}</h1>
-          <p>{agent.teamRole || '团队角色未设置'}</p>
+          <p>{agent.teamRole ||uiAttribute("团队角色未设置")}</p>
           <div className="member-detail-statuses">
             <span className={`presence-${agent.presence}`}>
               {memberPresenceLabel(agent.presence)}
@@ -974,14 +956,14 @@ function MemberDetailHeader({
               className={`member-header-runtime status-${runtime.status}`}
               type="button"
               onClick={onRuntime}
-              aria-label={agent.runtimeConfiguration?.adapterKind ? `${adapterLabel(agent.runtimeConfiguration.adapterKind)}，${runtime.label}；打开运行配置` : '未配置运行时；打开运行配置'}
-              title="打开运行配置"
+              aria-label={agent.runtimeConfiguration?.adapterKind ? uiAttribute("{0}，{1}；打开运行配置", String(adapterLabel(agent.runtimeConfiguration.adapterKind)), String(runtime.label)) : uiAttribute("未配置运行时；打开运行配置")}
+              title={uiAttribute("打开运行配置")}
             >
               <i aria-hidden="true" />
               <span>
                 {agent.runtimeConfiguration?.adapterKind
                   ? adapterLabel(agent.runtimeConfiguration.adapterKind)
-                  : '未配置运行时'}
+                  : uiAttribute("未配置运行时")}
               </span>
               <svg
                 className="member-runtime-entry-arrow"
@@ -1001,7 +983,7 @@ function MemberDetailHeader({
               ref={menuTriggerRef}
               className="member-editor-icon-button"
               type="button"
-              aria-label={`管理 ${agent.displayName}`}
+              aria-label={uiAttribute("管理 {0}", String(agent.displayName))}
               disabled={busy !== null}
             >
               <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -1022,9 +1004,7 @@ function MemberDetailHeader({
                 onSelect={() =>
                   onEditAvatar(menuTriggerRef.current as HTMLButtonElement)
                 }
-              >
-                更换角色图片
-              </Menu.Item>
+              ><UiText zh={"更换角色图片"} /></Menu.Item>
               <Menu.Item
                 className="member-editor-menu-item"
                 onSelect={() =>
@@ -1033,7 +1013,7 @@ function MemberDetailHeader({
                   ).catch(() => undefined)
                 }
               >
-                {agent.presence === 'present' ? '暂时离队' : '归队'}
+                {agent.presence === 'present' ? uiAttribute("暂时离队") : uiAttribute("归队")}
               </Menu.Item>
               <Menu.Separator className="member-editor-menu-separator" />
               <Menu.Item
@@ -1041,9 +1021,7 @@ function MemberDetailHeader({
                 onSelect={() =>
                   onRemove(menuTriggerRef.current as HTMLButtonElement)
                 }
-              >
-                永久移除队员
-              </Menu.Item>
+              ><UiText zh={"永久移除队员"} /></Menu.Item>
             </Menu.Content>
           </Menu.Portal>
         </Menu.Root>
@@ -1338,9 +1316,7 @@ export const MemberRuntimeForm = forwardRef<
                     className="quiet-button"
                     type="button"
                     onClick={onOpenRuntimeSettings}
-                  >
-                    前往 Agent 运行时
-                  </button>
+                  ><UiText zh={"前往 Agent 运行时"} /></button>
                 </div>
               )}
           </div>
@@ -1363,24 +1339,20 @@ export const MemberRuntimeForm = forwardRef<
 
         {conflict && (
           <div className="member-runtime-conflict" role="alert">
-            <strong>运行配置已在其他操作中更新</strong>
-            <span>
-              当前草稿没有被覆盖。重新读取会放弃这份草稿，并载入最新保存值。
-            </span>
+            <strong><UiText zh={"运行配置已在其他操作中更新"} /></strong>
+            <span><UiText zh={"当前草稿没有被覆盖。重新读取会放弃这份草稿，并载入最新保存值。"} /></span>
             <button
               className="quiet-button"
               type="button"
               onClick={resetFromAgent}
-            >
-              重新读取已保存配置
-            </button>
+            ><UiText zh={"重新读取已保存配置"} /></button>
           </div>
         )}
         {submitError && (
           <div className="inline-error" role="alert">
             {submitError}
             {submitError === commandCodeLabel('runtime_model_catalog_refresh_required') && (
-              <button className="quiet-button" type="submit" disabled={!canSave || busy !== null}>重试</button>
+              <button className="quiet-button" type="submit" disabled={!canSave || busy !== null}><UiText zh={"重试"} /></button>
             )}
           </div>
         )}
@@ -1389,10 +1361,10 @@ export const MemberRuntimeForm = forwardRef<
             className={`member-editor-save-status ${dirty ? 'is-dirty' : ''}`}
           >
             {!runtimeMutationAllowed
-              ? '当前平台仅可查看这份配置'
+              ? uiAttribute("当前平台仅可查看这份配置")
               : dirty
-                ? '有未保存更改'
-                : '当前配置已保存'}
+                ? uiAttribute("有未保存更改")
+                : uiAttribute("当前配置已保存")}
           </span>
           <div>
             <button
@@ -1400,18 +1372,16 @@ export const MemberRuntimeForm = forwardRef<
               type="button"
               disabled={!dirty || busy !== null}
               onClick={resetFromAgent}
-            >
-              放弃更改
-            </button>
+            ><UiText zh={"放弃更改"} /></button>
             <button
               className="member-editor-primary member-editor-save"
-              aria-label="保存运行配置"
+              aria-label={uiAttribute("保存运行配置")}
               disabled={!canSave || busy !== null}
             >
               <DialogControlIcon name="save" />
               {busy === 'runtime' || busy === 'runtime-clear'
-                ? '正在保存…'
-                : '保存'}
+                ? uiAttribute("正在保存…")
+                : uiAttribute("保存")}
             </button>
           </div>
         </div>
@@ -1472,8 +1442,8 @@ export function RuntimeInstallationsPanel({
     try {
       try {
         const result = await requestProductRuntimeCheck(runtimeKind, client.request)
-        if (result.outcome === 'deferred') throw new Error('检查未完成，程序或启动设置已变化，请重新检查。')
-        if (!result.ready) throw new Error('本次检查未通过，请查看当前状态；保留的历史结果不代表本次检查通过。')
+        if (result.outcome === 'deferred') throw new Error(uiAttribute('检查未完成，程序或启动设置已变化，请重新检查。'))
+        if (!result.ready) throw new Error(uiAttribute('本次检查未通过，请查看当前状态；保留的历史结果不代表本次检查通过。'))
       } finally {
         await onReload()
       }
@@ -1507,8 +1477,8 @@ export function RuntimeInstallationsPanel({
     <>
       <SettingsPageHeader
         eyebrow="Settings / Runtime"
-        title="运行时"
-        description="管理本机 Agent 运行时，只需安装你准备使用的。"
+        title={uiAttribute("运行时")}
+        description={uiAttribute("管理本机 Agent 运行时，只需安装你准备使用的。")}
         aside={
           <button
             className="quiet-button"
@@ -1516,21 +1486,21 @@ export function RuntimeInstallationsPanel({
             onClick={() => void rescan()}
           >
             {busy === 'rescan'
-              ? '正在重新检测…'
+              ? uiAttribute("正在重新检测…")
               : health === null
-                ? '重新检测'
+                ? uiAttribute("重新检测")
                 : hasEnabledRuntime
-                  ? '重新检测'
-                  : '当前平台尚无可检测 Runtime'}
+                  ? uiAttribute("重新检测")
+                  : uiAttribute("当前平台尚无可检测 Runtime")}
           </button>
         }
       />
       <section className="section-block runtime-installations">
         <div className="section-heading">
           <div>
-            <h2>运行时目录</h2>
+            <h2><UiText zh={"运行时目录"} /></h2>
           </div>
-          {health && <span className="runtime-catalog-platform">当前平台：{HOST_PLATFORM_LABELS[health.hostPlatform]}</span>}
+          {health && <span className="runtime-catalog-platform"><UiText zh={"当前平台："} />{HOST_PLATFORM_LABELS[health.hostPlatform]}</span>}
         </div>
 
         <div className="runtime-product-list">
@@ -1559,10 +1529,10 @@ export function RuntimeInstallationsPanel({
             const feedback = checkFeedback?.runtimeKind === runtimeKind ? (
               <p className={`runtime-guide-feedback${checkFeedback.error ? ' is-error' : ''}`} role={checkFeedback.error ? 'alert' : 'status'}>
                 {checkFeedback.error ?? (presentation.status === 'not_installed'
-                  ? '仍未检测到程序。请确认已在终端完成安装，再重新检测。'
+                  ? uiAttribute("仍未检测到程序。请确认已在终端完成安装，再重新检测。")
                   : presentation.status === 'authentication_required'
-                    ? '仍需登录。请在终端完成账号或模型配置后重试。'
-                    : `检测完成：${presentation.label}。${item?.failure ? '' : presentation.detail ?? ''}`)}
+                    ? uiAttribute("仍需登录。请在终端完成账号或模型配置后重试。")
+                    : uiAttribute("检测完成：{0}。{1}", String(presentation.label), String(item?.failure ? '' : presentation.detail ?? '')))}
               </p>
             ) : null
             return (
@@ -1581,18 +1551,18 @@ export function RuntimeInstallationsPanel({
                 </span>
                 {guide && (mode || isOpen) ? <button
                   type="button" className="quiet-button runtime-product-check runtime-guide-trigger"
-                  aria-label={`${adapterLabel(runtimeKind)} ${isOpen ? '收起指南' : mode === 'login' ? '登录指南' : '安装指南'}`}
+                  aria-label={`${adapterLabel(runtimeKind)} ${isOpen ? uiAttribute("收起指南") : mode === 'login' ? uiAttribute("登录指南") : uiAttribute("安装指南")}`}
                   aria-expanded={isOpen} aria-controls={isOpen ? `${guideId}-${runtimeKind}` : undefined}
                   onClick={() => setExpanded(isOpen ? null : { runtimeKind, mode: mode ?? 'install' })}
                 >
-                  {isOpen ? '收起' : mode === 'login' ? '登录指南' : '安装指南'}<DialogControlIcon name="chevron" />
+                  {isOpen ? uiAttribute("收起") : mode === 'login' ? uiAttribute("登录指南") : uiAttribute("安装指南")}<DialogControlIcon name="chevron" />
                 </button> : <button type="button" className="quiet-button runtime-product-check" disabled={busy !== null || !allowed} onClick={() => void checkProduct(runtimeKind)}>
                   {checking
-                    ? '正在检查…'
-                    : allowed ? '检查状态' : '不可检查'}<DialogControlIcon name="refresh" />
+                    ? uiAttribute("正在检查…")
+                    : allowed ? uiAttribute("检查状态") : uiAttribute("不可检查")}<DialogControlIcon name="refresh" />
                 </button>}
-                <button type="button" className="quiet-button runtime-product-settings" aria-label={`${adapterLabel(runtimeKind)} 启动设置`}
-                  title="启动设置" disabled={busy !== null || !allowed} onClick={() => setSettingsRuntime(runtimeKind)}><DialogControlIcon name="settings" /></button>
+                <button type="button" className="quiet-button runtime-product-settings" aria-label={uiAttribute("{0} 启动设置", String(adapterLabel(runtimeKind)))}
+                  title={uiAttribute("启动设置")} disabled={busy !== null || !allowed} onClick={() => setSettingsRuntime(runtimeKind)}><DialogControlIcon name="settings" /></button>
                 {item?.failure && <RuntimeFailureNotice failure={item.failure} />}
                 {isOpen && guide && expanded ? <RuntimeInstallationGuide
                   id={`${guideId}-${runtimeKind}`} label={adapterLabel(runtimeKind)} guide={guide}
@@ -1647,7 +1617,7 @@ class MemberRuntimeCommandError extends Error {
     const option = payload ? stringField(payload, 'option') : null
     const label = option && ({ reasoning_effort: '推理强度', effort: '推理强度', thinking_level: '思考深度' } as Record<string, string>)[option]
     super(label && (code === 'runtime_model_option_invalid' || code === 'runtime_model_option_unknown')
-      ? `所选模型不支持当前「${label}」设置，请调整该参数。填写内容已保留。`
+      ? uiAttribute("所选模型不支持当前「{0}」设置，请调整该参数。填写内容已保留。", uiAttribute(label))
       : commandCodeLabel(code))
   }
 }
@@ -1669,7 +1639,7 @@ function assertApplied(result: StoredCommandResult): void {
 }
 
 function commandCodeLabel(code: string): string {
-  return (
+  return uiAttribute(
     (
       {
         'agent_profile.display_name_conflict': '该名称已被其他队员使用',
@@ -1696,25 +1666,25 @@ function commandCodeLabel(code: string): string {
         'adapter_installation.version_conflict':
           'Agent 运行时已被更新，请刷新后重试'
       } as Record<string, string>
-    )[code] ?? '操作未完成，请稍后重试；详细原因可在诊断中查看。'
+    )[code] ?? uiAttribute('操作未完成，请稍后重试；详细原因可在诊断中查看。')
   )
 }
 
 function memberPresenceLabel(presence: AgentProfile['presence']): string {
-  return { present: '在队', away: '暂离', removed: '已移除' }[presence]
+  return { present:uiAttribute("在队"), away:uiAttribute("暂离"), removed:uiAttribute("已移除") }[presence]
 }
 
 function runtimeSnapshotSummary(installation: AdapterInstallation): string {
   const snapshot = installation.snapshot
-  if (!installation.enabled) return '该安装已停用'
-  if (!snapshot) return '尚未探测能力'
-  if (snapshot.staleAt) return '成功快照已失效，请重新检查'
+  if (!installation.enabled) return uiAttribute("该安装已停用")
+  if (!snapshot) return uiAttribute("尚未探测能力")
+  if (snapshot.staleAt) return uiAttribute("成功快照已失效，请重新检查")
   if (installation.lastProbeAttempt?.status === 'failed') {
     return installation.lastProbeAttempt.failureClass === 'transient'
-      ? '最近刷新失败，仍保留上次成功快照'
-      : '最近检查失败，请查看诊断'
+      ?uiAttribute("最近刷新失败，仍保留上次成功快照")
+      :uiAttribute("最近检查失败，请查看诊断")
   }
-  return `${reportedModelCount(installation)} 个模型 · ${snapshot.permissionOptions.length} 个权限字段`
+  return uiAttribute("{0} 个模型 · {1} 个权限字段", String(reportedModelCount(installation)), String(snapshot.permissionOptions.length))
 }
 
 function reportedModelCount(installation: AdapterInstallation): number {

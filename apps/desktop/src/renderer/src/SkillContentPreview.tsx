@@ -5,6 +5,7 @@ import { CapabilityError } from './CapabilityWorkspace'
 import { SafeMarkdown } from './SafeMarkdown'
 import { readErrorMessage } from './error-message'
 import { SkillFileNavigation } from './SkillFileNavigation'
+import { UiText, uiAttribute } from './interface-language'
 
 export function skillReadingContent(content: string): string {
   return content.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/u, '')
@@ -68,26 +69,20 @@ function SkillContentPreviewSession({ target, theme }: { target: SkillContentReq
         }}
       >
         {/\.(?:md|markdown)$/iu.test(path) && (
-          <div className="capability-view-modes" role="group" aria-label="Skill 预览方式">
-            <button type="button" aria-pressed={!raw} onClick={() => setRaw(false)}>
-              阅读
-            </button>
-            <button type="button" aria-pressed={raw} onClick={() => setRaw(true)}>
-              源码
-            </button>
+          <div className="capability-view-modes" role="group" aria-label={uiAttribute("Skill 预览方式")}>
+            <button type="button" aria-pressed={!raw} onClick={() => setRaw(false)}><UiText zh={"阅读"} /></button>
+            <button type="button" aria-pressed={raw} onClick={() => setRaw(true)}><UiText zh={"源码"} /></button>
           </div>
         )}
       </SkillFileNavigation>
       <CapabilityError error={error} onRetry={() => setRetry((value) => value + 1)} />
       {!view && !error && (
-        <div className="capability-empty" role="status">
-          正在读取内容…
-        </div>
+        <div className="capability-empty" role="status"><UiText zh={"正在读取内容…"} /></div>
       )}
       {view?.status === 'too_large' && (
-        <p className="capability-note">该文件较大，暂不支持正文预览。</p>
+        <p className="capability-note"><UiText zh={"该文件较大，暂不支持正文预览。"} /></p>
       )}
-      {view?.status === 'binary' && <p className="capability-note">该文件不是文本文件。</p>}
+      {view?.status === 'binary' && <p className="capability-note"><UiText zh={"该文件不是文本文件。"} /></p>}
       {view?.content !== null &&
         view?.content !== undefined &&
         (raw || !/\.(?:md|markdown)$/iu.test(path) ? (

@@ -60,7 +60,21 @@ try {
   captures.welcomeDay = join(outputDir, '01-welcome-day-1040x700.png')
   await capture(running.cdp, captures.welcomeDay)
 
+  await clickSelector(running.cdp, '.onboarding-language input[value="en"]')
+  await waitForExpression(running.cdp,
+    `document.documentElement.lang === 'en' && document.querySelector('#onboarding-welcome-title')?.textContent === 'Welcome to Rovai'`)
+  const englishWelcome = await surfaceState(running.cdp, '.onboarding-welcome')
+  assert(englishWelcome.visible && englishWelcome.primaryVisible && !englishWelcome.horizontalOverflow,
+    `English welcome is clipped or overflows: ${JSON.stringify(englishWelcome)}`)
+  captures.welcomeEnglishDay = join(outputDir, '01-welcome-english-day-1040x700.png')
+  await capture(running.cdp, captures.welcomeEnglishDay)
   await setTheme(running.cdp, 'night')
+  captures.welcomeEnglishNight = join(outputDir, '02-welcome-english-night-1040x700.png')
+  await capture(running.cdp, captures.welcomeEnglishNight)
+  await clickSelector(running.cdp, '.onboarding-language input[value="zh-CN"]')
+  await waitForExpression(running.cdp,
+    `document.documentElement.lang === 'zh-CN' && document.querySelector('#onboarding-welcome-title')?.textContent === '欢迎来到 Rovai'`)
+
   captures.welcomeNight = join(outputDir, '02-welcome-night-1040x700.png')
   await capture(running.cdp, captures.welcomeNight)
   await setTheme(running.cdp, 'day')
@@ -281,14 +295,16 @@ try {
     '我想创建一个定时任务，让你定期帮我处理一件事。请先问我想做什么、多久执行一次、在什么时间执行，再根据我的回答帮我创建。',
     '帮我做一个能直接预览的小工具网页，比如番茄钟或倒计时。先问我想做哪一种、需要什么功能，再用一个独立 HTML 文件做出第一版。'
   ]
+  await waitForExpression(running.cdp,
+    `Boolean(document.querySelector('.first-run-starters button:not(:disabled)'))`, 10_000)
   for (const [index, prompt] of additionalStarters.entries()) {
     await clickSelector(running.cdp, `.first-run-starters button:nth-child(${index + 2})`)
     await waitForExpression(running.cdp,
       `document.querySelector('#camp-message')?.textContent === ${JSON.stringify(prompt)}
         && document.activeElement === document.querySelector('#camp-message')`, 5_000)
     await waitForExpression(running.cdp,
-      `window.rovai.request('camp.composerDraft.get', { campId: ${JSON.stringify(completed.quickChatCampId)} })
-        .then((draft) => draft.body === ${JSON.stringify(prompt)})`, 10_000)
+      `JSON.parse(window.localStorage.getItem('rovai.camp-composer-draft.v1:' + ${JSON.stringify(completed.quickChatCampId)}) || 'null')?.body === ${JSON.stringify(prompt)}`,
+      10_000)
   }
   await clickSelector(running.cdp, '.first-run-starters button')
   await waitForExpression(running.cdp,
@@ -296,8 +312,7 @@ try {
       && document.activeElement === document.querySelector('#camp-message')`,
     5_000)
   await waitForExpression(running.cdp,
-    `window.rovai.request('camp.composerDraft.get', { campId: ${JSON.stringify(completed.quickChatCampId)} })
-      .then((draft) => draft.body === ${JSON.stringify(expectedStarter)})`,
+    `JSON.parse(window.localStorage.getItem('rovai.camp-composer-draft.v1:' + ${JSON.stringify(completed.quickChatCampId)}) || 'null')?.body === ${JSON.stringify(expectedStarter)}`,
     10_000)
   const afterProjection = await request(running.cdp, 'camps.open', {
     traceId: randomUUID(),
@@ -328,7 +343,7 @@ try {
     && draftInteraction.focused
     && draftInteraction.collapsed
     && draftInteraction.caretAtEnd
-    && draftInteraction.notice === '草稿已准备好，可编辑后发送。',
+    && draftInteraction.notice === '内容已填入，可编辑后发送。',
   `Starter did not only fill/focus the Composer: ${JSON.stringify(draftInteraction)}`)
   report.draft = draftInteraction
   captures.campDraftDay = join(outputDir, '08-first-run-camp-draft-day-1040x700.png')
@@ -355,6 +370,45 @@ try {
   `Completed onboarding/Camp did not survive restart: ${JSON.stringify({ restarted, messages: restartedProjection.messages.length, runs: restartedProjection.agentRuns.length })}`)
   captures.campRestarted = join(outputDir, '09-first-run-camp-restarted-1040x700.png')
   await capture(running.cdp, captures.campRestarted)
+
+  await clickSelector(running.cdp, '.sidebar-settings-main')
+  await waitForSelector(running.cdp, '.general-settings', 10_000)
+  await waitForExpression(running.cdp,
+    `Boolean(document.querySelector('.general-language-options input[value="en"]:not(:disabled)'))`, 10_000)
+  await clickSelector(running.cdp, '.general-language-options input[value="en"]')
+  await waitForExpression(running.cdp,
+    `document.documentElement.lang === 'en'
+      && document.querySelector('#general-language-heading')?.textContent === 'Interface language'`, 10_000)
+  const englishSettings = await surfaceState(running.cdp, '.general-settings')
+  assert(englishSettings.visible && !englishSettings.horizontalOverflow,
+    `English General Settings is clipped or overflows: ${JSON.stringify(englishSettings)}`)
+  captures.settingsEnglishDay = join(outputDir, '10-settings-english-day-1040x700.png')
+  await capture(running.cdp, captures.settingsEnglishDay)
+  await setTheme(running.cdp, 'night')
+  captures.settingsEnglishNight = join(outputDir, '11-settings-english-night-1040x700.png')
+  await capture(running.cdp, captures.settingsEnglishNight)
+  await setTheme(running.cdp, 'day')
+  await clickSelector(running.cdp, '.settings-sidebar-back')
+  await waitForExpression(running.cdp,
+    `Boolean(document.querySelector('.camp-timeline:not([hidden]) .first-run-camp-welcome'))
+      && document.querySelector('#camp-message')?.textContent === ${JSON.stringify(expectedStarter)}`, 10_000)
+  assert(await evaluate(running.cdp, `document.documentElement.scrollWidth <= window.innerWidth`),
+    'English Camp overflows horizontally')
+  captures.campEnglishDay = join(outputDir, '12-first-run-camp-english-day-1040x700.png')
+  await capture(running.cdp, captures.campEnglishDay)
+  const savedLanguage = await evaluate(running.cdp,
+    `window.rovai.generalPreferences.get().then((preferences) => preferences.interfaceLanguage)`, true)
+  assert(savedLanguage === 'en', `English language was not persisted: ${savedLanguage}`)
+  report.language = { saved: savedLanguage, routeAndDraftPreserved: true }
+  await closeApp(running)
+  running = null
+
+  running = await launchApp(firstPort + 4)
+  await waitForExpression(running.cdp,
+    `document.documentElement.lang === 'en'
+      && document.querySelector('#camp-message')?.textContent === ${JSON.stringify(expectedStarter)}`, 45_000)
+  captures.campEnglishRestarted = join(outputDir, '13-first-run-camp-english-restarted-1040x700.png')
+  await capture(running.cdp, captures.campEnglishRestarted)
   await closeApp(running)
   running = null
 
@@ -564,6 +618,7 @@ async function clickByText(cdp, selector, text) {
 }
 
 async function capture(cdp, path) {
+  await waitForExpression(cdp, `!document.querySelector('.page-zoom-indicator')`, 5_000)
   const result = await cdp.send('Page.captureScreenshot', {
     format: 'png',
     captureBeyondViewport: false,

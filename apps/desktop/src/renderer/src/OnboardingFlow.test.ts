@@ -196,6 +196,7 @@ function renderOnboarding(
     runtimePhase,
     busy: false,
     error: null,
+    onLanguageChange: () => undefined,
     onThemeChange: () => undefined,
     onShowWelcome: () => undefined,
     onCompleteWelcome: () => undefined,

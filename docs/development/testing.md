@@ -498,7 +498,9 @@ Windows x64 job 验证。改动还涉及完整桌面挂载和恢复时，在遵�
 | `pnpm accept:network-recovery` | Claude Code + OpenCode | macOS 普通交互式终端；使用同一隔离 Core generation 与隔离 Git workspace，先验证 Claude Code 的 `runtime_api_retrying` 原生自恢复，再验证 OpenCode ACP `not_accepted` terminal 由 Rovai 在新 epoch 接管并于 Input accepted 后清除恢复标记。脚本只提示操作者断开／恢复 Wi-Fi，不修改系统网络设置；失败时操作者必须手动恢复网络，fixture 与脱敏报告会保留 |
 | `pnpm accept:planned-shutdown` | 当前平台正式 Runtime + packaged App | 在隔离 Git workspace/`userData` 中等待真实 input handoff 后退出，验证 5 秒目标、10 秒硬 deadline、400ms 关闭反馈门槛、无伪 terminal、进程 reap、重启 blocker、Run 取消审计与安全退出 modal 截图；运行前在 macOS 执行 `pnpm package:mac`，在 Windows x64 执行 `pnpm package:windows:x64` |
 | `pnpm accept:onboarding-ui` | 本机首个可用正式 Runtime + packaged App | 不调用模型；用全新隔离 `userData` 验证三页断点、真实 provisioning、`初次集结`、Draft-only starter、重启与 `1040×700` 双主题截图 |
-| `pnpm accept:bootstrap-shell-ui` | 无 Runtime；packaged App + 独立未知 authority / 崩溃恢复 fixture | 不调用模型；证明未知 authority 保留、业务树不挂载、显式重试不消耗 crash budget；另在真实 Core 写事务产生 WAL 后强杀该隔离子进程，验证结构化失败字段、自动恢复已提交数据和工作区重挂载；覆盖双主题、窄窗口、200% 等效布局与 reduced motion 截图 |
+| `pnpm accept:bootstrap-shell-ui` | 无 Runtime；packaged App + 独立未知 authority / 崩溃恢复 fixture | 不调用模型；证明未知 authority 保留、业务树不挂载、显式重试不消耗 crash budget，并验证已保存英文在 Core 阻断时恢复；另在真实 Core 写事务产生 WAL 后强杀该隔离子进程，验证结构化失败字段、自动恢复已提交数据和工作区重挂载；覆盖双主题、窄窗口、200% 等效布局与 reduced motion 截图 |
+
+仅验证启动与故障壳层时可设 `ROVAI_BOOTSTRAP_ACCEPT_SCOPE=bootstrap`；默认 `all` 仍执行崩溃恢复与可选子系统场景。
 
 `pnpm smoke:runtime-permissions` 是 `smoke:action-approval` 与
 `smoke:multi-agent` 的聚合命令。

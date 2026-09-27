@@ -1,4 +1,5 @@
 import type { JSX, MouseEventHandler } from 'react'
+import { uiAttribute } from './interface-language'
 
 type ComposerPrimaryActionProps = {
   action: 'send' | 'stop'
@@ -16,8 +17,8 @@ export function ComposerPrimaryAction({
   type
 }: ComposerPrimaryActionProps): JSX.Element {
   const label = action === 'stop'
-    ? busy ? '正在提交停止请求' : '停止当前执行'
-    : busy ? '正在发送消息' : '发送消息'
+    ? busy ?uiAttribute("正在提交停止请求") :uiAttribute("停止当前执行")
+    : busy ?uiAttribute("正在发送消息") :uiAttribute("发送消息")
 
   return (
     <button

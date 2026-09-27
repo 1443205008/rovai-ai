@@ -1,3 +1,4 @@
+import { uiAttribute } from './interface-language'
 import { memo, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { FilePreviewApi, ResolvedTheme } from '@contracts'
@@ -85,7 +86,7 @@ export function FilePreviewProvider({ campId, resolvedTheme, api: providedApi, c
   campId: string | null; resolvedTheme: ResolvedTheme; api?: FilePreviewApi; children: ReactNode; missionActivity?: ReactNode
 }): React.JSX.Element {
   const api = providedApi ?? (typeof window === 'undefined' || window.rovai ? desktopFilePreviewApi : null)
-  if (!api) throw new Error('共享文件页面缺少显式资源适配。')
+  if (!api) throw new Error(uiAttribute('共享文件页面缺少显式资源适配。'))
   const resources = useMemo(() => new FilePreviewResources(api), [api])
   useSyncExternalStore(resources.subscribe, resources.getSnapshot, resources.getSnapshot)
   const [anchor, setAnchor] = useState<HTMLDivElement | null>(null)

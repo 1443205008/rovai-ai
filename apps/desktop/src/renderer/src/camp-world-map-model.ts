@@ -1,4 +1,5 @@
 import type { AgentRunView, CampMemberView } from '@contracts'
+import { uiAttribute } from './interface-language'
 import type { ExecutionProgressItem, LiveExecutionProgress } from './ui-model'
 
 const NON_TERMINAL_RUN_STATUSES = new Set<AgentRunView['status']>([
@@ -404,25 +405,25 @@ function mapSpeechForRun(
       ? {
           key: `${run.id}:${summary.itemKey}:${summary.text}`,
           kind: 'real',
-          label: '执行 · 正在运行',
+          label: uiAttribute('执行 · 正在运行'),
           text: summary.text
         }
       : {
           key: `${run.id}:running-without-output`,
           kind: 'real',
-          label: '执行 · 等待输出',
-          text: '运行已开始，暂未收到可展示步骤。'
+          label: uiAttribute('执行 · 等待输出'),
+          text: uiAttribute('运行已开始，暂未收到可展示步骤。')
         }
   }
   const queued = run.status === 'queued'
   return {
     key: `${run.id}:${run.status}:${summary?.itemKey ?? 'without-output'}:${summary?.text ?? ''}`,
     kind: 'waiting',
-    label: queued ? '执行 · 已排队' : '执行 · 结果待确认',
+    label: queued ? uiAttribute('执行 · 已排队') : uiAttribute('执行 · 结果待确认'),
     text: summary?.text
       ?? (queued
-        ? '任务已进入队列，暂未收到可展示步骤。'
-        : '运行处于等待状态，暂未收到新的可展示步骤。')
+        ? uiAttribute('任务已进入队列，暂未收到可展示步骤。')
+        : uiAttribute('运行处于等待状态，暂未收到新的可展示步骤。'))
   }
 }
 

@@ -1,3 +1,4 @@
+import { uiAttribute } from './interface-language'
 import { parseFileReference } from '../../file-preview-reference'
 import { newCommandId } from '../../shared/command-id'
 import type { FilePreviewApi, AgentRunFileChangesDetailView, AgentRunFileChangesView, FileLocationTarget, FilePreviewErrorPayload, FilePreviewHtmlSite, FilePreviewOperationResult, FilePreviewPageContent, OpenFilePreviewRequest, OpenFilePreviewResult, ResolvedFilePreview, ResolvedTheme } from '@contracts'
@@ -124,30 +125,30 @@ export interface FilePreviewContextValue {
 function errorFromUnknown(): FilePreviewErrorPayload {
   return {
     code: 'read_failed',
-    message: '暂时无法读取文件',
+    message: uiAttribute('暂时无法读取文件'),
     retryable: true
   }
 }
 
 export function filePreviewErrorMessage(error: Pick<FilePreviewErrorPayload, 'code'>): string {
   switch (error.code) {
-    case 'preview_timeout': return '未收到预览服务响应，请重试。'
-    case 'file_not_found': return '找不到这个文件'
-    case 'attachment_missing': return '找不到这个附件'
+    case 'preview_timeout': return uiAttribute('未收到预览服务响应，请重试。')
+    case 'file_not_found': return uiAttribute('找不到这个文件')
+    case 'attachment_missing': return uiAttribute('找不到这个附件')
     case 'source_not_authorized':
     case 'authorization_required':
-    case 'outside_authorized_root': return '文件访问已失效'
-    case 'evidence_identity_unavailable': return '无法定位这个历史记录对应的当前文件'
-    case 'read_failed': return '暂时无法读取文件'
-    case 'attachment_unreadable': return '暂时无法读取这个附件'
-    case 'attachment_kind_changed': return '这个附件的类型已变化'
-    case 'decode_failed': return '无法读取这个文件的内容'
-    case 'file_too_large': return '这个文件太大，无法预览'
-    case 'too_many_open_files': return '打开的文件太多'
+    case 'outside_authorized_root': return uiAttribute('文件访问已失效')
+    case 'evidence_identity_unavailable': return uiAttribute('无法定位这个历史记录对应的当前文件')
+    case 'read_failed': return uiAttribute('暂时无法读取文件')
+    case 'attachment_unreadable': return uiAttribute('暂时无法读取这个附件')
+    case 'attachment_kind_changed': return uiAttribute('这个附件的类型已变化')
+    case 'decode_failed': return uiAttribute('无法读取这个文件的内容')
+    case 'file_too_large': return uiAttribute('这个文件太大，无法预览')
+    case 'too_many_open_files': return uiAttribute('打开的文件太多')
     case 'not_regular_file':
-    case 'reference_not_clickable': return '无法在这里预览这个文件'
-    case 'open_failed': return '暂时无法打开这个文件'
-    case 'reveal_failed': return '暂时无法显示这个文件的位置'
+    case 'reference_not_clickable': return uiAttribute('无法在这里预览这个文件')
+    case 'open_failed': return uiAttribute('暂时无法打开这个文件')
+    case 'reveal_failed': return uiAttribute('暂时无法显示这个文件的位置')
   }
 }
 
@@ -172,7 +173,7 @@ function errorLoadState(
 function unavailableSourceError(): FilePreviewErrorPayload {
   return {
     code: 'source_not_authorized',
-    message: '文件访问已失效',
+    message: uiAttribute('文件访问已失效'),
     retryable: false
   }
 }
@@ -363,7 +364,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
     const before = tabsRef.current.find(tab => tab.id === tabId)
     const reservation = file.kind === 'html' ? await owner.reserveHtml(session, tabId) : () => undefined
     const loaded = reservation ? await loadContent(file, before?.kind === 'file' ? before.reading : undefined)
-      : { ok: false as const, error: { code: 'too_many_open_files' as const, message: '预览资源不足', retryable: true } }
+      : { ok: false as const, error: { code: 'too_many_open_files' as const, message: uiAttribute('预览资源不足'), retryable: true } }
     reservation?.()
     const current = tabsRef.current.find((tab) => tab.id === tabId)
     if (
@@ -700,7 +701,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
         } else {
           failTabRequest(tabId, scopeGeneration, requestGeneration, {
             code: 'reference_not_clickable',
-            message: '无法在这里预览这个文件',
+            message: uiAttribute('无法在这里预览这个文件'),
             retryable: false
           })
         }
@@ -724,7 +725,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
   ): Promise<FilePreviewOpenOutcome> => {
     const interaction = session.lastUsed
     const scopeGeneration = scopeGenerationRef.current
-    if (!owner.admit(session)) return { kind: 'error', error: { code: 'too_many_open_files', message: '预览资源不足', retryable: true } }
+    if (!owner.admit(session)) return { kind: 'error', error: { code: 'too_many_open_files', message: uiAttribute('预览资源不足'), retryable: true } }
     const load = Symbol()
     committedLoads.add(load)
     owner.changed()
@@ -751,7 +752,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
 
       const file = target ? { ...result.value.file, target } : result.value.file
       const reservation = file.kind === 'html' ? await owner.reserveHtml(session, '') : () => undefined
-      if (!reservation) { void api.release({ handleId: file.handleId }); return { kind: 'error', error: { code: 'too_many_open_files', message: '预览资源不足', retryable: true } } }
+      if (!reservation) { void api.release({ handleId: file.handleId }); return { kind: 'error', error: { code: 'too_many_open_files', message: uiAttribute('预览资源不足'), retryable: true } } }
       const loaded = await loadContent(file)
       reservation()
       if (!loaded.ok) {
@@ -1087,10 +1088,10 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
         if (!result.ok) throw new Error(filePreviewErrorMessage(result.error))
         candidate = result.value
       } else candidate = await restoreHandle(tab)
-      if (!candidate) throw new Error('无法重新取得文件，已保留当前预览。')
+      if (!candidate) throw new Error(uiAttribute('无法重新取得文件，已保留当前预览。'))
       if (!current()) return
       reservation = candidate.kind === 'html' ? await owner.reserveHtml(session, tabId) : () => undefined
-      if (!reservation) throw new Error('预览资源不足，旧预览已保留。')
+      if (!reservation) throw new Error(uiAttribute('预览资源不足，旧预览已保留。'))
       const content = await loadContent(candidate)
       if (!content.ok) throw new Error(filePreviewErrorMessage(content.error))
       loaded = content
@@ -1106,7 +1107,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
     } catch (error) {
       if (current()) setTabs(tabs => tabs.map(entry => entry.id !== tabId ? entry : {
         ...entry, isRefreshing: false,
-        refreshError: error instanceof Error ? error.message : '重新加载失败'
+        refreshError: error instanceof Error ? error.message : uiAttribute('重新加载失败')
       }))
     } finally {
       reservation?.()
@@ -1140,7 +1141,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
           || file.contentVersion.size !== version.size || file.contentVersion.mtimeMs !== version.mtimeMs) {
           void api.release({ handleId: file.handleId })
           if (current?.kind === 'file' && current.requestGeneration === requestGeneration) setTabs(tabs => tabs.map(entry => entry.id === tabId
-            ? { ...current, hasExternalUpdate: true, refreshError: '文件已变化，请刷新后读取新分页。当前内容已保留。' } : entry))
+            ? { ...current, hasExternalUpdate: true, refreshError: uiAttribute('文件已变化，请刷新后读取新分页。当前内容已保留。') } : entry))
           return
         }
         const acquired = file
