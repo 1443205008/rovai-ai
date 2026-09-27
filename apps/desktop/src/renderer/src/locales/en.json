@@ -3295,5 +3295,13 @@
   "自动恢复的安全条件已经变化，需要处理。请检查执行记录；确认后可停止本次运行并发送后续任务。": "The conditions for safe automatic recovery have changed. Check the run record; then you can stop this run and send a follow-up task.",
   "Agent 运行时已接受任务，但 Rovai AI 重启后无法确认原任务的最终结果。原请求不会自动重发。": "The Agent runtime accepted the task, but Rovai AI cannot confirm its final result after restart. The original request will not be sent again automatically.",
   "受限动作正在等待用户处理。": "A restricted action is waiting for your approval.",
-  "Agent 已暂停，等待用户补充信息。": "The Agent is paused, waiting for more information from you."
+  "Agent 已暂停，等待用户补充信息。": "The Agent is paused, waiting for more information from you.",
+  "连接飞书、Lark 或钉钉，让队员在你常用的平台协作。": "Connect Feishu, Lark, or DingTalk so teammates can collaborate where you work.",
+  "Lark 支持尚未完成真实租户验收": "Lark support has not yet been validated with a real tenant",
+  "{0}中的 Owner 消息不获得本机管理权限。": "Owner messages in {0} do not grant local administration access.",
+  "{0}开放平台": "{0} Open Platform",
+  "{0}身份": "{0} identity",
+  "{0}管理": "Manage {0}",
+  "独立{0} Bot": "Independent {0} Bot",
+  "重新连接{0}": "Reconnect {0}"
 }

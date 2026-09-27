@@ -23,8 +23,9 @@ describe('DingTalk inbound attachment transport', () => {
         expect(new Headers(init?.headers).get('x-acs-dingtalk-access-token')).toBe('private-token')
         const body = JSON.parse(String(init?.body))
         expect(body.robotCode).toBe('receiving-robot')
-        return Response.json({ downloadUrl: `https://storage.example/${body.downloadCode}?signed=private` })
+        return Response.json({ downloadUrl: `http://storage.example/${body.downloadCode}?signed=private` })
       }
+      expect(url).toMatch(/^http:\/\/storage\.example\//u)
       expect(new Headers(init?.headers).get('x-acs-dingtalk-access-token')).toBeNull()
       expect(init?.body).toBeUndefined()
       return new Response(url.includes('grant-image') ? 'image bytes' : '完整文件')

@@ -9,9 +9,8 @@ import { readErrorMessage } from './error-message'
 import { automationScheduleError } from './automation-schedule-validation'
 import { AutomationDatePicker, AutomationTimePicker } from './AutomationSchedulePickers'
 import { runtimeAdapterDisplayLabel } from '../../shared/execution-presentation'
-import feishuLogo from './assets/channel-logos/feishu.svg'
-import dingtalkLogo from './assets/channel-logos/dingtalk.svg'
 import { UiText, uiAttribute } from './interface-language'
+import { CHANNEL_KINDS, CHANNEL_PROVIDER_BRANDS } from './channel-provider-brand'
 
 function Picker({ label, value, options, onChange, children, disabled = false }: {
   label: string
@@ -180,16 +179,16 @@ export function AutomationEditor({ draft, onChange, agents, projects, automation
       {automation && !automation.enabled && <p className="automation-next-run"><UiText zh={"已关闭，可在任务操作中运行一次。"} /></p>}
     </section>
     <details className="automation-channel-disclosure" onToggle={(event) => setChannelsOpen(event.currentTarget.open)}>
-      <summary><span className="automation-channel-symbol"><AutomationGlyph name="channel" /></span><span><strong><UiText zh={"通知到渠道"} /></strong><small><UiText zh={"由当前队员的渠道 Bot 发送结果"} /></small></span><span className="automation-channel-count">{draft.notifyChannels.length ? draft.notifyChannels.map((channel) => channel === 'feishu' ? uiAttribute('飞书') : uiAttribute('钉钉')).join('、') : uiAttribute("未选择")}</span><AutomationGlyph name="chevron" /></summary>
+      <summary><span className="automation-channel-symbol"><AutomationGlyph name="channel" /></span><span><strong><UiText zh={"通知到渠道"} /></strong><small><UiText zh={"由当前队员的渠道 Bot 发送结果"} /></small></span><span className="automation-channel-count">{draft.notifyChannels.length ? draft.notifyChannels.map((channel) => uiAttribute(CHANNEL_PROVIDER_BRANDS[channel].name)).join('、') : uiAttribute("未选择")}</span><AutomationGlyph name="chevron" /></summary>
       <fieldset className="automation-channel-options"><legend className="sr-only"><UiText zh={"完成后通知"} /></legend>
-        {(['feishu', 'dingtalk'] as const).map((channel) => {
+        {CHANNEL_KINDS.map((channel) => {
           const provider = channels?.channels.find((item) => item.kind === channel)
           const bot = provider?.memberBots.find((item) => item.agentId === draft.memberId)
           const available = bot?.publicationStatus === 'published'
           const checked = draft.notifyChannels.includes(channel)
           return <label key={channel} className={`automation-channel-option ${!available ? 'unavailable' : ''}`}>
             <input type="checkbox" checked={checked} disabled={busy || (!available && !checked)} onChange={(event) => onChange((current) => ({ ...current, notifyChannels: event.target.checked ? [...new Set([...current.notifyChannels, channel])] : current.notifyChannels.filter((item) => item !== channel) }))} />
-            <img src={channel === 'feishu' ? feishuLogo : dingtalkLogo} alt="" /><span><strong>{channel === 'feishu' ? uiAttribute("飞书") : uiAttribute("钉钉")}</strong><small>{available ? bot.botDisplayName ?? `${member?.displayName ?? uiAttribute('队员')} Bot` : !client.channels ? uiAttribute("此 Host 未提供渠道通知") : channelError ? uiAttribute("暂时无法读取") : !channels ? uiAttribute("正在读取…") : uiAttribute("队员尚未发布 Bot")}</small></span>
+            <img src={CHANNEL_PROVIDER_BRANDS[channel].logo} alt="" /><span><strong>{uiAttribute(CHANNEL_PROVIDER_BRANDS[channel].name)}</strong><small>{available ? bot.botDisplayName ?? `${member?.displayName ?? uiAttribute('队员')} Bot` : !client.channels ? uiAttribute("此 Host 未提供渠道通知") : channelError ? uiAttribute("暂时无法读取") : !channels ? uiAttribute("正在读取…") : uiAttribute("队员尚未发布 Bot")}</small></span>
           </label>
         })}
       </fieldset>

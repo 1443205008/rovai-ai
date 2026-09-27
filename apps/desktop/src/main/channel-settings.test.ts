@@ -5,11 +5,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   createLarkChannel,
+  Domain,
   LarkChannelError,
   LoggerLevel
 } from '@larksuiteoapi/node-sdk'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentRunExecutionEvidenceView } from '@contracts'
+import { FEISHU_PROVIDER_PROFILE, LARK_PROVIDER_PROFILE } from './channel-provider-profile'
 import {
   ChannelSettingsService,
   feishuMemberBotWelcomeCard,
@@ -56,7 +58,8 @@ function consoleCommandEvidence(agentRunId: string): AgentRunExecutionEvidenceVi
 }
 
 function memoryCredentialStore(
-  initial: Record<string, FeishuAppCredential> = {}
+  initial: Record<string, FeishuAppCredential> = {},
+  providerOf: (credentialRef: string) => 'feishu' | 'lark' = () => 'feishu'
 ): ChannelCredentialStore & { values: Map<string, FeishuAppCredential> } {
   const values = new Map(Object.entries(initial))
   const store = {
@@ -74,7 +77,7 @@ function memoryCredentialStore(
       return [...values].map(([credentialRef, credential]) => ({
         agentId: credentialRef,
         credentialRef,
-        provider: 'feishu' as const,
+        provider: providerOf(credentialRef),
         remoteAppId: credential.appId,
         credential,
         revision: 1
@@ -273,6 +276,7 @@ function normalizedMessage(input: {
   content: string
   rawContentType?: string
   rawEncodedContent?: string
+  resources?: Array<{ fileKey: string; fileName: string; type: string }>
   mentions?: Array<{ key: string; openId?: string; name?: string; isBot?: boolean }>
   rootId?: string
   threadId?: string
@@ -287,7 +291,7 @@ function normalizedMessage(input: {
     senderName: '飞书成员',
     content: input.content,
     rawContentType: input.rawContentType ?? 'text',
-    resources: [],
+    resources: input.resources ?? [],
     mentions,
     mentionAll: false,
     mentionedBot: (input.chatType ?? 'p2p') === 'p2p' || mentions.some((mention) => mention.isBot),
@@ -319,7 +323,7 @@ function normalizedMessage(input: {
 }
 
 describe('channel settings service', () => {
-  it('recovers pending attachment downloads without blocking the pump or submitting partial inputs', async () => {
+  it.each([FEISHU_PROVIDER_PROFILE, LARK_PROVIDER_PROFILE])('$kind recovers pending attachment downloads without blocking the pump or submitting partial inputs', async (profile) => {
     const harness = controlledChannels({ cli_a: { openId: 'ou_bot_a', name: '审阅员' } })
     const stream = new PassThrough()
     harness.getResource.mockResolvedValue({ getReadableStream: () => stream })
@@ -328,19 +332,20 @@ describe('channel settings service', () => {
     let ticks = 0
     const service = new ChannelSettingsService({
       ...inertInterval(),
-      credentialStore: memoryCredentialStore({ 'feishu-member-a': { appId: 'cli_a', appSecret: 'secret-a' } }),
+      profile,
+      credentialStore: memoryCredentialStore({ 'feishu-member-a': { appId: 'cli_a', appSecret: 'secret-a' } }, () => profile.kind),
       createChannel: harness.createChannel,
       core: channelCore(async (method, raw) => {
-        if (method === 'channels.feishu.snapshot') return coreSnapshot({ memberBots: [{
-          agentId: 'agent-a', accountId: 'account-1', brand: 'feishu', appId: 'cli_a',
+        if (method === `${profile.methodPrefix}snapshot`) return coreSnapshot({ memberBots: [{
+          agentId: 'agent-a', accountId: 'account-1', brand: profile.kind, appId: 'cli_a',
           botDisplayName: '审阅员', credentialRef: 'feishu-member-a', status: 'published',
           failureCode: null, version: 1, ownerIdentityStatus: 'verified'
         }, {
-          agentId: 'agent-offline', accountId: 'account-1', brand: 'feishu', appId: 'cli_offline',
+          agentId: 'agent-offline', accountId: 'account-1', brand: profile.kind, appId: 'cli_offline',
           botDisplayName: '未连接队员', credentialRef: 'missing-credential', status: 'published',
           failureCode: null, version: 1, ownerIdentityStatus: 'verified'
         }] })
-        if (method === 'channels.host.tick') {
+        if (method === `${profile.hostMethodPrefix}host.tick`) {
           expect(raw).toMatchObject({ inboundAttachmentAppIds: ['cli_a'] })
           ticks += 1
           return { deliveries: [], hasOutstandingWork: !completed, inboundAttachments: completed ? [] : [{
@@ -348,7 +353,7 @@ describe('channel settings service', () => {
             retryAt: null, resources: [{ fileKey: 'img_key', kind: 'image', name: 'image' }]
           }] }
         }
-        if (method === 'channels.inbound.attachments.complete') {
+        if (method === `${profile.hostMethodPrefix}inbound.attachments.complete`) {
           const command = (raw as { command: { files: string[]; failureCode: string | null } }).command
           expect(command.failureCode).toBeNull()
           downloaded = command.files
@@ -378,39 +383,43 @@ describe('channel settings service', () => {
     } finally { stream.destroy(); await service.stop() }
   })
 
-  it('settles a rich-post folder as unsupported and sends the attention without downloading it', async () => {
+  it.each([FEISHU_PROVIDER_PROFILE, LARK_PROVIDER_PROFILE])('$kind rejects unsupported rich-post folders through its download queue', async (profile) => {
+    const hostMethod = (name: string): string => `${profile.hostMethodPrefix}${name}`
+    let observed = false
     const harness = controlledChannels({ cli_a: { openId: 'ou_bot_a', name: '审阅员' } })
     let pending: PendingFeishuAttachments | null = null
     let resources: PendingFeishuAttachments['resources'] = []
     let attention = false
     let settled = false
-    const notice = '飞书暂不支持下载此类附件，本条消息未交给队员。请改为普通图片或文件重新发送。'
+    const notice = '暂不支持下载此类附件，本条消息未交给队员。请改为普通图片或文件重新发送。'
     const service = new ChannelSettingsService({
       ...inertInterval(),
-      credentialStore: memoryCredentialStore({ 'feishu-member-a': { appId: 'cli_a', appSecret: 'secret-a' } }),
+      profile,
+      credentialStore: memoryCredentialStore({ 'feishu-member-a': { appId: 'cli_a', appSecret: 'secret-a' } }, () => profile.kind),
       createChannel: harness.createChannel,
       core: channelCore((method, raw) => {
         const command = (raw as { command?: Record<string, unknown> } | undefined)?.command ?? {}
-        if (method === 'channels.feishu.owner.verify') {
+        if (method === `${profile.methodPrefix}owner.verify`) {
           return { status: 'applied', payload: { classification: 'owner' } }
         }
-        if (method === 'channels.feishu.snapshot') return coreSnapshot({ memberBots: [{
-          agentId: 'agent-a', accountId: 'account-1', brand: 'feishu', appId: 'cli_a',
+        if (method === `${profile.methodPrefix}snapshot`) return coreSnapshot({ memberBots: [{
+          agentId: 'agent-a', accountId: 'account-1', brand: profile.kind, appId: 'cli_a',
           botDisplayName: '审阅员', credentialRef: 'feishu-member-a', status: 'published',
           failureCode: null, version: 1, ownerIdentityStatus: 'verified'
         }] })
-        if (method === 'channels.inbound.observe') {
+        if (method === hostMethod('inbound.observe')) {
           expect(command.body).toBe('请读取这个文件夹')
+          observed = true
           expect(command.resources).toEqual([{ fileKey: 'folder_key', name: '资料', kind: 'folder' }])
           resources = command.resources as PendingFeishuAttachments['resources']
           return { status: 'accepted', payload: { aggregateId: 'folder-aggregate', readyToFinalize: true } }
         }
-        if (method === 'channels.inbound.finalize') {
-          pending = { requestId: 'folder-request', appId: 'cli_a', messageId: 'folder-message',
-            attempt: 0, retryAt: null, resources }
+        if (method === hostMethod('inbound.finalize')) {
+          pending = resources.length ? { requestId: 'folder-request', appId: 'cli_a', messageId: 'folder-message',
+            attempt: 0, retryAt: null, resources } : null
           return { status: 'accepted', payload: {} }
         }
-        if (method === 'channels.host.tick') {
+        if (method === hostMethod('host.tick')) {
           const deliveries = attention ? [{
             deliveryId: 'folder-attention', requestId: 'folder-request', deliveryKind: 'attention',
             targetAppId: 'cli_a', credentialRef: 'feishu-member-a', chatId: 'oc_test', topicKey: '',
@@ -421,14 +430,14 @@ describe('channel settings service', () => {
           return { deliveries, inboundAttachments: pending ? [pending] : [],
             hasOutstandingWork: pending !== null || deliveries.length > 0 }
         }
-        if (method === 'channels.inbound.attachments.complete') {
+        if (method === hostMethod('inbound.attachments.complete')) {
           expect(command).toMatchObject({ requestId: 'folder-request', files: [],
             failureCode: 'channel.attachments.unsupported' })
           pending = null
           attention = true
           return { status: 'applied', payload: { ready: false, retryAt: null } }
         }
-        if (method === 'channels.deliveries.settle') {
+        if (method === hostMethod('deliveries.settle')) {
           expect(command).toMatchObject({ deliveryId: 'folder-attention', outcome: 'sent' })
           settled = true
         }
@@ -444,6 +453,7 @@ describe('channel settings service', () => {
           files: [{ file_key: 'folder_key', file_name: '资料', is_folder: true }]
         })
       }))
+      expect(observed).toBe(true)
       await vi.waitFor(() => expect(settled).toBe(true))
       expect(harness.getResource).not.toHaveBeenCalled()
       expect(harness.send).toHaveBeenCalledWith('oc_test', {
@@ -511,6 +521,120 @@ describe('channel settings service', () => {
       await starting
       await service.stop()
     }
+  })
+
+  it.each([
+    ['Feishu', FEISHU_PROVIDER_PROFILE, Domain.Feishu],
+    ['Lark', LARK_PROVIDER_PROFILE, Domain.Lark]
+  ] as const)('%s starts only its own published Bots with its explicit SDK domain and Core requests', async (_name, profile, domain) => {
+    const other = profile.kind === 'feishu' ? 'lark' : 'feishu'
+    const created = fakeCreateChannel()
+    // Constructing a Bot channel without a domain would silently use the SDK default.
+    const createChannel = vi.fn((options: Parameters<typeof created>[0]) => {
+      if (options.domain === undefined) throw new Error('sdk_domain_missing')
+      return created(options)
+    }) as unknown as typeof created
+    expect(() => createChannel({ appId: 'cli_x', appSecret: 'fixture' })).toThrow('sdk_domain_missing')
+    const methods: string[] = []
+    const account = connectedAccount(identity({ brand: profile.kind }))
+    const service = new ChannelSettingsService({
+      ...inertInterval(),
+      profile,
+      developerSession: developerSession(identity({ brand: profile.kind })),
+      credentialStore: memoryCredentialStore({
+        [`${profile.kind}-member-a`]: { appId: 'cli_own', appSecret: 'fixture-secret' },
+        [`${other}-member-a`]: { appId: 'cli_other', appSecret: 'fixture-secret' }
+      }, (credentialRef) => credentialRef.startsWith('lark-') ? 'lark' : 'feishu'),
+      createChannel,
+      core: channelCore((method) => {
+        methods.push(method)
+        if (method === `channels.${profile.kind}.snapshot`) return coreSnapshot({
+          account,
+          memberBots: [{
+            agentId: 'agent-a', accountId: account.accountId,
+            brand: profile.kind, appId: 'cli_own', botDisplayName: '审阅员',
+            credentialRef: `${profile.kind}-member-a`, status: 'published', failureCode: null,
+            version: 1, ownerIdentityStatus: 'verified'
+          }]
+        })
+        if (method.startsWith('channels.feishu.') || method.startsWith('channels.lark.')) {
+          throw new Error(`unexpected ${method}`)
+        }
+        return { status: 'applied', payload: { deliveries: [] } }
+      })
+    })
+    try {
+      await service.start()
+      expect(createChannel).toHaveBeenCalledTimes(2)
+      expect(created).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ appId: 'cli_own', domain }))
+      expect(methods.filter((method) => method.startsWith(`channels.${other}.`))).toEqual([])
+      expect((await service.get()).channels[0]).toMatchObject({ kind: profile.kind, displayName: profile.displayName })
+    } finally {
+      await service.stop()
+    }
+  })
+
+  it('expires a legacy brand=lark Feishu account and does not start its Bots', async () => {
+    const createChannel = fakeCreateChannel()
+    const legacy = connectedAccount(identity({ brand: 'lark' }))
+    let account: Record<string, unknown> = legacy
+    const commands: Array<[string, unknown]> = []
+    const service = new ChannelSettingsService({
+      ...inertInterval(),
+      developerSession: developerSession(),
+      credentialStore: memoryCredentialStore({ 'feishu-member-a': { appId: 'cli_a', appSecret: 'fixture-secret' } }),
+      createChannel,
+      core: channelCore((method, params) => {
+        if (method === 'channels.feishu.snapshot') return coreSnapshot({
+          account,
+          memberBots: [{
+            agentId: 'agent-a', accountId: legacy.accountId,
+            brand: 'lark', appId: 'cli_a', botDisplayName: '审阅员',
+            credentialRef: 'feishu-member-a', status: 'published', failureCode: null,
+            version: 1, ownerIdentityStatus: 'verified'
+          }]
+        })
+        commands.push([method, params])
+        if (method === 'channels.feishu.account.expire') account = { ...legacy, status: 'session_expired' }
+        return { status: 'applied', payload: { deliveries: [] } }
+      })
+    })
+    try {
+      await service.start()
+      expect(commands.filter(([method]) => method === 'channels.feishu.account.expire')).toEqual([[
+        'channels.feishu.account.expire',
+        expect.objectContaining({ command: { accountId: legacy.accountId, expectedVersion: 1 } })
+      ]])
+      expect(createChannel).not.toHaveBeenCalled()
+      const provider = (await service.get()).channels[0]
+      expect(provider.connection.status).toBe('session_expired')
+      expect(provider.memberBots[0]).toMatchObject({ agentId: 'agent-a', failureCode: 'feishu_brand_moved_to_lark' })
+    } finally {
+      await service.stop()
+    }
+  })
+
+  it('presents shared failures under the Lark name without changing Feishu copy', async () => {
+    const snapshot = coreSnapshot({
+      memberBots: [{
+        agentId: 'agent-a', accountId: 'account', brand: 'lark', appId: 'cli_a', botDisplayName: '审阅员',
+        credentialRef: 'lark-member-a', status: 'disabled', failureCode: 'feishu_connection_error',
+        version: 1, ownerIdentityStatus: 'verified'
+      }]
+    })
+    const lark = new ChannelSettingsService({
+      profile: LARK_PROVIDER_PROFILE,
+      credentialStore: memoryCredentialStore(),
+      core: channelCore(() => snapshot)
+    })
+    const feishu = new ChannelSettingsService({
+      credentialStore: memoryCredentialStore(),
+      core: channelCore(() => snapshot)
+    })
+    await expect(lark.publishMemberBot('agent-b')).rejects.toThrow(/^Lark 登录已过期，请先重新连接账号。$/)
+    await expect(feishu.publishMemberBot('agent-b')).rejects.toThrow(/^飞书登录已过期，请先重新连接账号。$/)
+    expect((await lark.get()).channels[0].memberBots[0]?.failureCode).toBe('lark_connection_error')
+    expect((await feishu.get()).channels[0].memberBots[0]?.failureCode).toBe('feishu_connection_error')
   })
 
   it.each(['expired', 'identity_changed'] as const)(
@@ -737,10 +861,12 @@ describe('channel settings service', () => {
     expect(serialized).not.toMatch(/credentialRef|ownerIdentityStatus|super-secret|tenant-private|chat-private|aggregate-private/)
   })
 
-  it('projects the bound account brand into the exact Lark app management page', async () => {
+  it('projects a Lark instance bot into the exact Lark app management page', async () => {
+    const methods: string[] = []
     const service = new ChannelSettingsService({
+      profile: LARK_PROVIDER_PROFILE,
       credentialStore: memoryCredentialStore(),
-      core: channelCore(() => coreSnapshot({
+      core: channelCore((method) => { methods.push(method); return coreSnapshot({
         memberBots: [{
           agentId: 'agent-a',
           accountId: 'account-lark',
@@ -762,12 +888,14 @@ describe('channel settings service', () => {
           failureCode: null,
           version: 1
         }]
-      }))
+      }) })
     })
 
-    expect((await service.get()).channels[0].memberBots[0]?.managementUrl)
-      .toBe('https://open.larksuite.com/app/cli_lark_agent/baseinfo')
-    expect((await service.get()).channels[0].memberBots[1]?.managementUrl).toBeNull()
+    const provider = (await service.get()).channels[0]
+    expect(provider).toMatchObject({ kind: 'lark', displayName: 'Lark' })
+    expect(provider.memberBots[0]?.managementUrl).toBe('https://open.larksuite.com/app/cli_lark_agent/baseinfo')
+    expect(provider.memberBots[1]?.managementUrl).toBeNull()
+    expect(new Set(methods)).toEqual(new Set(['channels.lark.snapshot']))
   })
 
   it('connects a real developer identity without registering an app or storing a controller secret', async () => {
@@ -819,6 +947,47 @@ describe('channel settings service', () => {
     expect(JSON.stringify(commit)).toContain('owner-user-id')
     expect(JSON.stringify(commit)).toContain('tenant-1')
     expect(JSON.stringify(commit)).not.toMatch(/appSecret|client_secret|controller/i)
+  })
+
+  it.each([
+    ['feishu', FEISHU_PROVIDER_PROFILE],
+    ['lark', LARK_PROVIDER_PROFILE]
+  ] as const)('commits a %s connection with the user digest namespace Core verifies', async (kind, profile) => {
+    // Core rejects the commit unless userIdDigest = sha256("<provider>-user\0userId").
+    const owner = identity({ brand: kind })
+    const commands: Array<{ method: string; params: unknown }> = []
+    let connected = false
+    const service = new ChannelSettingsService({
+      profile,
+      credentialStore: memoryCredentialStore(),
+      developerSession: {
+        beginLogin: async () => owner,
+        pendingConnection: () => ({ identity: owner, session: { cookies: [] } }),
+        async activatePendingLogin() {},
+        async discardPendingLogin() { return null },
+        async inspect() { return { status: 'invalid', reason: 'missing' } },
+        async requireExpectedIdentity() { throw new Error('not_used') },
+        async disconnect() {}
+      },
+      core: channelCore((method, params) => {
+        commands.push({ method, params })
+        if (method === `channels.${kind}.account.commitConnection`) {
+          connected = true
+          return { status: 'applied', payload: { sessionRevision: 1 } }
+        }
+        return coreSnapshot({ account: connected ? connectedAccount(owner) : null })
+      })
+    })
+
+    await service.connect()
+
+    const commit = commands.find((entry) => entry.method === `channels.${kind}.account.commitConnection`)
+    const account = (commit?.params as { command: { account: Record<string, unknown> } }).command.account
+    const digest = (input: string): string => `sha256:${createHash('sha256').update(input).digest('hex')}`
+    expect(account).toMatchObject({ brand: kind, userIdDigest: digest(`${kind}-user\0owner-user-id`) })
+    expect((await service.get()).channels[0]?.connection).toMatchObject({
+      status: 'connected', sessionStatus: 'valid'
+    })
   })
 
   it('uses only the developer session for publishing', async () => {
@@ -3452,7 +3621,9 @@ describe('channel settings service', () => {
           { tag: 'at', user_id: '@_user_3', user_name: '爱丽丝' },
           { tag: 'text', text: ' ' },
           { tag: 'at', user_id: '@_user_4', user_name: '小王' },
-          { tag: 'text', text: ' 你们报个数' }
+          { tag: 'text', text: ' ' },
+          { tag: 'img', image_key: 'img_one' },
+          { tag: 'text', text: ' ![image](example) 你们报个数' }
         ]]
       },
       en_us: {
@@ -3465,7 +3636,9 @@ describe('channel settings service', () => {
           { tag: 'at', user_id: '@_user_3', user_name: '爱丽丝' },
           { tag: 'text', text: ' ' },
           { tag: 'at', user_id: '@_user_4', user_name: '小王' },
-          { tag: 'text', text: ' 你们报个数' }
+          { tag: 'text', text: ' ' },
+          { tag: 'img', image_key: 'img_one' },
+          { tag: 'text', text: ' ![image](example) 你们报个数' }
         ]]
       }
     })
@@ -3477,13 +3650,13 @@ describe('channel settings service', () => {
     ]
     const cases = [{
       appId: 'cli_alice',
-      content: '@药师寺惠 @雾切响子 @小王 你们报个数'
+      content: '@药师寺惠 @雾切响子 @小王 ![image](img_one) ![image](example) 你们报个数'
     }, {
       appId: 'cli_kirigiri',
-      content: '@药师寺惠 @爱丽丝 @小王 你们报个数'
+      content: '@药师寺惠 @爱丽丝 @小王 ![image](img_one) ![image](example) 你们报个数'
     }, {
       appId: 'cli_megumi',
-      content: '@雾切响子 @爱丽丝 @小王 你们报个数'
+      content: '@雾切响子 @爱丽丝 @小王 ![image](img_one) ![image](example) 你们报个数'
     }]
     for (const current of cases) {
       await harness.handlers.get(`${current.appId}:message`)!(normalizedMessage({
@@ -3492,6 +3665,7 @@ describe('channel settings service', () => {
         chatType: 'group',
         senderUserId: 'owner-user-id',
         content: current.content,
+        resources: [{ fileKey: 'img_one', fileName: 'image', type: 'image' }],
         rawContentType: 'post',
         rawEncodedContent: rawPost,
         mentions: rawMentions.map((mention) => ({
@@ -3507,10 +3681,14 @@ describe('channel settings service', () => {
 
     expect(observations).toHaveLength(3)
     expect(observations.map((observation) => observation.body)).toEqual([
-      '@小王 你们报个数',
-      '@小王 你们报个数',
-      '@小王 你们报个数'
+      '@小王 ![image](example) 你们报个数',
+      '@小王 ![image](example) 你们报个数',
+      '@小王 ![image](example) 你们报个数'
     ])
+    expect(observations[0]).toMatchObject({
+      resources: [{ fileKey: 'img_one', name: 'image', kind: 'image' }],
+      attachmentSummaries: [{ name: 'image', mediaType: 'image' }]
+    })
     expect(observations).toEqual(expect.arrayContaining([
       expect.objectContaining({
         expectedAppIds: ['cli_alice', 'cli_kirigiri', 'cli_megumi'],

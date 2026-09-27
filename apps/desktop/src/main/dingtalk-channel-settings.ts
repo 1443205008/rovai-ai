@@ -1,6 +1,8 @@
 import type { PendingChannelAttachments } from './channel-inbound-attachments'
 import { withDingTalkInboundFiles, dingtalkAttachmentFailureCode } from './dingtalk-inbound-attachments'
 import { createHash, randomUUID } from 'node:crypto'
+import { readFile, stat } from 'node:fs/promises'
+import { basename } from 'node:path'
 import type {
   AgentProfile,
   ChannelMemberBotView,
@@ -34,7 +36,11 @@ import type { MemberBotAvatarSourceResolver } from './member-bot-avatar-source'
 import {
   decodeDingTalkCardActionId,
   DingTalkOpenApiClient,
+  DingTalkOpenApiError,
   dingtalkCardParams,
+  isSupportedDingTalkRobotFileName,
+  isSupportedDingTalkRobotImage,
+  MAX_DINGTALK_MEDIA_UPLOAD_BYTES,
   type DingTalkCardButton
 } from './dingtalk-open-api'
 import { DingTalkStreamRegistry, type DingTalkCardCallback } from './dingtalk-stream-registry'
@@ -108,6 +114,16 @@ export function dingtalkAgentOutputMarkdown(payload: Record<string, unknown>): s
   const excerpt = requiredPayloadString(reply, 'body')
   const quoted = excerpt.split(/\r?\n/u).map((line) => `> ${line}`).join('\n')
   return `> 回复 ${escapeDingTalkMarkdownInline(author)}：\n${quoted}\n\n${body}`
+}
+
+export function dingtalkDeliveryFailure(error: unknown): { code: string; retryable: boolean } {
+  const code = typeof error === 'string' ? error : failureCode(error)
+  return {
+    code,
+    retryable: error instanceof DingTalkOpenApiError
+      ? error.retryable
+      : code === 'dingtalk_target_bot_not_connected'
+  }
 }
 
 export function orderedUniqueDingTalkInboundObservations<T extends {
@@ -482,7 +498,7 @@ export class DingTalkChannelSettingsService {
     if (this.#activeProvisioning && !['completed', 'failed', 'unknown_remote_state'].includes(
       this.#activeProvisioning.stage
     )) throw new Error('队员发布期间不能切换钉钉账号。')
-    this.#sessionCheckGeneration += 1
+    const sessionCheckGeneration = ++this.#sessionCheckGeneration
     this.#sessionStatus = 'unknown'
     const abort = new AbortController()
     const attemptId = randomUUID()
@@ -560,6 +576,7 @@ export class DingTalkChannelSettingsService {
         this.#dependencies.developerSession,
         sessionRevisionFrom(result)
       )
+      if (sessionCheckGeneration === this.#sessionCheckGeneration) this.#sessionStatus = 'valid'
       this.#sessionNeedsReconnect = false
       if (this.#activeQrAttempt?.attemptId === attemptId) {
         this.#activeQrAttempt = {
@@ -1572,7 +1589,63 @@ export class DingTalkChannelSettingsService {
           })
         externalId = deliveryMessageId
       } else if (delivery.deliveryKind === 'agent_attachment') {
-        throw new Error('dingtalk_attachment_delivery_not_supported')
+        const campId = requiredPayloadString(delivery.payload, 'campId')
+        const attachmentId = requiredPayloadString(delivery.payload, 'attachmentId')
+        const target = await this.#dependencies.core.request<{
+          attachmentId: string
+          kind: 'file'
+          mediaType: string
+          path: string
+        } | null>('camp.attachments.desktopOpenTarget',
+          delivery.payload.storage === 'source_ref'
+            ? { owner: 'message', campId, attachmentRefId: attachmentId,
+                messageId: requiredPayloadString(delivery.payload, 'sourceCampMessageId') }
+            : { campId, attachmentId })
+        if (!target || target.kind !== 'file' || target.attachmentId !== attachmentId) {
+          throw new Error('channel_attachment_unavailable')
+        }
+        const fileName = basename(requiredPayloadString(delivery.payload, 'fileName').replaceAll('\\', '/'))
+        if (delivery.payload.attachmentKind !== 'image'
+          && delivery.payload.attachmentKind !== 'file') {
+          throw new Error('dingtalk_attachment_kind_unsupported')
+        }
+        const isImage = delivery.payload.attachmentKind === 'image'
+        if (isImage && !isSupportedDingTalkRobotImage(fileName, target.mediaType)) {
+          throw new Error('dingtalk_attachment_type_unsupported')
+        }
+        if (!isImage && !isSupportedDingTalkRobotFileName(fileName)) {
+          throw new Error('dingtalk_attachment_type_unsupported')
+        }
+        if ((await stat(target.path)).size > MAX_DINGTALK_MEDIA_UPLOAD_BYTES) {
+          throw new Error('dingtalk_attachment_size_unsupported')
+        }
+        const bytes = await readFile(target.path)
+        if (delivery.payload.storage !== 'source_ref') {
+          const size = delivery.payload.size
+          const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+          if (typeof size !== 'number' || !Number.isSafeInteger(size) || size !== bytes.byteLength
+            || digest !== requiredPayloadString(delivery.payload, 'contentDigest')) {
+            throw new Error('channel_attachment_integrity_mismatch')
+          }
+        }
+        const mediaId = isImage
+          ? await api.uploadImage(bytes, fileName, target.mediaType)
+          : await api.uploadFile(bytes, fileName, target.mediaType)
+        const attachment = isImage
+          ? { kind: 'image' as const, mediaId }
+          : { kind: 'file' as const, mediaId, fileName }
+        deliveryMessageId = delivery.conversationKind === 'group'
+          ? await api.sendGroupAttachment({
+            openConversationId: delivery.chatId,
+            robotCode: bot.robotCode,
+            attachment
+          })
+          : await api.sendPrivateAttachment({
+            robotCode: bot.robotCode,
+            userId: delivery.recipientOpenId ?? delivery.chatId,
+            attachment
+          })
+        externalId = deliveryMessageId
       } else if (delivery.deliveryKind === 'project_selection') {
         const operation = String(delivery.payload.operation ?? 'send')
         const params = projectCardParams(delivery.payload, operation === 'recall')
@@ -1674,13 +1747,13 @@ export class DingTalkChannelSettingsService {
           })
         } else {
           cardFallback = {
-            title: delivery.deliveryKind === 'attention' ? 'Rovai 需要你确认' : 'Rovai',
+            title: delivery.deliveryKind === 'attention' ? 'Rovai 未能处理' : 'Rovai',
             text: String(delivery.payload.text ?? '状态已更新')
           }
           const params = dingtalkCardParams({
-            title: delivery.deliveryKind === 'attention' ? 'Rovai 需要你确认' : 'Rovai 已接收',
+            title: delivery.deliveryKind === 'attention' ? 'Rovai 未能处理' : 'Rovai 已接收',
             content: String(delivery.payload.text ?? '状态已更新'),
-            flowStatus: '1'
+            flowStatus: delivery.deliveryKind === 'attention' ? '5' : '1'
           })
           if (externalId) {
             await api.updateCard(externalId, params)
@@ -1723,7 +1796,7 @@ export class DingTalkChannelSettingsService {
           return
         } catch { /* settle the original card failure below */ }
       }
-      await this.#settle(delivery, null, failureCode(error))
+      await this.#settle(delivery, null, error)
     }
   }
 
@@ -1754,17 +1827,18 @@ export class DingTalkChannelSettingsService {
   async #settle(
     delivery: ClaimedDelivery,
     messageId: string | null,
-    error: string | null,
+    error: unknown,
     updateMessageId: string | null = null
   ): Promise<void> {
+    const failure = error === null ? null : dingtalkDeliveryFailure(error)
     const result = await this.#command('channels.dingtalk.deliveries.settle', {
       deliveryId: delivery.deliveryId,
       workerId: WORKER_ID,
-      outcome: error ? 'failed' : 'sent',
+      outcome: failure ? 'failed' : 'sent',
       externalDeliveryMessageId: messageId,
       externalUpdateMessageId: updateMessageId,
-      failureCode: error,
-      retryable: error ? /timeout|rate|connected|network/u.test(error) : false
+      failureCode: failure?.code ?? null,
+      retryable: failure?.retryable ?? false
     }, false)
     this.#hostPump.wake()
     const availableAt = result.payload.availableAt

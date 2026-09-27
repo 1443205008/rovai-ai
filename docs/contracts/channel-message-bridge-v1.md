@@ -3,7 +3,7 @@ document_type: protocol-contract
 contract: channel-message-bridge-v1
 status: accepted
 target_version: v1.60
-last_updated: 2026-09-26
+last_updated: 2026-09-27
 ---
 
 # Channel Message Bridge v1
@@ -16,15 +16,18 @@ A Camp has at most one Channel binding. Every Agent message published through or
 bound Camp atomically creates one idempotent ChannelDelivery for that message. The outbound payload is the
 published message and its explicit attachments, not Run inputs, logs or anchor ancestors. No `--to-channel`
 flag exists.
+For a DingTalk private conversation, a bound Camp's direct delivery resolves the target Bot's App-scoped
+`user_id` through the conversation's recorded external principal. The private IM `chat_id` is a different
+identity and cannot replace `user_id` when there is no inbound Request attached to the delivery.
 
 ChannelDelivery retry/failure is independent of the inbound message, AgentRun and Camp Delivery. It never
 reruns the model or silently converts the result to local-only publication.
 
 ## Inbound attachments
 
-`channels.inbound.observe` and `channels.dingtalk.inbound.observe` accept optional
+`channels.inbound.observe`, `channels.lark.inbound.observe` and `channels.dingtalk.inbound.observe` accept optional
 `resources: [{fileKey, name, kind, downloadCode?}]` in normalized source order.
-The Feishu Host deduplicates repeated resource keys in a rich-text post. Up to 20 resources are accepted; resource
+The Feishu and Lark Hosts deduplicate repeated resource keys in a rich-text post. Up to 20 resources are accepted; resource
 descriptors participate in the existing multi-Bot observation digest. DingTalk group observations exclude
 Bot-scoped `downloadCode` from this digest; stable source positions, names and kinds still participate.
 The first observation freezes its grants with the canonical acknowledgement App and later Bot callbacks cannot
@@ -40,11 +43,14 @@ until project/Quick Chat selection creates the Camp and Request. Replayed observ
 A queued Request with incomplete resources cannot publish a CampMessage or create an Agent Delivery. The
 ordinary provider-scoped Host tick returns `inboundAttachments` containing `{requestId, appId, messageId,
 resources, attempt, retryAt}`. `appId` is the aggregate's canonical acknowledgement Bot. The Host supplies
-`inboundAttachmentAppIds` from its available download clients (Feishu managed connections, DingTalk published
-Bots with loaded App clients); Core filters by provider and these App IDs before limiting the
+`inboundAttachmentAppIds` from its available download clients (Feishu and Lark managed connections,
+DingTalk published Bots with loaded App clients); Core filters by provider and these App IDs before limiting the
 download window to 20 requests. An empty or omitted list returns no attachment tasks. Unavailable Bots retain
 their queued requests without blocking another Bot's downloads; per-conversation admission remains FIFO.
-For Feishu, Main downloads using
+No queue acknowledgement card is enqueued while resources are incomplete: Feishu, Lark and DingTalk wait
+silently during download. Requests already ready when first deferred still use the existing "Rovai 已接收，正在排队"
+acknowledgement. Already-sent download acknowledgements from older versions remain eligible for recall.
+For Feishu and Lark, Main downloads using each provider's SDK domain and
 the official [message-resource API](https://open.feishu.cn/document/server-docs/im-v1/message-resource/get),
 not the app-upload image/file download API. Images use `type=image`; ordinary files, audio and video bytes
 use `type=file`. Receiving audio/video does not promise transcription or video understanding. Sticker and
@@ -58,7 +64,8 @@ For DingTalk, the normalizer retains `picture` and ordered `richText` text/image
 `downloadCode` (falling back to legacy `pictureDownloadCode`); a missing grant still gates admission and
 settles as download failure instead of running text alone. Quoted images remain summaries.
 The acknowledgement Bot's App client sends `{robotCode, downloadCode}` to
-`POST /v1.0/robot/messageFiles/download`, then streams the returned HTTPS `downloadUrl` without forwarding
+`POST /v1.0/robot/messageFiles/download`, then streams the returned HTTP or HTTPS signed `downloadUrl` as issued,
+without forwarding
 App tokens to storage. The receiving Bot's published `robotCode` is used, not another Bot's identity.
 Token retrieval, grant exchange and body streaming all accept the message cancellation/deadline signal.
 Each retry exchanges the persisted grant again; temporary URLs are never persisted. Expired grants that
@@ -70,12 +77,13 @@ Each provider's Main allows at most two concurrent message downloads, with a 60-
 streamed-byte limit per message. Download work does not block the Host maintenance pump. Temporary files
 remain alive until Core replies and are removed after success, failure or Host cancellation.
 
-`channels.inbound.attachments.complete` and `channels.dingtalk.inbound.attachments.complete` are trusted
+`channels.inbound.attachments.complete`, `channels.lark.inbound.attachments.complete` and
+`channels.dingtalk.inbound.attachments.complete` are trusted
 provider Host commands carrying
 `{requestId, appId, attempt, files, failureCode}`. `files` are ordered temporary local source paths; on failure
 the Host sends an empty list and a bounded failure code. Core derives provider from the trusted Host actor and rechecks the queued Request, matching provider/App, active binding,
 Camp existence/deletion and retry generation before any filesystem publication. Core imports files into
-the Camp-owned default output directory under `feishu/` or `dingtalk/`, observes their MIME from bytes and persists normal Source Refs
+the Camp-owned default output directory under `feishu/`, `lark/` or `dingtalk/`, observes their MIME from bytes and persists normal Source Refs
 in the same aggregate. Duplicate filenames have distinct ordinal locations. Retries preserve already
 promoted files, and replayed/late completions do not overwrite ready inputs or recreate deleted Camps.
 
@@ -83,12 +91,19 @@ Once all resources are ready, ordinary FIFO admission atomically publishes the C
 `source_attachments_json` and the existing per-target Deliveries. Thus `CURRENT_INPUT` receives actual local
 attachment paths through the same projection as local messages. Subsequent reads follow the existing live
 Source Ref semantics; Camp deletion owns downloaded files, including unfinished imports.
+Current-message `attachmentSummaries` remain accepted for compatibility but are not appended to the
+CampMessage body. Feishu, Lark and DingTalk present downloaded files through Source Refs instead.
+Feishu and Lark remove SDK-generated `![image](fileKey)` placeholders from the inbound body only
+when `fileKey` matches a normalized image resource; other Markdown remains user text.
+External Quote attachment summaries stay in their structured quote segment; already published messages
+retain their stored body.
 
 Transient failures receive at most three attempts, with 5/10-second retry delays persisted in the aggregate.
-Too-large, unsupported and HTTP authorization failures end immediately. Terminal failure closes the Request
-and enqueues a visible attention message explaining that the message was not dispatched and can be resent
+Too-large, unsupported and HTTP authorization failures end immediately. Terminal failure closes the Request,
+recalls any older already-sent queue acknowledgement, and enqueues a visible attention message explaining that the message was not dispatched and can be resent
 after correcting the cause. It never silently executes only the text. Startup re-reads queued resource state;
 download retry and late completion remain separate from Agent execution retry.
+DingTalk presents the attention card as a terminal failure, not an in-progress card.
 
 ## Provider references and validation
 
@@ -97,8 +112,9 @@ download retry and late completion remain separate from Agent execution retry.
 - [Official DingTalk Stream SDK](https://github.com/open-dingtalk/dingtalk-stream-sdk-python/blob/8d8bb1c630848fee1ae8c7bdd11bc1b78097b611/dingtalk_stream/chatbot.py)
 
 Provider normalizer/transport tests own raw callback shapes, authorization headers, cancellation and
-temporary-file lifetime. Existing Core attachment owners cover both providers' admission, retry, terminal
+temporary-file lifetime. Existing Core attachment owners cover Feishu and DingTalk admission, retry, terminal
 unsupported failure, Camp deletion and unavailable-Bot filtering; the DingTalk multi-Bot owner also proves
-that distinct grants retain the first receiver without duplicate dispatch. These use isolated fixtures.
+that distinct grants retain the first receiver without duplicate dispatch. Lark extends the provider isolation
+owner with resource admission, wrong-Host rejection and Source Ref publication. These use isolated fixtures.
 Real tenant file reception, permission grants and desktop/mobile clients require separate platform acceptance;
 automated fixture results do not claim that acceptance.

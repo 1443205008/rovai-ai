@@ -19,7 +19,7 @@ function catalogKeysUsedByRenderer(): Set<string> {
     const visit = (node: ts.Node): void => {
       if (ts.isCallExpression(node)
         && ts.isIdentifier(node.expression)
-        && ['t', 'uiAttribute', 'translateUi'].includes(node.expression.text)) {
+        && ['t', 'uiAttribute', 'translateUi', 'localizedChannelCopy'].includes(node.expression.text)) {
         const phrase = node.arguments[0]
         if (phrase && ts.isStringLiteralLike(phrase) && han.test(phrase.text)) keys.add(phrase.text.trim())
       }

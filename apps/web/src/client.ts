@@ -3,7 +3,7 @@ import { browserEditingRecovery } from './editing-recovery'
 import { RECOVERY_KEY, type RecoveryStorage } from './tab-recovery'
 import { fileDigest } from './file-digest'
 import { newCommandId } from '../../desktop/src/shared/command-id'
-import type { ChannelSettingsSnapshot, FilePreviewBinaryContent, FilePreviewOperationResult, LocalAttachmentSourceView } from '@contracts'
+import type { ChannelKind, ChannelSettingsSnapshot, FilePreviewBinaryContent, FilePreviewOperationResult, LocalAttachmentSourceView } from '@contracts'
 
 const HOST_WEB_PROTOCOL_VERSION = 4
 
@@ -106,6 +106,7 @@ export const WEB_OPERATIONS = [
   'automations.run',
   'app.info',
   'navigation.snapshot',
+  'navigation.camps',
   'navigation.groupCamps',
   'navigation.campViewed',
   'camps.exists',
@@ -712,7 +713,7 @@ export class ConsoleClient {
     return body.result
   }
 
-  async channel(request: { operation: 'get' | 'publish' | 'retry' | 'selectApprover'; kind?: 'feishu' | 'dingtalk'; agentId?: string; userId?: string }): Promise<ChannelSettingsSnapshot> {
+  async channel(request: { operation: 'get' | 'publish' | 'retry' | 'selectApprover'; kind?: ChannelKind; agentId?: string; userId?: string }): Promise<ChannelSettingsSnapshot> {
     try {
       const reply = await this.#json<{ result: ChannelSettingsSnapshot }>('channels', { method: 'POST', body: JSON.stringify(request) })
       return reply.result

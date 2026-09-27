@@ -44,7 +44,8 @@ import type {
   MissionCreate,
   NavigationCampItem,
   NavigationCampTarget,
-  NavigationCampPage,
+  NavigationCampRows,
+  CampViewedAcknowledgement,
   NavigationPin,
   NavigationPreferencesSnapshot,
   NavigationSnapshot,
@@ -1162,7 +1163,10 @@ export function BusinessApp({
   const notificationFocusSequence = useRef(0)
   const notificationFocusRef = useRef<NotificationFocusTarget | null>(null)
   const notificationPresentationRef = useRef<NotificationPresentationCoordinator | null>(null)
-  const campViewedAcknowledgementKey = useRef<string | null>(null)
+  const campViewedAcknowledgements = useRef(new Map<string, number>())
+  const [openedNavigationRow, setOpenedNavigationRow] = useState<NavigationCampItem | null>(null)
+  const pinnedCampIdsRef = useRef<string[]>([])
+  pinnedCampIdsRef.current = navigationPins.filter(pin => pin.kind === 'camp').map(pin => pin.targetKey)
   const healthRequest = useRef<Promise<HealthStatus> | null>(null)
   const navigationSnapshotRef = useRef<NavigationSnapshot | null>(null)
   const deletingCampIdsRef = useRef(new Set<string>())
@@ -1422,6 +1426,14 @@ export function BusinessApp({
       commitNavigation,
       {
         initiallyVisible: document.visibilityState !== 'hidden',
+        readCamps: (campIds) => client.request<NavigationCampRows>('navigation.camps', { campIds }),
+        getPinnedCampIds: () => pinnedCampIdsRef.current,
+        onRows: (rows, requestedIds) => {
+          setPinnedCampItems(current => current.flatMap(camp =>
+            requestedIds.includes(camp.id) ? rows.camps.find(next => next.id === camp.id) ?? [] : camp))
+          const activeRow = rows.camps.find(camp => camp.id === activeCampIdRef.current)
+          if (activeRow) setOpenedNavigationRow(activeRow)
+        },
         onError: () => setNavigationState('error')
       }
     ),
@@ -1833,7 +1845,7 @@ export function BusinessApp({
         + `elapsed_ms=${(performance.now() - startedAt).toFixed(1)}`
       )
       void (async () => {
-        await loadNavigation()
+        await navigationRefreshCoordinator.refreshCamps([campId], 'explicit')
         if (selectionGeneration !== campSelectionGeneration.current) return
         console.info(
           `[camp-open] trace=${traceId} stage=renderer_background_complete `
@@ -1861,7 +1873,7 @@ export function BusinessApp({
       }
       return false
     }
-  }, [clearCampOpenFeedback, loadNavigation, requestCampProjection, setCampSnapshot])
+  }, [clearCampOpenFeedback, navigationRefreshCoordinator, requestCampProjection, setCampSnapshot])
 
   const activateCamp = useCallback(async (
     campId: string,
@@ -2397,7 +2409,17 @@ export function BusinessApp({
     ) return undefined
     const campId = activeCampId
     const throughGlobalSequence = campSnapshot.throughGlobalSequence
-    const key = `${campId}:${throughGlobalSequence}`
+    if (campSnapshotState.entryPreview) return undefined
+    const mission = campSnapshot.camp.missionId
+      ? missionList.missions.find(item => item.campId === campId) : null
+    const row = (navigation ? allNavigationCamps(navigation).find(camp => camp.id === campId) : null)
+      ?? (openedNavigationRow?.id === campId ? openedNavigationRow : null)
+      ?? pinnedCampItems.find(camp => camp.id === campId)
+    if (campSnapshot.camp.missionId ? !mission?.hasUnread
+      : !row || row.latestCompletionGlobalSequence <= (row.lastSeenGlobalSequence ?? 0)
+        || row.latestCompletionGlobalSequence > throughGlobalSequence) return undefined
+    // Missions use published Agent replies as their existing unread boundary.
+    const observedCompletion = mission ? throughGlobalSequence : row!.latestCompletionGlobalSequence
     let cancelled = false
     let retryTimer: number | null = null
     const acknowledgeVisibleCamp = async (): Promise<void> => {
@@ -2408,17 +2430,18 @@ export function BusinessApp({
         document.visibilityState,
         document.hasFocus()
       )) return
-      if (campViewedAcknowledgementKey.current === key) return
-      campViewedAcknowledgementKey.current = key
+      if ((campViewedAcknowledgements.current.get(campId) ?? 0) >= observedCompletion) return
+      campViewedAcknowledgements.current.set(campId, observedCompletion)
       try {
-        await client.request('navigation.campViewed', {
+        const acknowledgement = await client.request<CampViewedAcknowledgement>('navigation.campViewed', {
           campId,
           throughGlobalSequence
         })
-        if (!cancelled) await loadNavigation()
+        if (mission) void missionList.refresh()
+        else navigationRefreshCoordinator.acceptRows(acknowledgement.navigation)
       } catch {
-        if (campViewedAcknowledgementKey.current === key) {
-          campViewedAcknowledgementKey.current = null
+        if (campViewedAcknowledgements.current.get(campId) === observedCompletion) {
+          campViewedAcknowledgements.current.delete(campId)
         }
         if (!cancelled) {
           retryTimer = window.setTimeout(() => {
@@ -2441,7 +2464,14 @@ export function BusinessApp({
     activeCampId,
     campSnapshot?.camp.id,
     campSnapshot?.throughGlobalSequence,
-    loadNavigation,
+    navigation,
+    pinnedCampItems,
+    openedNavigationRow,
+    missionList.missions,
+    missionList.refresh,
+    campSnapshotState.entryPreview,
+    navigationRefreshCoordinator,
+    client,
     view
   ])
 
@@ -2478,6 +2508,8 @@ export function BusinessApp({
           setState('error')
           setError(stringField(params, 'message') ?? uiAttribute('后台服务已停止。'))
         } else if (runtimeStatus === 'starting' || runtimeStatus === 'restarting') {
+          campViewedAcknowledgements.current.clear()
+          setOpenedNavigationRow(null)
           setState('loading')
           setHealth(null)
           setHealthAttempted(false)
@@ -2520,7 +2552,11 @@ export function BusinessApp({
         }
       }
       if (shouldRefreshNavigationForCoreEvent(event, shuttingDownRef.current)) {
-        void navigationRefreshCoordinator.refresh('invalidation').catch(() => undefined)
+        void navigationRefreshCoordinator.invalidate({
+          scope: params.scope === 'camp' || params.scope === 'group' ? params.scope : 'all',
+          campId: stringField(params, 'campId') ?? undefined,
+          groupKeys: Array.isArray(params.groupKeys) ? params.groupKeys.filter((key): key is string => typeof key === 'string') : undefined
+        }).catch(() => undefined)
       }
       const campId = activeCampIdRef.current
       const refresh = campId && deletingCampIdsRef.current.has(campId)
@@ -2684,6 +2720,8 @@ export function BusinessApp({
   }, [activeCampId, campSnapshot?.camp.id, requestCampProjection, setCampSnapshot])
 
   useEffect(() => client.onInvalidated?.(() => {
+    campViewedAcknowledgements.current.clear()
+    setOpenedNavigationRow(null)
     void uiPreferences.generalPreferences.get().then(setGeneralPreferences).catch((e) => setError(errorMessage(e)))
     void loadNavigation('invalidation').catch(() => undefined)
     void loadCampDeletionIssues().catch(() => undefined)
@@ -3305,7 +3343,7 @@ export function BusinessApp({
       })
       if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
       await Promise.all([
-        loadNavigation(),
+        navigationRefreshCoordinator.refreshCamps([camp.id], 'explicit'),
         activeCampId === camp.id ? refreshActiveCampSnapshot(camp.id) : Promise.resolve()
       ])
     } finally {
@@ -3323,7 +3361,7 @@ export function BusinessApp({
       })
       if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
       hideAcceptedCampDeletion(camp.id)
-      void loadNavigation('invalidation').catch(() => undefined)
+      void navigationRefreshCoordinator.refreshGroups([camp.projectBindingKind === 'directory' ? `directory:${camp.projectPath}` : 'quick-chat']).catch(() => undefined)
     } finally {
       setBusy(null)
     }
@@ -3429,7 +3467,7 @@ export function BusinessApp({
       if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
       await Promise.all([
         refreshActiveCampSnapshot(activeCampId),
-        loadNavigation()
+        navigationRefreshCoordinator.refreshCamps([activeCampId], 'explicit')
       ])
     } catch (nextError) {
       setError(errorMessage(nextError))
@@ -3492,7 +3530,7 @@ export function BusinessApp({
       try {
         await Promise.all([
           refreshActiveCampSnapshot(campId),
-          loadNavigation()
+          navigationRefreshCoordinator.refreshCamps([campId], 'explicit')
         ])
       } catch {
         // The per-command outcomes are authoritative; normal event refresh will converge the surface.
@@ -3551,7 +3589,7 @@ export function BusinessApp({
       try {
         await Promise.all([
           refreshActiveCampSnapshot(campId),
-          loadNavigation()
+          navigationRefreshCoordinator.refreshCamps([campId], 'explicit')
         ])
       } catch {
         // The accepted cutover is authoritative; reconciliation events will refresh the surface.
@@ -3605,7 +3643,7 @@ export function BusinessApp({
         } else {
           // Core owns the created Camp. Refresh its visibility without stealing focus;
           // empty one-click drafts still follow the existing pending-Camp lifecycle.
-          await loadNavigation()
+          await navigationRefreshCoordinator.invalidate({ scope: 'group', campId })
         }
       } finally {
         if (preferencesSaveFailed) {
@@ -3650,12 +3688,13 @@ export function BusinessApp({
   }
 
   const refreshPendingCampNavigation = (): void => {
-    void loadNavigation('invalidation').catch(() => undefined)
+    const campId = activeCampIdRef.current
+    if (campId) void navigationRefreshCoordinator.invalidate({ scope: 'group', campId }).catch(() => undefined)
   }
 
   const settlePendingCampOnLeave = async (draft: CampComposerDraftView): Promise<void> => {
     if (draft.body.trim() || draft.attachments.length > 0 || draft.replyIntent) {
-      await loadNavigation()
+      await navigationRefreshCoordinator.invalidate({ scope: 'group', campId: draft.campId })
       return
     }
     const result = await client.request<StoredCommandResult>('camps.discardPending', {
@@ -3667,7 +3706,7 @@ export function BusinessApp({
     }
     if (result.status !== 'rejected') campSnapshotCache.current.delete(draft.campId)
     if (result.status !== 'rejected') forgetRemovedCampSurface(draft.campId)
-    await loadNavigation()
+    await navigationRefreshCoordinator.invalidate({ scope: 'group', campId: draft.campId })
   }
 
   const sendCampMessage = async (
@@ -3724,7 +3763,7 @@ export function BusinessApp({
             setOptimisticCampMessages((current) =>
               current.filter((entry) => entry.commandId !== commandId)
             )
-            if (selectionGeneration === campSelectionGeneration.current) await loadNavigation()
+            if (selectionGeneration === campSelectionGeneration.current) await navigationRefreshCoordinator.invalidate({ scope: 'group', campId })
           })
           .catch((nextError) => setError(errorMessage(nextError)))
       }
@@ -3924,7 +3963,6 @@ export function BusinessApp({
       await desktopNavigation.replace({ kind: 'missions' }, { prepared: true })
     }
     void missionList.refresh()
-    void loadNavigation('invalidation').catch(() => undefined)
   }
   const missionSource = (messageId: string): void => {
     setNotificationFocus({ requestId: ++notificationFocusSequence.current, kind: 'camp_message', campTurnId: null, messageId, active: true })
@@ -4846,36 +4884,8 @@ async function resolveNavigationPins(
   )
 
   if (unresolvedCampIds.size > 0) {
-    const groups = [
-      {
-        projectPath: null as string | null,
-        totalCount: navigation.quickChat.totalCount,
-        knownCount: navigation.quickChat.recentCamps.length
-      },
-      ...navigation.projects.map((project) => ({
-        projectPath: project.projectPath,
-        totalCount: project.totalCount,
-        knownCount: project.recentCamps.length
-      }))
-    ].filter((group) => group.totalCount > group.knownCount)
-
-    await Promise.all(groups.map(async (group) => {
-      let offset = 0
-      for (;;) {
-        if (unresolvedCampIds.size === 0) break
-        const page = await client.request<NavigationCampPage>('navigation.groupCamps', {
-          projectPath: group.projectPath,
-          offset,
-          limit: 200
-        })
-        if (page.schemaVersion !== 3) throw new Error(uiAttribute('会话列表数据版本不兼容。'))
-        for (const camp of page.camps) {
-          if (unresolvedCampIds.delete(camp.id)) campById.set(camp.id, camp)
-        }
-        if (unresolvedCampIds.size === 0 || page.nextOffset === null) break
-        offset = page.nextOffset
-      }
-    }))
+    const rows = await client.request<NavigationCampRows>('navigation.camps', { campIds: [...unresolvedCampIds] })
+    for (const camp of rows.camps) campById.set(camp.id, camp)
   }
 
   const validProjectKeys = new Set(navigation.projects.map((project) => project.projectKey))
