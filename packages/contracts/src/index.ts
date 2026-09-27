@@ -3937,6 +3937,7 @@ export type CoreMethod =
   | 'channels.lark.dm.startNew'
   | 'channels.lark.pendingBinding.resolve'
   | 'channels.lark.inbound.observe'
+  | 'channels.lark.inbound.attachments.complete'
   | 'channels.lark.inbound.finalize'
   | 'channels.lark.roster.reconcile'
   | 'channels.lark.deliveries.settle'

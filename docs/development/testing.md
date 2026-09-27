@@ -99,6 +99,11 @@ CampMessage/Delivery 的 seam，继续使用现有隔离 SQLite/文件 fixture�
 两个接收 Bot 使用不同 downloadCode 时仍冻结首观察 Bot 的 grant，绑定选择和下载完成后仅派发一次。
 最小命令为 `cargo test -p rovai-core --features extended-tests --lib channel::tests::`。
 
+Lark 入站资源下载扩展既有 `wrong_provider_hosts_are_rejected_by_every_lark_capable_handler` owner：
+同一 provider 世界内验证观察、待下载任务、错误 Host 拒绝、正确 Host 完成与 Camp Source Ref。
+Main 的飞书/Lark 参数化 owner 覆盖流式下载、临时文件清理、文件夹失败提示与各自完成请求路由。
+这不增加独立 Rust fixture owner；真实 Lark 租户权限仍按版本验收记录单独验证。
+
 Main 的现有 normalizer owner 覆盖官方 picture/richText/file/audio/video 字段；新增钉钉下载适配器测试拥有
 Open API grant 兑换、独立 CDN 请求无 token、取消与丢失 grant 的 seam；共同字节限制和临时文件清理由既有
 飞书下载测试继续覆盖。Host 既有 fixture 扩展文件成功、folder 明确失败和 receiving Bot 选择，不运行真实模型

@@ -741,6 +741,7 @@ fn channel_request_host_component(method: &str) -> Result<&'static str> {
         | "channels.feishu.dm.startNew"
         | "channels.feishu.pendingBinding.resolve"
         | "channels.inbound.observe"
+        | "channels.inbound.attachments.complete"
         | "channels.roster.reconcile"
         | "channels.inbound.finalize"
         | "channels.host.tick"
@@ -759,6 +760,7 @@ fn channel_request_host_component(method: &str) -> Result<&'static str> {
         | "channels.dingtalk.dm.startNew"
         | "channels.dingtalk.pendingBinding.resolve"
         | "channels.dingtalk.inbound.observe"
+        | "channels.dingtalk.inbound.attachments.complete"
         | "channels.dingtalk.roster.reconcile"
         | "channels.dingtalk.inbound.finalize"
         | "channels.dingtalk.host.tick"
@@ -777,6 +779,7 @@ fn channel_request_host_component(method: &str) -> Result<&'static str> {
         | "channels.lark.dm.startNew"
         | "channels.lark.pendingBinding.resolve"
         | "channels.lark.inbound.observe"
+        | "channels.lark.inbound.attachments.complete"
         | "channels.lark.roster.reconcile"
         | "channels.lark.inbound.finalize"
         | "channels.lark.host.tick"
@@ -7647,7 +7650,8 @@ impl Core {
                 Ok(serde_json::to_value(execution.result)?)
             }
             "channels.inbound.attachments.complete"
-            | "channels.dingtalk.inbound.attachments.complete" => {
+            | "channels.dingtalk.inbound.attachments.complete"
+            | "channels.lark.inbound.attachments.complete" => {
                 let params: UserCommandParams<
                     rovai_core::channel::inbound_attachments::CompleteAttachmentsCommand,
                 > = serde_json::from_value(request.params.clone())?;
@@ -7656,11 +7660,7 @@ impl Core {
                     &mut database,
                     &system_command_envelope(
                         params.command_id,
-                        if request.method == "channels.dingtalk.inbound.attachments.complete" {
-                            "dingtalk-channel-host"
-                        } else {
-                            "feishu-channel-host"
-                        },
+                        channel_request_host_component(&request.method)?,
                         None,
                         params.command,
                     ),
@@ -24483,8 +24483,24 @@ mod tests {
 
     #[test]
     fn lark_actor_routes_are_closed_and_payload_cannot_supply_authority() {
+        for (method, host_component) in [
+            (
+                "channels.inbound.attachments.complete",
+                "feishu-channel-host",
+            ),
+            (
+                "channels.dingtalk.inbound.attachments.complete",
+                "dingtalk-channel-host",
+            ),
+        ] {
+            assert_eq!(
+                channel_request_host_component(method).unwrap(),
+                host_component
+            );
+        }
         for suffix in [
             "inbound.observe",
+            "inbound.attachments.complete",
             "inbound.finalize",
             "roster.reconcile",
             "deliveries.settle",

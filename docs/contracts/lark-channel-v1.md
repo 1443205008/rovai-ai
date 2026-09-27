@@ -60,12 +60,13 @@ Lark 专属请求 12 个，与飞书同名请求一一对应，命令语义相�
 | `channels.lark.dm.startNew` | `channels.feishu.dm.startNew` |
 | `channels.lark.snapshot` | `channels.feishu.snapshot` |
 
-Actor 绑定请求 8 个。它们的飞书形式虽然没有 `feishu` 前缀，但 Core 以飞书 Host 身份执行，因此 Lark 需要独立
+Actor 绑定请求 9 个。它们的飞书形式虽然没有 `feishu` 前缀，但 Core 以飞书 Host 身份执行，因此 Lark 需要独立
 请求名；参数、结果、幂等和错误与不带前缀的形式相同：
 
 | 请求 | 共享形式 |
 | --- | --- |
 | `channels.lark.inbound.observe` | `channels.inbound.observe` |
+| `channels.lark.inbound.attachments.complete` | `channels.inbound.attachments.complete` |
 | `channels.lark.inbound.finalize` | `channels.inbound.finalize` |
 | `channels.lark.roster.reconcile` | `channels.roster.reconcile` |
 | `channels.lark.deliveries.settle` | `channels.deliveries.settle` |
@@ -152,8 +153,14 @@ Lark Camp 的来源前缀为 `【Lark私聊】`、`【Lark群聊】`、`【Lark�
 本渠道 Bot 已发布且仍在群内。Host tick 只返回自身 provider 的刷新请求；另一 provider 的同名租户、群、App
 或队员事实不能放行本次派发。Bot 不在群内时，Lark 的派发失败码为 `recipient_not_in_lark_roster`。
 
-主线新增的持久入站资源下载仍仅供国内飞书和钉钉使用；Lark 保留原有附件摘要输入，不能进入飞书的下载等待队列。
-此边界不改变 Lark 既有的显式文件外发。
+### 入站附件
+
+Lark 入站消息与飞书使用同一资源提取、持久等待队列和消息准入链路。Lark Host 用 `Domain.Lark` 的 SDK
+客户端读取消息资源，并以 `channels.lark.inbound.attachments.complete` 结算；Core 只从该请求名确定
+`lark-channel-host`，再校验待下载 Request 的 provider、App、绑定、Camp 和尝试代数。下载所得 Source Ref
+保存在 Camp 默认输出目录的 `lark/` 子目录；就绪前不得只把文字交给 Agent。文件夹和贴纸通过可见失败提示
+终止本条消息。可下载类型及限制继承 [Channel Message Bridge v1](channel-message-bridge-v1.md#inbound-attachments)。
+此变更不改变 Lark 既有的显式文件外发；真实 Lark 租户的入站权限与客户端行为仍按第 8 节验收。
 
 ## 7. 模型上下文
 
@@ -182,7 +189,8 @@ Bot 只能通过 Lark 渠道新建。
 ## 10. 验证
 
 - Core：结构等价测试；Lark 与飞书各自单 connected 账号且互不影响；错误 provider 请求被拒绝且无部分写入；
-  8 个 actor 绑定请求使用 `lark-channel-host`；目录视图返回 Lark Bot；话题 roster 刷新、发布状态和成员存在性按 provider 隔离；三张中立表接受 `lark` 并保留旧行；
+  9 个 actor 绑定请求使用 `lark-channel-host`；目录视图返回 Lark Bot；话题 roster 刷新、发布状态和成员存在性按 provider 隔离；三张中立表接受 `lark` 并保留旧行；
+  Lark 附件请求只由 Lark Host 完成，文件以 Source Ref 进入 Agent 输入，错误 Host 不产生部分写入；
   Lark 绑定 Camp 的 Charter 不含飞书文件交付提示。
 - Main：两个渠道服务实例并存；Lark 实例注入 Lark 登录配置、`Domain.Lark` 与 `channels.lark.*` 方法名；
   所有 SDK 构造点的 domain 断言；可信域拒绝对方站点；一个实例启动失败不影响另一个。

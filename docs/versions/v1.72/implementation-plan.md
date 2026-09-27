@@ -291,6 +291,26 @@ v1.71 / schema 125；ContextManifest/Formatter 沿用主线 31。降级 fixture 
 
 真实租户验收状态保持不变。
 
+## 2026-09-27 Lark 入站附件补充
+
+基线为主线 `0f7b101a`。先前“Lark 不进入下载队列”是当时尚无 Lark 完成请求时的范围记录；本次按
+[V1.72-D03](decisions.md#v1-72-d03)补上第 21 个 `channels.lark.*` 请求，并让 Lark Host 复用资源提取、
+持久队列、消息准入与 Source Ref。请求名确定 `lark-channel-host`；飞书 Host 的完成结果不能结算 Lark Request。
+
+验收范围：飞书与 Lark 参数化的流式下载、临时文件清理和文件夹失败提示；Core Lark 资源观察、队列领取、
+错误 Host 拒绝、正确 Host 完成及 Agent 消息的 Source Ref。真实 Lark 租户的消息资源权限和客户端文件行为
+仍未完成逐项验收。
+
+| 验证 | 结果 |
+| --- | --- |
+| `pnpm exec vitest run apps/desktop/src/main/channel-settings.test.ts --maxWorkers=2` | 78 项通过；包含飞书与 Lark 的下载恢复、去重和文件夹失败路径 |
+| `pnpm exec vitest run apps/desktop/src/main/feishu-inbound-attachments.test.ts apps/desktop/src/main/channel-settings-coordinator.test.ts --maxWorkers=2` | 15 项通过 |
+| `pnpm typecheck`、`pnpm build:desktop` | 类型检查及 Web、Main、Preload、Renderer 构建通过 |
+| `cargo test -p rovai-core --features extended-tests --lib wrong_provider_hosts_are_rejected_by_every_lark_capable_handler` | 1 项通过；覆盖 Lark 附件的 provider 隔离与 Agent 输入路径 |
+| `cargo test -p rovai-core --features extended-tests --lib inbound_attachments_` | 2 项通过；飞书与钉钉原有准入、重试、失败、删除及 20＋2/FIFO 回归 |
+| `cargo test -p rovai-core --features extended-tests --lib lark_actor_routes_are_closed_and_payload_cannot_supply_authority` | 1 项通过；新完成方法由 Lark Host 执行，payload 不可自报 actor；飞书、钉钉原有完成方法仍有各自 Host 路由 |
+| `cargo fmt --all --check`、`pnpm docs:test`、`pnpm docs:check`、`DOCS_BASE_REF=0f7b101a226da2158f1de0fe95baead27e4c47ae pnpm docs:check:ci` | 格式与文档通用门禁通过 |
+
 ## 2026-09-27 侧栏与 Skills 并行切片
 
 侧栏按 [Navigation Read v1](../../contracts/navigation-read-v1.md) 实施单 Camp、单分组与摘要完整快照读取。

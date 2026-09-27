@@ -57,6 +57,11 @@ Core 只从请求名决定 actor：`channels.lark.*` 以 `lark-channel-host` 执
 已发布凭据再分发给各实例。Host 维护调度、执行台服务、Outbox 租约与重试、FIFO、项目卡和 Quick Chat 目录全部共用，
 只以 provider 区分事实。
 
+入站图片与文件也复用共享资源下载器和 Core 持久等待队列。Lark Host 只提交自身 Bot 可处理的 App ID，并使用
+`Domain.Lark` 的消息资源接口下载；完成请求的 `channels.lark.` 方法名由 Profile 生成，Core 从请求名赋予
+`lark-channel-host`，再以 Request 的 provider 和 App 校验。文件导入 Camp 的 `lark/` 子目录并作为 Source Ref
+进入原有消息准入与 Agent 输入投影；失败时整条消息停止准入并向用户发送注意力提示。
+
 ## 模型上下文
 
 Lark 不改变任何模型可见内容。飞书绑定 Camp 的文件交付提示仍只对 `provider = 'feishu'` 注入；是否扩展到 Lark

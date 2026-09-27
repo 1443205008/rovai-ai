@@ -23,7 +23,7 @@ last_updated: 2026-09-27
 
 ### 选择
 
-新增 provider `lark`，拥有 5 张与飞书表结构等价的 `lark_*` 表、独立 Host 组件、8 个领域命令类型和 20 个请求名；
+新增 provider `lark`，拥有 5 张与飞书表结构等价的 `lark_*` 表、独立 Host 组件、8 个领域命令类型和 20 个初始请求名（D03 扩至 21 个）；
 可信域、登录配置与 SDK 域按 provider 分离，飞书 provider 收窄为只接受飞书品牌。实现上不复制飞书代码：Core 领域逻辑
 以 `ChannelProviderSpec` 参数化表名与 provider 常量，Main 以 Provider Profile 创建同一渠道服务类的第二个实例。
 Core 只从请求名推导 Host actor。
@@ -68,3 +68,35 @@ Agent 消息更新；Run 终态本身不产生新回复标记。
 
 需要一次历史回填和摘要写入维护；正常读取不再付出历史聚合成本。不采用独立导航/分组变化表、删除补齐记录、
 保留期或通用增量同步，避免双份状态与恢复协议。保留现有聚焦/低频完整性兜底；不引入优先级队列或独立数据库连接。
+
+<a id="v1-72-d03"></a>
+## V1.72-D03：Lark 入站附件复用持久下载队列并保留独立 Host 完成请求
+
+- 状态：accepted
+- 日期：2026-09-27
+- 当前权威：[Lark Channel v1](../../contracts/lark-channel-v1.md#入站附件)、
+  [Channel Message Bridge v1](../../contracts/channel-message-bridge-v1.md#inbound-attachments)与
+  [Lark 渠道架构](../../architecture/lark-channel.md#共享而不复制)
+
+### 背景
+
+Lark 已有独立 Host 和 `Domain.Lark` 的 SDK 客户端，但入站观察仅保存附件摘要。飞书与钉钉后来新增的持久下载
+链路不能直接复用飞书完成请求名：该请求名会被赋予飞书 Host 身份，Core 会拒绝 Lark 的待下载 Request。
+因此只在 Host 打开资源描述会让下载长期停在队列，无法把文件交给 Agent。
+
+### 选择
+
+Lark 复用现有资源提取、下载器、等待队列、Source Ref 和失败提示；仅增加 Lark 专属完成请求名。
+Core 从该封闭请求名赋予 `lark-channel-host`，继续以 provider、App、绑定和尝试代数校验完成结果。
+Lark 文件导入 Camp 的 `lark/` 子目录，消息就绪后才可派发。
+
+### 后果
+
+- Lark 入站图片与普通文件由摘要升级为可读取的本地 Source Ref；文件夹与贴纸仍走整条消息失败提示。
+- Lark Host 与飞书 Host 的下载候选、完成权限和文件目录保持隔离。
+- 真实 Lark 租户的资源权限与客户端文件行为仍需单独验收；自动化测试不能解除该能力 gate。
+
+### 未选择方案
+
+- **复用飞书完成请求名**：请求名决定飞书 Host 身份，会破坏 provider 隔离并导致 Lark Request 无法完成。
+- **另建 Lark 下载表和调度器**：可隔离状态，但重复了已有的 provider 分区、重试和 FIFO 语义，增加两套状态漂移风险。
