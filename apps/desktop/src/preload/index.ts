@@ -161,6 +161,9 @@ const api: RovaiApi = {
     getStartupSnapshot() {
       return ipcRenderer.invoke('rovai:desktop-session-get-startup')
     },
+    getInterfaceLanguage() {
+      return ipcRenderer.invoke('rovai:desktop-session-get-interface-language')
+    },
     commitRestorableLocation(location: RestorableLocation) {
       return ipcRenderer.invoke('rovai:desktop-session-commit-location', location)
     }

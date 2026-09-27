@@ -33,7 +33,7 @@ export function useInterfaceLanguage(): InterfaceLanguage {
 }
 
 /** Apply the first persisted snapshot without letting a late read undo a user's choice. */
-export function initializeInterfaceLanguage(snapshot: GeneralPreferencesSnapshot): void {
+export function initializeInterfaceLanguage(snapshot: Pick<GeneralPreferencesSnapshot, 'interfaceLanguage'>): void {
   if (initialized || pendingRequests > 0) return
   initialized = true
   savedLanguage = snapshot.interfaceLanguage

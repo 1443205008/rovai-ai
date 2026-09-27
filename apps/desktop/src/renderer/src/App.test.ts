@@ -1,6 +1,8 @@
 import { RemoteConnectionStatus } from './RemoteConnectionStatus'
 import { VISIBLE_PRODUCT_RUNTIMES } from './runtime-products'
 import { DEFAULT_APPEARANCE } from '../../shared/appearance'
+import { DEFAULT_GENERAL_PREFERENCES } from '../../shared/general-preferences-model'
+import { changeInterfaceLanguage } from './interface-language'
 import { AgentRunFileChangesReviewSurface } from './FileChangesPreview'
 import { CampDetailEntries } from './CampDetailPopover'
 import { createElement, type ComponentProps } from 'react'
@@ -23,6 +25,7 @@ import type {
   StoredCommandResult,
   CanonicalRuntimeActivityView,
   CoreMethod,
+  GeneralPreferencesApi,
   HealthStatus,
   MessageDeliveryView,
   NotificationActionView,
@@ -5940,7 +5943,7 @@ describe('task event projections', () => {
       .toBeGreaterThan(positionedMarkup.indexOf('已执行前置检查。'))
   })
 
-  it('mounts Run details only after a terminal Run is focused while keeping non-terminal details immediate', () => {
+  it('mounts Run details only after a terminal Run is focused while keeping non-terminal details immediate', async () => {
     const run: AgentRunView = {
       id: 'run-lazy-history', campTurnId: 'turn-1', conversationId: 'conversation-lazy',
       agentId: 'agent-lazy', taskId: null, responsibilityKey: 'direct:agent-lazy',
@@ -6007,6 +6010,26 @@ describe('task event projections', () => {
     }))
     expect(networkBlockedMarkup).toContain('自动恢复已停止')
     expect(networkBlockedMarkup).not.toContain('process-spinner')
+
+    const languageApi = {
+      setInterfaceLanguage: async (language: 'zh-CN' | 'en') =>
+        ({ ...DEFAULT_GENERAL_PREFERENCES, interfaceLanguage: language })
+    } as GeneralPreferencesApi
+    await changeInterfaceLanguage(languageApi, 'en')
+    try {
+      const englishMarkup = renderToStaticMarkup(createElement(RunExecutionDisclosure, {
+        run: { ...run, status: 'waiting', waitReason: 'recovery_blocked', endedAt: null },
+        progress,
+        campId: 'camp-1'
+      }))
+      expect(englishMarkup).toContain('The Agent runtime accepted the task, but Rovai AI cannot confirm its final result after restart.')
+      expect(englishMarkup).toContain('Execution exception, cleaning up')
+      expect(englishMarkup).toContain('The original request will not be sent again automatically.')
+      expect(englishMarkup).toContain('仅在详情激活后渲染')
+      expect(englishMarkup).not.toContain('原请求不会自动重发')
+    } finally {
+      await changeInterfaceLanguage(languageApi, 'zh-CN')
+    }
   })
 
   it('does not present an ACP protocol kind as Copilot execution detail', () => {

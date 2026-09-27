@@ -191,6 +191,19 @@ import {
 } from './execution-tool-grouping'
 import { UiText, uiAttribute, useUiText } from './interface-language'
 
+function localizedAgentRunPresentation(
+  run: Parameters<typeof agentRunPresentation>[0],
+  cancelling = false
+): ReturnType<typeof agentRunPresentation> {
+  const presentation = agentRunPresentation(run, cancelling)
+  return { ...presentation, label: uiAttribute(presentation.label) }
+}
+
+function localizedAgentRunWaitDetail(waitReason: string | null): string | null {
+  const detail = agentRunWaitDetail(waitReason)
+  return detail === null ? null : uiAttribute(detail)
+}
+
 const NON_TERMINAL_RUNS = new Set(['queued', 'running', 'waiting'])
 const EXECUTION_EVIDENCE_PAGE_LIMIT = 1_000
 const EXECUTION_DRAWER_HEIGHT_STORAGE_KEY = 'rovai.execution-drawer-height.v1'
@@ -5967,14 +5980,14 @@ function runPulseProcessState(
 } {
   const run = preferredAgentProcessRun(process.runs)
   if (run && NON_TERMINAL_RUNS.has(run.status)) {
-    const presentation = agentRunPresentation(run, stopping && NON_TERMINAL_RUNS.has(run.status))
+    const presentation = localizedAgentRunPresentation(run, stopping && NON_TERMINAL_RUNS.has(run.status))
     return { run, label: presentation.label, tone: presentation.tone, shape: runPulseStateShape(run, stopping) }
   }
   if (process.waitingDeliveries.length > 0) {
     return { run: null, label:uiAttribute("排队中"), tone: 'attention', shape: 'queued' }
   }
   if (run) {
-    const presentation = agentRunPresentation(run)
+    const presentation = localizedAgentRunPresentation(run)
     return { run, label: presentation.label, tone: presentation.tone, shape: runPulseStateShape(run, false) }
   }
   return { run: null, label:uiAttribute("暂无执行"), tone: 'neutral', shape: 'recorded' }
@@ -6924,7 +6937,7 @@ function ExecutionDrawer({
     )
     const focused = run.id === resolvedFocusedRunId
     const expanded = expandedRunIds.has(run.id)
-    const state = agentRunPresentation(run, cancelling)
+    const state = localizedAgentRunPresentation(run, cancelling)
     const stateShape = runPulseStateShape(run, cancelling)
     const sourceMessage = executionTriggerMessage(run, turns, messageById)
     const inputMessageIds = executionRunInputMessageIds(run, turns)
@@ -9945,7 +9958,7 @@ function RunExecutionContent({
     runtimePhase
   )
   const phaseFeedback = thinkingAfterTool ? uiAttribute('思考中') : initialFeedback
-  const feedback = run.status === 'waiting' ? agentRunWaitDetail(run.waitReason) ?? uiAttribute('等待继续')
+  const feedback = run.status === 'waiting' ? localizedAgentRunWaitDetail(run.waitReason) ?? uiAttribute('等待继续')
     : run.failure?.code === 'runtime_network_interrupted' ? uiAttribute('正在恢复连接')
       : activeRetryDiagnostic
         ? uiAttribute("等待 Claude Code 自动重试（{0}/{1}）", String(activeRetryDiagnostic.attempt), String(activeRetryDiagnostic.maxAttempts))
@@ -10312,8 +10325,8 @@ export function RunExecutionDisclosure({
     >
       <summary hidden={liveOpen} className={mobile ? 'mobile-run-summary' : undefined}>
         {mobile && <time className="mobile-run-time">{runIntervalLabel(run)}</time>}
-        <span className="process-disclosure-label">{mobile ? agentRunPresentation(run, cancelling).label : !liveOpen && (nonTerminal
-          ? cancelling ? uiAttribute("正在停止") : run.status === 'waiting' ? agentRunWaitDetail(run.waitReason) ?? uiAttribute("等待继续")
+        <span className="process-disclosure-label">{mobile ? localizedAgentRunPresentation(run, cancelling).label : !liveOpen && (nonTerminal
+          ? cancelling ? uiAttribute("正在停止") : run.status === 'waiting' ? localizedAgentRunWaitDetail(run.waitReason) ?? uiAttribute("等待继续")
             : executionInitialFeedback(
               run.status,
               progress?.items ?? [],
@@ -10951,7 +10964,7 @@ function RelatedTaskExecution({
               key={process.agentId}
               onClick={(event) => onOpenAgent(process.agentId, event.currentTarget)}
             >
-              {memberName} · {run ? agentRunPresentation(run).label : uiAttribute("执行过程")}
+              {memberName} · {run ? localizedAgentRunPresentation(run).label : uiAttribute("执行过程")}
             </button>
           )
         })}

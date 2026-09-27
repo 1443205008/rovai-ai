@@ -5,6 +5,7 @@ import { CoreSubsystemNotice } from './CoreSubsystemNotice'
 import { CampClientProvider } from './camp-client'
 import { desktopCampClient } from './desktop-camp-client'
 import { desktopBusinessEnvironment } from './desktop-business-environment'
+import { initializeInterfaceLanguage, useInterfaceLanguage } from './interface-language'
 import { applyAppearanceSnapshot } from './theme'
 import {
   BusinessApp, BootstrapShell, StartupWorkspace, ControlledShutdownOverlay,
@@ -14,6 +15,7 @@ import {
 export * from './BusinessApp'
 
 export function App(): React.JSX.Element {
+  useInterfaceLanguage()
   const [supervisorState, setSupervisorState] = useState<{
     latest: SupervisorSnapshot | null
     lastNonShutdown: SupervisorSnapshot | null
@@ -44,6 +46,16 @@ export function App(): React.JSX.Element {
     }).catch((error) => {
       if (!disposed) setStartupError(errorMessage(error))
     })
+    return () => { disposed = true }
+  }, [startupReadAttempt])
+
+  useEffect(() => {
+    let disposed = false
+    // Main owns this local preference, so the language is available even when
+    // Core is blocked and BusinessApp never mounts.
+    void window.rovai.desktopSession.getInterfaceLanguage().then((language) => {
+      if (!disposed) initializeInterfaceLanguage({ interfaceLanguage: language })
+    }).catch(() => undefined)
     return () => { disposed = true }
   }, [startupReadAttempt])
 

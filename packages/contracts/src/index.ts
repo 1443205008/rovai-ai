@@ -3064,6 +3064,7 @@ export interface WindowResetResult {
 
 export interface DesktopSessionApi {
   getStartupSnapshot(): Promise<DesktopStartupSnapshot>
+  getInterfaceLanguage(): Promise<InterfaceLanguage>
   commitRestorableLocation(location: RestorableLocation): Promise<void>
 }
 

@@ -14,7 +14,11 @@ last_updated: 2026-09-27
 
 Selecting a language updates App-owned copy immediately and persists the choice through that API. Earlier save responses cannot replace a newer selection. If the latest save fails, the display returns to the most recently saved language and shows a local error. The language change does not reload or remount the App, change navigation, save a draft, or cancel a task or Run. The document language follows the displayed choice.
 
+Desktop Main exposes a local-only language read through `DesktopSessionApi` after the persisted preference store loads. The Renderer root restores this preference independently of Core availability, so Startup and blocked/crashed Bootstrap surfaces use the saved language even when the business workspace never mounts. The ordinary General Preferences `get` continues to merge Core-owned new-conversation choices and is not used for Bootstrap restoration.
+
 The catalog contains only App-owned navigation, controls, explanatory copy, status and error shells, and accessible names. User-written text, saved member profiles, draft content, messages, memories, Runtime output, paths, commands, model names and IDs retain their original bytes. The four built-in member candidates use language-specific initial text before creation; only the selected candidate is saved through the existing onboarding command. Once saved, its identity fields are ordinary member data and are never rewritten by a language change. The durable first-run Camp title follows the existing [First-run Onboarding v5](first-run-onboarding-v5.md) contract.
+
+Shared AgentRun presentation retains its existing Chinese copy for non-Renderer callers. Camp execution status labels and recovery/approval instructions enter the interface catalog only at the Renderer display boundary; this does not translate Agent output or Feishu cards.
 
 ## References
 

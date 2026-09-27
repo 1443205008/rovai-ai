@@ -3278,5 +3278,22 @@
   "上一个": "Previous",
   "正则表达式": "Regular expression",
   "当前匹配": "Current match",
-  "位于行": "On line"
+  "位于行": "On line",
+  "正在停止…": "Stopping...",
+  "已排队": "Queued",
+  "正在恢复": "Recovering",
+  "执行已中断": "Run interrupted",
+  "投递待确认": "Delivery unconfirmed",
+  "恢复中": "Recovering",
+  "连接中断，等待恢复": "Connection lost; waiting to recover",
+  "结果待确认": "Result unconfirmed",
+  "等待用户": "Waiting for user",
+  "等待处理": "Waiting",
+  "Agent 运行时是否接收输入尚不可确认；为避免重复执行，Rovai AI 不会盲目重发。": "It is not yet clear whether the Agent runtime received the input. To avoid duplicate execution, Rovai AI will not resend it automatically.",
+  "正在从已保存的执行、运行会话与输入回执恢复。": "Restoring from the saved run, runtime session, and input receipts.",
+  "连接中断，等待恢复。确认输入未被接收后，Rovai AI 会自动重试。": "Connection lost; waiting to recover. Rovai AI will retry automatically once it confirms the input was not received.",
+  "自动恢复的安全条件已经变化，需要处理。请检查执行记录；确认后可停止本次运行并发送后续任务。": "The conditions for safe automatic recovery have changed. Check the run record; then you can stop this run and send a follow-up task.",
+  "Agent 运行时已接受任务，但 Rovai AI 重启后无法确认原任务的最终结果。原请求不会自动重发。": "The Agent runtime accepted the task, but Rovai AI cannot confirm its final result after restart. The original request will not be sent again automatically.",
+  "受限动作正在等待用户处理。": "A restricted action is waiting for your approval.",
+  "Agent 已暂停，等待用户补充信息。": "The Agent is paused, waiting for more information from you."
 }

@@ -1321,6 +1321,12 @@ ipcMain.handle('rovai:desktop-session-get-startup', async (event) => {
   return structuredClone(snapshot)
 })
 
+ipcMain.handle('rovai:desktop-session-get-interface-language', async (event) => {
+  requireMainWindow(event.sender)
+  await localStoresLoaded
+  return requireGeneralPreferences().get().interfaceLanguage
+})
+
 ipcMain.handle('rovai:desktop-session-commit-location', async (_event, location: unknown) => {
   const validated = parseRestorableLocation(location)
   if (!validated) throw new Error('Unsupported restorable location')

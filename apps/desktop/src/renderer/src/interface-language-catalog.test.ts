@@ -5,6 +5,8 @@ import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import english from './locales/en.json'
 import { CAMP_WORLD_MAP_AMBIENT_BEATS } from './camp-world-map-ambient-copy'
+import { agentRunPresentation, agentRunWaitDetail } from '../../shared/execution-presentation'
+import { translateUi } from './interface-language'
 
 const rendererDirectory = fileURLToPath(new URL('.', import.meta.url))
 const han = /[\u3400-\u9fff]/u
@@ -47,5 +49,35 @@ describe('English interface catalog', () => {
     }).map(([source]) => source)
     expect(missing).toEqual([])
     expect(malformed).toEqual([])
+  })
+
+  it('covers shared Run states and wait explanations shown by the Camp Renderer', () => {
+    const run = (status: Parameters<typeof agentRunPresentation>[0]['status'], waitReason: string | null = null) =>
+      ({ status, waitReason })
+    const cases: Array<Parameters<typeof agentRunPresentation>[0]> = [
+      run('queued'), run('running'), run('succeeded'), run('failed'), run('cancelled'),
+      { ...run('failed'), terminalReasonCode: 'runtime_interrupted' },
+      { ...run('cancelled'), terminalReasonCode: 'planned_shutdown_cancelled' },
+      {
+        ...run('running'),
+        failure: {
+          runtimeKind: 'codex-cli', origin: 'runtime', phase: 'execution',
+          code: 'runtime_network_interrupted', summary: 'Connection lost',
+          detail: null, retryable: true
+        }
+      },
+      ...[
+        'delivery_unknown', 'runtime_recovery', 'network_recovery',
+        'network_recovery_blocked', 'recovery_blocked', 'approval', 'user_input',
+        'unknown_reason'
+      ].map((reason) => run('waiting', reason))
+    ]
+    const phrases = [
+      ...cases.map((entry) => agentRunPresentation(entry).label),
+      agentRunPresentation(run('running'), true).label,
+      ...cases.flatMap((entry) => agentRunWaitDetail(entry.waitReason) ?? [])
+    ]
+    expect(phrases.filter((phrase) => !Object.hasOwn(english, phrase))).toEqual([])
+    expect(phrases.filter((phrase) => han.test(translateUi('en', phrase)))).toEqual([])
   })
 })
