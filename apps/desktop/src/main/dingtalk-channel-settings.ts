@@ -498,7 +498,7 @@ export class DingTalkChannelSettingsService {
     if (this.#activeProvisioning && !['completed', 'failed', 'unknown_remote_state'].includes(
       this.#activeProvisioning.stage
     )) throw new Error('队员发布期间不能切换钉钉账号。')
-    this.#sessionCheckGeneration += 1
+    const sessionCheckGeneration = ++this.#sessionCheckGeneration
     this.#sessionStatus = 'unknown'
     const abort = new AbortController()
     const attemptId = randomUUID()
@@ -576,6 +576,7 @@ export class DingTalkChannelSettingsService {
         this.#dependencies.developerSession,
         sessionRevisionFrom(result)
       )
+      if (sessionCheckGeneration === this.#sessionCheckGeneration) this.#sessionStatus = 'valid'
       this.#sessionNeedsReconnect = false
       if (this.#activeQrAttempt?.attemptId === attemptId) {
         this.#activeQrAttempt = {

@@ -188,6 +188,9 @@ function ManagedChannelSettings({ agents, channels }: { agents: AgentProfile[]; 
     catch (nextError) { setError(channelActionError(kind, nextError)) }
   }, [channels])
 
+  const visibleKind = snapshot?.channels.some(provider => provider.kind === selectedKind)
+    ? selectedKind
+    : snapshot?.channels[0]?.kind ?? selectedKind
   const publishChannel = snapshot?.channels.find((candidate) => candidate.kind === publishKind) ?? null
   const provisioning = channelProvisioning(snapshot, publishKind)
 
@@ -199,8 +202,8 @@ function ManagedChannelSettings({ agents, channels }: { agents: AgentProfile[]; 
         snapshot={snapshot}
         loading={loading}
         busy={busy}
-        error={channelActionErrorFor(error, selectedKind) ?? readError}
-        selectedKind={selectedKind}
+        error={channelActionErrorFor(error, visibleKind) ?? readError}
+        selectedKind={visibleKind}
         onSelectChannel={setSelectedKind}
         onRetry={() => void load()}
         onConnect={channels.native ? (provider) => void run(
@@ -237,10 +240,10 @@ function ManagedChannelSettings({ agents, channels }: { agents: AgentProfile[]; 
 
       {channels.native && <QrDialog
         snapshot={snapshot}
-        kind={selectedKind}
+        kind={visibleKind}
         busy={busy !== null}
-        onClose={(attemptId) => void cancelQrAttempt(attemptId, selectedKind)}
-        onRefresh={(attemptId) => void refreshLoginQr(attemptId, selectedKind)}
+        onClose={(attemptId) => void cancelQrAttempt(attemptId, visibleKind)}
+        onRefresh={(attemptId) => void refreshLoginQr(attemptId, visibleKind)}
       />}
 
       <PublishBotDialog

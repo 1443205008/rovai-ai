@@ -298,9 +298,11 @@ describe('DingTalk channel account connection', () => {
     committed.resolve({ status: 'applied', code: 'channels.dingtalk.account.commitConnection.applied', payload: { sessionRevision: 2 } })
     await vi.waitFor(() => expect(activate).toHaveBeenCalledExactlyOnceWith(2))
     expect((await fixture.service.get()).activeQrAttempt?.stage).toBe('saving_local_session')
+    expect((await fixture.service.get()).provider.connection.sessionStatus).toBe('unknown')
     activated.resolve()
     await connecting
     expect((await fixture.service.get()).activeQrAttempt).toBeNull()
+    expect((await fixture.service.get()).provider.connection.sessionStatus).toBe('valid')
     expect(fixture.developerSession.discardPendingLogin).not.toHaveBeenCalled()
   })
 
