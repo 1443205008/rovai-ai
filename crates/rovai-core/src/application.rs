@@ -322,6 +322,8 @@ const DELIVERY_BATCH_SCHEDULER_PAGE_LIMIT: i64 = 16;
 const DELIVERY_BATCH_FALLBACK_INTERVAL: Duration = Duration::from_secs(30);
 const NON_BATCH_AGENT_RUN_DISPATCH_LIMIT: i64 = 16;
 const ORDERED_REQUEST_QUEUE_CAPACITY: usize = 128;
+const CAMP_READ_QUEUE_CAPACITY: usize = 16;
+const CAMP_READ_WORKERS: usize = 2;
 const MISSION_GIT_READ_CONCURRENCY_LIMIT: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -836,6 +838,10 @@ fn request_runs_outside_main_queue(method: &str) -> bool {
     )
 }
 
+fn request_uses_camp_read_queue(method: &str) -> bool {
+    matches!(method, "camps.open" | "camps.enter")
+}
+
 fn is_execution_window_request(method: &str) -> bool {
     matches!(
         method,
@@ -899,6 +905,20 @@ fn log_mission_git_read_request_stage(
 fn log_read_request_stage(request: &Request, stage: &str, elapsed: Option<std::time::Duration>) {
     log_execution_window_request_stage(request, stage, elapsed);
     log_mission_git_read_request_stage(request, stage, elapsed);
+    if matches!(request.method.as_str(), "camps.enter" | "camps.open")
+        && matches!(stage, "handling_start" | "read_dispatch_start")
+    {
+        eprintln!(
+            "[camp-open] trace={} method={} stage={stage} queue_ms={}",
+            request
+                .params
+                .get("traceId")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            request.method,
+            elapsed.map(|duration| duration.as_millis()).unwrap_or(0),
+        );
+    }
 }
 
 async fn response_for_request(
@@ -1012,6 +1032,60 @@ async fn process_ordered_requests(
         enqueue_response(&output, &response)?;
     }
     Ok(())
+}
+
+async fn process_camp_read_requests(
+    core: Arc<Core>,
+    requests: Arc<Mutex<mpsc::Receiver<ReceivedRequest>>>,
+    ordered_requests: mpsc::Sender<ReceivedRequest>,
+    output: mpsc::UnboundedSender<String>,
+) -> Result<()> {
+    loop {
+        let Some(received) = requests.lock().await.recv().await else {
+            return Ok(());
+        };
+        if received.request.method == "camps.open" {
+            let response =
+                response_for_request(&core, &received.request, received.received_at).await;
+            enqueue_response(&output, &response)?;
+            continue;
+        }
+
+        let queue_wait = received.received_at.elapsed();
+        log_read_request_stage(&received.request, "read_dispatch_start", Some(queue_wait));
+        match core
+            .try_handle_camp_enter_read_only(&received.request)
+            .await
+        {
+            Ok(Some(result)) => {
+                enqueue_response(
+                    &output,
+                    &Response {
+                        id: received.request.id,
+                        result: Some(result),
+                        error: None,
+                    },
+                )?;
+            }
+            Ok(None) => {
+                // A receipt, invalid Lead, or uncertain classification belongs to the
+                // original command path. It repeats the check after joining the FIFO.
+                ordered_requests.send(received).await.map_err(|_| {
+                    anyhow::anyhow!("ordered Core request worker stopped unexpectedly")
+                })?;
+            }
+            Err(error) => {
+                enqueue_response(
+                    &output,
+                    &Response {
+                        id: received.request.id,
+                        result: None,
+                        error: Some(request_error_body(&error)),
+                    },
+                )?;
+            }
+        }
+    }
 }
 
 fn request_invalidates_navigation(method: &str) -> bool {
@@ -1318,7 +1392,7 @@ fn normalized_camp_open_trace_id(trace_id: &str) -> Result<String> {
 }
 
 struct CampOpenLogMetrics {
-    lock_ms: u128,
+    db_lock_ms: u128,
     database_ms: u128,
     reconcile_ms: u128,
     projection_ms: u128,
@@ -1333,7 +1407,7 @@ fn log_camp_open_projection(
     projection: &CampOpenProjection,
 ) {
     let CampOpenLogMetrics {
-        lock_ms,
+        db_lock_ms,
         database_ms,
         reconcile_ms,
         projection_ms,
@@ -1341,7 +1415,7 @@ fn log_camp_open_projection(
         payload_bytes,
     } = metrics;
     eprintln!(
-        "[camp-open] trace={trace_id} method={method} lock_ms={lock_ms} database_ms={database_ms} \
+        "[camp-open] trace={trace_id} method={method} db_lock_ms={db_lock_ms} database_ms={database_ms} \
          reconcile_ms={reconcile_ms} projection_ms={projection_ms} \
          serialization_ms={serialization_ms} payload_bytes={payload_bytes} \
          schema={} high_water={} messages={} runs={} evidence={}",
@@ -6583,6 +6657,45 @@ impl Core {
         }
     }
 
+    async fn try_handle_camp_enter_read_only(&self, request: &Request) -> Result<Option<Value>> {
+        let params: CampEnterParams = serde_json::from_value(request.params.clone())?;
+        let trace_id = normalized_camp_open_trace_id(&params.trace_id)?;
+        let camp_id = params.command.camp_id.clone();
+        let lock_started_at = Instant::now();
+        let mut database = self.database.lock().await;
+        let db_lock_ms = lock_started_at.elapsed().as_millis();
+        let database_started_at = Instant::now();
+        let outcome = CampOpenService.try_enter_read_only(
+            &mut database,
+            &user_camp_command_envelope(params.command_id, camp_id, params.command),
+        )?;
+        let database_ms = database_started_at.elapsed().as_millis();
+        drop(database);
+        let Some(outcome) = outcome else {
+            return Ok(None);
+        };
+        let projection = outcome.projection;
+        let projection_ms = outcome.projection_duration.as_millis();
+        let serialization_started_at = Instant::now();
+        let value = serde_json::to_value(&projection)?;
+        let payload_bytes = serde_json::to_vec(&value)?.len();
+        let serialization_ms = serialization_started_at.elapsed().as_millis();
+        log_camp_open_projection(
+            &trace_id,
+            "camps.enter",
+            &CampOpenLogMetrics {
+                db_lock_ms,
+                database_ms,
+                reconcile_ms: 0,
+                projection_ms,
+                serialization_ms,
+                payload_bytes,
+            },
+            &projection,
+        );
+        Ok(Some(value))
+    }
+
     async fn handle(self: &Arc<Self>, request: &Request) -> Result<Value> {
         validate_lark_request_actor(&request.method, &request.params)?;
         if request.method.starts_with("skills.") {
@@ -9398,7 +9511,7 @@ impl Core {
                 let camp_id = params.command.camp_id.clone();
                 let lock_started_at = std::time::Instant::now();
                 let mut database = self.database.lock().await;
-                let lock_ms = lock_started_at.elapsed().as_millis();
+                let db_lock_ms = lock_started_at.elapsed().as_millis();
                 let database_started_at = std::time::Instant::now();
                 let outcome = CampOpenService.enter(
                     &mut database,
@@ -9427,7 +9540,7 @@ impl Core {
                     &trace_id,
                     "camps.enter",
                     &CampOpenLogMetrics {
-                        lock_ms,
+                        db_lock_ms,
                         database_ms,
                         reconcile_ms,
                         projection_ms,
@@ -9443,7 +9556,7 @@ impl Core {
                 let trace_id = normalized_camp_open_trace_id(&params.trace_id)?;
                 let lock_started_at = std::time::Instant::now();
                 let mut database = self.database.lock().await;
-                let lock_ms = lock_started_at.elapsed().as_millis();
+                let db_lock_ms = lock_started_at.elapsed().as_millis();
                 let database_started_at = std::time::Instant::now();
                 let outcome = CampOpenService.open(&mut database, params.camp_id.as_str())?;
                 let projection = outcome.projection;
@@ -9458,7 +9571,7 @@ impl Core {
                     &trace_id,
                     "camps.open",
                     &CampOpenLogMetrics {
-                        lock_ms,
+                        db_lock_ms,
                         database_ms,
                         reconcile_ms: 0,
                         projection_ms,
@@ -17351,6 +17464,17 @@ async fn run_core(
         output_tx.clone(),
         host_control.clone(),
     ));
+    let (camp_read_tx, camp_read_rx) = mpsc::channel(CAMP_READ_QUEUE_CAPACITY);
+    let camp_read_rx = Arc::new(Mutex::new(camp_read_rx));
+    let mut camp_read_workers = Vec::with_capacity(CAMP_READ_WORKERS);
+    for _ in 0..CAMP_READ_WORKERS {
+        camp_read_workers.push(tokio::spawn(process_camp_read_requests(
+            core.clone(),
+            camp_read_rx.clone(),
+            ordered_request_tx.clone(),
+            output_tx.clone(),
+        )));
+    }
     let mut planned_shutdown_request = None;
 
     while let Some(request) = input.next_request().await? {
@@ -17388,6 +17512,17 @@ async fn run_core(
             }
         }
 
+        if request_uses_camp_read_queue(&request.method) {
+            camp_read_tx
+                .send(ReceivedRequest {
+                    request,
+                    received_at,
+                })
+                .await
+                .map_err(|_| anyhow::anyhow!("Camp read request workers stopped unexpectedly"))?;
+            continue;
+        }
+
         if request_runs_outside_main_queue(&request.method) {
             let request_core = core.clone();
             let request_output = output_tx.clone();
@@ -17409,6 +17544,10 @@ async fn run_core(
             .map_err(|_| anyhow::anyhow!("ordered Core request worker stopped unexpectedly"))?;
     }
 
+    drop(camp_read_tx);
+    for worker in camp_read_workers {
+        worker.await.context("Camp read request worker failed")??;
+    }
     drop(ordered_request_tx);
     ordered_request_worker
         .await
@@ -27576,6 +27715,9 @@ done
         assert!(!request_runs_outside_main_queue("camps.snapshot"));
         assert!(!request_runs_outside_main_queue("camps.enter"));
         assert!(!request_runs_outside_main_queue("camps.open"));
+        assert!(request_uses_camp_read_queue("camps.enter"));
+        assert!(request_uses_camp_read_queue("camps.open"));
+        assert!(!request_uses_camp_read_queue("camps.reconcileDefaultLead"));
         assert!(!request_runs_outside_main_queue("camp.messages.page"));
         assert!(request_runs_outside_main_queue("agentRunExecution.page"));
         assert!(request_runs_outside_main_queue("agentRunExecution.changes"));
@@ -27633,12 +27775,58 @@ done
         let data_dir = root.join("data");
         let workspace_dir = root.join("workspace");
         fs::create_dir_all(&workspace_dir).unwrap();
+        fs::create_dir_all(&data_dir).unwrap();
         let runtime_camp_files_root =
             rovai_core::storage_layout::server_runtime_root(&data_dir).unwrap();
+        let (camp_ids, repair_camp_id) = {
+            let attachment_views =
+                CampAttachmentViewStore::admit(&runtime_camp_files_root, &data_dir, &[]).unwrap();
+            let mut database = Database::open_with_runtime_camp_files_root(
+                &data_dir,
+                attachment_views.root(),
+                attachment_views.root_identity_digest(),
+            )
+            .unwrap();
+            let mut create = |index: usize, members: &[&str], lead: &str| {
+                let mut command = CreateCampCommand::for_test_with_members(
+                    workspace_dir.to_string_lossy().into_owned(),
+                    members,
+                    lead,
+                );
+                command.project_binding_kind = ProjectBindingKind::Directory;
+                let created = CollaborationService::default()
+                    .create_camp(
+                        &mut database,
+                        &user_command_envelope(format!("dispatch-create-{index}"), command),
+                    )
+                    .unwrap();
+                let camp_id = created.result.payload["campId"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                CampOutputDirectory::prepare(&database, &camp_id).unwrap();
+                attachment_views
+                    .ensure_empty_camp_ready(&mut database, &camp_id)
+                    .unwrap();
+                camp_id
+            };
+            let camp_ids = (0..3)
+                .map(|index| create(index, &["agent_1", "agent_2"], "agent_1"))
+                .collect::<Vec<_>>();
+            let repair_camp_id = create(3, &["agent_3", "agent_4"], "agent_3");
+            database
+                .connection()
+                .execute(
+                    "UPDATE agent_profile SET profile_status='away' WHERE id='agent_3'",
+                    [],
+                )
+                .unwrap();
+            (camp_ids, repair_camp_id)
+        };
         let (service, runner) = embedded(
             CoreConfig {
                 runtime_camp_files_root: runtime_camp_files_root.clone(),
-                data_dir,
+                data_dir: data_dir.clone(),
                 skill_library_root: root.join("skills"),
                 mcp_config_path: Some(root.join("mcp.json")),
                 require_existing_authority: false,
@@ -27687,6 +27875,54 @@ done
                 )
                 .await
         });
+        let read_started_at = Instant::now();
+        let mut camp_requests = camp_ids
+            .iter()
+            .enumerate()
+            .map(|(index, camp_id)| {
+                let service = service.clone();
+                let camp_id = camp_id.clone();
+                tokio::spawn(async move {
+                    service
+                        .request(
+                            "camps.enter",
+                            json!({
+                                "traceId": uuid::Uuid::new_v4().to_string(),
+                                "commandId": format!("dispatch-enter-{index}"),
+                                "command": { "campId": camp_id }
+                            }),
+                        )
+                        .await
+                })
+            })
+            .collect::<Vec<_>>();
+        let open_service = service.clone();
+        let open_camp_id = camp_ids[2].clone();
+        let mut open_request = tokio::spawn(async move {
+            open_service
+                .request(
+                    "camps.open",
+                    json!({
+                        "traceId": uuid::Uuid::new_v4().to_string(),
+                        "campId": open_camp_id
+                    }),
+                )
+                .await
+        });
+        let repair_service = service.clone();
+        let repair_target = repair_camp_id.clone();
+        let mut repair_request = tokio::spawn(async move {
+            repair_service
+                .request(
+                    "camps.enter",
+                    json!({
+                        "traceId": uuid::Uuid::new_v4().to_string(),
+                        "commandId": "dispatch-repair-enter",
+                        "command": { "campId": repair_target }
+                    }),
+                )
+                .await
+        });
         let barrier_release_at = tokio::time::Instant::now() + Duration::from_secs(3);
         let page_before_release =
             tokio::time::timeout_at(barrier_release_at, &mut page_request).await;
@@ -27694,6 +27930,32 @@ done
         let inspection_before_release =
             tokio::time::timeout_at(barrier_release_at, &mut inspection_request).await;
         let inspection_finished_while_blocked = inspection_before_release.is_ok();
+        let mut camp_before_release = Vec::new();
+        let mut last_camp_completion_ms = None;
+        for request in &mut camp_requests {
+            let completion = tokio::time::timeout_at(barrier_release_at, request).await;
+            if completion.is_ok() {
+                last_camp_completion_ms = Some(read_started_at.elapsed().as_millis());
+            }
+            camp_before_release.push(completion);
+        }
+        let open_before_release =
+            tokio::time::timeout_at(barrier_release_at, &mut open_request).await;
+        let repair_before_release =
+            tokio::time::timeout_at(barrier_release_at, &mut repair_request).await;
+        let repair_waited_for_ordered_queue = repair_before_release.is_err();
+        let camp_before_release_count = camp_before_release
+            .iter()
+            .filter(|result| result.is_ok())
+            .count();
+        let open_finished_while_blocked = open_before_release.is_ok();
+        eprintln!(
+            "[camp-open-dispatch-fixture] rapid_clicks=3 completed_before_release={} latest_response_ms={}",
+            camp_before_release_count,
+            last_camp_completion_ms
+                .map(|ms| ms.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+        );
 
         tokio::time::sleep_until(barrier_release_at).await;
         barrier.release.notify_waiters();
@@ -27706,6 +27968,48 @@ done
             Ok(completed) => completed.unwrap().unwrap(),
             Err(_) => inspection_request.await.unwrap().unwrap(),
         };
+        let mut camp_replies = Vec::new();
+        for (before_release, request) in camp_before_release.into_iter().zip(camp_requests) {
+            camp_replies.push(match before_release {
+                Ok(completed) => completed.unwrap().unwrap(),
+                Err(_) => request.await.unwrap().unwrap(),
+            });
+        }
+        let open_reply = match open_before_release {
+            Ok(completed) => completed.unwrap().unwrap(),
+            Err(_) => open_request.await.unwrap().unwrap(),
+        };
+        let repair_reply = match repair_before_release {
+            Ok(completed) => completed.unwrap().unwrap(),
+            Err(_) => repair_request.await.unwrap().unwrap(),
+        };
+        let first_camp_version = camp_replies[0].result.as_ref().unwrap()["camp"]["version"]
+            .as_i64()
+            .unwrap();
+        let renamed = service
+            .request(
+                "camps.rename",
+                json!({
+                    "commandId": "dispatch-rename-after-enter",
+                    "command": {
+                        "campId": camp_ids[0],
+                        "title": "Renamed after enter",
+                        "expectedVersion": first_camp_version
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+        let opened_after_write = service
+            .request(
+                "camps.open",
+                json!({
+                    "traceId": uuid::Uuid::new_v4().to_string(),
+                    "campId": camp_ids[0]
+                }),
+            )
+            .await
+            .unwrap();
         drop(service);
         if tokio::time::timeout(Duration::from_secs(10), &mut runner_task)
             .await
@@ -27715,9 +28019,24 @@ done
             let _ = runner_task.await;
         }
         drop(installed_barrier);
+        for camp_id in camp_ids.iter().chain(std::iter::once(&repair_camp_id)) {
+            CampAttachmentStore::new(&data_dir)
+                .remove_camp(camp_id)
+                .unwrap();
+        }
         #[cfg(unix)]
         if runtime_camp_files_root.join("camps").exists() {
             use std::os::unix::fs::PermissionsExt;
+            for camp_id in camp_ids.iter().chain(std::iter::once(&repair_camp_id)) {
+                let camp_root = runtime_camp_files_root.join("camps").join(camp_id);
+                let attachments = camp_root.join("attachments");
+                if attachments.exists() {
+                    fs::set_permissions(&attachments, fs::Permissions::from_mode(0o700)).unwrap();
+                }
+                if camp_root.exists() {
+                    fs::set_permissions(&camp_root, fs::Permissions::from_mode(0o700)).unwrap();
+                }
+            }
             fs::set_permissions(
                 runtime_camp_files_root.join("camps"),
                 fs::Permissions::from_mode(0o700),
@@ -27748,6 +28067,46 @@ done
             inspection_reply.error.is_none(),
             "the independent workspace inspection should succeed: {:?}",
             inspection_reply.error
+        );
+        assert!(
+            camp_replies.iter().all(|reply| reply.error.is_none()),
+            "Camp enter failed"
+        );
+        assert!(
+            open_reply.error.is_none(),
+            "Camp open failed: {:?}",
+            open_reply.error
+        );
+        assert!(camp_replies.iter().all(|reply| reply.result.is_some()));
+        assert!(
+            camp_before_release_count == 3,
+            "pure Camp enter waited for unrelated FIFO work"
+        );
+        assert!(
+            open_finished_while_blocked,
+            "Camp open waited for unrelated FIFO work"
+        );
+        assert!(
+            repair_waited_for_ordered_queue,
+            "Lead repair bypassed the ordered command path"
+        );
+        assert!(
+            repair_reply.error.is_none(),
+            "Lead repair failed: {:?}",
+            repair_reply.error
+        );
+        assert_eq!(
+            repair_reply.result.unwrap()["camp"]["defaultLeadAgentId"],
+            "agent_4"
+        );
+        assert!(
+            renamed.error.is_none(),
+            "rename failed: {:?}",
+            renamed.error
+        );
+        assert_eq!(
+            opened_after_write.result.unwrap()["camp"]["title"],
+            "Renamed after enter"
         );
     }
 

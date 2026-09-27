@@ -3,7 +3,7 @@ document_type: architecture
 architecture: camp-open-read-path
 authority: desktop-camp-enter-and-progressive-read-boundaries
 status: accepted
-last_updated: 2026-09-27
+last_updated: 2026-09-28
 ---
 
 # Camp Open Read Path 架构
@@ -21,8 +21,8 @@ last_updated: 2026-09-27
 | Renderer startup controller | 快照返回后立即显示候选目标的一级页面框架；候选 Camp 与 committed Camp 分离，只有 enter 成功才提交权威 Camp 内容 |
 | Renderer enter controller | 生成 trace/command ID、selection generation 与 high-water fence；应用内缓存未命中时保留当前 surface，投影到达后原子 commit 目标 Camp/项目并完成 meaningful paint，再确认可见来源并仅更新目标导航行 |
 | Electron Main bridge | allowlist typed method、记录不含内容的 IPC roundtrip/response bytes；不组装或缓存领域投影 |
-| Core request ingress | 持续接收请求；有顺序要求的命令与混合操作交给单一 FIFO worker，执行窗口 page/changes 复用既有独立派发任务，不建立优先级调度器或第二套 RPC |
-| Core Camp enter module | 在一次有序 request 中先读 activation state；Pending 直接读取投影，Active 先按原 Envelope 查 receipt 并校验 Lead，有效新 User enter 只读，需要修复时 reconcile 后再读；缺失或 rejected 时 fail closed；不执行取消或文本维护 |
+| Core request ingress | 持续接收请求；`camps.open` 与可能纯读的 `camps.enter` 进入有界双 worker 读取队列，有顺序要求的命令与需修复的 enter 交给原 FIFO worker；执行窗口 page/changes 继续复用既有独立派发任务，不建立优先级调度器或第二套 RPC |
+| Core Camp enter module | 在共享 Database mutex 内判断 activation state、原 Envelope receipt 和 Lead；Pending 与有效新 User enter 直接读取投影，旧回执、冲突、非 User 或需修复状态回到原命令路径并重新判断，必要时 reconcile 后再读；缺失或 rejected 时 fail closed；不执行取消或文本维护 |
 | Core Camp open read model | 在单一 SQLite transaction 中组装业务首屏投影、空 Execution Evidence、有界业务 coverage 与 high-water；保留已返回 Run 的定向原始 Evidence 计数和独立 change watermark，不计算 Camp-wide Evidence 总数；不读取 event_log 或 Context Manifest/Action history，不执行业务 SQL 或 Blob/文件写入 |
 | Camp message history read | 以 stable sequence cursor 读取 earlier page；不回放 event 构造第二真源 |
 | Camp conversation find read | 扫描当前 Camp 公开 user/agent 正文投影，返回 exact total 与一个选中命中；不改变 Agent-facing discovery search，也不返回完整结果集 |
@@ -59,6 +59,11 @@ Run 标题由 ReadModel 按所返回 Run 的首条输入或历史触发关系定
 此边界只约束投影读取，不撤销已执行 Active reconciliation 的 command receipt，也不修改完整
 `camp_snapshot()`、显式 History/Find、Navigation 或 `events.subscribe` 的审计与 invalidation 语义。
 Migration 168 只增加新水位字段并保留历史默认值；无需清理旧数据、回填历史 Evidence 或给旧 event 查询补索引。
+
+普通 enter 和后台 open 不再等待无关的有序请求完成。两个读取 worker 共用一条有界队列；enter 的纯读判定和投影
+在同一次 Database mutex 持有期间完成，无法确认纯读时把原请求送回 FIFO，由既有命令处理重新校验回执和
+Lead。明确依赖某次写入的读取仍在该写入回执后发起。当前没有新增只读 SQLite 连接池；分流只消除不占数据库
+锁的 FIFO 等待，若实测数据库锁成为主瓶颈再单独评估。
 
 取消、成功与失败的普通终态继续由 Domain Command Gateway 在业务事务提交后收尾文本；受控关闭和
 planned-shutdown 的直提交流程在自己的提交后调用同一入口，不在 Adapter 回调重复实现。若业务与回执已提交、
