@@ -1,3 +1,4 @@
+use rusqlite::OptionalExtension;
 mod config;
 mod conversation_preferences;
 mod mission;
@@ -1023,7 +1024,6 @@ fn request_invalidates_navigation(method: &str) -> bool {
             | "camps.members.remove"
             | "camps.changeDefaultLead"
             | "camps.reconcileDefaultLead"
-            | "camps.enter"
             | "messageQuotes.mutateDraft"
             | "camp.messages.send"
             | "camp.messages.withdraw"
@@ -1037,7 +1037,13 @@ fn request_invalidates_navigation(method: &str) -> bool {
 fn navigation_invalidation_emitted_at_commit_boundary(method: &str) -> bool {
     matches!(
         method,
-        "camps.create" | "camps.discardPending" | "camp.messages.send" | "camp.messages.withdraw"
+        "camps.create"
+            | "camps.discardPending"
+            | "camp.messages.send"
+            | "camp.messages.withdraw"
+            | "agentRuns.cancel"
+            | "channels.executionConsole.agentRun.cancel"
+            | "channels.dingtalk.executionConsole.agentRun.cancel"
     )
 }
 
@@ -1051,6 +1057,9 @@ async fn request_did_invalidate_navigation(core: &Core, request: &Request, resul
         || navigation_mutation_was_rejected(result)
     {
         return false;
+    }
+    if request.method == "navigation.campViewed" {
+        return result.get("changed").and_then(Value::as_bool) == Some(true);
     }
     if !navigation_invalidation_requires_pending_camp(&request.method) {
         return true;
@@ -1543,6 +1552,13 @@ struct NavigationGroupCampsParams {
 struct NavigationSnapshotParams {
     #[serde(default)]
     group_limits: BTreeMap<String, usize>,
+    group_keys: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NavigationCampsParams {
+    camp_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2973,8 +2989,9 @@ impl Core {
                         )?
                         .context("Camp deletion cleanup handoff was not prepared")?
                 };
-                {
+                let group_key = {
                     let mut database = self.database.lock().await;
+                    let group_key = navigation_group_key(&database, &candidate.camp_id)?;
                     service.commit_business_delete(
                         &mut database,
                         &self.attachment_views,
@@ -2982,11 +2999,12 @@ impl Core {
                         &cleanup,
                     )?;
                     self.mark_skill_projections_dirty_best_effort(&mut database, true);
-                }
-                Ok::<_, anyhow::Error>(cleanup)
+                    group_key
+                };
+                Ok::<_, anyhow::Error>((cleanup, group_key))
             }
             .await;
-            let cleanup = match database_result {
+            let (cleanup, group_key) = match database_result {
                 Ok(cleanup) => cleanup,
                 Err(error) => {
                     self.record_camp_deletion_failure(&candidate, "database_delete_failed", &error)
@@ -2997,7 +3015,12 @@ impl Core {
             let database_ms = database_started_at.elapsed().as_millis();
             self.forget_deleted_camp_runtimes(&candidate.camp_id).await;
             self.mission_workspace_cleanup_notify.notify_one();
-            emit_navigation_invalidated(&self.output, "camp.deleted", Some(&candidate.camp_id));
+            emit_navigation_group_invalidated(
+                &self.output,
+                "camp.deleted",
+                Some(&candidate.camp_id),
+                group_key.as_deref(),
+            );
             eprintln!(
                 "[camp-deletion] operation={} camp={} stage=business_deleted queue_delay_ms={} runtime_stop_ms={} database_ms={}",
                 candidate.operation_id,
@@ -8521,29 +8544,34 @@ impl Core {
                 }
                 let runtime_search = self.runtime_search_environment.read().await.clone();
                 let mut references = Vec::new();
-                for (member_id, kind) in roster {
-                    let Some(kind) = kind else {
-                        continue;
-                    };
-                    let Ok(kind) = kind.parse::<rovai_core::agent_profile::AdapterKind>() else {
-                        errors.push(format!("{member_id}: unknown Runtime {kind}"));
-                        continue;
-                    };
-                    let project_for_member = project.clone();
-                    let refresh = params.refresh;
-                    let configuration = runtime_search.startup_configuration(kind);
-                    let discovery = self.native_skill_discovery.clone();
-                    match tokio::task::spawn_blocking(move || {
-                        discovery.discover(
-                            kind,
-                            project_for_member.as_deref(),
-                            false,
-                            refresh,
-                            &configuration,
-                        )
-                    })
-                    .await?
-                    {
+                let discovery = self.native_skill_discovery.clone();
+                let refresh = params.refresh;
+                let scans = tokio::task::spawn_blocking(move || {
+                    let mut request = discovery.request(refresh);
+                    roster
+                        .into_iter()
+                        .filter_map(|(member_id, kind)| {
+                            let kind = kind?;
+                            let scan = kind
+                                .parse::<rovai_core::agent_profile::AdapterKind>()
+                                .map_err(|_| format!("unknown Runtime {kind}"))
+                                .and_then(|kind| {
+                                    request
+                                        .discover(
+                                            kind,
+                                            project.as_deref(),
+                                            false,
+                                            &runtime_search.startup_configuration(kind),
+                                        )
+                                        .map_err(|error| format!("{error:#}"))
+                                });
+                            Some((member_id, scan))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await?;
+                for (member_id, scan) in scans {
+                    match scan {
                         Ok(scan) => {
                             errors.extend(scan.errors);
                             for skill in scan.skills {
@@ -8565,7 +8593,7 @@ impl Core {
                                 references.push(skill);
                             }
                         }
-                        Err(error) => errors.push(format!("{member_id}: {error:#}")),
+                        Err(error) => errors.push(format!("{member_id}: {error}")),
                     }
                 }
                 let mut database = self.database.lock().await;
@@ -8954,12 +8982,22 @@ impl Core {
                     serde_json::from_value(request.params.clone())?;
                 let mut database = self.database.lock().await;
                 Ok(serde_json::to_value(
-                    ReadModelService.navigation_snapshot_with_group_limits(
+                    ReadModelService.navigation_snapshot_for_groups(
                         &mut database,
                         &params.group_limits,
+                        params.group_keys.as_deref(),
                         &request.client,
                     )?,
                 )?)
+            }
+            "navigation.camps" => {
+                let params: NavigationCampsParams = serde_json::from_value(request.params.clone())?;
+                let mut database = self.database.lock().await;
+                Ok(serde_json::to_value(ReadModelService.navigation_camps(
+                    &mut database,
+                    &params.camp_ids,
+                    &request.client,
+                )?)?)
             }
             "navigation.groupCamps" => {
                 let params: NavigationGroupCampsParams =
@@ -8987,10 +9025,11 @@ impl Core {
                     serde_json::from_value(request.params.clone())?;
                 let mut database = self.database.lock().await;
                 Ok(serde_json::to_value(
-                    ReadModelService.acknowledge_camp_viewed(
+                    ReadModelService.acknowledge_camp_viewed_for_client(
                         &mut database,
                         params.camp_id.as_str(),
                         params.through_global_sequence,
+                        &request.client,
                     )?,
                 )?)
             }
@@ -9368,6 +9407,13 @@ impl Core {
                 let projection = outcome.projection;
                 let database_ms = database_started_at.elapsed().as_millis();
                 drop(database);
+                if outcome.navigation_changed {
+                    emit_navigation_invalidated(
+                        &self.output,
+                        "camps.reconcileDefaultLead",
+                        Some(projection.camp.id.as_str()),
+                    );
+                }
                 let reconcile_ms = outcome
                     .reconcile_duration
                     .map(|duration| duration.as_millis())
@@ -9431,6 +9477,7 @@ impl Core {
                 let envelope =
                     user_camp_command_envelope(params.command_id, camp_id.clone(), params.command);
                 let mut database = self.database.lock().await;
+                let group_key = navigation_group_key(&database, &camp_id)?;
                 let execution = self
                     .runtime_fleet
                     .install_camp_deletion_cutover(&camp_id, || {
@@ -9446,10 +9493,11 @@ impl Core {
                     // in-process fence before returning, but never wait for a
                     // Runtime or filesystem operation on the request path.
                     self.camp_deletion_notify.notify_one();
-                    emit_navigation_invalidated(
+                    emit_navigation_group_invalidated(
                         &self.output,
                         "camps.delete_accepted",
                         Some(&camp_id),
+                        group_key.as_deref(),
                     );
                     eprintln!(
                         "[camp-deletion] operation={} camp={} stage=accepted accept_ms={} replayed={}",
@@ -9519,6 +9567,7 @@ impl Core {
                     return Err(error);
                 }
                 let mut database = self.database.lock().await;
+                let group_key = navigation_group_key(&database, &camp_id)?;
                 let execution = match CollaborationService::default().discard_pending_camp(
                     &mut database,
                     &user_camp_command_envelope(params.command_id, camp_id, params.command),
@@ -9556,10 +9605,11 @@ impl Core {
                 }
                 drop(database);
                 if discarded {
-                    emit_navigation_invalidated(
+                    emit_navigation_group_invalidated(
                         &self.output,
                         "camps.discardPending",
                         discarded_camp_id.as_deref(),
+                        group_key.as_deref(),
                     );
                 }
                 if discarded && let Some(camp_id) = discarded_camp_id {
@@ -11265,27 +11315,37 @@ impl Core {
     async fn collect_delivery_batch_dispatch_candidates(
         &self,
     ) -> Result<Vec<rovai_core::runtime::QueuedAgentRunCandidate>> {
-        let mut claimed_any = false;
+        let mut changed_camps = std::collections::BTreeSet::new();
         loop {
             let claimed = {
                 let mut database = self.database.lock().await;
                 if !has_waiting_delivery_batch_work(&database)? {
                     Vec::new()
                 } else {
-                    claim_waiting_delivery_batches(
+                    let runs = claim_waiting_delivery_batches(
                         &mut database,
                         DELIVERY_BATCH_SCHEDULER_PAGE_LIMIT,
-                    )?
+                    )?;
+                    let mut statement = database.connection().prepare(
+                        "SELECT DISTINCT camp_id FROM agent_run WHERE id IN (SELECT value FROM json_each(?1)) AND camp_id IS NOT NULL"
+                    )?;
+                    changed_camps.extend(
+                        statement
+                            .query_map([serde_json::to_string(&runs)?], |row| {
+                                row.get::<_, String>(0)
+                            })?
+                            .collect::<rusqlite::Result<Vec<_>>>()?,
+                    );
+                    runs
                 }
             };
             if claimed.is_empty() {
                 break;
             }
-            claimed_any = true;
             tokio::task::yield_now().await;
         }
-        if claimed_any {
-            emit_navigation_invalidated(&self.output, "delivery_batch.claimed", None);
+        for camp_id in changed_camps {
+            emit_navigation_invalidated(&self.output, "delivery_batch.claimed", Some(&camp_id));
         }
 
         let candidates = {
@@ -23752,17 +23812,61 @@ fn emit(output: &mpsc::UnboundedSender<String>, method: &str, params: Value) {
     }
 }
 
-fn emit_navigation_invalidated(
+fn emit_missions_invalidated(
     output: &mpsc::UnboundedSender<String>,
     reason: &str,
     camp_id: Option<&str>,
 ) {
     emit(
         output,
+        "missions.invalidated",
+        json!({ "reason": reason, "campId": camp_id }),
+    );
+}
+
+fn navigation_group_key(database: &Database, camp_id: &str) -> Result<Option<String>> {
+    Ok(database.connection().query_row(
+        "SELECT CASE WHEN project_binding_kind='directory' THEN 'directory:' || project_path ELSE 'quick-chat' END FROM camp WHERE id=?1",
+        [camp_id], |row| row.get(0)).optional()?)
+}
+
+fn emit_navigation_group_invalidated(
+    output: &mpsc::UnboundedSender<String>,
+    reason: &str,
+    camp_id: Option<&str>,
+    group_key: Option<&str>,
+) {
+    if let Some(key) = group_key {
+        emit(
+            output,
+            "navigation.invalidated",
+            json!({ "reason": reason, "campId": camp_id, "scope": "group", "groupKeys": [key] }),
+        );
+    } else {
+        emit_navigation_invalidated(output, reason, camp_id);
+    }
+}
+
+fn emit_navigation_invalidated(
+    output: &mpsc::UnboundedSender<String>,
+    reason: &str,
+    camp_id: Option<&str>,
+) {
+    if reason.starts_with("missions.") || reason.starts_with("mission.") {
+        emit_missions_invalidated(output, reason, camp_id);
+        return;
+    }
+    emit(
+        output,
         "navigation.invalidated",
         match camp_id {
-            Some(camp_id) => json!({ "reason": reason, "campId": camp_id }),
-            None => json!({ "reason": reason }),
+            Some(camp_id) => json!({
+                "reason": reason, "campId": camp_id,
+                "scope": if reason.starts_with("agent_run.") || matches!(reason,
+                    "navigation.campViewed" | "delivery_batch.claimed" | "camps.rename" | "camps.members.add" | "camps.members.remove"
+                    | "camps.changeDefaultLead" | "camps.reconcileDefaultLead" | "agentRuns.cancel") { "camp" } else { "group" }
+            }),
+            None => json!({ "reason": reason, "scope": "all" }),
         },
     );
 }
@@ -28316,8 +28420,6 @@ done
             "navigation.campViewed",
             "camps.create",
             "camps.rename",
-            "camps.enter",
-            "camps.delete",
             "camp.messages.send",
             "camp.messages.withdraw",
             "userAutomation.camp.send",
@@ -28327,6 +28429,9 @@ done
         }
         for method in [
             "navigation.snapshot",
+            "navigation.camps",
+            "camps.enter",
+            "camps.delete", // Notification belongs to the acceptance transaction boundary.
             "navigation.groupCamps",
             "navigation.findCamp",
             "camps.open",
@@ -28382,6 +28487,20 @@ done
         assert_eq!(invalidation["method"], "navigation.invalidated");
         assert_eq!(invalidation["params"]["reason"], "agent_run.terminal");
         assert_eq!(invalidation["params"]["campId"], "rvcamp_test");
+        assert_eq!(invalidation["params"]["scope"], "camp");
+        emit_navigation_group_invalidated(
+            &output,
+            "camp.deleted",
+            Some("rvcamp_test"),
+            Some("directory:/repo"),
+        );
+        let deleted: Value = serde_json::from_str(&receiver.try_recv().unwrap()).unwrap();
+        assert_eq!(deleted["params"]["scope"], "group");
+        assert_eq!(deleted["params"]["groupKeys"], json!(["directory:/repo"]));
+        emit_missions_invalidated(&output, "missions.update", Some("mission-camp"));
+        let mission: Value = serde_json::from_str(&receiver.try_recv().unwrap()).unwrap();
+        assert_eq!(mission["method"], "missions.invalidated");
+        assert!(receiver.try_recv().is_err());
     }
 
     #[cfg(all(target_os = "macos", feature = "slow-tests"))]

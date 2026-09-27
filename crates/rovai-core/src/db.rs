@@ -293,7 +293,7 @@ impl MainCampMigrationSource {
 }
 
 pub(crate) const CURRENT_DATA_CONTRACT_VERSION: &str = "v1.72";
-pub(crate) const CURRENT_PROJECTION_SCHEMA_VERSION: i64 = 126;
+pub(crate) const CURRENT_PROJECTION_SCHEMA_VERSION: i64 = 127;
 const V147_MIGRATION_SOURCE_DATA_CONTRACT_VERSION: &str = "v1.54";
 const V147_MIGRATION_SOURCE_PROJECTION_SCHEMA_VERSION: i64 = 96;
 const V145_MIGRATION_SOURCE_DATA_CONTRACT_VERSION: &str = "v1.53";
@@ -744,6 +744,7 @@ struct CurrentMigrationState {
     v174: bool,
     v175: bool,
     v176: bool,
+    v177: bool,
 }
 
 impl CurrentMigrationState {
@@ -765,11 +766,19 @@ impl CurrentMigrationState {
     }
 
     fn admits(&self, contract: &str, schema: i64, classifier: &str) -> bool {
+        if self.v177 {
+            let mut previous = *self;
+            previous.v177 = false;
+            return contract == CURRENT_DATA_CONTRACT_VERSION
+                && schema == CURRENT_PROJECTION_SCHEMA_VERSION
+                && self.v176
+                && previous.admits("v1.72", 126, classifier);
+        }
         if self.v176 {
             let mut previous = *self;
             previous.v176 = false;
-            return contract == CURRENT_DATA_CONTRACT_VERSION
-                && schema == CURRENT_PROJECTION_SCHEMA_VERSION
+            return contract == "v1.72"
+                && schema == 126
                 && self.v175
                 && previous.admits("v1.71", 125, classifier);
         }
@@ -3215,6 +3224,7 @@ pub(crate) fn classify_database_contract(
         || (migrations.v174 && !public_history_claim_schema_matches)
         || (migrations.v175 && !notification_model::schema_matches(connection)?)
         || (migrations.v176 && !lark_channel_v176_schema_matches(connection)?)
+        || (migrations.v177 && !navigation_summary_schema_matches(connection)?)
         || (migrations.v156
             && !migrations.v157
             && !attachment_paths::schema_matches(connection)?
@@ -3944,6 +3954,18 @@ fn public_history_claim_preserved_evidence_digest(connection: &Connection) -> Re
         "bootstraps": bootstraps,
         "skills": skills,
     }))
+}
+
+fn navigation_summary_schema_matches(connection: &Connection) -> rusqlite::Result<bool> {
+    connection.query_row(
+        "SELECT
+          (SELECT COUNT(*) FROM pragma_table_info('camp') WHERE
+              (name IN ('navigation_activity_sequence', 'navigation_completion_sequence') AND type='INTEGER' AND [notnull]=1 AND dflt_value='0')
+              OR (name='navigation_activity_at' AND type='TEXT' AND [notnull]=0)) = 3
+          AND (SELECT COUNT(*) FROM sqlite_master WHERE
+              (type='index' AND name IN ('camp_navigation_window_idx', 'agent_run_navigation_active_idx', 'agent_run_navigation_legacy_active_idx'))
+              OR (type='trigger' AND name IN ('camp_navigation_event_insert', 'camp_navigation_event_sequence', 'camp_navigation_reply_tombstone'))) = 6",
+        [], |row| row.get(0))
 }
 
 fn public_history_claim_v174_schema_matches(connection: &Connection) -> rusqlite::Result<bool> {
@@ -4943,7 +4965,8 @@ fn load_current_migration_state(
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 173),
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 174),
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 175),
-               EXISTS(SELECT 1 FROM schema_migration WHERE version = 176)
+               EXISTS(SELECT 1 FROM schema_migration WHERE version = 176),
+               EXISTS(SELECT 1 FROM schema_migration WHERE version = 177)
         "#,
         [],
         |row| {
@@ -5055,6 +5078,7 @@ fn load_current_migration_state(
                 v174: row.get(104)?,
                 v175: row.get(105)?,
                 v176: row.get(106)?,
+                v177: row.get(107)?,
             })
         },
     )
@@ -8136,6 +8160,9 @@ impl Database {
             if !self.schema_migration_applied(176)? {
                 migration_step!("migration_176", self.migrate_lark_channel_v176());
             }
+            if !self.schema_migration_applied(177)? {
+                migration_step!("migration_177", self.migrate_navigation_summary_v177());
+            }
             if let Err(error) =
                 crate::notification::maintain_notification_episode_retention(self.connection())
             {
@@ -8879,6 +8906,9 @@ impl Database {
         }
         if !self.schema_migration_applied(176)? {
             migration_step!("migration_176", self.migrate_lark_channel_v176());
+        }
+        if !self.schema_migration_applied(177)? {
+            migration_step!("migration_177", self.migrate_navigation_summary_v177());
         }
         if let Err(error) =
             crate::notification::maintain_notification_episode_retention(self.connection())
@@ -28244,6 +28274,34 @@ impl Database {
         Ok(())
     }
 
+    fn migrate_navigation_summary_v177(&mut self) -> Result<()> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        anyhow::ensure!(
+            matches!(classify_database_contract(&tx)?,
+            DatabaseContractClassification::SupportedMigrationSource(ref marker)
+                if marker.contract_version == "v1.72" && marker.projection_schema_version == 126),
+            "Navigation summary migration requires v1.72/schema 126"
+        );
+        tx.execute_batch(include_str!("db_navigation_summary.sql"))?;
+        tx.execute_batch("INSERT INTO schema_migration VALUES (177, datetime('now'));
+            UPDATE rovai_data_contract SET projection_schema_version=127, updated_at=datetime('now') WHERE singleton=1;")?;
+        anyhow::ensure!(
+            navigation_summary_schema_matches(&tx)?,
+            "Navigation summary schema is incomplete"
+        );
+        anyhow::ensure!(
+            matches!(
+                classify_database_contract(&tx)?,
+                DatabaseContractClassification::Current(_)
+            ),
+            "Navigation summary migration failed current schema admission"
+        );
+        tx.commit()?;
+        Ok(())
+    }
+
     fn migrate_public_history_claim_v174(&mut self) -> Result<()> {
         self.connection.execute_batch("PRAGMA foreign_keys=OFF;")?;
         let result = (|| -> Result<()> {
@@ -28491,9 +28549,10 @@ impl Database {
         anyhow::ensure!(
             matches!(
                 classify_database_contract(&transaction)?,
-                DatabaseContractClassification::Current(_)
+                DatabaseContractClassification::SupportedMigrationSource(ref marker)
+                    if marker.contract_version == "v1.72" && marker.projection_schema_version == 126
             ),
-            "Lark migration failed current schema admission"
+            "Lark migration failed v1.72/schema 126 admission"
         );
         validate_migration_foreign_keys(
             &transaction,
@@ -33737,6 +33796,35 @@ pub(crate) fn open_v170_source_for_test(directory: &Path) -> Result<Database> {
 }
 
 #[cfg(test)]
+fn downgrade_navigation_summary_for_test(connection: &Connection) {
+    let applied: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=177)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    if !applied {
+        return;
+    }
+    connection
+        .execute_batch(
+            "DROP TRIGGER camp_navigation_event_insert;
+        DROP TRIGGER camp_navigation_event_sequence;
+        DROP TRIGGER camp_navigation_reply_tombstone;
+        DROP INDEX camp_navigation_window_idx;
+        DROP INDEX agent_run_navigation_active_idx;
+        DROP INDEX agent_run_navigation_legacy_active_idx;
+        ALTER TABLE camp DROP COLUMN navigation_activity_sequence;
+        ALTER TABLE camp DROP COLUMN navigation_activity_at;
+        ALTER TABLE camp DROP COLUMN navigation_completion_sequence;
+        DELETE FROM schema_migration WHERE version=177;
+        UPDATE rovai_data_contract SET projection_schema_version=126 WHERE singleton=1;",
+        )
+        .unwrap();
+}
+
+#[cfg(test)]
 fn downgrade_recent_context_for_legacy_fixture(connection: &Connection) {
     downgrade_current_schema_to_v175_source_for_test(connection);
     #[cfg(feature = "extended-tests")]
@@ -34010,6 +34098,7 @@ fn downgrade_recent_context_for_legacy_fixture(connection: &Connection) {
 
 #[cfg(test)]
 fn downgrade_current_schema_to_v175_source_for_test(connection: &Connection) {
+    downgrade_navigation_summary_for_test(connection);
     let applied: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=176)",
@@ -38125,6 +38214,119 @@ mod tests {
     use super::*;
 
     #[test]
+    fn navigation_summary_migration_preserves_tables_backfills_and_rolls_back_with_events() {
+        let directory =
+            std::env::temp_dir().join(format!("rovai-navigation-migration-{}", Uuid::new_v4()));
+        let mut database = crate::test_support::fresh_schema_database_at(&directory);
+        database.connection().execute_batch(r#"
+            INSERT INTO camp(id,title,project_binding_kind,project_path,created_at,updated_at)
+            VALUES ('nav-a','A','quick_chat','','2026-01-01','2026-01-01'),
+                   ('nav-b','B','directory','/repo','2026-01-02','2026-01-02');
+            INSERT INTO camp_message(id,camp_id,sequence,author_type,author_id,body,structured_content_json,content_digest,address_mode,addressed_agent_ids_json,version,created_at,updated_at)
+            VALUES('nav-message','nav-a',1,'user','local_user','hello','[]','digest','default','[]',1,'2026-02-01','2026-02-01'),
+                  ('nav-reply','nav-b',1,'agent','agent_1','reply','[]','reply','default','[]',1,'2026-03-01','2026-03-01');
+            INSERT INTO event_log(event_type,camp_id,entity_type,entity_id,payload_json,created_at)
+            VALUES('camp_message.sent','nav-a','camp_message','nav-message','{}','2026-02-01'),
+                  ('camp_message.sent','nav-b','camp_message','nav-reply','{}','2026-03-01');
+        "#).unwrap();
+        let expected = serde_json::to_value(
+            crate::read_model::ReadModelService
+                .navigation_snapshot(&mut database)
+                .unwrap(),
+        )
+        .unwrap();
+        downgrade_navigation_summary_for_test(database.connection());
+        let tables = |database: &Database| {
+            database
+                .connection()
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                .unwrap()
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        let before = tables(&database);
+        assert!(
+            matches!(classify_database_contract(database.connection()).unwrap(), DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 126)
+        );
+        database.connection().execute_batch("CREATE TEMP TRIGGER reject_navigation_receipt BEFORE INSERT ON schema_migration WHEN NEW.version=177 BEGIN SELECT RAISE(ABORT,'navigation receipt failure'); END;").unwrap();
+        assert!(
+            database
+                .migrate_navigation_summary_v177()
+                .unwrap_err()
+                .to_string()
+                .contains("navigation receipt failure")
+        );
+        assert!(!navigation_summary_schema_matches(database.connection()).unwrap());
+        assert_eq!(tables(&database), before);
+        assert!(
+            matches!(classify_database_contract(database.connection()).unwrap(), DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 126)
+        );
+        database
+            .connection()
+            .execute_batch("DROP TRIGGER reject_navigation_receipt")
+            .unwrap();
+        database.migrate_navigation_summary_v177().unwrap();
+        assert_eq!(
+            tables(&database),
+            before,
+            "navigation must add no persistent table"
+        );
+        assert_eq!(
+            serde_json::to_value(
+                crate::read_model::ReadModelService
+                    .navigation_snapshot(&mut database)
+                    .unwrap()
+            )
+            .unwrap(),
+            expected
+        );
+        {
+            let tx = database.connection_mut().transaction().unwrap();
+            tx.execute_batch("INSERT INTO camp_message(id,camp_id,sequence,author_type,author_id,body,structured_content_json,content_digest,address_mode,addressed_agent_ids_json,version,created_at,updated_at)
+                VALUES('nav-new-reply','nav-a',2,'agent','agent_1','reply','[]','new-reply','default','[]',1,'2026-04-01','2026-04-01');
+                INSERT INTO event_log(event_type,camp_id,entity_type,entity_id,payload_json,created_at)
+                VALUES ('camp_message.sent','nav-a','camp_message','nav-new-reply','{}','2026-04-01');").unwrap();
+            assert!(
+                tx.query_row(
+                    "SELECT navigation_completion_sequence > 0 FROM camp WHERE id='nav-a'",
+                    [],
+                    |row| row.get::<_, bool>(0)
+                )
+                .unwrap()
+            );
+            tx.rollback().unwrap();
+        }
+        assert_eq!(
+            serde_json::to_value(
+                crate::read_model::ReadModelService
+                    .navigation_snapshot(&mut database)
+                    .unwrap()
+            )
+            .unwrap(),
+            expected
+        );
+        drop(database);
+        let mut reopened = Database::open(&directory).unwrap();
+        assert!(matches!(
+            classify_database_contract(reopened.connection()).unwrap(),
+            DatabaseContractClassification::Current(_)
+        ));
+        assert_eq!(
+            serde_json::to_value(
+                crate::read_model::ReadModelService
+                    .navigation_snapshot(&mut reopened)
+                    .unwrap()
+            )
+            .unwrap(),
+            expected
+        );
+        drop(reopened);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn v173_preserves_imported_revisions_and_member_studio_disablement() {
         let directory =
             std::env::temp_dir().join(format!("rovai-v173-skills-rebuild-{}", Uuid::new_v4()));
@@ -38792,7 +38994,8 @@ mod tests {
         }
         assert!(matches!(
             classify_database_contract(database.connection()).unwrap(),
-            DatabaseContractClassification::Current(_)
+            DatabaseContractClassification::SupportedMigrationSource(ref marker)
+                if marker.contract_version == "v1.72" && marker.projection_schema_version == 126
         ));
     }
 
@@ -39737,6 +39940,7 @@ mod tests {
             v174: version >= 174,
             v175: version >= 175,
             v176: version >= 176,
+            v177: version >= 177,
         }
     }
 
@@ -39931,6 +40135,12 @@ mod tests {
                 "current",
                 CURRENT_DATA_CONTRACT_VERSION,
                 CURRENT_PROJECTION_SCHEMA_VERSION,
+                177,
+            ),
+            (
+                "v1.72/schema 126 before navigation summaries",
+                "v1.72",
+                126,
                 176,
             ),
             ("v1.71/schema 125 before Lark", "v1.71", 125, 175),
@@ -40418,7 +40628,7 @@ mod tests {
         }
 
         assert!(migration_state_through(141).admits("v1.52", 92, V142_CLASSIFIER_VERSION));
-        let current = migration_state_through(176);
+        let current = migration_state_through(177);
         let v092_source = migration_state_through(91);
         let mut missing_intermediate = current;
         missing_intermediate.v84 = false;
@@ -40460,7 +40670,16 @@ mod tests {
         missing_task_description.v167 = false;
         let mut missing_execution_lifecycle = current;
         missing_execution_lifecycle.v168 = false;
+        let mut missing_navigation_summary = current;
+        missing_navigation_summary.v177 = false;
         let rejected = [
+            (
+                "current marker without navigation summary migration",
+                missing_navigation_summary,
+                CURRENT_DATA_CONTRACT_VERSION,
+                CURRENT_PROJECTION_SCHEMA_VERSION,
+                V147_CLASSIFIER_VERSION,
+            ),
             (
                 "current marker without execution lifecycle migration",
                 missing_execution_lifecycle,
@@ -40890,7 +41109,7 @@ mod tests {
             )
             .expect("current contract marker should load");
 
-        assert_eq!(state, migration_state_through(176));
+        assert_eq!(state, migration_state_through(177));
         assert!(state.admits(&contract, schema, &classifier));
         assert!(has_admissible_data_contract(
             &directory.join("rovai.sqlite")
@@ -41442,7 +41661,7 @@ mod tests {
             .to_string();
         preview.migrate_dsh_runtime_v157().unwrap();
         preview.migrate_mission_context_v158().unwrap();
-        assert!(connection_has_current_data_contract(preview.connection()).unwrap());
+        assert!(connection_has_v166_data_contract(preview.connection()).unwrap());
         assert_eq!(
             preview
                 .connection()
@@ -42514,11 +42733,9 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(
-            manifest_schema.contains(
-                "CHECK(formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30))"
-            )
-        );
+        assert!(manifest_schema.contains(
+            "CHECK(formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31))"
+        ));
         let conversation: (Option<String>, Option<String>, i64, i64) = reopened
             .connection()
             .query_row(
@@ -42847,11 +43064,9 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(
-            manifest_schema.contains(
-                "CHECK(formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30))"
-            )
-        );
+        assert!(manifest_schema.contains(
+            "CHECK(formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31))"
+        ));
         assert!(
             manifest_schema
                 .contains("CHECK(context_delivery_profile_version IN (4, 5, 6, 7, 8, 9, 10))")
@@ -50607,7 +50822,8 @@ mod tests {
     #[test]
     fn v39_resets_camps_and_accepts_only_quick_chat_or_directory_bindings() {
         let directory = std::env::temp_dir().join(format!("rovai-db-v39-test-{}", Uuid::new_v4()));
-        let database = Database::open(&directory).expect("database should open");
+        let mut database = Database::open(&directory).expect("database should open");
+        downgrade_navigation_summary_for_test(database.connection());
         database
             .connection()
             .execute_batch(
@@ -50644,9 +50860,13 @@ mod tests {
                 "#,
             )
             .expect("test should restore the pre-v39 Camp schema");
-        drop(database);
-
-        let reopened = Database::open(&directory).expect("v39 database should reopen");
+        // This fixture replaces only Camp, leaving later receipts on other tables.
+        // Exercise its owned migration boundary, not current-store admission of
+        // that deliberately mixed schema. Supported full upgrades have separate owners.
+        database
+            .migrate_quick_chat_binding_v39()
+            .expect("v39 Camp migration should succeed");
+        let reopened = database;
         let camp_count: i64 = reopened
             .connection()
             .query_row("SELECT COUNT(*) FROM camp", [], |row| row.get(0))
@@ -53348,6 +53568,9 @@ mod tests {
                 "automation_run_history_idx",
                 "automation_notification_claim_idx",
                 "camp_turn_automation_run_unique",
+                "camp_navigation_window_idx",
+                "agent_run_navigation_active_idx",
+                "agent_run_navigation_legacy_active_idx",
             ],
             true,
         );
@@ -53494,9 +53717,9 @@ mod tests {
             connection,
             "trigger",
             &[
-                "context_manifest_v30_only_insert",
+                "context_manifest_v31_only_insert",
                 "context_manifest_version_immutable",
-                "agent_run_input_v30_only_insert",
+                "agent_run_input_v31_only_insert",
                 "agent_run_input_context_projection_immutable",
                 "runtime_input_delivery_attachment_auth_insert",
                 "camp_attachment_view_camp_insert",
@@ -53505,6 +53728,8 @@ mod tests {
                 "camp_turn_automation_run_insert_valid",
                 "camp_turn_automation_run_immutable",
                 "automation_run_dispatch_link_valid",
+                "camp_navigation_event_insert",
+                "camp_navigation_event_sequence",
             ],
             true,
         );
