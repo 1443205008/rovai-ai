@@ -3,7 +3,7 @@ document_type: implementation-plan
 version: v1.72
 authority: version-implementation-and-acceptance
 status: in_progress
-last_updated: 2026-09-24
+last_updated: 2026-09-27
 ---
 
 # v1.72 实施与验收
@@ -290,3 +290,28 @@ v1.71 / schema 125；ContextManifest/Formatter 沿用主线 31。降级 fixture 
 | Standards / Spec 独立复核 | 均通过；通知版本文档和生产迁移保留，Lark 编号、迁移顺序、来源准入及反向 fixture 一致 |
 
 真实租户验收状态保持不变。
+
+## 2026-09-27 侧栏与 Skills 并行切片
+
+侧栏按 [Navigation Read v1](../../contracts/navigation-read-v1.md) 实施单 Camp、单分组与摘要完整快照读取。
+从主线 v1.72/schema 126 经 Migration 177 升为 schema 127：camp 增加三项摘要字段，消息首次发布和 Agent
+消息撤回在原事务维护，保留 camp_view_state 已读；新增业务表为 0。普通切换只处理目标 Camp，状态与成员变化按已知
+范围刷新，缺可信基础时从摘要恢复完整快照。SQL 分组窗口替代先读全体再截断，正常读取不聚合历史事件。
+Skills 则在现有 NativeSkillDiscovery 内改为 128 目录、300 秒 TTL 的原始元数据缓存，合并同目录在途扫描和一次
+Camp 手动刷新中的重复目录；Settings 与选择器仍按需同步返回，不增加启动预热或后台订阅。
+
+测试准入：`navigation_summary_migration_preserves_tables_backfills_and_rolls_back_with_events` 独立拥有 schema 126→127
+的回填、表集合不变、receipt 失败回滚、摘要事务一致性与重启边界；必须用 SQLite，现有迁移 owner 不覆盖这些事实。
+`navigation_reads_no_history_and_scoped_work_does_not_grow_with_other_groups` 在 SQLite authorizer 禁止 event_log
+读取时验证行、组、完整、分页与已读，并用 2,000 个无关 Camp、50,000 条历史事件验证局部读取工作量。
+最小命令分别是 `cargo test -p rovai-core --lib --features extended-tests navigation_summary_migration` 与
+`cargo test -p rovai-core --lib --features extended-tests navigation_reads_no_history`；Skills 目录共享/强刷去重由
+`native_skills::tests::shared_directory_keeps_runtime_paths_and_refreshes_once_per_request` 拥有。
+
+此前在隔离 Core 中对 342 Camp、18 组、57,000 条人工历史事件的 30 次请求测得：完整侧栏中位数
+61.76→9.95ms，排在它后面的打开请求 38.47→13.24ms，单行/单组读取为 0.61/0.87ms。
+这是同步当前主线前的顺序阶段测量，不能当作本次合并后的点击到绘制验收；最新主线集成门禁另行记录。
+
+合并主线 `0f7b101a2` 后的集成验证：Rust 默认 workspace 436 项通过、1 项既有 ignore；导航 Migration 177、
+无历史读取、回复首次发布／撤回、Lark Migration 176 定向测试通过。Vitest 219 文件／2,317 项、TypeScript
+检查、Desktop 构建、Product Contract Fingerprint、Rust 格式及通用文档门禁通过。未运行日常 App 的真实点击到绘制复测。

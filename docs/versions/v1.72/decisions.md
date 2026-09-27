@@ -3,7 +3,7 @@ document_type: version-decisions
 version: v1.72
 authority: decision-rationale
 lifecycle: current
-last_updated: 2026-09-24
+last_updated: 2026-09-27
 ---
 
 # v1.72 版本决定
@@ -44,3 +44,27 @@ Core 只从请求名推导 Host actor。
 - **复制飞书 Core 与 Main 代码并改名**：隔离清晰，但产生上万行重复实现，两家行为会逐步漂移。
 - **中立请求增加 provider 参数代替独立请求名**：请求数更少，但会改变飞书既有请求合同，并让 actor 由 payload
   决定；按请求名推导 actor 与钉钉现有模式一致，请求面保持封闭可审计。
+
+<a id="v1-72-d02"></a>
+## V1.72-D02：导航摘要放入 Camp，范围失效配合完整快照恢复
+
+- 状态：accepted
+- 日期：2026-09-27
+- 当前权威：[侧栏刷新架构](../../architecture/desktop-navigation-refresh.md)、[Navigation Read v1](../../contracts/navigation-read-v1.md)
+
+### 背景
+
+切换会话触发重复全局读取，导航仍聚合历史事件、全量载入会话后截取。单纯延迟刷新不能消除队列等待。
+Principal 接受按会话/分组缩小范围，同时明确禁止新增持久化业务表和复杂同步机制。主线的通知与 Lark 迁移已占用
+175 和 176；导航摘要独立顺延为 Migration 177。
+
+### 选择
+
+复用 camp 保存必要摘要、camp_view_state 保存已读、Core 事务保证一致性。在线提示声明行或分组；缺少可信
+基础/变化范围时从摘要重新读取完整快照。活动序号按首次发布的用户消息更新，未读回复序号按首次发布、未撤回的
+Agent 消息更新；Run 终态本身不产生新回复标记。
+
+### 后果与替代方案
+
+需要一次历史回填和摘要写入维护；正常读取不再付出历史聚合成本。不采用独立导航/分组变化表、删除补齐记录、
+保留期或通用增量同步，避免双份状态与恢复协议。保留现有聚焦/低频完整性兜底；不引入优先级队列或独立数据库连接。
