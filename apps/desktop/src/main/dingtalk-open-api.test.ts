@@ -3,6 +3,7 @@ import {
   DINGTALK_AI_CARD_TEMPLATE_ID,
   DingTalkOpenApiClient,
   DingTalkOpenApiError,
+  MAX_DINGTALK_MEDIA_UPLOAD_BYTES,
   decodeDingTalkCardActionId,
   dingtalkCardParams
 } from './dingtalk-open-api'
@@ -17,7 +18,7 @@ describe('DingTalk OpenAPI client', () => {
       calls.push({ url, body: init?.body })
       return Response.json(url.endsWith('/oauth2/accessToken')
         ? { accessToken: 'token', expireIn: 7200 }
-        : url.endsWith('/media/upload')
+        : new URL(url).pathname === '/media/upload'
           ? { errcode: 0, media_id: 'media-file-1' }
           : { processQueryKey: 'delivery-file-1' })
     }))
@@ -28,14 +29,15 @@ describe('DingTalk OpenAPI client', () => {
       attachment: { kind: 'file', mediaId, fileName: '报告.pdf' }
     })).resolves.toBe('delivery-file-1')
 
-    expect(calls[1]?.url).toBe('https://oapi.dingtalk.com/media/upload')
+    const uploadUrl = new URL(calls[1]?.url ?? '')
+    expect(uploadUrl.origin + uploadUrl.pathname).toBe('https://oapi.dingtalk.com/media/upload')
+    expect(uploadUrl.searchParams.get('access_token')).toBe('token')
+    expect(uploadUrl.searchParams.get('type')).toBe('file')
     const data = calls[1]?.body as FormData
-    expect(data.get('access_token')).toBe('token')
-    expect(data.get('type')).toBe('file')
     expect(await (data.get('media') as Blob).text()).toBe('PDF bytes')
     expect(JSON.parse(String(calls[2]?.body))).toEqual({
       robotCode: 'robot-1', userIds: ['owner-1'], msgKey: 'sampleFile',
-      msgParam: JSON.stringify({ mediaId: 'media-file-1', fileName: '报告.pdf', fileType: 'pdf' })
+      msgParam: JSON.stringify({ mediaId: '@media-file-1', fileName: '报告.pdf', fileType: 'pdf' })
     })
   })
 
@@ -46,7 +48,7 @@ describe('DingTalk OpenAPI client', () => {
       calls.push({ url, body: init?.body })
       return Response.json(url.endsWith('/oauth2/accessToken')
         ? { accessToken: 'token', expireIn: 7200 }
-        : url.endsWith('/media/upload')
+        : new URL(url).pathname === '/media/upload'
           ? { errcode: 0, media_id: 'media-image-1' }
           : { processQueryKey: 'delivery-image-1' })
     }))
@@ -57,12 +59,23 @@ describe('DingTalk OpenAPI client', () => {
       attachment: { kind: 'image', mediaId }
     })).resolves.toBe('delivery-image-1')
 
-    expect(calls[1]?.url).toBe('https://oapi.dingtalk.com/media/upload')
-    expect((calls[1]?.body as FormData).get('type')).toBe('image')
+    const uploadUrl = new URL(calls[1]?.url ?? '')
+    expect(uploadUrl.origin + uploadUrl.pathname).toBe('https://oapi.dingtalk.com/media/upload')
+    expect(uploadUrl.searchParams.get('type')).toBe('image')
     expect(JSON.parse(String(calls[2]?.body))).toEqual({
       openConversationId: 'group-1', robotCode: 'robot-1', msgKey: 'sampleImageMsg',
-      msgParam: JSON.stringify({ photoURL: 'media-image-1' })
+      msgParam: JSON.stringify({ photoURL: '@media-image-1' })
     })
+  })
+
+  it('rejects oversized media before requesting a token or uploading', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new DingTalkOpenApiClient({ appKey: 'ding-app', appSecret: 'secret' })
+    await expect(client.uploadFile(
+      Buffer.alloc(MAX_DINGTALK_MEDIA_UPLOAD_BYTES + 1), 'report.pdf', 'application/pdf'
+    )).rejects.toThrow('dingtalk_attachment_size_unsupported')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('reports HTTP 429 and transport failures as typed retryable errors', async () => {

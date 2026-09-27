@@ -5,6 +5,7 @@ const DEFAULT_OAPI_ORIGIN = 'https://oapi.dingtalk.com'
 export const DINGTALK_AI_CARD_TEMPLATE_ID = '382e4302-551d-4880-bf29-a30acfab2e71.schema'
 const DINGTALK_CARD_ACTION_PREFIX = 'rovai.v1.'
 const MAX_DINGTALK_CARD_ACTION_BYTES = 4_096
+export const MAX_DINGTALK_MEDIA_UPLOAD_BYTES = 20 * 1024 * 1024
 
 export type DingTalkCardDeliveryIdentity = {
   outTrackId: string
@@ -20,6 +21,17 @@ const DINGTALK_ROBOT_FILE_TYPES = new Set(['xlsx', 'pdf', 'zip', 'rar', 'doc', '
 export function isSupportedDingTalkRobotFileName(fileName: string): boolean {
   const fileType = fileName.match(/\.([a-z0-9]+)$/iu)?.[1]?.toLowerCase()
   return Boolean(fileType && DINGTALK_ROBOT_FILE_TYPES.has(fileType))
+}
+
+export function isSupportedDingTalkRobotImage(fileName: string, mediaType: string): boolean {
+  const extension = fileName.match(/\.([a-z0-9]+)$/iu)?.[1]?.toLowerCase()
+  switch (mediaType.toLowerCase()) {
+    case 'image/jpeg': return extension === 'jpg' || extension === 'jpeg'
+    case 'image/png': return extension === 'png'
+    case 'image/gif': return extension === 'gif'
+    case 'image/bmp': return extension === 'bmp'
+    default: return false
+  }
 }
 
 function attachmentMessage(attachment: DingTalkRobotAttachment): {
@@ -88,14 +100,18 @@ export class DingTalkOpenApiClient {
   async #uploadMedia(
     bytes: Buffer, fileName: string, mediaType: string, kind: 'image' | 'file'
   ): Promise<string> {
+    if (bytes.byteLength > MAX_DINGTALK_MEDIA_UPLOAD_BYTES) {
+      throw new Error('dingtalk_attachment_size_unsupported')
+    }
     const token = await this.#token()
     const data = new FormData()
-    data.append('access_token', token)
-    data.append('type', kind)
     data.append('media', new Blob([Uint8Array.from(bytes)], { type: mediaType }), fileName)
+    const url = new URL('/media/upload', this.#oapiOrigin)
+    url.searchParams.set('access_token', token)
+    url.searchParams.set('type', kind)
     let response: Response
     try {
-      response = await fetch(new URL('/media/upload', this.#oapiOrigin), {
+      response = await fetch(url, {
         method: 'POST', body: data, signal: AbortSignal.timeout(30_000)
       })
     } catch {
@@ -113,7 +129,8 @@ export class DingTalkOpenApiClient {
       const retryCode = remoteCode === '88' && value.sub_code ? null : remoteCode
       throw new DingTalkOpenApiError('dingtalk_media_upload_failed', response.status, retryCode)
     }
-    return requiredString(value, 'media_id')
+    const mediaId = requiredString(value, 'media_id')
+    return mediaId.startsWith('@') ? mediaId : `@${mediaId}`
   }
 
   async groupRobotCodes(openConversationId: string): Promise<string[]> {

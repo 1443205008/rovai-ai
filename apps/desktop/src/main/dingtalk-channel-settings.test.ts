@@ -1,4 +1,4 @@
-import { readFile, access, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { readFile, access, mkdtemp, rm, truncate, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,7 +29,12 @@ import type {
   DingTalkDeveloperSessionService
 } from './dingtalk-developer-session'
 import type { DingTalkAppCredential } from './channel-credential-store'
-import { DingTalkOpenApiClient, DingTalkOpenApiError, encodeDingTalkCardActionId } from './dingtalk-open-api'
+import {
+  DingTalkOpenApiClient,
+  DingTalkOpenApiError,
+  MAX_DINGTALK_MEDIA_UPLOAD_BYTES,
+  encodeDingTalkCardActionId
+} from './dingtalk-open-api'
 import { DingTalkStreamRegistry } from './dingtalk-stream-registry'
 import { DingTalkProvisioningError } from './dingtalk-member-bot-provisioner'
 
@@ -667,6 +672,69 @@ describe('DingTalk channel account connection', () => {
       expect(upload).not.toHaveBeenCalled()
     } finally {
       await fixture.service.stop()
+    }
+  })
+
+  it('settles an unsupported image format before opening the file', async () => {
+    const fixture = completedBotFixture({
+      credentialPresent: true,
+      attachmentTarget: { attachmentId: 'attachment-1', kind: 'file',
+        mediaType: 'image/webp', path: '/unreadable/image.webp' },
+      deliveries: [{
+        deliveryId: 'delivery-webp', provider: 'dingtalk', requestId: 'request-1',
+        deliveryKind: 'agent_attachment', targetAppId: 'ding-app-a',
+        credentialRef: 'dingtalk-credential-a', chatId: 'owner-a', topicKey: '',
+        conversationKind: 'p2p', attemptCount: 1, updateMessageId: null,
+        recipientOpenId: 'owner-a',
+        payload: { campId: 'camp-1', attachmentId: 'attachment-1',
+          fileName: 'image.webp', attachmentKind: 'image' }
+      }]
+    })
+    const upload = vi.spyOn(fixture.api, 'uploadImage')
+    try {
+      await fixture.service.start()
+      await vi.waitFor(() => expect(fixture.commandPayloads).toContainEqual({
+        method: 'channels.dingtalk.deliveries.settle',
+        command: expect.objectContaining({ deliveryId: 'delivery-webp', outcome: 'failed',
+          failureCode: 'dingtalk_attachment_type_unsupported', retryable: false })
+      }))
+      expect(upload).not.toHaveBeenCalled()
+    } finally {
+      await fixture.service.stop()
+    }
+  })
+
+  it('settles an oversized file before reading or uploading bytes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'rovai-dingtalk-oversize-'))
+    const path = join(dir, 'oversize.pdf')
+    await writeFile(path, '')
+    await truncate(path, MAX_DINGTALK_MEDIA_UPLOAD_BYTES + 1)
+    const fixture = completedBotFixture({
+      credentialPresent: true,
+      attachmentTarget: { attachmentId: 'attachment-1', kind: 'file',
+        mediaType: 'application/pdf', path },
+      deliveries: [{
+        deliveryId: 'delivery-oversize', provider: 'dingtalk', requestId: 'request-1',
+        deliveryKind: 'agent_attachment', targetAppId: 'ding-app-a',
+        credentialRef: 'dingtalk-credential-a', chatId: 'owner-a', topicKey: '',
+        conversationKind: 'p2p', attemptCount: 1, updateMessageId: null,
+        recipientOpenId: 'owner-a',
+        payload: { campId: 'camp-1', attachmentId: 'attachment-1',
+          fileName: 'oversize.pdf', attachmentKind: 'file' }
+      }]
+    })
+    const upload = vi.spyOn(fixture.api, 'uploadFile')
+    try {
+      await fixture.service.start()
+      await vi.waitFor(() => expect(fixture.commandPayloads).toContainEqual({
+        method: 'channels.dingtalk.deliveries.settle',
+        command: expect.objectContaining({ deliveryId: 'delivery-oversize', outcome: 'failed',
+          failureCode: 'dingtalk_attachment_size_unsupported', retryable: false })
+      }))
+      expect(upload).not.toHaveBeenCalled()
+    } finally {
+      await fixture.service.stop()
+      await rm(dir, { recursive: true, force: true })
     }
   })
 

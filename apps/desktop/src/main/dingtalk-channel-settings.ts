@@ -1,7 +1,7 @@
 import type { PendingChannelAttachments } from './channel-inbound-attachments'
 import { withDingTalkInboundFiles, dingtalkAttachmentFailureCode } from './dingtalk-inbound-attachments'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import type {
   AgentProfile,
@@ -39,6 +39,8 @@ import {
   DingTalkOpenApiError,
   dingtalkCardParams,
   isSupportedDingTalkRobotFileName,
+  isSupportedDingTalkRobotImage,
+  MAX_DINGTALK_MEDIA_UPLOAD_BYTES,
   type DingTalkCardButton
 } from './dingtalk-open-api'
 import { DingTalkStreamRegistry, type DingTalkCardCallback } from './dingtalk-stream-registry'
@@ -1607,11 +1609,14 @@ export class DingTalkChannelSettingsService {
           throw new Error('dingtalk_attachment_kind_unsupported')
         }
         const isImage = delivery.payload.attachmentKind === 'image'
-        if (isImage && !target.mediaType.startsWith('image/')) {
-          throw new Error('dingtalk_attachment_media_type_invalid')
+        if (isImage && !isSupportedDingTalkRobotImage(fileName, target.mediaType)) {
+          throw new Error('dingtalk_attachment_type_unsupported')
         }
         if (!isImage && !isSupportedDingTalkRobotFileName(fileName)) {
           throw new Error('dingtalk_attachment_type_unsupported')
+        }
+        if ((await stat(target.path)).size > MAX_DINGTALK_MEDIA_UPLOAD_BYTES) {
+          throw new Error('dingtalk_attachment_size_unsupported')
         }
         const bytes = await readFile(target.path)
         if (delivery.payload.storage !== 'source_ref') {
