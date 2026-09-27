@@ -298,9 +298,11 @@ describe('DingTalk channel account connection', () => {
     committed.resolve({ status: 'applied', code: 'channels.dingtalk.account.commitConnection.applied', payload: { sessionRevision: 2 } })
     await vi.waitFor(() => expect(activate).toHaveBeenCalledExactlyOnceWith(2))
     expect((await fixture.service.get()).activeQrAttempt?.stage).toBe('saving_local_session')
+    expect((await fixture.service.get()).provider.connection.sessionStatus).toBe('unknown')
     activated.resolve()
     await connecting
     expect((await fixture.service.get()).activeQrAttempt).toBeNull()
+    expect((await fixture.service.get()).provider.connection.sessionStatus).toBe('valid')
     expect(fixture.developerSession.discardPendingLogin).not.toHaveBeenCalled()
   })
 
@@ -524,6 +526,12 @@ describe('DingTalk channel account connection', () => {
         updateMessageId: null, recallMessageId
       }, {
         ...common,
+        deliveryId: 'failure-attention', deliveryKind: 'attention',
+        payload: { failureCode: 'channel.attachments.download_failed',
+          text: '附件下载失败，本条消息未交给队员。' },
+        updateMessageId: null, recallMessageId: null
+      }, {
+        ...common,
         deliveryId: 'execution-recall', deliveryKind: 'execution_console_recall',
         payload: { agentRunId: 'run-1' },
         updateMessageId: 'rv-run-card', recallMessageId: 'carrier:rv-run-card'
@@ -537,12 +545,20 @@ describe('DingTalk channel account connection', () => {
       await vi.waitFor(() => expect(fixture.commandPayloads
         .filter(({ method }) => method === 'channels.dingtalk.deliveries.settle')
         .map(({ command }) => command.deliveryId))
-        .toEqual(expect.arrayContaining(['queue-send', 'queue-recall', 'execution-recall'])))
+        .toEqual(expect.arrayContaining(['queue-send', 'queue-recall', 'failure-attention', 'execution-recall'])))
 
       expect(fixture.welcomeCard).toHaveBeenCalledWith(expect.objectContaining({
         outTrackId,
         space: 'p2p',
         cardParamMap: expect.objectContaining({ staticMsgContent: 'Rovai 已接收，正在排队' })
+      }))
+      expect(fixture.welcomeCard).toHaveBeenCalledWith(expect.objectContaining({
+        outTrackId: dingtalkOutTrackId('status', 'failure-attention'),
+        cardParamMap: expect.objectContaining({
+          msgTitle: 'Rovai 未能处理',
+          staticMsgContent: '附件下载失败，本条消息未交给队员。',
+          flowStatus: '5'
+        })
       }))
       expect(recall).toHaveBeenNthCalledWith(1, {
         conversationKind: 'p2p',

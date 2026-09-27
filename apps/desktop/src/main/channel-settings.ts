@@ -518,6 +518,7 @@ export class ChannelSettingsService {
   async #resolveConnectionCommit(): Promise<void> {
     const commit = this.#connectionCommit
     if (!commit || commit.busy) return
+    const sessionCheckGeneration = this.#sessionCheckGeneration
     commit.busy = true
     if (this.#activeQrAttempt?.attemptId === commit.attemptId) {
       this.#activeQrAttempt = { ...this.#activeQrAttempt, commitUncertain: false,
@@ -547,6 +548,9 @@ export class ChannelSettingsService {
         commit.applied = result
       }
       await activatePendingFeishuLogin(this.#developerSession, sessionRevisionFrom(commit.applied))
+      if (!this.#stopped && sessionCheckGeneration === this.#sessionCheckGeneration) {
+        this.#sessionStatus = 'valid'
+      }
       this.#updateLoginAttempt(commit.attemptId, 'connected')
       this.#connectionCommit = null
       if (this.#activeQrAttempt?.attemptId === commit.attemptId) this.#finishQr()
@@ -2931,6 +2935,13 @@ function canonicalInboundBody(
   expectedBotNames: ReadonlySet<string>
 ): string {
   let body = message.content
+  // The SDK represents rich-post image nodes as Markdown even though the same
+  // image is already delivered through the structured resource list.
+  for (const resource of message.resources) {
+    if (resource.type === 'image') {
+      body = body.replaceAll(`![image](${resource.fileKey})`, '')
+    }
+  }
   for (const mention of message.mentions) {
     if (mention.isBot || !mention.name || !expectedBotNames.has(mention.name)) continue
     const token = `@${mention.name}`

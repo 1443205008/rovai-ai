@@ -85,6 +85,7 @@ last_updated: 2026-09-27
 - 钉钉与共享渠道存储理由来源：[V1.36-D01（存储由 D04、OAuth 控制面由 D05 取代）](../versions/v1.36/decisions.md#v1-36-d01)、[V1.36-D02](../versions/v1.36/decisions.md#v1-36-d02)、[V1.36-D03](../versions/v1.36/decisions.md#v1-36-d03)、[V1.36-D04](../versions/v1.36/decisions.md#v1-36-d04)、[V1.36-D05](../versions/v1.36/decisions.md#v1-36-d05)、[V1.37-D09](../versions/v1.37/decisions.md#v1-37-d09)、[V1.37-D10](../versions/v1.37/decisions.md#v1-37-d10)、[V1.37-D11（群目标 ID 相等假设已由 D12 取代）](../versions/v1.37/decisions.md#v1-37-d11)、[V1.37-D12](../versions/v1.37/decisions.md#v1-37-d12)、[V1.37-D13](../versions/v1.37/decisions.md#v1-37-d13)、[V1.37-D14](../versions/v1.37/decisions.md#v1-37-d14)、[V1.37-D15](../versions/v1.37/decisions.md#v1-37-d15)、[V1.38-D01](../versions/v1.38/decisions.md#v1-38-d01)和[V1.38-D02](../versions/v1.38/decisions.md#v1-38-d02)。
 - Lark 独立 provider、克隆表族、参数化飞书实现与按请求名推导 Host actor 的理由：[V1.72-D01](../versions/v1.72/decisions.md#v1-72-d01)；
   入站附件复用持久队列、以独立 Host 完成请求结算的理由：[V1.72-D03](../versions/v1.72/decisions.md#v1-72-d03)。
+- 钉钉入站按平台返回的签名链接下载、终态失败撤回排队卡的理由：[V1.72-D04](../versions/v1.72/decisions.md#v1-72-d04)。
 
 ## Member identity
 

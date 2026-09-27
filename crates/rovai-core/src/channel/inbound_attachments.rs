@@ -223,7 +223,6 @@ pub fn complete(
                 if state.attempts >= MAX_ATTEMPTS || code != "channel.attachments.download_failed" {
                     state.retry_at = None;
                     fail_queued_request(transaction, &command.request_id, &command.app_id, code, &now.to_rfc3339())?;
-                    transaction.execute("DELETE FROM channel_delivery WHERE request_id = ?1 AND delivery_kind = 'queue_ack' AND status = 'pending'", [&command.request_id])?;
                     transaction.execute(
                         "UPDATE channel_delivery SET payload_json = json_set(payload_json, '$.text', ?2)
                          WHERE request_id = ?1 AND delivery_kind = 'attention' AND status = 'pending'",
