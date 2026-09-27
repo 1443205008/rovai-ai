@@ -54,9 +54,10 @@ function harness(pinnedCampIds: string[] = []) {
     current = next
     limits = nextLimits
   })
-  const reader = createNavigationWindowReader(read, commit, { readCamps, getPinnedCampIds: () => pinnedCampIds })
+  const onRows = vi.fn()
+  const reader = createNavigationWindowReader(read, commit, { readCamps, getPinnedCampIds: () => pinnedCampIds, onRows })
   return {
-    reader, read, readCamps, commit,
+    reader, read, readCamps, commit, onRows,
     visibleRows: () => current?.projects[0].recentCamps.slice(0, limits['directory:/repo'] ?? 5) ?? [],
     setRows: (next: NavigationCampItem[]) => { rows = next },
     rows: () => rows,
@@ -247,6 +248,37 @@ describe('authoritative Camp navigation windows', () => {
     old.resolve(snapshot([{ ...camp(1), marker: 'unread_completed' }, ...h.rows().slice(1)]))
     await refresh
     expect(h.visibleRows()[0]).toMatchObject({ marker: 'none', lastSeenGlobalSequence: 1 })
+    h.reader.dispose()
+  })
+
+  it('accepts B read acknowledgement after a newer C row while rejecting stale B results', async () => {
+    const h = harness()
+    const unreadB = { ...camp(1, 'unread_completed'), latestCompletionGlobalSequence: 90, lastSeenGlobalSequence: 0 }
+    h.setRows([unreadB, ...h.rows().slice(1)])
+    h.read.mockImplementationOnce(async () => ({ ...snapshot(h.rows()), throughGlobalSequence: 100 }))
+    await h.reader.refresh('explicit')
+
+    h.reader.acceptRows({
+      throughGlobalSequence: 102, groupKeys: ['directory:/repo'],
+      camps: [{ ...camp(2), title: 'C 已更新' }]
+    })
+    const readB = { ...unreadB, marker: 'none' as const, lastSeenGlobalSequence: 100 }
+    h.reader.acceptRows({
+      throughGlobalSequence: 101, groupKeys: ['directory:/repo'], camps: [readB, camp(2)]
+    })
+    expect(h.visibleRows()[0]).toMatchObject({ id: 'camp-1', marker: 'none', lastSeenGlobalSequence: 100 })
+    expect(h.visibleRows()[1].title).toBe('C 已更新')
+    expect(h.commit.mock.lastCall?.[0].throughGlobalSequence).toBe(102)
+    expect(h.onRows.mock.lastCall?.[1]).toEqual(['camp-1'])
+
+    h.reader.acceptRows({
+      throughGlobalSequence: 100, groupKeys: ['directory:/repo'], camps: [unreadB]
+    })
+    h.reader.acceptRows({
+      throughGlobalSequence: 101, groupKeys: ['directory:/repo'], camps: [unreadB]
+    })
+    expect(h.visibleRows()[0].marker).toBe('none')
+    expect(h.onRows.mock.lastCall?.[1]).toEqual(['camp-1'])
     h.reader.dispose()
   })
 

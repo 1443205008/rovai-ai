@@ -46,6 +46,7 @@ export function createNavigationWindowReader(
   let pending = emptyRead()
   let disposed = false
   let rowRevision = 0
+  const appliedRows = new Map<string, { sequence: number; seen: number; version: number }>()
   const resizeTokens = new Map<string, symbol>()
   const restore = (scope: PendingRead): void => {
     pending.all ||= scope.all
@@ -55,18 +56,44 @@ export function createNavigationWindowReader(
   }
   const allRows = (): NavigationCampItem[] => snapshot
     ? [...snapshot.quickChat.recentCamps, ...snapshot.projects.flatMap(group => group.recentCamps)] : []
-  const applyRows = (rows: NavigationCampRows, ids: string[]): void => {
-    if (disposed) return
-    if (snapshot && rows.throughGlobalSequence < snapshot.throughGlobalSequence) return
-    options.onRows?.(rows, ids)
-    if (!snapshot) return
-    const byId = new Map(rows.camps.map(camp => [camp.id, camp]))
+  const rememberRows = (camps: NavigationCampItem[], sequence: number): void => {
+    for (const camp of camps) appliedRows.set(camp.id, {
+      sequence, seen: camp.lastSeenGlobalSequence ?? 0, version: camp.version
+    })
+  }
+  const applyRows = (rows: NavigationCampRows, ids: string[]): boolean => {
+    if (disposed) return false
+    const received = new Map(rows.camps.map(camp => [camp.id, camp]))
+    const acceptedIds = ids.filter(id => {
+      const previous = appliedRows.get(id)
+      const camp = received.get(id)
+      // A newer C read says nothing about whether B's row was refreshed.
+      return !previous || (rows.throughGlobalSequence >= previous.sequence
+        && (!camp || ((camp.lastSeenGlobalSequence ?? 0) >= previous.seen && camp.version >= previous.version)))
+    })
+    if (acceptedIds.length === 0) return false
+    const accepted = new Set(acceptedIds)
+    const camps = rows.camps.filter(camp => accepted.has(camp.id))
+    for (const id of acceptedIds) {
+      const camp = received.get(id)
+      if (camp) rememberRows([camp], rows.throughGlobalSequence)
+      else {
+        const previous = appliedRows.get(id)
+        appliedRows.set(id, {
+          sequence: rows.throughGlobalSequence, seen: previous?.seen ?? 0, version: previous?.version ?? 0
+        })
+      }
+    }
+    options.onRows?.({ ...rows, camps }, acceptedIds)
+    if (!snapshot) return true
+    const byId = new Map(camps.map(camp => [camp.id, camp]))
     // Row reads never infer membership, order or counts from an incomplete window.
     const replace = (camps: NavigationCampItem[]) => camps.map(camp => byId.get(camp.id) ?? camp)
-    snapshot = { ...snapshot, throughGlobalSequence: rows.throughGlobalSequence,
+    snapshot = { ...snapshot, throughGlobalSequence: Math.max(snapshot.throughGlobalSequence, rows.throughGlobalSequence),
       quickChat: { ...snapshot.quickChat, recentCamps: replace(snapshot.quickChat.recentCamps) },
       projects: snapshot.projects.map(group => ({ ...group, recentCamps: replace(group.recentCamps) })) }
     commit(snapshot, displayed)
+    return true
   }
 
   const coordinator = createNavigationRefreshCoordinator(async () => {
@@ -100,10 +127,13 @@ export function createNavigationWindowReader(
       }
       if (next) {
         if (next.schemaVersion !== 3) throw new Error('会话列表数据版本不兼容。')
-        if (scope.all || !snapshot) snapshot = next
-        else snapshot = { ...snapshot, throughGlobalSequence: next.throughGlobalSequence,
+        if (scope.all || !snapshot) {
+          snapshot = next
+          appliedRows.clear()
+        } else snapshot = { ...snapshot, throughGlobalSequence: Math.max(snapshot.throughGlobalSequence, next.throughGlobalSequence),
           quickChat: scope.groups.has('quick-chat') ? next.quickChat : snapshot.quickChat,
           projects: [...snapshot.projects.filter(group => !scope.groups.has(group.projectKey)), ...next.projects] }
+        rememberRows([next.quickChat.recentCamps, ...next.projects.map(group => group.recentCamps)].flat(), next.throughGlobalSequence)
         displayed = windows
         commit(snapshot, displayed)
       }
@@ -142,7 +172,7 @@ export function createNavigationWindowReader(
       pending.all = true
       return coordinator.refresh('invalidation')
     },
-    acceptRows(rows) { rowRevision += 1; applyRows(rows, rows.camps.map(camp => camp.id)) },
+    acceptRows(rows) { if (applyRows(rows, rows.camps.map(camp => camp.id))) rowRevision += 1 },
     async resizeGroup(groupKey, limit) {
       if (disposed) throw new Error('Navigation window reader is disposed')
       if (!Number.isSafeInteger(limit) || limit < NAVIGATION_INITIAL_VISIBLE_CAMPS) {
