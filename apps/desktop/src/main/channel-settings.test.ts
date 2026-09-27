@@ -955,6 +955,7 @@ describe('channel settings service', () => {
     // Core rejects the commit unless userIdDigest = sha256("<provider>-user\0userId").
     const owner = identity({ brand: kind })
     const commands: Array<{ method: string; params: unknown }> = []
+    let connected = false
     const service = new ChannelSettingsService({
       profile,
       credentialStore: memoryCredentialStore(),
@@ -970,9 +971,10 @@ describe('channel settings service', () => {
       core: channelCore((method, params) => {
         commands.push({ method, params })
         if (method === `channels.${kind}.account.commitConnection`) {
+          connected = true
           return { status: 'applied', payload: { sessionRevision: 1 } }
         }
-        return coreSnapshot()
+        return coreSnapshot({ account: connected ? connectedAccount(owner) : null })
       })
     })
 
@@ -982,6 +984,9 @@ describe('channel settings service', () => {
     const account = (commit?.params as { command: { account: Record<string, unknown> } }).command.account
     const digest = (input: string): string => `sha256:${createHash('sha256').update(input).digest('hex')}`
     expect(account).toMatchObject({ brand: kind, userIdDigest: digest(`${kind}-user\0owner-user-id`) })
+    expect((await service.get()).channels[0]?.connection).toMatchObject({
+      status: 'connected', sessionStatus: 'valid'
+    })
   })
 
   it('uses only the developer session for publishing', async () => {

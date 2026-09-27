@@ -518,6 +518,7 @@ export class ChannelSettingsService {
   async #resolveConnectionCommit(): Promise<void> {
     const commit = this.#connectionCommit
     if (!commit || commit.busy) return
+    const sessionCheckGeneration = this.#sessionCheckGeneration
     commit.busy = true
     if (this.#activeQrAttempt?.attemptId === commit.attemptId) {
       this.#activeQrAttempt = { ...this.#activeQrAttempt, commitUncertain: false,
@@ -547,6 +548,9 @@ export class ChannelSettingsService {
         commit.applied = result
       }
       await activatePendingFeishuLogin(this.#developerSession, sessionRevisionFrom(commit.applied))
+      if (!this.#stopped && sessionCheckGeneration === this.#sessionCheckGeneration) {
+        this.#sessionStatus = 'valid'
+      }
       this.#updateLoginAttempt(commit.attemptId, 'connected')
       this.#connectionCommit = null
       if (this.#activeQrAttempt?.attemptId === commit.attemptId) this.#finishQr()
