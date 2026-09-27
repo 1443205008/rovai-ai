@@ -4,6 +4,7 @@ import { readErrorMessage } from './error-message'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NotificationPreference, StoredCommandResult } from '@contracts'
 import { SettingsPageHeader } from './SettingsPageHeader'
+import { UiText, uiAttribute, useInterfaceLanguage } from './interface-language'
 
 export type NotificationPreferenceKey =
   | 'headsUpEnabled'
@@ -49,25 +50,25 @@ interface NotificationScenario {
 }
 
 const NOTIFICATION_SCENARIOS: readonly NotificationScenario[] = [
-  { id: 'conversation', title: '会话', categories: [
-    { key: 'approvalHeadsUpEnabled', label: '待审批', description: '公共会话或单聊有权限请求时提醒' },
-    { key: 'userMentionHeadsUpEnabled', label: '提到你', description: '队员在公共会话中明确提到你' },
-    { key: 'turnCompletedHeadsUpEnabled', label: '本轮完成', description: '本次消息引发的全部协作结束后，只提醒一次' },
-    { key: 'singleChatHeadsUpEnabled', label: '单聊回复', description: '队员在单聊中完成回复时提醒' },
-    { key: 'turnIncompleteHeadsUpEnabled', label: '执行未完成', description: '公共会话或单聊失败、未完成时提醒' }
+  { id: 'conversation', title:"会话", categories: [
+    { key: 'approvalHeadsUpEnabled', label:"待审批", description:"公共会话或单聊有权限请求时提醒" },
+    { key: 'userMentionHeadsUpEnabled', label:"提到你", description:"队员在公共会话中明确提到你" },
+    { key: 'turnCompletedHeadsUpEnabled', label:"本轮完成", description:"本次消息引发的全部协作结束后，只提醒一次" },
+    { key: 'singleChatHeadsUpEnabled', label:"单聊回复", description:"队员在单聊中完成回复时提醒" },
+    { key: 'turnIncompleteHeadsUpEnabled', label:"执行未完成", description:"公共会话或单聊失败、未完成时提醒" }
   ] },
-  { id: 'mission', title: '使命', categories: [
-    { key: 'missionNeedsYouHeadsUpEnabled', label: '使命需要你', description: '使命进入“需要你”状态时提醒' },
-    { key: 'missionStatusHeadsUpEnabled', label: '使命状态变更', description: '使命进入所选状态时提醒', filter: 'missionStatuses' }
+  { id: 'mission', title:"使命", categories: [
+    { key: 'missionNeedsYouHeadsUpEnabled', label:"使命需要你", description:"使命进入“需要你”状态时提醒" },
+    { key: 'missionStatusHeadsUpEnabled', label:"使命状态变更", description:"使命进入所选状态时提醒", filter: 'missionStatuses' }
   ] },
-  { id: 'task', title: '任务', categories: [
-    { key: 'taskStatusHeadsUpEnabled', label: '任务状态变更', description: '任务进入所选状态时提醒', filter: 'taskStatuses' }
+  { id: 'task', title:"任务", categories: [
+    { key: 'taskStatusHeadsUpEnabled', label:"任务状态变更", description:"任务进入所选状态时提醒", filter: 'taskStatuses' }
   ] }
 ]
 
 const STATUS_OPTIONS: Record<FilterKey, readonly { value: string; label: string }[]> = {
-  missionStatuses: [{ value: 'completed', label: '已完成' }, { value: 'in_progress', label: '进行中' }, { value: 'not_started', label: '未开始' }],
-  taskStatuses: [{ value: 'completed', label: '已完成' }, { value: 'blocked', label: '受阻' }, { value: 'cancelled', label: '已取消' }, { value: 'in_progress', label: '进行中' }, { value: 'pending', label: '待开始' }]
+  missionStatuses: [{ value: 'completed', label:"已完成" }, { value: 'in_progress', label:"进行中" }, { value: 'not_started', label:"未开始" }],
+  taskStatuses: [{ value: 'completed', label:"已完成" }, { value: 'blocked', label:"受阻" }, { value: 'cancelled', label:"已取消" }, { value: 'in_progress', label:"进行中" }, { value: 'pending', label:"待开始" }]
 }
 
 export function NotificationSettings(): React.JSX.Element {
@@ -163,7 +164,7 @@ export function NotificationSettings(): React.JSX.Element {
           lastKnownCurrent = current
           setPreference(current)
         }
-        throw new Error('设置已在其他窗口更新，请检查当前值后重试。')
+        throw new Error(uiAttribute('设置已在其他窗口更新，请检查当前值后重试。'))
       }
 
       setPreference(assertPreference(result.payload))
@@ -182,7 +183,7 @@ export function NotificationSettings(): React.JSX.Element {
         setPreference(assertPreference(current))
       } catch {
         setPreference(lastKnownCurrent)
-        message = `${message} 当前值暂时无法重新读取。`
+        message = uiAttribute("{0} 当前值暂时无法重新读取。", String(message))
       }
       setError(message)
     } finally {
@@ -201,19 +202,17 @@ export function NotificationSettings(): React.JSX.Element {
     <>
       <SettingsPageHeader
         eyebrow="Settings / Reminders"
-        title="提醒"
-        description="设置需要显示临时浮层的提醒。"
+        title={uiAttribute("提醒")}
+        description={uiAttribute("设置需要显示临时浮层的提醒。")}
       />
-      <section className="section-block notification-settings" aria-label="应用内提醒设置">
+      <section className="section-block notification-settings" aria-label={uiAttribute("应用内提醒设置")}>
         {loading && !preference && (
-          <p className="notification-settings-state" role="status">正在读取提醒设置…</p>
+          <p className="notification-settings-state" role="status"><UiText zh={"正在读取提醒设置…"} /></p>
         )}
         {!loading && !preference && (
           <div className="notification-settings-state" role="alert">
-            <span>{error ?? '提醒设置暂时不可用。'}</span>
-            <button className="quiet-button compact" type="button" onClick={() => void load()}>
-              重试
-            </button>
+            <span>{error ?? uiAttribute("提醒设置暂时不可用。")}</span>
+            <button className="quiet-button compact" type="button" onClick={() => void load()}><UiText zh={"重试"} /></button>
           </div>
         )}
         {preference && (
@@ -247,11 +246,11 @@ export function NotificationPreferenceEditor({
   onRetry(): void
 }): React.JSX.Element {
   const headsUpEnabled = preference.headsUpEnabled
-  const statusLabel = savingKey ? '保存中…' : saveStatus === 'saved' ? '已保存' : null
+  const statusLabel = savingKey ? uiAttribute('保存中…') : saveStatus === 'saved' ? uiAttribute('已保存') : null
 
   return (
     <fieldset className="notification-switches" aria-busy={Boolean(savingKey)}>
-      <legend>应用内提醒类别</legend>
+      <legend><UiText zh={"应用内提醒类别"} /></legend>
       <div className="notification-master-panel">
         <span className="notification-master-icon" aria-hidden="true">
           <svg viewBox="0 0 20 20">
@@ -261,12 +260,12 @@ export function NotificationPreferenceEditor({
         </span>
         <div className="notification-master-copy">
           <div className="notification-master-title">
-            <h2>应用内提醒</h2>
+            <h2><UiText zh={"应用内提醒"} /></h2>
             <span className={headsUpEnabled ? '' : 'is-off'}>
-              {headsUpEnabled ? '已开启' : '已关闭'}
+              {headsUpEnabled ? uiAttribute("已开启") : uiAttribute("已关闭")}
             </span>
           </div>
-          <p>正在查看的会话保持安静，包含它的使命和任务；重新开启提醒时不补弹旧消息。</p>
+          <p><UiText zh={"正在查看的会话保持安静，包含它的使命和任务；重新开启提醒时不补弹旧消息。"} /></p>
         </div>
         <div className="notification-master-control">
           <span
@@ -277,7 +276,7 @@ export function NotificationPreferenceEditor({
             {statusLabel ?? ''}
           </span>
           <NotificationSwitch
-            label="应用内提醒"
+            label={uiAttribute("应用内提醒")}
             checked={headsUpEnabled}
             disabled={Boolean(savingKey && savingKey !== 'headsUpEnabled')}
             busy={savingKey === 'headsUpEnabled'}
@@ -291,7 +290,7 @@ export function NotificationPreferenceEditor({
       {error && (
         <div className="notification-settings-error" role="alert">
           <span>{error}</span>
-          <button type="button" onClick={onRetry}>重试</button>
+          <button type="button" onClick={onRetry}><UiText zh={"重试"} /></button>
         </div>
       )}
 
@@ -325,19 +324,20 @@ function NotificationScenarioGroup({
   onChange(key: SettingKey, checked: SettingValue, controlKey?: string): void
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState<FilterKey | null>(null)
+  const language = useInterfaceLanguage()
   const enabledCount = scenario.categories.filter((category) => preference[category.key]).length
 
   return (
     <section className={`notification-scenario notification-scenario-${scenario.id}`} aria-labelledby={`notification-scenario-${scenario.id}`}>
       <header className="notification-scenario-heading">
-        <h3 id={`notification-scenario-${scenario.id}`}>{scenario.title}</h3>
-        <span>{enabledCount} / {scenario.categories.length} 项{headsUpEnabled ? '已开启' : '已保留'}</span>
+        <h3 id={`notification-scenario-${scenario.id}`}>{uiAttribute(scenario.title)}</h3>
+        <span>{enabledCount} / {scenario.categories.length}<UiText zh={" 项"} />{headsUpEnabled ? uiAttribute("已开启") : uiAttribute("已保留")}</span>
       </header>
       {scenario.categories.map((category) => (
         <div className="notification-preference-row" key={category.key}>
         <NotificationSwitch
-          label={category.label}
-          description={category.description}
+          label={uiAttribute(category.label)}
+          description={uiAttribute(category.description)}
           checked={preference[category.key]}
           disabled={!headsUpEnabled || Boolean(savingKey && savingKey !== category.key)}
           busy={savingKey === category.key}
@@ -349,10 +349,10 @@ function NotificationScenarioGroup({
             disabled={!headsUpEnabled || !preference[category.key] || Boolean(savingKey)}
             data-notification-preference={category.filter}
             onClick={() => setExpanded(expanded === category.filter ? null : category.filter ?? null)}>
-            <span>{STATUS_OPTIONS[category.filter].filter(option => (preference[category.filter!] as string[]).includes(option.value)).map(option => option.label).join('、') || '未选择状态'}</span>
-            <span>{expanded === category.filter ? '收起' : '选择状态'}</span>
+            <span>{STATUS_OPTIONS[category.filter].filter(option => (preference[category.filter!] as string[]).includes(option.value)).map(option => uiAttribute(option.label)).join(language === 'en' ? ', ' : '、') || uiAttribute('未选择状态')}</span>
+            <span>{expanded === category.filter ? uiAttribute('收起') : uiAttribute('选择状态')}</span>
           </button>
-          {expanded === category.filter && <div className="notification-filter-options" role="group" aria-label={`${scenario.title}提醒状态`}>
+          {expanded === category.filter && <div className="notification-filter-options" role="group" aria-label={`${uiAttribute(scenario.title)} ${uiAttribute('提醒状态')}`}>
             {STATUS_OPTIONS[category.filter].map(option => <label key={option.value}>
               <input type="checkbox" checked={(preference[category.filter!] as string[]).includes(option.value)}
                 data-notification-preference={`${category.filter}:${option.value}`}
@@ -363,7 +363,7 @@ function NotificationScenarioGroup({
                   const key = category.filter!
                   const next = STATUS_OPTIONS[key].filter(item => item.value === option.value ? event.target.checked : (preference[key] as string[]).includes(item.value)).map(item => item.value)
                   onChange(key, next as NotificationPreference[FilterKey], `${key}:${option.value}`)
-                }} />{option.label}
+                }} />{uiAttribute(option.label)}
             </label>)}
           </div>}
         </div>}
@@ -445,7 +445,7 @@ function validStatusFilter(value: unknown, key: FilterKey): boolean {
 
 function assertPreference(value: unknown): NotificationPreference {
   const preference = preferenceFromUnknown(value)
-  if (!preference) throw new Error('通知设置合同不兼容。')
+  if (!preference) throw new Error(uiAttribute('通知设置合同不兼容。'))
   return preference
 }
 

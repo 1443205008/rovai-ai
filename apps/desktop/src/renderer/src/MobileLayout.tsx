@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useSyncExternalStore, type ReactNode, type Ref } from 'react'
 import { NavigationIcon } from './NavigationIcon'
 import { PanelToggleIcon } from './PanelToggleIcon'
+import { uiAttribute } from './interface-language'
 
 // Presentation only. Host capabilities and editing identity still come from CampClient.
 const MobileLayout = createContext(false)
@@ -70,7 +71,7 @@ export function MobilePageHeader({ title, onOpenMenu, menuOpen, triggerRef, chil
 }): React.JSX.Element {
   return <header className="mobile-page-heading app-root-heading">
     <button ref={triggerRef} className="mobile-icon-button mobile-conversation-list-open" type="button"
-      aria-label="打开主菜单" aria-expanded={menuOpen} aria-controls={menuOpen ? 'mobile-app-menu' : undefined} onClick={event => onOpenMenu(event.currentTarget)}>
+      aria-label={uiAttribute("打开主菜单")} aria-expanded={menuOpen} aria-controls={menuOpen ? 'mobile-app-menu' : undefined} onClick={event => onOpenMenu(event.currentTarget)}>
       <PanelToggleIcon side="left" visible={false} />
     </button>
     <h1>{title}</h1>

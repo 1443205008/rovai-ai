@@ -142,6 +142,7 @@ import {
   type OnboardingRuntimePhase
 } from './OnboardingFlow'
 import { provisionFirstRun } from './onboarding-provisioning'
+import { UiText, changeInterfaceLanguage, initializeInterfaceLanguage, uiAttribute, useInterfaceLanguage } from './interface-language'
 import {
   currentProjectAccessDecision,
   currentProjectForCamp,
@@ -327,7 +328,7 @@ export async function prepareActiveAutomationForAppQuit(
   guard: AutomationLeaveGuard | null
 ): Promise<void> {
   if (view === 'automations' && guard && !(await guard())) {
-    throw new Error('定时任务修改尚未保存')
+    throw new Error(uiAttribute('定时任务修改尚未保存'))
   }
 }
 
@@ -700,14 +701,12 @@ export function ControlledShutdownOverlay({
             </svg>
           </span>
           <div className="shutdown-card-content">
-            <h2 id="controlled-shutdown-title">正在安全退出</h2>
-            <p id="controlled-shutdown-description">Rovai 正在保存本地状态并关闭后台服务。</p>
-            <span className="shutdown-progress-track" role="progressbar" aria-label="正在完成安全退出">
+            <h2 id="controlled-shutdown-title"><UiText zh={"正在安全退出"} /></h2>
+            <p id="controlled-shutdown-description"><UiText zh={"Rovai 正在保存本地状态并关闭后台服务。"} /></p>
+            <span className="shutdown-progress-track" role="progressbar" aria-label={uiAttribute("正在完成安全退出")}>
               <i />
             </span>
-            <p className="shutdown-evidence-note" id="controlled-shutdown-evidence">
-              未完成的任务会取消，未确认的改动保留为待核对记录。
-            </p>
+            <p className="shutdown-evidence-note" id="controlled-shutdown-evidence"><UiText zh={"未完成的任务会取消，未确认的改动保留为待核对记录。"} /></p>
           </div>
         </section>
       )}
@@ -779,7 +778,7 @@ export function StartupWorkspace({
         onError={ignore}
       />
       {view === 'camp' && <AppHeader
-        campTitle="对话"
+        campTitle={uiAttribute("对话")}
         contextLabel={null}
         camp={null}
         onFocusApprovals={ignore}
@@ -839,7 +838,7 @@ export function BootstrapShell({
     try {
       await window.rovai.supervisor.retryFullCore()
     } catch {
-      setActionError('暂时无法重新打开，请重试。')
+      setActionError(uiAttribute('暂时无法重新打开，请重试。'))
     } finally {
       setBusy(null)
     }
@@ -850,7 +849,7 @@ export function BootstrapShell({
     try {
       await window.rovai.exportDiagnostics()
     } catch {
-      setActionError('暂时无法导出诊断，请重试。')
+      setActionError(uiAttribute('暂时无法导出诊断，请重试。'))
     } finally {
       setBusy(null)
     }
@@ -860,7 +859,7 @@ export function BootstrapShell({
     try {
       setAppearance(await window.rovai.appearance.setPreference(preference))
     } catch {
-      setActionError('暂时无法保存外观设置，请重试。')
+      setActionError(uiAttribute('暂时无法保存外观设置，请重试。'))
     }
   }
 
@@ -885,7 +884,7 @@ export function BootstrapShell({
               disabled={busy !== null || !snapshot?.capabilities.fullCoreRetry}
               onClick={() => void retry()}
             >
-              {busy === 'retry' ? '正在打开会话' : '重新打开'}
+              {busy === 'retry' ? uiAttribute("正在打开会话") : uiAttribute("重新打开")}
             </button>
             <button
               className="quiet-button"
@@ -893,7 +892,7 @@ export function BootstrapShell({
               disabled={busy !== null}
               onClick={() => void exportDiagnostics()}
             >
-              {busy === 'diagnostics' ? '正在导出…' : '导出诊断'}
+              {busy === 'diagnostics' ? uiAttribute("正在导出…") : uiAttribute("导出诊断")}
             </button>
           </div>
           {actionError && (
@@ -905,10 +904,10 @@ export function BootstrapShell({
 
         <aside className="bootstrap-local-card">
           <div>
-            <span className="bootstrap-local-label">本地外观</span>
-            <p>你仍然可以调整外观。</p>
+            <span className="bootstrap-local-label"><UiText zh={"本地外观"} /></span>
+            <p><UiText zh={"你仍然可以调整外观。"} /></p>
           </div>
-          <div className="bootstrap-theme-options" role="group" aria-label="外观主题">
+          <div className="bootstrap-theme-options" role="group" aria-label={uiAttribute("外观主题")}>
             {([
               ['system', '跟随系统'],
               ['day', '日间'],
@@ -920,14 +919,14 @@ export function BootstrapShell({
                 onClick={() => void changeAppearance(preference)}
                 key={preference}
               >
-                {label}
+                {uiAttribute(label)}
               </button>
             ))}
           </div>
           {(snapshot?.localDegradations.length ?? 0) > 0 && (
             <div className="bootstrap-degradations">
-              <span className="bootstrap-local-label">本机设置提示</span>
-              <p>部分本机设置暂时无法读取，可导出诊断以排查原因。</p>
+              <span className="bootstrap-local-label"><UiText zh={"本机设置提示"} /></span>
+              <p><UiText zh={"部分本机设置暂时无法读取，可导出诊断以排查原因。"} /></p>
             </div>
           )}
         </aside>
@@ -943,9 +942,9 @@ export function bootstrapAuthorityCopy(snapshot: SupervisorSnapshot | null): {
 } {
   const starting = !snapshot || snapshot.fullCoreState === 'idle' || snapshot.fullCoreState === 'starting'
   return {
-    eyebrow: starting ? '请稍候' : '会话尚未就绪',
-    title: starting ? '正在打开会话' : '暂时无法打开会话',
-    description: starting ? '准备好后会自动打开。' : '请重新打开，或导出诊断以排查原因。'
+    eyebrow: starting ?uiAttribute("请稍候") :uiAttribute("会话尚未就绪"),
+    title: starting ?uiAttribute("正在打开会话") :uiAttribute("暂时无法打开会话"),
+    description: starting ?uiAttribute("准备好后会自动打开。") :uiAttribute("请重新打开，或导出诊断以排查原因。")
   }
 }
 
@@ -991,7 +990,7 @@ export function AppToast({
     >
       <span>{toast.message}</span>
       {toast.action && <button className="app-toast-action" type="button" onClick={() => { onClose(); toast.action?.onSelect() }}>{toast.action.label}</button>}
-      <button className="icon-button" type="button" aria-label="关闭提示" onClick={onClose}>×</button>
+      <button className="icon-button" type="button" aria-label={uiAttribute("关闭提示")} onClick={onClose}>×</button>
     </div>
   )
 }
@@ -1012,6 +1011,8 @@ export function BusinessApp({
   startupFeedbackDelayElapsed?: boolean
 }): React.JSX.Element {
   const { client, preferences: uiPreferences, desktop } = environment
+  const interfaceLanguage = useInterfaceLanguage()
+  const onboardingLanguageRequest = useRef(0)
   const mobile = useMobileViewport(!desktop)
   const [mobileSettingsList, setMobileSettingsList] = useState(false)
   const [mobileConversationDrawerOpen, setMobileConversationDrawerOpen] = useState(false)
@@ -1105,7 +1106,11 @@ export function BusinessApp({
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general')
   const [remotePort, setRemotePort] = useState<string | null>(null)
   const newConversationRequestBusy = useRef(false)
-  const [generalPreferences, setGeneralPreferences] = useState<GeneralPreferencesSnapshot | null>(null)
+  const [generalPreferences, setGeneralPreferencesState] = useState<GeneralPreferencesSnapshot | null>(null)
+  const setGeneralPreferences = useCallback((snapshot: GeneralPreferencesSnapshot): void => {
+    initializeInterfaceLanguage(snapshot)
+    setGeneralPreferencesState(snapshot)
+  }, [])
   const [currentProject, setCurrentProject] = useState<CurrentProject>(() => readCurrentProject())
   const [currentWorkspaceHint, setCurrentWorkspaceHint] = useState<WorkspaceSelection | null>(null)
   const [activeCampId, setActiveCampId] = useState<string | null>(null)
@@ -1254,7 +1259,7 @@ export function BusinessApp({
       await afterNextPaint()
       preparation.didLeave ||= viewRef.current !== 'camp' || activeCampIdRef.current !== leavingCampId
     } catch (nextError) {
-      setError(`离开当前会话前未能完成输入操作：${errorMessage(nextError)}`)
+      setError(uiAttribute("离开当前会话前未能完成输入操作：{0}", String(errorMessage(nextError))))
       return false
     } finally {
       preparation.users -= 1
@@ -1280,7 +1285,7 @@ export function BusinessApp({
         transition
       )
     } catch (nextError) {
-      setError(`离开定时任务前未能保存修改：${errorMessage(nextError)}`)
+      setError(uiAttribute("离开定时任务前未能保存修改：{0}", String(errorMessage(nextError))))
       return false
     }
   }, [])
@@ -1307,7 +1312,7 @@ export function BusinessApp({
         automationLeaveGuardRef.current
       )
     } catch (nextError) {
-      setError(`退出应用前未能完成输入操作：${errorMessage(nextError)}`)
+      setError(uiAttribute("退出应用前未能完成输入操作：{0}", String(errorMessage(nextError))))
       throw nextError
     }
   }, [])
@@ -1341,7 +1346,7 @@ export function BusinessApp({
           command: { campId }
         })
       : await requestAuthoritativeCampOpenProjection(client, campId, traceId)
-    if (projection.schemaVersion !== 8) throw new Error('会话打开数据版本不兼容。')
+    if (projection.schemaVersion !== 8) throw new Error(uiAttribute('会话打开数据版本不兼容。'))
     console.info(
       `[camp-open] trace=${traceId} stage=renderer_received method=${method} `
       + `elapsed_ms=${(performance.now() - startedAt).toFixed(1)} `
@@ -1428,7 +1433,7 @@ export function BusinessApp({
   ): Promise<NavigationSnapshot> => {
     await navigationRefreshCoordinator.refresh(trigger)
     const snapshot = navigationSnapshotRef.current
-    if (!snapshot) throw new Error('会话导航暂时不可用，请重试。')
+    if (!snapshot) throw new Error(uiAttribute('会话导航暂时不可用，请重试。'))
     return snapshot
   }, [navigationRefreshCoordinator])
 
@@ -1441,7 +1446,7 @@ export function BusinessApp({
         if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
         setToast(null)
       }).catch(() => {
-        notifyError('删除未完成，请重试。', { label: '重试', onSelect: retry }, true)
+        notifyError(uiAttribute('删除未完成，请重试。'), { label:uiAttribute("重试"), onSelect: retry }, true)
       })
     }
     retry()
@@ -1455,8 +1460,8 @@ export function BusinessApp({
     if (!issue) return
     shownDeletionIssuesRef.current.add(`${issue.operationId}:${issue.attentionRevision}`)
     notifyError(
-      '删除未完成，请重试。',
-      { label: '重试', onSelect: () => retryCampDeletion(issue.operationId) },
+      uiAttribute('删除未完成，请重试。'),
+      { label:uiAttribute("重试"), onSelect: () => retryCampDeletion(issue.operationId) },
       true
     )
   }, [client, notifyError, retryCampDeletion])
@@ -1469,7 +1474,7 @@ export function BusinessApp({
       try {
         const snapshot = await desktop.onboarding.get()
         if (snapshot.status === 'uninitialized') {
-          throw new Error('首次引导状态尚未就绪，请重试。')
+          throw new Error(uiAttribute('首次引导状态尚未就绪，请重试。'))
         }
         setOnboardingSnapshot(snapshot)
       } catch (nextError) {
@@ -1665,7 +1670,7 @@ export function BusinessApp({
       })
       .catch((nextError) => {
         if (generation === projectOrderSyncGeneration.current) {
-          setError(`项目顺序暂时无法保存：${errorMessage(nextError)}`)
+          setError(uiAttribute("项目顺序暂时无法保存：{0}", String(errorMessage(nextError))))
         }
       })
   }, [applyNavigationPreferences, navigation, removedProjectAuthorityReady, removedProjectKeys])
@@ -1676,7 +1681,7 @@ export function BusinessApp({
       const snapshot = await uiPreferences.navigationPreferences.restoreProject(targetKey)
       applyNavigationPreferences(snapshot)
     } catch (nextError) {
-      setError(`项目访问状态未能恢复，已停止后续目录检查：${errorMessage(nextError)}`)
+      setError(uiAttribute("项目访问状态未能恢复，已停止后续目录检查：{0}", String(errorMessage(nextError))))
       throw nextError
     }
   }, [applyNavigationPreferences])
@@ -1929,7 +1934,7 @@ export function BusinessApp({
       || page.hasMore !== (page.nextBeforeSequence !== null)
       || page.messages.some((message) => message.sequence >= beforeSequence)
     ) {
-      throw new Error('较早消息数据不兼容，请重新打开会话。')
+      throw new Error(uiAttribute('较早消息数据不兼容，请重新打开会话。'))
     }
     if (selectionGeneration !== campSelectionGeneration.current) return
     const current = campSnapshotRef.current
@@ -2471,7 +2476,7 @@ export function BusinessApp({
           setToast(null)
         } else if (runtimeStatus === 'crashed') {
           setState('error')
-          setError(stringField(params, 'message') ?? '后台服务已停止。')
+          setError(stringField(params, 'message') ?? uiAttribute('后台服务已停止。'))
         } else if (runtimeStatus === 'starting' || runtimeStatus === 'restarting') {
           setState('loading')
           setHealth(null)
@@ -2568,7 +2573,7 @@ export function BusinessApp({
     ? selectedCurrentProject.projectPath
     : null
   const currentProjectKey = selectedCurrentProject?.projectKey ?? 'quick-chat'
-  const currentProjectLabel = selectedCurrentProject?.name ?? '快速对话'
+  const currentProjectLabel = selectedCurrentProject?.name ?? uiAttribute('快速对话')
   const activeProjectPath = activeCamp?.projectBindingKind === 'directory'
     ? activeCamp.projectPath
     : campSnapshot?.camp.id === activeCampId
@@ -2582,7 +2587,7 @@ export function BusinessApp({
     ? formatCampTitle(activeCamp)
     : campSnapshot?.camp.id === activeCampId ? formatCampTitle(campSnapshot.camp) : ''
   const activeCampContextLabel = activeCampProject?.name
-    ?? (activeProjectPath === currentProjectPath ? currentProjectLabel : '快速对话')
+    ?? (activeProjectPath === currentProjectPath ? currentProjectLabel : uiAttribute('快速对话'))
   const activeCancellingTurnIds = useMemo(
     () => campSnapshot?.camp.id === activeCampId
       ? effectiveCancellingTurnIds(cancellingTurnIds, campSnapshot)
@@ -2734,7 +2739,7 @@ export function BusinessApp({
           return 'created'
         } catch (nextError) {
           if (!intent.isCurrent()) return 'ignored'
-          openNewConversation(workspace, `一键创建未完成：${errorMessage(nextError)} 请重新确认项目、队员与默认负责人。`, preferences)
+          openNewConversation(workspace, uiAttribute("一键创建未完成：{0} 请重新确认项目、队员与默认负责人。", String(errorMessage(nextError))), preferences)
           return 'dialog'
         }
       }
@@ -2742,7 +2747,7 @@ export function BusinessApp({
       return 'dialog'
     } catch (nextError) {
       if (!intent.isCurrent()) return 'ignored'
-      setError(`默认队员设置读取失败：${errorMessage(nextError)}`)
+      setError(uiAttribute("默认队员设置读取失败：{0}", String(errorMessage(nextError))))
       return 'ignored'
     } finally { newConversationRequestBusy.current = false }
   }
@@ -2925,7 +2930,7 @@ export function BusinessApp({
       releaseSection.scrollIntoView({ block: 'start' })
       return Boolean(heading)
     } catch (nextError) {
-      setError(`无法打开更新内容：${errorMessage(nextError)}`)
+      setError(uiAttribute("无法打开更新内容：{0}", String(errorMessage(nextError))))
       return false
     }
   }
@@ -2973,7 +2978,7 @@ export function BusinessApp({
   ): Promise<NotificationNavigationResult> => {
     let result: NotificationNavigationResult = {
       status: 'failed',
-      message: '当前页面尚未完成切换，请稍后重试。'
+      message:uiAttribute("当前页面尚未完成切换，请稍后重试。")
     }
     let transitionActionCompleted = false
     const transitioned = await requestMemberTransition(async () => {
@@ -2981,13 +2986,13 @@ export function BusinessApp({
         if (!action.available) {
           result = {
             status: 'failed',
-            message: '这个来源当前不可用。你可以显式选择卡片上的其他动作。'
+            message:uiAttribute("这个来源当前不可用。你可以显式选择卡片上的其他动作。")
           }
           return
         }
         if (action.kind === 'open_single_chat') {
           const source = action.singleChat
-          if (!source) throw new Error('单聊通知缺少原始对话标识。')
+          if (!source) throw new Error(uiAttribute('单聊通知缺少原始对话标识。'))
           const snapshot = await client.request<import('@contracts').SingleChatSnapshot | null>('singleChat.get', {
             conversationId: source.conversationId
           })
@@ -2995,22 +3000,22 @@ export function BusinessApp({
             || snapshot.conversation.campId !== action.campId
             || snapshot.conversation.agentId !== source.agentId
             || !snapshot.agentRuns.some((run) => run.id === source.agentRunId)) {
-            throw new Error('原单聊已结束或来源不可用。')
+            throw new Error(uiAttribute('原单聊已结束或来源不可用。'))
           }
           if (action.approvalId && !snapshot.approvals.some((approval) => approval.id === action.approvalId && approval.status === 'pending')) {
-            throw new Error('这项审批已经处理。')
+            throw new Error(uiAttribute('这项审批已经处理。'))
           }
         }
         let anchoredTasks: readonly import('@contracts').TaskView[] = []
         if (action.kind === 'open_mission' || action.kind === 'open_task') {
           const source = action.subject
           if (!source || source.kind !== (action.kind === 'open_mission' ? 'mission' : 'task')) {
-            throw new Error('通知缺少原始事项标识。')
+            throw new Error(uiAttribute('通知缺少原始事项标识。'))
           }
           const snapshot = await client.request<CampSnapshot>('camps.snapshot', { campId: action.campId })
           if (snapshot.camp.id !== action.campId
             || (source.kind === 'mission' ? snapshot.camp.missionId !== source.id : !snapshot.tasks.some(task => task.taskId === source.id))) {
-            throw new Error('原事项已删除或暂时不可用。')
+            throw new Error(uiAttribute('原事项已删除或暂时不可用。'))
           }
           if (source.kind === 'task') anchoredTasks = snapshot.tasks.filter(task => task.taskId === source.id)
         }
@@ -3020,7 +3025,7 @@ export function BusinessApp({
           if (!action.messageId) {
             result = {
               status: 'failed',
-              message: '消息动作没有可用的精确定位目标。'
+              message:uiAttribute("消息动作没有可用的精确定位目标。")
             }
             return
           }
@@ -3035,16 +3040,16 @@ export function BusinessApp({
             around.schemaVersion !== 1
             || around.campId !== action.campId
             || around.anchorMessageId !== action.messageId
-          ) throw new Error('消息定位合同不兼容。')
+          ) throw new Error(uiAttribute('消息定位合同不兼容。'))
           if (!around.sourceAvailable) {
             result = {
               status: 'failed',
-              message: '原消息已删除或暂时不可用。通知仍保留在“全部”列表中。'
+              message:uiAttribute("原消息已删除或暂时不可用。通知仍保留在“全部”列表中。")
             }
             return
           }
           if (!around.messages.some((message) => message.id === action.messageId)) {
-            throw new Error('消息定位结果未包含目标消息。')
+            throw new Error(uiAttribute('消息定位结果未包含目标消息。'))
           }
           anchoredMessages = around.messages
         }
@@ -3052,7 +3057,7 @@ export function BusinessApp({
           if (!action.agentRunId) {
             result = {
               status: 'failed',
-              message: '执行动作没有可用的精确定位目标。'
+              message:uiAttribute("执行动作没有可用的精确定位目标。")
             }
             return
           }
@@ -3065,14 +3070,14 @@ export function BusinessApp({
               campId: action.campId
             })
             if (fullSnapshot.schemaVersion !== 34 || fullSnapshot.camp.id !== action.campId) {
-              throw new Error('执行定位合同不兼容。')
+              throw new Error(uiAttribute('执行定位合同不兼容。'))
             }
             run = fullSnapshot.agentRuns.find(({ id }) => id === action.agentRunId) ?? null
           }
           if (!run) {
             result = {
               status: 'failed',
-              message: '原执行已删除或暂时不可用。通知仍保留在“全部”列表中。'
+              message:uiAttribute("原执行已删除或暂时不可用。通知仍保留在“全部”列表中。")
             }
             return
           }
@@ -3128,7 +3133,7 @@ export function BusinessApp({
         if (!activated) {
           result = {
             status: 'failed',
-            message: '暂时无法打开通知来源。通知仍保留，可稍后重试。'
+            message:uiAttribute("暂时无法打开通知来源。通知仍保留，可稍后重试。")
           }
           return
         }
@@ -3141,7 +3146,7 @@ export function BusinessApp({
         ) {
           result = {
             status: 'failed',
-            message: '已打开会话，但原消息未能呈现。通知仍保留，可稍后重试。'
+            message:uiAttribute("已打开会话，但原消息未能呈现。通知仍保留，可稍后重试。")
           }
           return
         }
@@ -3153,7 +3158,7 @@ export function BusinessApp({
       } catch (nextError) {
         result = {
           status: 'failed',
-          message: `暂时无法打开通知来源：${errorMessage(nextError)}`
+          message: uiAttribute("暂时无法打开通知来源：{0}", String(errorMessage(nextError)))
         }
       } finally {
         transitionActionCompleted = true
@@ -3161,7 +3166,7 @@ export function BusinessApp({
     })
     return transitioned || transitionActionCompleted ? result : {
       status: 'failed',
-      message: '请先处理当前队员页面中尚未保存的更改，再打开这条通知。'
+      message:uiAttribute("请先处理当前队员页面中尚未保存的更改，再打开这条通知。")
     }
   }, [activateCamp, requestMemberTransition])
 
@@ -3263,7 +3268,7 @@ export function BusinessApp({
         if (removingCurrent || removingActiveCamp) {
           await commitRestorableLocation({ kind: 'quick_chat' })
         }
-        notify(`已从侧栏移除“${project.name}”`)
+        notify(uiAttribute("已从侧栏移除“{0}”", String(project.name)))
       } finally {
         setBusy(null)
       }
@@ -3271,7 +3276,7 @@ export function BusinessApp({
     if (removingActiveCamp) {
       const transitioned = await leaveActiveSurface(remove)
       if (!transitioned) {
-        throw new Error('当前输入操作尚未完成，项目未从侧栏移除。请重试。')
+        throw new Error(uiAttribute('当前输入操作尚未完成，项目未从侧栏移除。请重试。'))
       }
     } else {
       await remove()
@@ -3283,7 +3288,7 @@ export function BusinessApp({
     ++projectNamesGeneration.current
     const snapshot = await uiPreferences.navigationPreferences.setProjectName(project.projectKey, name)
     setProjectNames(snapshot.projectNames)
-    notify('项目名称已保存')
+    notify(uiAttribute('项目名称已保存'))
   }
 
   const renameCamp = async (camp: NavigationCampItem, title: string): Promise<void> => {
@@ -3438,7 +3443,7 @@ export function BusinessApp({
     const campId = activeCampIdRef.current
     const currentSnapshot = campSnapshotRef.current
     if (!campId || currentSnapshot?.camp.id !== campId) {
-      throw new Error('当前会话尚未准备好。')
+      throw new Error(uiAttribute('当前会话尚未准备好。'))
     }
     setBusy('camp-membership')
     setError(null)
@@ -3467,7 +3472,7 @@ export function BusinessApp({
               for (const remainingAgentId of agentIds.slice(index + 1)) {
                 outcome.failures.push({
                   agentId: remainingAgentId,
-                  message: '名册已发生变化，请在刷新后重试。'
+                  message:uiAttribute("名册已发生变化，请在刷新后重试。")
                 })
               }
               break
@@ -3501,13 +3506,13 @@ export function BusinessApp({
   const previewCampMemberRemoval = async (agentId: string): Promise<CampMemberRemovalPreview> => {
     const campId = activeCampIdRef.current
     if (!campId || campSnapshotRef.current?.camp.id !== campId) {
-      throw new Error('当前会话尚未准备好。')
+      throw new Error(uiAttribute('当前会话尚未准备好。'))
     }
     const preview = await client.request<CampMemberRemovalPreview | null>(
       'camps.members.removalPreview',
       { campId, agentId }
     )
-    if (!preview) throw new Error('这位队员已不在当前会话中。')
+    if (!preview) throw new Error(uiAttribute('这位队员已不在当前会话中。'))
     return preview
   }
 
@@ -3516,7 +3521,7 @@ export function BusinessApp({
   ): Promise<CampMemberRemoveOutcome> => {
     const campId = activeCampIdRef.current
     if (!campId || preview.campId !== campId || campSnapshotRef.current?.camp.id !== campId) {
-      return { status: 'conflict', message: '当前会话已发生变化，请重新读取影响。' }
+      return { status: 'conflict', message:uiAttribute("当前会话已发生变化，请重新读取影响。") }
     }
     setBusy('camp-membership')
     setError(null)
@@ -3580,7 +3585,7 @@ export function BusinessApp({
       })
       if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
       const campId = stringField(result.payload, 'campId')
-      if (!campId) throw new Error('会话已创建，但暂时无法打开。请刷新会话列表后重试。')
+      if (!campId) throw new Error(uiAttribute('会话已创建，但暂时无法打开。请刷新会话列表后重试。'))
       setNewConversationOpen(false)
       let preferencesSaveFailed = false
       if (enableOneClick) {
@@ -3604,7 +3609,7 @@ export function BusinessApp({
         }
       } finally {
         if (preferencesSaveFailed) {
-          notifyError('对话已创建，但默认队伍与一键新建设置未保存。可在「设置 → 通用」重试。')
+          notifyError(uiAttribute('对话已创建，但默认队伍与一键新建设置未保存。可在「设置 → 通用」重试。'))
         }
       }
     } finally {
@@ -3692,7 +3697,7 @@ export function BusinessApp({
         campMessageSendParams(commandId, campId, draft)
       )
       if (!result.commandResult) {
-        throw new Error('消息提交结果暂时不可用，请稍后重试。')
+        throw new Error(uiAttribute('消息提交结果暂时不可用，请稍后重试。'))
       }
       if (result.commandResult.status === 'rejected') {
         const recovery = runtimeRecoveryFromCommandResult(campId, result.commandResult)
@@ -3831,7 +3836,8 @@ export function BusinessApp({
         installations,
         (checkpoint) => {
           if (checkpoint.status === 'in_progress') setOnboardingSnapshot(checkpoint)
-        }
+        },
+        interfaceLanguage
       )
       const [nextAgents, , nextInstallations] = await Promise.all([
         client.request<AgentProfile[]>('members.list'),
@@ -3851,7 +3857,7 @@ export function BusinessApp({
         const stored = await desktop.onboarding.get()
         if (stored.status === 'completed') {
           setOnboardingSnapshot(stored)
-          setError(`“初次集结”已保存，但当前页面还未完全打开：${message}`)
+          setError(uiAttribute("“初次集结”已保存，但当前页面还未完全打开：{0}", String(message)))
         } else {
           setOnboardingSnapshot(stored)
           setOnboardingError(message)
@@ -3924,35 +3930,35 @@ export function BusinessApp({
     setNotificationFocus({ requestId: ++notificationFocusSequence.current, kind: 'camp_message', campTurnId: null, messageId, active: true })
   }
   async function createMission(draft: Omit<CreateCampRequest, 'commandId' | 'activationState'>, saveTeam: boolean, definition?: {description: string; start: boolean; tags: string[]; attachments: MissionAttachmentDraft[]}): Promise<void> {
-    if (!definition) throw new Error('缺少使命定义')
+    if (!definition) throw new Error(uiAttribute('缺少使命定义'))
     const command: MissionCreate = { title: draft.name ?? '', description: definition.description, memberAgentIds: draft.memberAgentIds, defaultLeadAgentId: draft.defaultLeadAgentId, projectBindingKind: draft.workspace ? 'directory' : 'quick_chat', projectPath: draft.workspace?.projectPath ?? '', tags: definition.tags }
     const attachmentSignature = JSON.stringify(definition.attachments.map(({ id, file, kindHint }) => [id, file.name, file.size, file.lastModified, file.type, kindHint]))
     // Unknown transport outcomes retry the exact command. A different draft cannot
     // accidentally create a second Mission while the first result is unresolved.
     const pending = missionCreation.current
-    if (pending && (JSON.stringify(pending.command) !== JSON.stringify(command) || pending.attachmentSignature !== attachmentSignature)) throw new Error('上次创建结果尚未确认，请恢复原内容并重试。')
+    if (pending && (JSON.stringify(pending.command) !== JSON.stringify(command) || pending.attachmentSignature !== attachmentSignature)) throw new Error(uiAttribute('上次创建结果尚未确认，请恢复原内容并重试。'))
     const request = pending ?? { id: newCommandId(), command, attachments: definition.attachments, attachmentSignature }
     missionCreation.current = request
     setBusy('create-mission')
     try {
       const result = request.attachments.length
         ? await (async () => {
-            if (!client.missionAttachments) throw new Error('当前环境不支持使命附件。')
+            if (!client.missionAttachments) throw new Error(uiAttribute('当前环境不支持使命附件。'))
             const stored = await client.missionAttachments.create(request.id, request.command, request.attachments)
             if (stored.status === 'rejected') throw new MissionCommandRejected(stored)
             return stored
           })()
         : await missionCommand(client, 'missions.create', request.command, request.id)
       const campId = stringField(result.payload, 'campId'), missionId = stringField(result.payload, 'missionId')
-      if (!campId || !missionId) throw new Error('使命已保存，但返回的标识不完整。请刷新使命板。')
+      if (!campId || !missionId) throw new Error(uiAttribute('使命已保存，但返回的标识不完整。请刷新使命板。'))
       missionCreation.current = null; setNewMissionOpen(false)
       if (saveTeam) {
         try { setGeneralPreferences(await uiPreferences.generalPreferences.setNewConversationDefaults({ memberAgentIds: draft.memberAgentIds, defaultLeadAgentId: draft.defaultLeadAgentId }, true)) }
-        catch { notifyError('使命已创建，但默认队伍设置未保存。可在设置中重试。') }
+        catch { notifyError(uiAttribute('使命已创建，但默认队伍设置未保存。可在设置中重试。')) }
       }
       if (definition.start) {
         try { await missionCommand(client, 'missions.start', { missionId }) }
-        catch (error) { notifyError(`使命已保存，暂时未开始：${missionError(error)}`) }
+        catch (error) { notifyError(uiAttribute("使命已保存，暂时未开始：{0}", String(missionError(error)))) }
       }
       await missionList.refresh()
     } catch (error) {
@@ -4003,33 +4009,33 @@ export function BusinessApp({
         <>
           {memoryReviewNotice && (
             <div className="memory-review-notice" role="status">
-              <div><strong>队员提交了一条共同记忆审核</strong><span>候选内容尚未成为正式记忆，你可以稍后在“记忆”中逐条处理。</span></div>
-              <div><button className="quiet-button compact" type="button" onClick={openMemoryReviews}>查看审核</button><button className="icon-button" type="button" aria-label="暂时忽略共同记忆审核提示" onClick={() => setMemoryReviewNotice(false)}>×</button></div>
+              <div><strong><UiText zh={"队员提交了一条共同记忆审核"} /></strong><span><UiText zh={"候选内容尚未成为正式记忆，你可以稍后在“记忆”中逐条处理。"} /></span></div>
+              <div><button className="quiet-button compact" type="button" onClick={openMemoryReviews}><UiText zh={"查看审核"} /></button><button className="icon-button" type="button" aria-label={uiAttribute("暂时忽略共同记忆审核提示")} onClick={() => setMemoryReviewNotice(false)}>×</button></div>
             </div>
           )}
           {memoryAutoNotice.count > 0 && (
             <div className="memory-review-notice memory-auto-applied-notice" role="status" aria-live="polite">
-              <div><strong>已自动形成 {memoryAutoNotice.count} 条{memoryAutoNotice.count === 1 ? memoryAutoNotice.scope === 'relationship' ? '队员间记忆' : memoryAutoNotice.scope === 'companion' ? '队员记忆' : '共同记忆' : '记忆'}</strong><span>已立即用于后续协作，你可以随时查看、修订、停止沿用或遗忘。</span></div>
-              <div><button className="quiet-button compact" type="button" onClick={openAutomaticMemory}>查看</button><button className="icon-button" type="button" aria-label="关闭自动形成提示" onClick={() => setMemoryAutoNotice({ count: 0, memoryId: null, scope: null })}>×</button></div>
+              <div><strong><UiText zh={"已自动形成 "} />{memoryAutoNotice.count}<UiText zh={" 条"} />{memoryAutoNotice.count === 1 ? memoryAutoNotice.scope === 'relationship' ? uiAttribute("队员间记忆") : memoryAutoNotice.scope === 'companion' ? uiAttribute("队员记忆") : uiAttribute("共同记忆") : uiAttribute("记忆")}</strong><span><UiText zh={"已立即用于后续协作，你可以随时查看、修订、停止沿用或遗忘。"} /></span></div>
+              <div><button className="quiet-button compact" type="button" onClick={openAutomaticMemory}><UiText zh={"查看"} /></button><button className="icon-button" type="button" aria-label={uiAttribute("关闭自动形成提示")} onClick={() => setMemoryAutoNotice({ count: 0, memoryId: null, scope: null })}>×</button></div>
             </div>
           )}
           {!shuttingDown && error && (
             <div className="error-banner" role="alert">
               <span className="error-icon" aria-hidden="true">!</span>
-              <div><strong>操作未完成</strong><span>{error}</span><small>项目文件和已经写入的审计记录不会因此丢失。</small></div>
-              <div className="error-actions"><button className="quiet-button" onClick={() => void loadOverview()}>刷新状态</button><button className="icon-button" aria-label="关闭错误" onClick={() => setError(null)}>×</button></div>
+              <div><strong><UiText zh={"操作未完成"} /></strong><span>{error}</span><small><UiText zh={"项目文件和已经写入的审计记录不会因此丢失。"} /></small></div>
+              <div className="error-actions"><button className="quiet-button" onClick={() => void loadOverview()}><UiText zh={"刷新状态"} /></button><button className="icon-button" aria-label={uiAttribute("关闭错误")} onClick={() => setError(null)}>×</button></div>
             </div>
           )}
           {!shuttingDown && locationSaveError && (
             <div className="error-banner" role="alert">
               <span className="error-icon" aria-hidden="true">!</span>
-              <div><strong>当前页面已打开，但下次启动位置未保存</strong><span>{locationSaveError}</span></div>
+              <div><strong><UiText zh={"当前页面已打开，但下次启动位置未保存"} /></strong><span>{locationSaveError}</span></div>
               <div className="error-actions">
                 <button className="quiet-button" type="button" onClick={() => {
                   const location = pendingRestorableLocation.current
                   if (location) void commitRestorableLocation(location)
-                }}>重试保存</button>
-                <button className="icon-button" type="button" aria-label="关闭启动位置保存错误" onClick={() => setLocationSaveError(null)}>×</button>
+                }}><UiText zh={"重试保存"} /></button>
+                <button className="icon-button" type="button" aria-label={uiAttribute("关闭启动位置保存错误")} onClick={() => setLocationSaveError(null)}>×</button>
               </div>
             </div>
           )}
@@ -4061,6 +4067,13 @@ export function BusinessApp({
           runtimePhase={onboardingRuntimePhase}
           busy={onboardingBusy}
           error={onboardingError}
+          onLanguageChange={(language) => {
+            const request = ++onboardingLanguageRequest.current
+            setOnboardingError(null)
+            void changeInterfaceLanguage(uiPreferences.generalPreferences, language, setGeneralPreferences)
+              .then(() => { if (request === onboardingLanguageRequest.current) setOnboardingError(null) })
+              .catch(() => { if (request === onboardingLanguageRequest.current) setOnboardingError(uiAttribute('语言偏好未能保存，请重试。')) })
+          }}
           onThemeChange={(preference) => void changeOnboardingTheme(preference)}
           onShowWelcome={() => void runOnboardingMutation(
             () => desktop.onboarding.showWelcome()
@@ -4154,7 +4167,7 @@ export function BusinessApp({
     onRenameProject={renameProject}
     onCampIdCopied={() => {
       setError(null)
-      notify('已复制会话 ID')
+      notify(uiAttribute('已复制会话 ID'))
     }}
     onRename={renameCamp}
     onDelete={deleteCamp}
@@ -4170,10 +4183,10 @@ export function BusinessApp({
     <NavigationShell platform={client.platform} settings={view === 'settings'} navigation={desktopNavigation} nativeWindowControls={desktop?.windowControls} browser={!desktop} disabled={startupStatus !== 'resolved' || shuttingDown} className={view === 'camp' && !missionDrawer ? 'app-shell-camp' : ''} data-mobile-view={mobile ? view : undefined} data-mobile-settings-list={mobile && view === 'settings' && mobileSettingsList || undefined}>
       {!mobile && renderNavigation()}
       {!startupGateVisible && mobile && ['compose', 'members', 'memory', 'automations'].includes(view) && <MobilePageHeader
-        title={({ compose: '新对话', members: '队员', memory: '记忆', automations: '定时任务' } as Record<string, string>)[view]}
+        title={({ compose:uiAttribute("新对话"), members:uiAttribute("队员"), memory:uiAttribute("记忆"), automations:uiAttribute("定时任务") } as Record<string, string>)[view]}
         onOpenMenu={openMobileMenu} menuOpen={mobileConversationDrawerOpen} triggerRef={mobileConversationListButtonRef} />}
       {!startupGateVisible && view === 'camp' && !missionCamp && <AppHeader
-        campTitle={activeCampTitle || '对话'}
+        campTitle={activeCampTitle ||uiAttribute("对话")}
         contextLabel={activeCampContextLabel}
         camp={campSnapshot?.camp.id === activeCampId ? campSnapshot : null}
         detailEntryHostRef={setCampDetailEntryHost}
@@ -4211,7 +4224,7 @@ export function BusinessApp({
           hidden={view !== 'missions' && !missionDrawer} selectedId={missionDrawer ? activeMission?.missionId : undefined} onRefresh={missionList.refresh}
           onOpenMenu={openMobileMenu} menuOpen={mobileConversationDrawerOpen} menuTriggerRef={mobileConversationListButtonRef}
           onNew={() => { setNewMissionOpen(true) }} onOpen={mission => { void openMission(mission).catch(error => notifyError(missionError(error))) }}/>} 
-        {!startupGateVisible && view === 'camp' && missionCamp && !activeMission && <section className="mission-section-empty" role={missionList.error ? 'alert' : 'status'}><p>{missionList.error || (missionList.loading ? '正在读取使命…' : '此使命当前不可用。')}</p>{!missionList.loading && <button className="quiet-button" onClick={() => void missionList.refresh()}>重试</button>}<button className="quiet-button" onClick={returnToMissions}>返回使命板</button></section>}
+        {!startupGateVisible && view === 'camp' && missionCamp && !activeMission && <section className="mission-section-empty" role={missionList.error ? 'alert' : 'status'}><p>{missionList.error || (missionList.loading ? uiAttribute("正在读取使命…") : uiAttribute("此使命当前不可用。"))}</p>{!missionList.loading && <button className="quiet-button" onClick={() => void missionList.refresh()}><UiText zh={"重试"} /></button>}<button className="quiet-button" onClick={returnToMissions}><UiText zh={"返回使命板"} /></button></section>}
         {!startupGateVisible && generalPreferences && view === 'camp' && (!missionCamp || activeMission) && activeCampId && visibleCampSnapshot?.camp.id === activeCampId && (
           <MissionSurface key={activeCampId} enabled={!!activeMission} full={!missionDrawer} onExpand={() => setMissionPresentation('full')} onClose={returnToMissions}>
           {activeMission && <MissionHeader mission={activeMission} drawer={missionDrawer} camp={visibleCampSnapshot} projectName={activeCampProject?.name ?? activeCampContextLabel}
@@ -4436,7 +4449,7 @@ export function BusinessApp({
             visibleTrigger?.focus({ preventScroll: true })
           }}>
             <header className="app-menu-heading"><Dialog.Title>Rovai AI</Dialog.Title>
-              <Dialog.Close asChild><button className="mobile-icon-button" type="button" aria-label="关闭主菜单"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></Dialog.Close>
+              <Dialog.Close asChild><button className="mobile-icon-button" type="button" aria-label={uiAttribute("关闭主菜单")}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></Dialog.Close>
             </header>
             {renderNavigation(true)}
           </Dialog.Content>
@@ -4528,11 +4541,11 @@ function StartupRecoveryActions({ onRetry, onExportDiagnostics }: {
     finally { setExporting(false) }
   }
   return <div className="startup-route-actions">
-    <button className="primary-button" type="button" onClick={onRetry}>重新打开</button>
+    <button className="primary-button" type="button" onClick={onRetry}><UiText zh={"重新打开"} /></button>
     {onExportDiagnostics && <button className="quiet-button" type="button" disabled={exporting} onClick={() => void exportDiagnostics()}>
-      {exporting ? '正在导出…' : '导出诊断'}
+      {exporting ? uiAttribute("正在导出…") : uiAttribute("导出诊断")}
     </button>}
-    {exportError && <p role="alert">暂时无法导出诊断，请重试。</p>}
+    {exportError && <p role="alert"><UiText zh={"暂时无法导出诊断，请重试。"} /></p>}
   </div>
 }
 
@@ -4554,8 +4567,8 @@ function StartupRecoverySurface({
   }, [])
 
   const title = headingLevel === 1
-    ? <h1 id="startup-recovery-title" ref={headingRef} tabIndex={-1}>暂时无法打开会话</h1>
-    : <h2 id="startup-recovery-title" ref={headingRef} tabIndex={-1}>暂时无法打开会话</h2>
+    ? <h1 id="startup-recovery-title" ref={headingRef} tabIndex={-1}><UiText zh={"暂时无法打开会话"} /></h1>
+    : <h2 id="startup-recovery-title" ref={headingRef} tabIndex={-1}><UiText zh={"暂时无法打开会话"} /></h2>
 
   return (
     <section
@@ -4855,7 +4868,7 @@ async function resolveNavigationPins(
           offset,
           limit: 200
         })
-        if (page.schemaVersion !== 3) throw new Error('会话列表数据版本不兼容。')
+        if (page.schemaVersion !== 3) throw new Error(uiAttribute('会话列表数据版本不兼容。'))
         for (const camp of page.camps) {
           if (unresolvedCampIds.delete(camp.id)) campById.set(camp.id, camp)
         }
@@ -4950,7 +4963,7 @@ export function campMessageSendParams(
   }
 } {
   const sourceAttachments = draft.attachments.map((attachment) => {
-    if (!attachment.sourcePath) throw new Error('本地附件来源已不可用，请移除后重新添加。')
+    if (!attachment.sourcePath) throw new Error(uiAttribute('本地附件来源已不可用，请移除后重新添加。'))
     return {
       id: attachment.id,
       sourcePath: attachment.sourcePath,
@@ -4998,7 +5011,7 @@ export function campCreationPreflightFromAgents(
     .find((member) => member.runtimeReadiness === 'light_ready')
     ?.agentId ?? presentMembers[0]?.agentId ?? null
   const blockers: CampCreationPreflight['blockers'] = presentMembers.length === 0
-    ? [{ code: 'no_present_members', detail: '当前没有在队的队员。' }]
+    ? [{ code: 'no_present_members', detail:uiAttribute("当前没有在队的队员。") }]
     : []
   return {
     admissible: blockers.length === 0,
@@ -5010,31 +5023,31 @@ export function campCreationPreflightFromAgents(
 
 export function commandFailureMessage(result: StoredCommandResult): string {
   if (result.code === 'reply_recipient_required') {
-    return '原作者当前不可接收，请选择其他成员。'
+    return uiAttribute("原作者当前不可接收，请选择其他成员。")
   }
   if (result.code === 'mention_target_unavailable') {
-    return '消息未发送：一位收件人当前不可接收，请重新选择。'
+    return uiAttribute("消息未发送：一位收件人当前不可接收，请重新选择。")
   }
   if (result.code === 'camp_message.invalid_reply') {
-    return '消息未发送：引用的消息当前不可用。请取消引用后重试。'
+    return uiAttribute("消息未发送：引用的消息当前不可用。请取消引用后重试。")
   }
   if (
     result.code === 'camp_message.no_addressable_member'
     || result.code === 'camp.default_lead_invariant'
     || result.code === 'camp.no_present_members'
   ) {
-    return '当前无可用队员。'
+    return uiAttribute("当前无可用队员。")
   }
   if (result.code === 'agent_run.runtime_not_ready') {
-    return '目标队员的 Agent 运行时暂不可用。'
+    return uiAttribute("目标队员的 Agent 运行时暂不可用。")
   }
   if (result.code === 'camp.last_member_required') {
-    return '会话至少保留 1 位队员。'
+    return uiAttribute("会话至少保留 1 位队员。")
   }
   if (membershipConflictCode(result.code)) {
-    return '名册已发生变化。请重新读取最新状态后再试。'
+    return uiAttribute("名册已发生变化。请重新读取最新状态后再试。")
   }
-  return localizeExecutionEngineTerms(stringField(result.payload, 'message') ?? `操作未完成：${result.code}`)
+  return localizeExecutionEngineTerms(stringField(result.payload, 'message') ?? uiAttribute("操作未完成：{0}", String(result.code)))
 }
 
 function membershipConflictCode(code: string): boolean {

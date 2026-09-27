@@ -80,6 +80,7 @@ import { RUNTIME_RENDERER_CORE_METHODS } from './runtime-core-methods'
 import {
   GeneralPreferencesStore,
   isExecutionConsolePlacement,
+  isInterfaceLanguage,
   isNewConversationDefaults,
   isSettingsSection,
   isStartupLocationMode
@@ -1328,6 +1329,11 @@ ipcMain.handle('rovai:desktop-session-commit-location', async (_event, location:
 })
 
 ipcMain.handle('rovai:general-preferences-get', () => hostGeneralPreferences().get())
+
+ipcMain.handle('rovai:general-preferences-set-language', (_event, language: unknown) => {
+  if (!isInterfaceLanguage(language)) throw new Error('Unsupported interface language')
+  return hostGeneralPreferences().setInterfaceLanguage(language)
+})
 
 ipcMain.handle('rovai:general-preferences-set-startup', (_event, mode: unknown) => {
   if (!isStartupLocationMode(mode)) throw new Error('Unsupported startup location mode')

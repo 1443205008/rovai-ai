@@ -12,6 +12,7 @@ import {
   type MarkdownNode
 } from './safe-markdown-model'
 import type { FilePreviewBinaryContent, FilePreviewOperationResult, ResolvedTheme } from '@contracts'
+import { UiText, uiAttribute } from './interface-language'
 
 type MarkdownTreeNode = MarkdownNode
 
@@ -376,5 +377,5 @@ function LocalMarkdownImage({ reference, alt, read }: {
     }).catch(() => { if (active) setFailed(true) })
     return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl) }
   }, [reference, read, visible])
-  return <span ref={root}>{url ? <img src={url} alt={alt} loading="lazy" /> : failed ? <span role="status">{alt || '图片'}（暂不可读）</span> : <span>{alt || '图片'}</span>}</span>
+  return <span ref={root}>{url ? <img src={url} alt={alt} loading="lazy" /> : failed ? <span role="status">{alt ||uiAttribute("图片")}<UiText zh={"（暂不可读）"} /></span> : <span>{alt ||uiAttribute("图片")}</span>}</span>
 }

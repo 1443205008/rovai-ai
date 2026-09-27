@@ -4,6 +4,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { useMobileLayout } from './MobileLayout'
 import { MemberAvatar, type MemberAvatarProps } from './MemberAvatar'
 import { ExecutionIcon } from './ExecutionIcons'
+import { UiText, uiAttribute } from './interface-language'
 
 export type CampDetailTab = 'execution' | 'tasks' | 'members'
 export type RunningCampMember = Pick<MemberAvatarProps, 'agentId' | 'avatarRef' | 'displayName'>
@@ -11,7 +12,7 @@ export type RunningCampMember = Pick<MemberAvatarProps, 'agentId' | 'avatarRef' 
 const labels: Record<CampDetailTab, string> = {
   execution: '执行',
   tasks: '任务',
-  members: '队员'
+  members:"队员"
 }
 
 function CampDetailIcon({ tab }: { tab: CampDetailTab }): React.JSX.Element {
@@ -43,8 +44,8 @@ function CampExecutionEntry({ members, executionCount, expanded, panelId, mobile
   const avatarLimit = mobile ? 2 : 3
   const names = members.map(member => member.displayName).join('、')
   const description = running
-    ? `${members.length} 位队员正在执行：${names}`
-    : `共 ${executionCount} 位队员有执行记录，当前没有队员正在执行`
+    ? uiAttribute("{0} 位队员正在执行：{1}", String(members.length), String(names))
+    : uiAttribute("共 {0} 位队员有执行记录，当前没有队员正在执行", String(executionCount))
 
   useEffect(() => {
     if (!running) return
@@ -71,7 +72,7 @@ function CampExecutionEntry({ members, executionCount, expanded, panelId, mobile
 
   const face = <>
     {!mobile && <CampDetailIcon tab="execution" />}
-    <span>执行</span>
+    <span><UiText zh={"执行"} /></span>
     {!mobile && !running && <small>{executionCount}</small>}
     {running && <>
       <span className="camp-execution-members" aria-hidden="true">
@@ -92,7 +93,7 @@ function CampExecutionEntry({ members, executionCount, expanded, panelId, mobile
       type="button"
       data-detail="execution"
       data-running={running}
-      aria-label={`执行，${description}`}
+      aria-label={uiAttribute("执行，{0}", String(description))}
       aria-expanded={expanded}
       aria-pressed={mobile ? expanded : undefined}
       aria-controls={panelId}
@@ -149,7 +150,7 @@ export function CampDetailEntries({
     { tab: 'members', count: memberCount }
   ]
   return (
-    <div className="camp-detail-entries" role="group" aria-label="当前会话详情入口">
+    <div className="camp-detail-entries" role="group" aria-label={uiAttribute("当前会话详情入口")}>
       {showExecution && <CampExecutionEntry
         members={runningMembers}
         executionCount={executionCount}
@@ -169,7 +170,7 @@ export function CampDetailEntries({
           onClick={(event) => onSelect(tab, event.currentTarget, event.detail === 0)}
         >
           <CampDetailIcon tab={tab} />
-          <span>{labels[tab]}</span>
+          <span>{uiAttribute(labels[tab])}</span>
           <small>{count}</small>
         </button>
       ))}
@@ -248,14 +249,14 @@ export function CampDetailPopover({
   }, [visible, onClose])
 
   const entries = mobile ? <>
-    <div className="mobile-camp-tabs" role="group" aria-label="当前会话视图" hidden={secondary}>
-      <button type="button" aria-pressed={!visible} onClick={onClose}>对话</button>
+    <div className="mobile-camp-tabs" role="group" aria-label={uiAttribute("当前会话视图")} hidden={secondary}>
+      <button type="button" aria-pressed={!visible} onClick={onClose}><UiText zh={"对话"} /></button>
       <CampExecutionEntry mobile members={runningMembers} executionCount={executionCount} expanded={executionExpanded} panelId={panelId}
         onSelect={(tab, trigger) => { triggerRef.current = trigger; if (visible && activeTab === tab) onClose(); else onOpen(tab) }} />
     </div>
     <DropdownMenu.Root modal={false}>
       <DropdownMenu.Trigger asChild>
-        <button className="mobile-icon-button mobile-camp-more" type="button" data-secondary={secondary} aria-label="会话更多操作">
+        <button className="mobile-icon-button mobile-camp-more" type="button" data-secondary={secondary} aria-label={uiAttribute("会话更多操作")}>
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
         </button>
       </DropdownMenu.Trigger>
@@ -267,13 +268,13 @@ export function CampDetailPopover({
             triggerRef.current = entryHost?.querySelector<HTMLButtonElement>('.mobile-camp-more') ?? null
             focusPanelRef.current = true
             onOpen(tab)
-          }}><CampDetailIcon tab={tab} /><span>{labels[tab]}</span></DropdownMenu.Item>)}
+          }}><CampDetailIcon tab={tab} /><span>{uiAttribute(labels[tab])}</span></DropdownMenu.Item>)}
           <DropdownMenu.Item onSelect={() => { menuSelected.current = true; onOpenSingleChat() }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6A8.4 8.4 0 0 1 12.5 3h.5a8.5 8.5 0 0 1 8 8v.5Z" /></svg>
-            <span>单聊</span>
+            <span><UiText zh={"单聊"} /></span>
           </DropdownMenu.Item>
           {onOpenMissionActivity && <DropdownMenu.Item onSelect={() => { menuSelected.current = true; onOpenMissionActivity() }}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.6 7M3 4v7h7M12 7v5l3 2" /></svg><span>活动</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.6 7M3 4v7h7M12 7v5l3 2" /></svg><span><UiText zh={"活动"} /></span>
           </DropdownMenu.Item>}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
@@ -326,11 +327,11 @@ export function CampDetailPopover({
     >
       <header className="camp-detail-heading">
         <CampDetailIcon tab={activeTab} />
-        <strong id={`${panelId}-title`}>{labels[activeTab]}</strong>
+        <strong id={`${panelId}-title`}>{uiAttribute(labels[activeTab])}</strong>
         {mobile && activeTab === 'execution' && onToggleMobileExecutionMaximized && <button
           className="mobile-execution-expand"
           type="button"
-          aria-label={mobileExecutionMaximized ? '还原执行面板' : '展开执行面板'}
+          aria-label={mobileExecutionMaximized ? uiAttribute("还原执行面板") : uiAttribute("展开执行面板")}
           aria-pressed={mobileExecutionMaximized}
           onClick={onToggleMobileExecutionMaximized}
         ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={mobileExecutionMaximized
@@ -339,20 +340,20 @@ export function CampDetailPopover({
         <button
           className="camp-detail-collapse"
           type="button"
-          aria-label="收起会话详情"
-          title="收起 · Esc"
+          aria-label={uiAttribute("收起会话详情")}
+          title={uiAttribute("收起 · Esc")}
           onClick={() => {
             onClose()
             triggerRef.current?.focus({ preventScroll: true })
           }}
         >
-          {!mobile && <span>收起</span>}
+          {!mobile && <span><UiText zh={"收起"} /></span>}
           <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d={mobile ? 'm4 4 8 8m0-8-8 8' : 'm4 10 4-4 4 4'} /></svg>
         </button>
       </header>
       {children}
       <footer className="camp-detail-footer">
-        <span className="camp-detail-dismiss-hint"><kbd>Esc</kbd> 收起</span>
+        <span className="camp-detail-dismiss-hint"><kbd>Esc</kbd><UiText zh={" 收起"} /></span>
       </footer>
     </aside>
   </>

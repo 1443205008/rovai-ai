@@ -100,6 +100,26 @@ describe('first-run provisioning', () => {
     ])
   })
 
+  it('creates the selected English preset once without changing the Camp workflow', async () => {
+    const harness = onboardingHarness([], {}, [])
+    await provisionFirstRun(harness.api, harness.snapshot, [codexInstallation()], () => undefined, 'en')
+
+    const create = harness.requests.find(({ method }) => method === 'members.create')
+    expect(create?.params).toMatchObject({
+      command: {
+        displayName: 'Dingding',
+        teamRole: 'Traveling Scholar',
+        personalityTraits: ['Curious', 'Adaptable', 'Diligent'],
+        avatarRef: 'rovai://member-avatar/builtin/luoke/v1'
+      }
+    })
+    expect(harness.requests.filter(({ method }) => method === 'members.create')).toHaveLength(1)
+    expect(harness.requests.find(({ method }) => method === 'camps.create')?.params).toMatchObject({
+      name: FIRST_RUN_CAMP_TITLE,
+      memberAgentIds: ['agent-first']
+    })
+  })
+
   it('does not mark training complete until the fourth-page location is restorable', async () => {
     const events: string[] = []
     const harness = onboardingHarness(events, {
@@ -123,7 +143,8 @@ describe('first-run provisioning', () => {
 
 function onboardingHarness(
   events: string[],
-  checkpoints: Partial<OnboardingProvisioningOperation> = {}
+  checkpoints: Partial<OnboardingProvisioningOperation> = {},
+  members: AgentProfile[] = [builtinLuoke()]
 ): {
   api: OnboardingProvisioningApi
   snapshot: InProgress
@@ -158,7 +179,7 @@ function onboardingHarness(
     async request<T>(method: CoreMethod, params?: unknown): Promise<T> {
       requests.push({ method, params })
       events.push(`request:${method}`)
-      if (method === 'members.list') return [builtinLuoke()] as T
+      if (method === 'members.list') return members as T
       const result = method === 'members.create'
         ? commandResult(method, { agentId: 'agent-first', version: 1 }, 'agent_profile', 'agent-first')
         : method === 'members.runtime.set'

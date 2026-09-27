@@ -16,6 +16,7 @@ import type {
 import type { VisibleNotificationSources } from './CampWorkspace'
 import { preferenceFromUnknown } from './NotificationSettings'
 import { formatCampTitle } from './camp-title'
+import { UiText, uiAttribute } from './interface-language'
 
 export const NOTIFICATION_RECOVERY_INTERVAL_MS = 30_000
 
@@ -213,9 +214,9 @@ export async function readNotificationChangePages(
   let candidateCursor = startCursor
   for (let page = 0; page < maximumPages; page += 1) {
     const batch = await requestPage(candidateCursor)
-    if (batch.schemaVersion !== 9) throw new Error('提醒增量合同不兼容。')
+    if (batch.schemaVersion !== 9) throw new Error(uiAttribute('提醒增量合同不兼容。'))
     if (batch.requestedAfterChangeSequence !== candidateCursor) {
-      throw new Error('提醒增量游标边界不一致。')
+      throw new Error(uiAttribute('提醒增量游标边界不一致。'))
     }
     if (batch.resetRequired) {
       return {
@@ -228,7 +229,7 @@ export async function readNotificationChangePages(
       batch.nextChangeSequence < candidateCursor
       || batch.nextChangeSequence > batch.throughChangeSequence
       || (batch.hasMore && batch.nextChangeSequence === candidateCursor)
-    ) throw new Error('提醒增量游标没有单调推进。')
+    ) throw new Error(uiAttribute('提醒增量游标没有单调推进。'))
     changes.push(...batch.changes)
     candidateCursor = batch.nextChangeSequence
     if (!batch.hasMore) break
@@ -246,34 +247,34 @@ export function notificationHeadsUpPresentation(
 ): { label: string; message: string } {
   switch (signal.semantic) {
     case 'approval_pending':
-      return { label: '待审批', message: '有操作等待你审批' }
+      return { label:uiAttribute("待审批"), message:uiAttribute("有操作等待你审批") }
     case 'turn_failed':
-      return { label: '执行失败', message: '本轮执行失败，请查看详情' }
+      return { label:uiAttribute("执行失败"), message:uiAttribute("本轮执行失败，请查看详情") }
     case 'turn_incomplete':
-      return { label: '执行未完成', message: '本轮未完成，请查看详情' }
+      return { label:uiAttribute("执行未完成"), message:uiAttribute("本轮未完成，请查看详情") }
     case 'turn_completed':
     case 'round_completed':
-      return { label: '本轮完成', message: '本轮已完成' }
+      return { label:uiAttribute("本轮完成"), message:uiAttribute("本轮已完成") }
     case 'single_chat_reply':
-      return { label: '单聊回复', message: `${signal.action.singleChat?.agentDisplayName ?? '队员'}已回复` }
+      return { label:uiAttribute("单聊回复"), message: uiAttribute("{0}已回复", String(signal.action.singleChat?.agentDisplayName ?? uiAttribute('队员'))) }
     case 'mission_needs_you': {
-      const title = signal.action.subject?.title || '使命'
+      const title = signal.action.subject?.title || uiAttribute('使命')
       const question = signal.mention?.available && signal.action.subject?.sourceMessageId === signal.mention.messageId ? signal.mention.summary : null
-      return { label: '使命需要你', message: `使命「${title}」需要你${question ? `：${question}` : ''}` }
+      return { label:uiAttribute("使命需要你"), message: uiAttribute("使命「{0}」需要你{1}", String(title), question ? `${uiAttribute('：')}${question}` : '') }
     }
     case 'mission_status_changed':
     case 'task_status_changed': {
-      const kind = signal.semantic === 'mission_status_changed' ? '使命' : '任务'
+      const kind = signal.semantic === 'mission_status_changed' ?uiAttribute("使命") :uiAttribute("任务")
       const subject = signal.action.subject
-      const status = { completed: '已完成', in_progress: '进行中', not_started: '未开始', pending: '待开始', blocked: '受阻', cancelled: '已取消' }[subject?.status ?? ''] ?? '状态已更新'
-      return { label: `${kind}状态变更`, message: `${kind}「${subject?.title || kind}」${status}` }
+      const status = { completed: uiAttribute('已完成'), in_progress: uiAttribute('进行中'), not_started: uiAttribute('未开始'), pending: uiAttribute('待开始'), blocked: uiAttribute('受阻'), cancelled: uiAttribute('已取消') }[subject?.status ?? ''] ?? uiAttribute('状态已更新')
+      return { label: uiAttribute("{0}状态变更", String(kind)), message: uiAttribute('{0}「{1}」{2}', kind, subject?.title || kind, status) }
     }
     case 'user_mention':
       return {
-        label: '提到你',
+        label:uiAttribute("提到你"),
         message: signal.mention?.available
-          ? signal.mention.summary ?? '有消息明确提到你'
-          : '原消息来源不可用'
+          ? signal.mention.summary ?? uiAttribute('有消息明确提到你')
+          :uiAttribute("原消息来源不可用")
       }
   }
 }
@@ -370,7 +371,7 @@ export function NotificationAttentionController({
     const next = await client.request<NotificationPreference>(
       'notifications.preference.get'
     )
-    if (!validPreference(next)) throw new Error('提醒设置合同不兼容。')
+    if (!validPreference(next)) throw new Error(uiAttribute('提醒设置合同不兼容。'))
     setPreference(next)
     setHeadsUpState((current) => filterHeadsUpByPreference(current, next))
     return next
@@ -381,7 +382,7 @@ export function NotificationAttentionController({
       'notifications.inbox',
       { filter: 'unread', limit: 1 }
     )
-    if (inbox.schemaVersion !== 9) throw new Error('提醒基线合同不兼容。')
+    if (inbox.schemaVersion !== 9) throw new Error(uiAttribute('提醒基线合同不兼容。'))
     setHasUnreadAttention(inbox.unreadCount > 0)
     return inbox
   }, [])
@@ -696,7 +697,7 @@ export function NotificationAttentionController({
       if (result.status === 'failed') {
         onCancelNavigation()
         onError(acknowledgementPersisted
-          ? `${result.message} 这条提醒已标记为已读。`
+          ? uiAttribute("{0} 这条提醒已标记为已读。", String(result.message))
           : result.message)
         return
       }
@@ -708,15 +709,15 @@ export function NotificationAttentionController({
       if (!presented) {
         onCancelNavigation()
         onError(acknowledgementPersisted
-          ? '已打开会话，但未能定位到目标；这条提醒已标记为已读。'
-          : '已打开会话，但暂时无法定位到目标。')
+          ?uiAttribute("已打开会话，但未能定位到目标；这条提醒已标记为已读。")
+          :uiAttribute("已打开会话，但暂时无法定位到目标。"))
       }
     } catch (nextError) {
       onCancelNavigation()
       if (generation !== navigationGeneration.current) return
       onError(acknowledgementPersisted
-        ? `提醒已标记为已读，但打开失败：${errorMessage(nextError)}`
-        : `提醒操作未完成：${errorMessage(nextError)}`)
+        ? uiAttribute("提醒已标记为已读，但打开失败：{0}", String(errorMessage(nextError)))
+        : uiAttribute("提醒操作未完成：{0}", String(errorMessage(nextError))))
     } finally {
       setBusyAcknowledgementId(null)
     }
@@ -787,7 +788,7 @@ export function NotificationHeadsUp({
   const [focused, setFocused] = useState(false)
   const presentation = notificationHeadsUpPresentation(entry.signal)
   const campTitle = formatCampTitle(entry.episode.camp)
-  const privateTitle = entry.signal.action.singleChat ? ` · 与${entry.signal.action.singleChat.agentDisplayName}单聊` : ''
+  const privateTitle = entry.signal.action.singleChat ? uiAttribute(" · 与{0}单聊", String(entry.signal.action.singleChat.agentDisplayName)) : ''
   useHeadsUpLifetime(!active || hovered || focused || busy, onDismiss, entry.signal.action.acknowledgementId)
   return (
     <aside
@@ -815,7 +816,7 @@ export function NotificationHeadsUp({
       <button
         className="notification-heads-up-close"
         type="button"
-        aria-label="关闭本次提醒"
+        aria-label={uiAttribute("关闭本次提醒")}
         onClick={onDismiss}
       ><CloseIcon /></button>
     </aside>
@@ -849,12 +850,12 @@ function NotificationHeadsUpSummary({
       }}
     >
       <button className="notification-heads-up-open" type="button" onClick={onOpen}>
-        <span>还有 {count} 条提醒</span><span>查看下一条</span>
+        <span><UiText zh={"还有 "} />{count}<UiText zh={" 条提醒"} /></span><span><UiText zh={"查看下一条"} /></span>
       </button>
       <button
         className="notification-heads-up-close"
         type="button"
-        aria-label="关闭这些提醒"
+        aria-label={uiAttribute("关闭这些提醒")}
         onClick={onDismiss}
       ><CloseIcon /></button>
     </aside>

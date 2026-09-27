@@ -189,6 +189,7 @@ import {
   toolActivityGroupHasActiveTool,
   type ToolProgressItem
 } from './execution-tool-grouping'
+import { UiText, uiAttribute, useUiText } from './interface-language'
 
 const NON_TERMINAL_RUNS = new Set(['queued', 'running', 'waiting'])
 const EXECUTION_EVIDENCE_PAGE_LIMIT = 1_000
@@ -462,7 +463,7 @@ async function mutateComposerDraft(
   }
   switch (mutation.kind) {
     case 'return_pending_input':
-      throw new Error('旧版待发送输入已停用。')
+      throw new Error(uiAttribute('旧版待发送输入已停用。'))
     case 'quote': {
       if (mutation.action.type === 'add') {
         const quote = await client.request<MessageQuoteSnapshot>('messageQuotes.capture', {
@@ -475,7 +476,7 @@ async function mutateComposerDraft(
         const quoteId = mutation.action.quoteId
         return update({ quotes: draft.quotes.filter((quote) => quote.quoteId !== quoteId) })
       }
-      throw new Error('引用撤销仅在当前编辑操作中可用。')
+      throw new Error(uiAttribute('引用撤销仅在当前编辑操作中可用。'))
     }
     case 'save_content':
       return update({ content: mutation.content })
@@ -555,7 +556,7 @@ export function composerRecipientSummary(
       && (segment.atom.type === 'member' || segment.atom.type === 'all_members')
   )) return null
   const defaultLead = members.find((member) => member.isDefaultLead)
-  return defaultLead ? `默认由队长 @${defaultLead.displayName} 接收` : '默认队长当前不可用'
+  return defaultLead ? uiAttribute("默认由队长 @{0} 接收", String(defaultLead.displayName)) :uiAttribute("默认队长当前不可用")
 }
 
 export function campConversationViewFromStoredValue(value: string | null): CampConversationView {
@@ -817,9 +818,9 @@ export function executionPlacementChangeShouldStart(
 export function executionPlacementSaveFailureMessage(
   current: ExecutionConsolePlacement
 ): string {
-  if (current === 'bottom') return '未能保存，仍在底部。'
-  if (current === 'right') return '未能保存，仍在右侧。'
-  return '未能保存，仍在详情浮层。'
+  if (current === 'bottom') return uiAttribute("未能保存，仍在底部。")
+  if (current === 'right') return uiAttribute("未能保存，仍在右侧。")
+  return uiAttribute("未能保存，仍在详情浮层。")
 }
 
 export function attachmentDropIsBlocked({
@@ -835,10 +836,10 @@ export function agentRunTerminalNote(
   run: Pick<AgentRunView, 'terminalReasonCode'>
 ): string | null {
   if (run.terminalReasonCode === 'planned_shutdown_cancelled') {
-    return '因 Rovai 计划关闭，执行引擎已确认取消本次执行。'
+    return uiAttribute("因 Rovai 计划关闭，执行引擎已确认取消本次执行。")
   }
   if (run.terminalReasonCode === 'runtime_interrupted') {
-    return '执行连续性已中断，最终结果无法确认；本次执行未被记为已取消。'
+    return uiAttribute("执行连续性已中断，最终结果无法确认；本次执行未被记为已取消。")
   }
   return null
 }
@@ -1004,51 +1005,53 @@ type MentionPopoverRequest = {
 export function runtimeRecoveryReason(blockerCode: string): string {
   switch (blockerCode) {
     case 'runtime_not_configured':
-      return '尚未配置 Agent 运行时'
+      return uiAttribute("尚未配置 Agent 运行时")
     case 'runtime_authentication_required':
-      return 'Agent 运行时需要登录'
+      return uiAttribute("Agent 运行时需要登录")
     case 'adapter_installation_missing':
-      return '所选 Agent 运行时尚未安装'
+      return uiAttribute("所选 Agent 运行时尚未安装")
     case 'adapter_installation_disabled':
-      return '所选 Agent 运行时已停用'
+      return uiAttribute("所选 Agent 运行时已停用")
     case 'runtime_probe_required':
-      return 'Agent 运行时需要重新检查'
+      return uiAttribute("Agent 运行时需要重新检查")
     case 'runtime_configuration_adapter_mismatch':
-      return '运行配置已变更，请重新选择'
+      return uiAttribute("运行配置已变更，请重新选择")
     case 'conversation_runtime_override_unsupported':
-      return '当前对话的运行配置不受支持'
+      return uiAttribute("当前对话的运行配置不受支持")
     case 'runtime_model_adapter_mismatch':
     case 'runtime_model_unavailable':
     case 'runtime_permission_adapter_mismatch':
     case 'runtime_permission_schema_mismatch':
-      return '当前运行配置已失效'
+      return uiAttribute("当前运行配置已失效")
     case 'member_away':
-      return '队员当前已离队'
+      return uiAttribute("队员当前已离队")
     case 'member_removed':
     case 'agent_unavailable':
-      return '队员当前不可用'
+      return uiAttribute("队员当前不可用")
     default:
-      return 'Agent 运行时暂不可用'
+      return uiAttribute("Agent 运行时暂不可用")
   }
 }
 
-const EMPTY_CAMP_STARTERS = [
+function emptyCampStarters(): FirstRunCampStarter[] {
+  return [
   {
-    title: '先了解项目',
-    body: '读取项目结构并给出可靠的起步建议。',
-    prompt: '先了解当前项目结构，再告诉我最值得优先处理的三件事。'
+    title: uiAttribute('先了解项目'),
+    body: uiAttribute('读取项目结构并给出可靠的起步建议。'),
+    prompt: uiAttribute('先了解当前项目结构，再告诉我最值得优先处理的三件事。')
   },
   {
-    title: '整理成任务',
-    body: '把目标拆分为负责人、顺序和验收点。',
-    prompt: '把这次改动拆成可执行的任务，并标出需要我决策的部分。'
+    title: uiAttribute('整理成任务'),
+    body: uiAttribute('把目标拆分为负责人、顺序和验收点。'),
+    prompt: uiAttribute('把这次改动拆成可执行的任务，并标出需要我决策的部分。')
   },
   {
-    title: '检查工作区',
-    body: '确认目录、Git 能力和当前执行条件。',
-    prompt: '检查当前工作区状态，先说明风险，再提出下一步。'
+    title: uiAttribute('检查工作区'),
+    body: uiAttribute('确认目录、Git 能力和当前执行条件。'),
+    prompt: uiAttribute('检查当前工作区状态，先说明风险，再提出下一步。')
   }
-] as const
+  ]
+}
 
 export interface FirstRunCampStarter {
   title: string
@@ -1059,19 +1062,19 @@ export interface FirstRunCampStarter {
 export function firstRunCampStarters(): FirstRunCampStarter[] {
   return [
     {
-      title: '创建一位新队员',
-      body: '从身份、职责和工作方式开始。',
-      prompt: '我想创建一个新的队员，请用 member-studio 帮我开始。'
+      title: uiAttribute('创建一位新队员'),
+      body: uiAttribute('从身份、职责和工作方式开始。'),
+      prompt: uiAttribute('我想创建一个新的队员，请用 member-studio 帮我开始。')
     },
     {
-      title: '创建一个定时任务',
-      body: '日报、巡检，让队员按时完成。',
-      prompt: '我想创建一个定时任务，让你定期帮我处理一件事。请先问我想做什么、多久执行一次、在什么时间执行，再根据我的回答帮我创建。'
+      title: uiAttribute('创建一个定时任务'),
+      body: uiAttribute('日报、巡检，让队员按时完成。'),
+      prompt: uiAttribute('我想创建一个定时任务，让你定期帮我处理一件事。请先问我想做什么、多久执行一次、在什么时间执行，再根据我的回答帮我创建。')
     },
     {
-      title: '做一个实用小工具',
-      body: '番茄钟、倒计时，或你自己的点子。',
-      prompt: '帮我做一个能直接预览的小工具网页，比如番茄钟或倒计时。先问我想做哪一种、需要什么功能，再用一个独立 HTML 文件做出第一版。'
+      title: uiAttribute('做一个实用小工具'),
+      body: uiAttribute('番茄钟、倒计时，或你自己的点子。'),
+      prompt: uiAttribute('帮我做一个能直接预览的小工具网页，比如番茄钟或倒计时。先问我想做哪一种、需要什么功能，再用一个独立 HTML 文件做出第一版。')
     }
   ]
 }
@@ -1369,12 +1372,14 @@ export function campConversationHasVisibleHistory(
 export function formatStopElapsed(createdAt: string, cancelRequestedAt: string): string {
   const started = new Date(createdAt).getTime()
   const stopped = new Date(cancelRequestedAt).getTime()
-  if (!Number.isFinite(started) || !Number.isFinite(stopped)) return '0 秒'
+  if (!Number.isFinite(started) || !Number.isFinite(stopped)) return uiAttribute("0 秒")
   const seconds = Math.max(0, Math.round((stopped - started) / 1_000))
-  if (seconds < 60) return `${seconds} 秒`
+  if (seconds < 60) return uiAttribute("{0} 秒", String(seconds))
   const minutes = Math.floor(seconds / 60)
   const remainder = seconds % 60
-  return `${minutes}分${remainder ? `${remainder}秒` : ''}`
+  return remainder
+    ? uiAttribute('{0}分{1}秒', minutes, remainder)
+    : uiAttribute('{0}分', minutes)
 }
 
 export function campInspectorMembers(
@@ -1470,19 +1475,19 @@ export function emptyCampRuntimeSummary(
   const activeMembers = members.filter((member) =>
     member.membershipStatus === 'active' && member.profilePresence === 'present'
   )
-  if (activeMembers.length === 0) return '暂无在队的队员'
+  if (activeMembers.length === 0) return uiAttribute("暂无在队的队员")
 
   const profileById = new Map(agents.map((agent) => [agent.agentId, agent]))
   const profiles = activeMembers.map((member) => profileById.get(member.agentId))
-  if (profiles.some((profile) => !profile)) return '正在检查 Agent 运行时…'
+  if (profiles.some((profile) => !profile)) return uiAttribute("正在检查 Agent 运行时…")
 
   const readyCount = profiles.filter((profile) => (
     profile?.runtimeReadiness.status === 'ready'
     || profile?.runtimeReadiness.status === 'light_ready'
   )).length
-  if (readyCount === activeMembers.length) return 'Agent 运行时可用'
-  if (readyCount === 0) return 'Agent 运行时不可用'
-  return `${readyCount}/${activeMembers.length} 个 Agent 运行时可用`
+  if (readyCount === activeMembers.length) return uiAttribute("Agent 运行时可用")
+  if (readyCount === 0) return uiAttribute("Agent 运行时不可用")
+  return uiAttribute("{0}/{1} 个 Agent 运行时可用", String(readyCount), String(activeMembers.length))
 }
 
 export function QuickChatWorkspace({
@@ -1505,7 +1510,7 @@ export function QuickChatWorkspace({
     runtimeReadiness: agent.runtimeReadiness.status
   }))
   return (
-    <section className="workspace-shell new-conversation-workspace quick-chat-workspace" aria-label="快速对话">
+    <section className="workspace-shell new-conversation-workspace quick-chat-workspace" aria-label={uiAttribute("快速对话")}>
       <div className="new-conversation-main">
         <div className="new-conversation-stage">
           {recentCamps.length === 0 && <>
@@ -1514,24 +1519,24 @@ export function QuickChatWorkspace({
             <path d="M8 49.5 Q36 37.5 64 49.5" stroke="currentColor" strokeWidth="5" fill="none" strokeLinecap="round" />
             <circle className="brand-rendezvous-point" data-brand-point="rendezvous" cx="36" cy="43.5" r="2.6" />
           </svg>
-          <h2>{hasAvailableMember ? '开始一段协作' : '还没有可用的队员'}</h2>
-          <p className="quick-chat-subline">{hasAvailableMember ? '选好队员，写下你想完成的事。' : '先添加队员或完成运行配置。'}</p>
+          <h2>{hasAvailableMember ? uiAttribute("开始一段协作") : uiAttribute("还没有可用的队员")}</h2>
+          <p className="quick-chat-subline">{hasAvailableMember ? uiAttribute("选好队员，写下你想完成的事。") : uiAttribute("先添加队员或完成运行配置。")}</p>
           <div className="quick-chat-empty">
             {hasAvailableMember
-              ? <button className="quick-chat-create" type="button" onClick={onNewConversation}><span aria-hidden="true">＋</span>新对话</button>
-              : <><button className="quick-chat-create" type="button" onClick={onOpenMembers}>前往队员</button><button className="quiet-button" type="button" onClick={onOpenRuntimeSettings}>查看运行时</button></>}
+              ? <button className="quick-chat-create" type="button" onClick={onNewConversation}><span aria-hidden="true">＋</span><UiText zh={"新对话"} /></button>
+              : <><button className="quick-chat-create" type="button" onClick={onOpenMembers}><UiText zh={"前往队员"} /></button><button className="quiet-button" type="button" onClick={onOpenRuntimeSettings}><UiText zh={"查看运行时"} /></button></>}
           </div>
           </>}
           {recentCamps.length > 0 && (
-            <div className="quick-chat-continue" aria-label="最近对话">
-              <header className="quick-chat-continue-title"><h2>最近对话</h2><button className="quiet-button" type="button" onClick={onNewConversation}><span aria-hidden="true">＋</span>新对话</button></header>
+            <div className="quick-chat-continue" aria-label={uiAttribute("最近对话")}>
+              <header className="quick-chat-continue-title"><h2><UiText zh={"最近对话"} /></h2><button className="quiet-button" type="button" onClick={onNewConversation}><span aria-hidden="true">＋</span><UiText zh={"新对话"} /></button></header>
               {recentCamps.map((camp) => (
                 <button className="quick-chat-continue-row" type="button" key={camp.id} onClick={() => onOpenCamp(camp)}>
                   <span className="camp-marker-slot" aria-hidden="true">
                     {camp.marker === 'unread_completed' && <i className="task-dot camp-marker-unread_completed" />}
                   </span>
                   <span className="truncate" title={formatCampTitle(camp)}>{formatCampTitle(camp)}</span>
-                  {camp.marker === 'loading' && <span className="camp-loading-spinner camp-marker-loading" role="img" aria-label="正在运行" />}
+                  {camp.marker === 'loading' && <span className="camp-loading-spinner camp-marker-loading" role="img" aria-label={uiAttribute("正在运行")} />}
                   <small>{relativeTimeLabel(camp.lastActivityAt)}</small>
                 </button>
               ))}
@@ -2542,7 +2547,7 @@ export function CampWorkspace({
 
   const prepareForCampLeave = useCallback(async (): Promise<CampLeavePreparation> => {
     if (composerSubmittingRef.current || routingMutatingRef.current) {
-      throw new Error('Composer 正在提交变更，请稍后再离开当前会话。')
+      throw new Error(uiAttribute('Composer 正在提交变更，请稍后再离开当前会话。'))
     }
     const composerHandle = composerHandleRef.current
     composerHandle?.setInteractionLocked(true)
@@ -2611,7 +2616,7 @@ export function CampWorkspace({
         || around.campId !== campId
         || around.anchorMessageId !== messageId
         || (around.sourceAvailable && !around.messages.some((message) => message.id === messageId))
-      ) throw new Error('消息定位合同不兼容。')
+      ) throw new Error(uiAttribute('消息定位合同不兼容。'))
       return around.sourceAvailable ? around.messages : null
     }).catch(() => null).then((messages) => {
       if (draftCampId.current === campId) {
@@ -2702,7 +2707,7 @@ export function CampWorkspace({
         || result.query !== query
         || result.totalMatchCount < 0
         || !hasValidSelection
-      ) throw new Error('会话查找合同不兼容。')
+      ) throw new Error(uiAttribute('会话查找合同不兼容。'))
       if (conversationFindRequestGeneration.current !== generation) return
 
       setConversationFind((current) => current.open && current.query === query
@@ -2730,7 +2735,7 @@ export function CampWorkspace({
           || around.anchorMessageId !== selectedMatch.messageId
           || !around.sourceAvailable
           || !around.messages.some((message) => message.id === selectedMatch.messageId)
-        ) throw new Error('命中消息当前不可用。')
+        ) throw new Error(uiAttribute('命中消息当前不可用。'))
         if (conversationFindRequestGeneration.current !== generation) return
         setAnchoredMessages((current) => {
           const merged = new Map(current.map((message) => [message.id, message]))
@@ -2746,7 +2751,7 @@ export function CampWorkspace({
       target = timelineScrollRef.current?.querySelector<HTMLElement>(
         `[data-message-id="${CSS.escape(selectedMatch.messageId)}"]`
       ) ?? null
-      if (!target) throw new Error('命中消息暂时无法显示。')
+      if (!target) throw new Error(uiAttribute('命中消息暂时无法显示。'))
       const timeline = timelineScrollRef.current
       if (timeline) {
         const timelineBounds = timeline.getBoundingClientRect()
@@ -2792,7 +2797,7 @@ export function CampWorkspace({
         ? {
             ...current,
             status: 'error',
-            error: '暂时无法搜索完整会话。'
+            error:uiAttribute("暂时无法搜索完整会话。")
           }
         : current)
     }
@@ -2934,7 +2939,7 @@ export function CampWorkspace({
         ...current,
         status: 'error',
         snapshot: null,
-        error: '搜索内容不能超过 512 个字符。'
+        error:uiAttribute("搜索内容不能超过 512 个字符。")
       }))
       return undefined
     }
@@ -3008,7 +3013,7 @@ export function CampWorkspace({
   ): Promise<CampComposerDraftView> => {
     const composerHandle = composerHandleRef.current
     if (!composerHandle || draftLoadState.state !== 'ready') {
-      throw new Error('Composer Draft 尚未就绪。')
+      throw new Error(uiAttribute('Composer Draft 尚未就绪。'))
     }
     routingMutatingRef.current = true
     setRoutingMutating(true)
@@ -3195,7 +3200,7 @@ export function CampWorkspace({
     }
     const messages = replyAnchorWindows.get(messageId) ?? await loadReplyAnchorWindow(messageId)
     if (!messages) {
-      setReplyInteractionError('引用的消息当前不可用。')
+      setReplyInteractionError(uiAttribute('引用的消息当前不可用。'))
       return
     }
     setAnchoredMessages((current) => {
@@ -3838,10 +3843,10 @@ export function CampWorkspace({
       await attachmentPreparationQueue.current
       const flushed = await composerHandle.flush()
       const frozenDraft = flushed.draft ?? draftCoordinator.getCurrentDraft()
-      if (!frozenDraft) throw new Error('Composer Draft 尚未就绪。')
+      if (!frozenDraft) throw new Error(uiAttribute('Composer Draft 尚未就绪。'))
       const routedDraft = materializeLocalContinuation(frozenDraft, snapshot.members)
       const sendReceipt = await onSend(routedDraft)
-      if (!sendReceipt) throw new Error('消息未被当前 Camp 接受。')
+      if (!sendReceipt) throw new Error(uiAttribute('消息未被当前 Camp 接受。'))
       if (mountedCampId.current === campId
         && (sendReceipt.deliveryIds.length || sendReceipt.agentRunIds.length)) {
         setSubmittedExecutionRequests((current) => [...current, sendReceipt])
@@ -4097,17 +4102,18 @@ export function CampWorkspace({
     try {
       await onWithdrawMessage(message)
       setWithdrawalMessage(null)
-      onNotify('消息已撤回')
+      onNotify(uiAttribute('消息已撤回'))
     } catch (error) {
-      setWithdrawalError(readErrorMessage(error, '撤回失败，请重试。'))
+      setWithdrawalError(readErrorMessage(error, uiAttribute('撤回失败，请重试。')))
     } finally {
       setWithdrawingMessageId(null)
     }
   }
 
   const chooseStarterPrompt = (prompt: string, announceDraft = false): void => {
+    if (composerInteractionDisabled || composerDraft?.campId !== snapshot.camp.id) return
     composerHandleRef.current?.setDocument(composerDocumentFromText(prompt), 'end')
-    if (announceDraft) setStarterNotice('内容已填入，可编辑后发送。')
+    if (announceDraft) setStarterNotice(uiAttribute('内容已填入，可编辑后发送。'))
   }
 
   const selectInspectorTab = (tab: CampInspectorTab): void => {
@@ -4226,7 +4232,7 @@ export function CampWorkspace({
       const confirmedPlacement = await onExecutionPlacementChange(target)
       if (!executionPlacementMounted.current) return
       if (confirmedPlacement && confirmedPlacement !== target) {
-        throw new Error('保存后的执行台位置与请求不一致')
+        throw new Error(uiAttribute('保存后的执行台位置与请求不一致'))
       }
       executionReadingPosition.current = readingPosition
       pendingExecutionReadingPosition.current = readingPosition
@@ -4437,19 +4443,19 @@ export function CampWorkspace({
     && conversationFindSelectedIndex !== null
     ? `${conversationFindSelectedIndex + 1} / ${conversationFindTotal}`
     : conversationFind.status === 'ready' && conversationFind.query.trim()
-      ? '无匹配'
+      ? uiAttribute('无匹配')
       : conversationFind.status === 'error'
-        ? '搜索失败'
+        ? uiAttribute('搜索失败')
         : conversationFind.query.trim()
-          ? '正在查找'
-          : '输入关键词'
+          ? uiAttribute('正在查找')
+          : uiAttribute('输入关键词')
   const conversationFindAnnouncement = conversationFind.error
     ?? (conversationFindBusy
-      ? '正在查找当前会话'
+      ? uiAttribute('正在查找当前会话')
       : conversationFind.snapshot && conversationFindSelectedIndex !== null
-        ? `第 ${conversationFindSelectedIndex + 1} 项，共 ${conversationFindTotal} 项`
+        ? uiAttribute("第 {0} 项，共 {1} 项", String(conversationFindSelectedIndex + 1), String(conversationFindTotal))
         : conversationFind.status === 'ready' && conversationFind.query.trim()
-          ? '当前会话中没有匹配项'
+          ? uiAttribute('当前会话中没有匹配项')
           : '')
   const conversationFindNavigationDisabled = conversationFindBusy
     || conversationFindTotal <= 0
@@ -4490,7 +4496,7 @@ export function CampWorkspace({
     && Boolean(filePreview?.paneVisible && filePreview.activeTab?.kind === 'execution')
 
   return (
-    <section ref={workspaceShellRef} className="workspace-shell camp-workspace" data-mobile-panel={mobile && inspectorVisible ? inspectorSurfaceTab : undefined} data-mobile-execution-maximized={mobile && mobileExecutionMaximized || undefined} aria-label={`会话：${formatCampTitle(snapshot.camp)}`}>
+    <section ref={workspaceShellRef} className="workspace-shell camp-workspace" data-mobile-panel={mobile && inspectorVisible ? inspectorSurfaceTab : undefined} data-mobile-execution-maximized={mobile && mobileExecutionMaximized || undefined} aria-label={uiAttribute("会话：{0}", String(formatCampTitle(snapshot.camp)))}>
       <FilePreviewWorkspace
       >
         <RevealNotificationConversation active={!!notificationFocus?.active
@@ -4511,7 +4517,7 @@ export function CampWorkspace({
                   <form
                     className="conversation-find-form"
                     role="search"
-                    aria-label="查找当前会话"
+                    aria-label={uiAttribute("查找当前会话")}
                     onSubmit={(event) => {
                       event.preventDefault()
                       navigateConversationFind(1)
@@ -4525,9 +4531,9 @@ export function CampWorkspace({
                       ref={conversationFindInputRef}
                       type="text"
                       value={conversationFind.query}
-                      aria-label="搜索当前会话"
+                      aria-label={uiAttribute("搜索当前会话")}
                       aria-describedby="conversation-find-status"
-                      placeholder="搜索当前会话"
+                      placeholder={uiAttribute("搜索当前会话")}
                       autoComplete="off"
                       spellCheck={false}
                       onChange={(event) => {
@@ -4564,8 +4570,8 @@ export function CampWorkspace({
                     <button
                       className="conversation-find-icon-button"
                       type="button"
-                      aria-label="上一个匹配项"
-                      title="上一个匹配项（Shift+Enter）"
+                      aria-label={uiAttribute("上一个匹配项")}
+                      title={uiAttribute("上一个匹配项（Shift+Enter）")}
                       disabled={conversationFindNavigationDisabled}
                       onClick={() => navigateConversationFind(-1)}
                     >
@@ -4574,8 +4580,8 @@ export function CampWorkspace({
                     <button
                       className="conversation-find-icon-button"
                       type="button"
-                      aria-label="下一个匹配项"
-                      title="下一个匹配项（Enter）"
+                      aria-label={uiAttribute("下一个匹配项")}
+                      title={uiAttribute("下一个匹配项（Enter）")}
                       disabled={conversationFindNavigationDisabled}
                       onClick={() => navigateConversationFind(1)}
                     >
@@ -4584,8 +4590,8 @@ export function CampWorkspace({
                     <button
                       className="conversation-find-icon-button close"
                       type="button"
-                      aria-label="关闭会话查找"
-                      title="关闭（Esc）"
+                      aria-label={uiAttribute("关闭会话查找")}
+                      title={uiAttribute("关闭（Esc）")}
                       onClick={() => closeConversationFind()}
                     >
                       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -4596,7 +4602,7 @@ export function CampWorkspace({
                   {conversationFind.error && (
                     <div className="conversation-find-error" role="alert">
                       <span>{conversationFind.error}</span>
-                      <button type="button" onClick={retryConversationFind}>重试</button>
+                      <button type="button" onClick={retryConversationFind}><UiText zh={"重试"} /></button>
                     </div>
                   )}
                   <span id="conversation-find-status" className="sr-only" aria-live="polite">
@@ -4605,14 +4611,12 @@ export function CampWorkspace({
                 </div>
               )}
               {worldMapEnabled && (
-                <div className="camp-conversation-view-controls" role="group" aria-label="会话区视图">
+                <div className="camp-conversation-view-controls" role="group" aria-label={uiAttribute("会话区视图")}>
                   <button
                     type="button"
                     aria-pressed={conversationView === 'conversation'}
                     onClick={() => setConversationView('conversation')}
-                  >
-                    会话
-                  </button>
+                  ><UiText zh={"会话"} /></button>
                   <button
                     type="button"
                     aria-pressed={conversationView === 'world'}
@@ -4625,16 +4629,14 @@ export function CampWorkspace({
                         window.requestAnimationFrame(() => trigger.focus({ preventScroll: true }))
                       }
                     }}
-                  >
-                    地图
-                  </button>
+                  ><UiText zh={"地图"} /></button>
                   {conversationView === 'world' && (
                     <button
                       className="camp-world-map-route-toggle"
                       type="button"
-                      aria-label={worldMapRoutesVisible ? '隐藏地图路线' : '展示地图路线'}
+                      aria-label={worldMapRoutesVisible ? uiAttribute("隐藏地图路线") : uiAttribute("展示地图路线")}
                       aria-pressed={worldMapRoutesVisible}
-                      title={worldMapRoutesVisible ? '隐藏路线' : '展示路线'}
+                      title={worldMapRoutesVisible ? uiAttribute("隐藏路线") : uiAttribute("展示路线")}
                       onClick={() => setWorldMapRoutesVisible((visible) => !visible)}
                     >
                       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -4651,7 +4653,7 @@ export function CampWorkspace({
               className="timeline-scroll camp-timeline"
               ref={timelineScrollRef}
               tabIndex={-1}
-              aria-label="对话时间线"
+              aria-label={uiAttribute("对话时间线")}
               hidden={conversationView !== 'conversation'}
               onWheelCapture={(event) => {
                 captureFilePreviewAnchor()
@@ -4682,15 +4684,13 @@ export function CampWorkspace({
                 >
                   {earlierMessageStatus === 'error' ? (
                     <>
-                      <span className="camp-history-error-message">较早消息暂时没有加载</span>
+                      <span className="camp-history-error-message"><UiText zh={"较早消息暂时没有加载"} /></span>
                       <span className="camp-history-separator" aria-hidden="true">·</span>
                       <button
                         className="camp-history-text-button"
                         type="button"
                         onClick={() => void loadEarlierMessages()}
-                      >
-                        重试
-                      </button>
+                      ><UiText zh={"重试"} /></button>
                     </>
                   ) : (
                     <button
@@ -4702,20 +4702,18 @@ export function CampWorkspace({
                       {earlierMessageStatus === 'loading' ? (
                         <>
                           <span className="camp-history-spinner" aria-hidden="true" />
-                          <span>正在加载更早消息…</span>
+                          <span><UiText zh={"正在加载更早消息…"} /></span>
                         </>
                       ) : (
                         <>
                           <span aria-hidden="true">↑</span>
-                          <span>加载更早消息</span>
+                          <span><UiText zh={"加载更早消息"} /></span>
                         </>
                       )}
                     </button>
                   )}
                   <span className="camp-history-separator" aria-hidden="true">·</span>
-                  <span className="camp-history-count">
-                    已显示 {messageHistory.loadedCount} / {messageHistory.totalCount} 条
-                  </span>
+                  <span className="camp-history-count"><UiText zh={"已显示 "} />{messageHistory.loadedCount} / {messageHistory.totalCount}<UiText zh={" 条"} /></span>
                 </div>
               )}
               {(() => {
@@ -4771,7 +4769,7 @@ export function CampWorkspace({
                     items.push(
                       <section className="agent-message-output run-artifact-output" key={timelineItem.id}
                         data-run-artifact-output-id={run.id} data-camp-turn-id={run.campTurnId}
-                        aria-label={`${author}的运行产物`}>
+                        aria-label={uiAttribute("{0}的运行产物", String(author))}>
                         <div className="timeline-node conversation-bubble agent"
                           style={{ '--agent-accent': identityColorToken(run.agentId) } as CSSProperties}>
                           {authorPart('avatar')}
@@ -4782,7 +4780,7 @@ export function CampWorkspace({
                               <time>{messageClockTime(run.endedAt ?? timelineItem.createdAt)}</time>
                             </div>
                             {imageGroups.length > 0 && (
-                              <section className="message-attachments agent-message-outputs" aria-label="Agent 输出图片">
+                              <section className="message-attachments agent-message-outputs" aria-label={uiAttribute("Agent 输出图片")}>
                                 <div className="agent-output-images">
                                   <ImageGallery images={imageGroups.flatMap((group) => group.images.map((image) => ({
                                     kind: 'runtime' as const, campId: snapshot.camp.id, image
@@ -4851,9 +4849,9 @@ export function CampWorkspace({
                         className="timeline-node withdrawn-message-event"
                         key={campMessage.id}
                         role="status"
-                        aria-label={`你撤回了第${campMessage.sequence}条消息`}
+                        aria-label={uiAttribute("你撤回了第{0}条消息", String(campMessage.sequence))}
                       >
-                        <span>你撤回了一条消息</span>
+                        <span><UiText zh={"你撤回了一条消息"} /></span>
                         <time>{messageClockTime(campMessage.createdAt)}</time>
                       </div>
                     )
@@ -4960,7 +4958,7 @@ export function CampWorkspace({
                       key={campMessage.id}
                       data-message-id={campMessage.id}
                       data-camp-turn-id={campMessage.campTurnId ?? sourceRun?.campTurnId}
-                      aria-label={`${author}，${messageClockTime(campMessage.createdAt)}，第${campMessage.sequence}条消息`}
+                      aria-label={uiAttribute("{0}，{1}，第{2}条消息", String(author), String(messageClockTime(campMessage.createdAt)), String(campMessage.sequence))}
                       tabIndex={-1}
                       style={member ? { '--agent-accent': identityColorToken(member.agentId) } as React.CSSProperties : undefined}
                     >
@@ -4994,7 +4992,7 @@ export function CampWorkspace({
                         <button
                           type="button"
                           className="message-author-trigger message-author-avatar-trigger current-user-profile-trigger"
-                          aria-label={`查看${currentUserDisplayName(currentUserProfile)}的个人资料`}
+                          aria-label={uiAttribute("查看{0}的个人资料", String(currentUserDisplayName(currentUserProfile)))}
                           aria-haspopup="dialog"
                           aria-expanded={false}
                           onClick={(event) => openCurrentUserProfilePopover(event.currentTarget, event.detail === 0)}
@@ -5183,7 +5181,7 @@ export function CampWorkspace({
                               <div className="system-message-card">
                                 <div className="system-message-meta">
                                   <NavigationIcon name="cpu" />
-                                  <span>系统</span>
+                                  <span><UiText zh={"系统"} /></span>
                                   <time dateTime={campMessage.createdAt} title={`#${campMessage.sequence}`}>
                                     {messageClockTime(campMessage.createdAt)}
                                   </time>
@@ -5243,6 +5241,7 @@ export function CampWorkspace({
                   agents={agents}
                   firstRunCamp={firstRunCamp}
                   starterNotice={starterNotice}
+                  starterDisabled={composerInteractionDisabled || composerDraft?.campId !== snapshot.camp.id}
                   onChoosePrompt={chooseStarterPrompt}
                 />
               )}
@@ -5329,15 +5328,15 @@ export function CampWorkspace({
                 {!executionDrawerPortal && executionPlacement === 'inspector' && executionDrawer}
                 {executionPlacement === 'inspector' && !executionDrawer && (
                   <div className="execution-sidecar-empty">
-                    {executionProcesses.length > 0 ? '选择一位队员，查看连续执行历史。' : <>
-                      <span>暂无执行记录</span>
+                    {executionProcesses.length > 0 ? uiAttribute("选择一位队员，查看连续执行历史。") : <>
+                      <span><UiText zh={"暂无执行记录"} /></span>
                       <button
                         ref={inspectorPlacementButtonRef}
                         className="quiet-button compact"
                         type="button"
                         disabled={executionPlacementPending}
                         onClick={() => void moveExecution('bottom')}
-                      >{executionPlacementPending ? '正在保存…' : '移到底部'}</button>
+                      >{executionPlacementPending ? uiAttribute("正在保存…") : uiAttribute("移到底部")}</button>
                       {executionPlacementError && <span role="alert">{executionPlacementError.message}</span>}
                     </>}
                   </div>
@@ -5468,7 +5467,7 @@ export function CampWorkspace({
         <div>
         <div className="composer-route-slot">
         {draftLoadState.state === 'loading' && (
-          <div className="composer-route-rail" aria-label="正在加载接收者路由" aria-busy="true">
+          <div className="composer-route-rail" aria-label={uiAttribute("正在加载接收者路由")} aria-busy="true">
             <span className="composer-route-placeholder" aria-hidden="true"><span /><span /></span>
           </div>
         )}
@@ -5479,19 +5478,19 @@ export function CampWorkspace({
           && !continuationRepairRequired
         )
           ? (
-              <div className="composer-route-rail" aria-label="接收者路由">
+              <div className="composer-route-rail" aria-label={uiAttribute("接收者路由")}>
                 {continuationVisible && continuationIntent
                   ? (
-                      <span className="composer-continuation" aria-label={`继续发给 ${continuationIntent.recipient.displayName}`}>
+                      <span className="composer-continuation" aria-label={uiAttribute("继续发给 {0}", String(continuationIntent.recipient.displayName))}>
                         <svg aria-hidden="true" viewBox="0 0 16 16">
                           <path d="M3 3.5v3.25c0 1.8 1.45 3.25 3.25 3.25H13" />
                           <path d="m10.5 7.5 2.5 2.5-2.5 2.5" />
                         </svg>
-                        <span>继续发给 <strong>@{continuationIntent.recipient.displayName}</strong></span>
+                        <span><UiText zh={"继续发给 "} /><strong>@{continuationIntent.recipient.displayName}</strong></span>
                         <button
                           type="button"
-                          aria-label={`取消继续发给 ${continuationIntent.recipient.displayName}`}
-                          title="取消继续发送"
+                          aria-label={uiAttribute("取消继续发给 {0}", String(continuationIntent.recipient.displayName))}
+                          title={uiAttribute("取消继续发送")}
                           disabled={composerInteractionDisabled}
                           onClick={() => void dismissContinuation()}
                         >
@@ -5508,7 +5507,7 @@ export function CampWorkspace({
                           <path d="m10.5 7.5 2.5 2.5-2.5 2.5" />
                         </svg>
                         <span>{defaultLead
-                          ? <>默认由队长 <strong>@{defaultLead.displayName}</strong> 接收</>
+                          ? <><UiText zh={"默认由队长 "} /><strong>@{defaultLead.displayName}</strong><UiText zh={" 接收"} /></>
                           : recipientSummary}</span>
                       </span>
                     )}
@@ -5524,7 +5523,7 @@ export function CampWorkspace({
         />
         <div className="composer-box">
           {attachmentDragState && (
-            <span className="composer-destination">将添加到这条消息</span>
+            <span className="composer-destination"><UiText zh={"将添加到这条消息"} /></span>
           )}
           <div className="composer-input">
             {(composerDraft?.attachments.length ?? 0) > 0
@@ -5572,11 +5571,11 @@ export function CampWorkspace({
               <div className="composer-reply-region">
                 <div
                   className={`composer-reply-line${replyRepairRequired ? ' needs-repair' : ''}`}
-                  title={`${composerDraft.replyIntent.author?.displayName ?? '引用消息'} · ${composerDraft.replyIntent.excerpt ?? '引用的消息当前不可用'}`}
+                  title={`${composerDraft.replyIntent.author?.displayName ?? uiAttribute("引用消息")} · ${composerDraft.replyIntent.excerpt ?? uiAttribute("引用的消息当前不可用")}`}
                 >
                   <span className="composer-reply-copy">
-                    <strong>回复 {composerDraft.replyIntent.author?.displayName ?? '引用消息'}</strong>
-                    <span>{composerDraft.replyIntent.excerpt ?? '引用的消息当前不可用'}</span>
+                    <strong><UiText zh={"回复 "} />{composerDraft.replyIntent.author?.displayName ?? uiAttribute("引用消息")}</strong>
+                    <span>{composerDraft.replyIntent.excerpt ?? uiAttribute("引用的消息当前不可用")}</span>
                   </span>
                   <button
                     ref={composerDraft.replyIntent.targetState === 'message_unavailable'
@@ -5584,29 +5583,27 @@ export function CampWorkspace({
                       : undefined}
                     className="composer-reply-cancel"
                     type="button"
-                    aria-label="取消回复"
+                    aria-label={uiAttribute("取消回复")}
                     disabled={composerInteractionDisabled}
                     onClick={() => void cancelReply()}
-                  >
-                    取消
-                  </button>
+                  ><UiText zh={"取消"} /></button>
                 </div>
                 {replyRepairRequired && (
                   <div className="reply-recipient-repair" role="alert" aria-live="assertive">
                     {composerDraft.replyIntent.targetState === 'message_unavailable'
                       ? (
                           <div className="reply-recipient-repair-copy">
-                            <strong>引用的消息当前不可用</strong>
-                            <span>请取消引用后再发送，当前输入会继续保留。</span>
+                            <strong><UiText zh={"引用的消息当前不可用"} /></strong>
+                            <span><UiText zh={"请取消引用后再发送，当前输入会继续保留。"} /></span>
                           </div>
                         )
                       : (
                           <>
                             <div className="reply-recipient-repair-copy">
-                              <strong>原作者当前不可接收，请选择其他成员</strong>
-                              <span>引用会保留；只有你显式选择新接收者后才能发送。</span>
+                              <strong><UiText zh={"原作者当前不可接收，请选择其他成员"} /></strong>
+                              <span><UiText zh={"引用会保留；只有你显式选择新接收者后才能发送。"} /></span>
                             </div>
-                            <div className="reply-recipient-options" aria-label="选择替代接收者">
+                            <div className="reply-recipient-options" aria-label={uiAttribute("选择替代接收者")}>
                               {composerMembers.filter((member) => member.mentionable !== false).map((member, index) => (
                                 <button
                                   ref={index === 0 ? recipientRepairFirstOptionRef : undefined}
@@ -5630,9 +5627,7 @@ export function CampWorkspace({
                                 type="button"
                                 disabled={composerInteractionDisabled}
                                 onClick={() => void resolveReplyRecipient({ kind: 'all_members' })}
-                              >
-                                @所有队员
-                              </button>
+                              ><UiText zh={"@所有队员"} /></button>
                             </div>
                           </>
                         )}
@@ -5646,14 +5641,12 @@ export function CampWorkspace({
             {continuationRepairRequired && continuationIntent && !composerDraft?.replyIntent && (
               <div className="reply-recipient-repair" role="alert" aria-live="assertive">
                 <div className="reply-recipient-repair-copy">
-                  <strong>原接收者当前不可接收，请选择其他成员</strong>
-                  <span>
-                    当前输入与附件会继续保留；只有你显式选择新接收者后才能发送。
-                  </span>
+                  <strong><UiText zh={"原接收者当前不可接收，请选择其他成员"} /></strong>
+                  <span><UiText zh={"当前输入与附件会继续保留；只有你显式选择新接收者后才能发送。"} /></span>
                 </div>
-                <div className="reply-recipient-options" aria-label="选择替代接收者">
+                <div className="reply-recipient-options" aria-label={uiAttribute("选择替代接收者")}>
                   {continuationReplacementMembers.length === 0
-                    ? <span className="reply-recipient-empty">当前没有其他可接收成员</span>
+                    ? <span className="reply-recipient-empty"><UiText zh={"当前没有其他可接收成员"} /></span>
                     : continuationReplacementMembers.map((member, index) => (
                       <button
                         ref={index === 0 ? recipientRepairFirstOptionRef : undefined}
@@ -5672,16 +5665,14 @@ export function CampWorkspace({
             {draftLoadState.state === 'error' && (
               <div className="reply-recipient-repair composer-draft-load-error" role="alert">
                 <div className="reply-recipient-repair-copy">
-                  <strong>输入框无法初始化</strong>
+                  <strong><UiText zh={"输入框无法初始化"} /></strong>
                   <span>{draftLoadState.error.message}</span>
                 </div>
                 <button
                   className="quiet-button compact"
                   type="button"
                   onClick={() => void retryComposerDraftLoad()}
-                >
-                  重新初始化
-                </button>
+                ><UiText zh={"重新初始化"} /></button>
               </div>
             )}
             <MessageQuotes key={snapshot.camp.id} quotes={composerDraft?.quotes ?? []}
@@ -5716,12 +5707,12 @@ export function CampWorkspace({
               skillCatalogErrors={composerSkillCatalog.candidates.errors}
               skillCatalogRefreshing={skillCatalogRefreshing}
               onRefreshSkills={() => refreshSkillCatalogRef.current?.()}
-              ariaLabel={`给 ${defaultLead?.displayName ?? '默认负责人'} 发消息`}
+              ariaLabel={uiAttribute("给 {0} 发消息", String(defaultLead?.displayName ?? uiAttribute("默认负责人")))}
               placeholder={draftLoadState.state === 'error'
-                ? '输入框暂不可用'
+                ? uiAttribute("输入框暂不可用")
                 : isCampEmpty
-                  ? '集结队伍，写下这次冒险的目标…'
-                  : '和队伍继续前行：补充线索、调整方向或布置新任务…'}
+                  ? uiAttribute("集结队伍，写下这次冒险的目标…")
+                  : uiAttribute("和队伍继续前行：补充线索、调整方向或布置新任务…")}
               disabled={composerInteractionDisabled}
               editorRef={composerEditorRef}
               onActivateMemberMention={(member, trigger, focusPanel) =>
@@ -5739,8 +5730,7 @@ export function CampWorkspace({
             />
             {unlistedSkillName && (
               <span className="composer-reply-status" role="status" aria-live="polite">
-                {unlistedSkillName} 的来源当前不在候选中，仍可发送。
-              </span>
+                {unlistedSkillName}<UiText zh={" 的来源当前不在候选中，仍可发送。"} /></span>
             )}
             {!composerDraft?.replyIntent && replyInteractionError && (
               <span className="composer-reply-status" role="status" aria-live="polite">
@@ -5748,8 +5738,7 @@ export function CampWorkspace({
               </span>
             )}
             {composerPersistenceError && (
-              <span className="composer-reply-status" role="status" aria-live="polite">
-                本机草稿保存失败；当前窗口内内容仍保留。{composerPersistenceError.message}
+              <span className="composer-reply-status" role="status" aria-live="polite"><UiText zh={"本机草稿保存失败；当前窗口内内容仍保留。"} />{composerPersistenceError.message}
               </span>
             )}
           </div>
@@ -5773,8 +5762,8 @@ export function CampWorkspace({
               <button
                 className="composer-attachment-button"
                 type="button"
-                aria-label="添加文件"
-                title="添加文件"
+                aria-label={uiAttribute("添加文件")}
+                title={uiAttribute("添加文件")}
                 disabled={busy || composerInteractionDisabled}
                 onClick={() => composerFileInputRef.current?.click()}
               >
@@ -5782,18 +5771,18 @@ export function CampWorkspace({
                   <path d="m6.2 9.8 4.65-4.65a2.5 2.5 0 0 1 3.54 3.54l-6.1 6.1a4 4 0 0 1-5.66-5.66l6.1-6.1" />
                 </svg>
               </button>
-              {mobile && <button className="composer-attachment-button" type="button" aria-label="提及队员" disabled={busy || composerInteractionDisabled} onPointerDown={(event) => event.preventDefault()} onClick={() => composerHandleRef.current?.startMention()}>@</button>}
+              {mobile && <button className="composer-attachment-button" type="button" aria-label={uiAttribute("提及队员")} disabled={busy || composerInteractionDisabled} onPointerDown={(event) => event.preventDefault()} onClick={() => composerHandleRef.current?.startMention()}>@</button>}
             </div>
             <div className="composer-actions">
               {!executionBlocked && (
                 <span className="composer-hint">
-                  <span className="sr-only">Enter 发送，Shift+Enter 换行</span>
+                  <span className="sr-only"><UiText zh={"Enter 发送，Shift+Enter 换行"} /></span>
                   <span className="composer-hint-visual" aria-hidden="true">
                     <kbd>↵</kbd>
-                    <span>发送</span>
+                    <span><UiText zh={"发送"} /></span>
                     <span className="composer-hint-separator">·</span>
                     <kbd>⇧↵</kbd>
-                    <span>换行</span>
+                    <span><UiText zh={"换行"} /></span>
                   </span>
                 </span>
               )}
@@ -5828,11 +5817,11 @@ export function CampWorkspace({
                 </svg>
               </span>
               <span className="conversation-drop-copy">
-                <strong>松手添加到当前消息</strong>
+                <strong><UiText zh={"松手添加到当前消息"} /></strong>
                 <span>
                   {attachmentDragState === 'directory'
-                    ? '将引用此文件夹的当前位置，不会移动原文件'
-                    : '支持文件与文件夹 · 原位置移动或删除后可能不可用'}
+                    ? uiAttribute("将引用此文件夹的当前位置，不会移动原文件")
+                    : uiAttribute("支持文件与文件夹 · 原位置移动或删除后可能不可用")}
                 </span>
               </span>
             </div>
@@ -5840,7 +5829,7 @@ export function CampWorkspace({
         )}
         <span className="sr-only" aria-live="polite">
           {attachmentDragState
-            ? '已进入当前消息附件区域，释放以添加文件或文件夹。'
+            ? uiAttribute("已进入当前消息附件区域，释放以添加文件或文件夹。")
             : ''}
         </span>
       </FilePreviewWorkspace>
@@ -5874,7 +5863,7 @@ export function CampWorkspace({
           />}
           {!executionDrawer && (
             <div className="execution-sidecar-empty execution-preview-empty">
-              {executionProcesses.length > 0 ? '选择一位队员，查看连续执行历史。' : '暂无执行记录'}
+              {executionProcesses.length > 0 ? uiAttribute("选择一位队员，查看连续执行历史。") : uiAttribute("暂无执行记录")}
             </div>
           )}
         </>,
@@ -5895,8 +5884,8 @@ export function CampWorkspace({
           <AppDialogContent className="message-withdraw-dialog" tone="danger" width="compact">
             <AppDialogHeader
               icon="warning"
-              title="撤回这条消息？"
-              description="所有接收队员尚未领取，可直接撤回。"
+              title={uiAttribute("撤回这条消息？")}
+              description={uiAttribute("所有接收队员尚未领取，可直接撤回。")}
               closeDisabled={withdrawingMessageId !== null}
             />
             {withdrawalError && <AppDialogBody>
@@ -5906,20 +5895,20 @@ export function CampWorkspace({
               <button
                 className="quiet-button"
                 type="button"
-                aria-label="取消撤回"
+                aria-label={uiAttribute("取消撤回")}
                 disabled={withdrawingMessageId !== null}
                 onClick={() => {
                   setWithdrawalMessage(null)
                   setWithdrawalError(null)
                 }}
-              >取消</button>
+              ><UiText zh={"取消"} /></button>
               <button
                 className="danger-button"
                 type="button"
-                aria-label="确认撤回消息"
+                aria-label={uiAttribute("确认撤回消息")}
                 disabled={withdrawingMessageId !== null}
                 onClick={() => void confirmMessageWithdrawal()}
-              >{withdrawingMessageId ? '正在撤回…' : '撤回'}</button>
+              >{withdrawingMessageId ? uiAttribute("正在撤回…") : uiAttribute("撤回")}</button>
             </AppDialogFooter>
           </AppDialogContent>
         </Dialog.Portal>
@@ -5982,13 +5971,13 @@ function runPulseProcessState(
     return { run, label: presentation.label, tone: presentation.tone, shape: runPulseStateShape(run, stopping) }
   }
   if (process.waitingDeliveries.length > 0) {
-    return { run: null, label: '排队中', tone: 'attention', shape: 'queued' }
+    return { run: null, label:uiAttribute("排队中"), tone: 'attention', shape: 'queued' }
   }
   if (run) {
     const presentation = agentRunPresentation(run)
     return { run, label: presentation.label, tone: presentation.tone, shape: runPulseStateShape(run, false) }
   }
-  return { run: null, label: '暂无执行', tone: 'neutral', shape: 'recorded' }
+  return { run: null, label:uiAttribute("暂无执行"), tone: 'neutral', shape: 'recorded' }
 }
 
 function RunPulse({
@@ -6036,23 +6025,23 @@ function RunPulse({
   ).length
   if (visibleProcesses.length === 0) return <></>
   const placementLabel = placement === 'right'
-    ? '固定到右侧'
+    ? uiAttribute('固定到右侧')
     : placement === 'inspector'
-      ? '浮层'
-      : '底部'
+      ? uiAttribute('浮层')
+      : uiAttribute('底部')
   return (
-    <div className={`run-pulse run-pulse-${placement}${placement === 'right' ? ' run-pulse-inspector' : ''}`} aria-label="Agent 执行台">
+    <div className={`run-pulse run-pulse-${placement}${placement === 'right' ? ' run-pulse-inspector' : ''}`} aria-label={uiAttribute("Agent 执行台")}>
       {placement === 'bottom' && <span className="run-pulse-bottom-caption">
         <ExecutionIcon />
-        <span>执行</span>
+        <span><UiText zh={"执行"} /></span>
       </span>}
       {placement !== 'bottom' ? <ExecutionAvatarRail
         items={[{
           agentId: EXECUTION_OVERVIEW_SCOPE,
           avatarRef: null,
-          displayName: '总览',
+          displayName:uiAttribute("总览"),
           overview: true,
-          statusLabel: '全部队员',
+          statusLabel:uiAttribute("全部队员"),
           statusTone: activeProcessCount > 0 ? 'info' : 'neutral',
           stateShape: activeProcessCount > 0 ? 'running' : 'recorded'
         }, ...visibleProcesses.flatMap(process => {
@@ -6075,21 +6064,21 @@ function RunPulse({
           if (agentId === EXECUTION_OVERVIEW_SCOPE) onOpenOverview(trigger)
           else onOpen(agentId, trigger)
         }}
-      /> : <ul className="run-pulse-list" aria-label="队员执行过程入口">
+      /> : <ul className="run-pulse-list" aria-label={uiAttribute("队员执行过程入口")}>
         <li>
           <button
             type="button"
             className={`run-pulse-chip run-pulse-overview-chip${selectedAgentId === EXECUTION_OVERVIEW_SCOPE ? ' is-selected' : ''}`}
-            aria-label="打开全部队员执行总览"
+            aria-label={uiAttribute("打开全部队员执行总览")}
             aria-pressed={selectedAgentId === EXECUTION_OVERVIEW_SCOPE}
             aria-expanded={selectedAgentId === EXECUTION_OVERVIEW_SCOPE}
             aria-controls="agent-execution-drawer"
-            title="总览 · 全部队员"
+            title={uiAttribute("总览 · 全部队员")}
             data-agent-id={EXECUTION_OVERVIEW_SCOPE}
             onClick={(event) => onOpenOverview(event.currentTarget)}
           >
             <ExecutionOverviewMark className="run-pulse-overview-mark" />
-            <span className="run-pulse-chip-copy"><strong><span>总览</span></strong></span>
+            <span className="run-pulse-chip-copy"><strong><span><UiText zh={"总览"} /></span></strong></span>
           </button>
         </li>
         {visibleProcesses.map((process) => {
@@ -6102,7 +6091,7 @@ function RunPulse({
               <button
                 type="button"
                 className={`run-pulse-chip${selectedAgentId === process.agentId ? ' is-selected' : ''}`}
-                aria-label={`打开${memberName}的执行过程，${state.label}`}
+                aria-label={uiAttribute("打开{0}的执行过程，{1}", String(memberName), String(state.label))}
                 aria-pressed={selectedAgentId === process.agentId}
                 aria-expanded={selectedAgentId === process.agentId}
                 aria-controls="agent-execution-drawer"
@@ -6140,9 +6129,9 @@ function RunPulse({
               ref={placementButtonRef}
               className="execution-placement-button"
               type="button"
-              aria-label={`切换执行台位置，当前${placementLabel}`}
+              aria-label={uiAttribute("切换执行台位置，当前{0}", String(placementLabel))}
               aria-busy={placementPending}
-              title={placementPending ? '正在保存执行台位置' : `切换执行台位置 · ${placementLabel}`}
+              title={placementPending ? uiAttribute("正在保存执行台位置") : uiAttribute("切换执行台位置 · {0}", String(placementLabel))}
               disabled={placementPending}
               onPointerDownCapture={onPlacementMenuIntent}
               onKeyDownCapture={(event) => {
@@ -6156,7 +6145,7 @@ function RunPulse({
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content className="execution-placement-menu" sideOffset={6} align="end">
-              <div className="execution-placement-menu-heading">切换执行台位置</div>
+              <div className="execution-placement-menu-heading"><UiText zh={"切换执行台位置"} /></div>
               {([
                 ['right', '固定到右侧', '与会话并排，不遮挡正文'],
                 ['inspector', '浮层', '保持会话宽度，按需展开'],
@@ -6170,7 +6159,7 @@ function RunPulse({
                   onSelect={() => { void onMovePlacement(target) }}
                 >
                   <ExecutionPlacementIcon target={target} />
-                  <span><strong>{title}</strong><small>{description}</small></span>
+                  <span><strong>{uiAttribute(title)}</strong><small>{uiAttribute(description)}</small></span>
                   {placement === target && <svg className="execution-placement-check" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8 3 3 6-6" /></svg>}
                 </DropdownMenu.Item>
               ))}
@@ -6180,7 +6169,7 @@ function RunPulse({
         {placementError && (
           <span className="execution-placement-feedback" role="alert" title={placementError.detail ?? undefined}>
             <span>{placementError.message}</span>
-            <button type="button" onClick={() => void onMovePlacement(placementError.target)}>重试</button>
+            <button type="button" onClick={() => void onMovePlacement(placementError.target)}><UiText zh={"重试"} /></button>
           </span>
         )}
       </div>
@@ -6189,13 +6178,13 @@ function RunPulse({
         type="button"
         aria-expanded={selectedAgentId !== null}
         aria-controls="agent-execution-drawer"
-        aria-label={selectedAgentId === null ? '展开执行详情' : '收起执行详情'}
+        aria-label={selectedAgentId === null ? uiAttribute("展开执行详情") : uiAttribute("收起执行详情")}
         onClick={(event) => {
           if (selectedAgentId === null) onOpenOverview(event.currentTarget)
           else onClose()
         }}
       >
-        <span>{selectedAgentId === null ? '展开' : '收起'}</span>
+        <span>{selectedAgentId === null ? uiAttribute("展开") : uiAttribute("收起")}</span>
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d={selectedAgentId === null ? 'm5 15 7-7 7 7' : 'm5 9 7 7 7-7'} />
         </svg>
@@ -6286,15 +6275,15 @@ export function executionMessageSummary(
   run: Pick<AgentRunView, 'inputSummary' | 'purpose'>
 ): string {
   if (run.inputSummary !== undefined) {
-    return run.inputSummary || run.purpose.trim().replace(/\s+/gu, ' ') || '执行记录'
+    return run.inputSummary || run.purpose.trim().replace(/\s+/gu, ' ') || uiAttribute('执行记录')
   }
   const body = message?.body.trim().replace(/\s+/gu, ' ')
   if (body) return body
   const attachment = message?.attachments[0]?.displayName
   if (attachment) return message!.attachments.length > 1
-    ? `${attachment} 等 ${message!.attachments.length} 个附件`
+    ? uiAttribute("{0} 等 {1} 个附件", String(attachment), String(message!.attachments.length))
     : attachment
-  return run.purpose.trim().replace(/\s+/gu, ' ') || '执行记录'
+  return run.purpose.trim().replace(/\s+/gu, ' ') || uiAttribute('执行记录')
 }
 
 export function executionEmptyStateShouldRender(
@@ -6357,8 +6346,8 @@ function executionRunDurationLabel(run: AgentRunView, now: number): string {
   const elapsedSeconds = Math.max(0, Math.floor((end - start) / 1_000))
   const minutes = Math.floor(elapsedSeconds / 60)
   const seconds = elapsedSeconds % 60
-  if (minutes >= 60) return `${Math.floor(minutes / 60)}时 ${minutes % 60}分`
-  return `${minutes}分 ${String(seconds).padStart(2, '0')}秒`
+  if (minutes >= 60) return uiAttribute("{0}时 {1}分", String(Math.floor(minutes / 60)), String(minutes % 60))
+  return uiAttribute("{0}分 {1}秒", String(minutes), String(String(seconds).padStart(2, '0')))
 }
 
 function ExecutionRunMetric({ run }: { run: AgentRunView }): JSX.Element {
@@ -6370,7 +6359,7 @@ function ExecutionRunMetric({ run }: { run: AgentRunView }): JSX.Element {
     return () => window.clearInterval(timer)
   }, [live])
   return <span className={`execution-run-metric${live ? ' is-live' : ''}${run.status === 'queued' ? ' is-queued' : ''}`}>
-    {run.status === 'queued' ? '排队中' : executionRunDurationLabel(run, now)}
+    {run.status === 'queued' ? uiAttribute("排队中") : executionRunDurationLabel(run, now)}
   </span>
 }
 
@@ -6418,22 +6407,21 @@ function ExecutionInputList({
       const author = message
         ? message.authorType === 'agent'
           ? authorMember?.displayName ?? message.authorId
-          : '你'
-        : '消息'
+          : uiAttribute('你')
+        : uiAttribute('消息')
       const summary = message
         ? message.body || message.attachments.map((item) => item.displayName).join('、')
-        : '消息内容尚未载入'
+        : uiAttribute('消息内容尚未载入')
       return <li key={messageId}>
         {message?.authorType === 'agent'
           ? <MemberAvatar agentId={message.authorId} avatarRef={authorMember?.avatarRef ?? null}
               displayName={author} size="execution" decorative />
           : message
-            ? <span className="execution-input-user" aria-hidden="true">你</span>
+            ? <span className="execution-input-user" aria-hidden="true"><UiText zh={"你"} /></span>
             : <span className="execution-input-placeholder" aria-hidden="true"><ExecutionBatchIcon /></span>}
         <div>
           <div><strong>{author}</strong><button type="button" onClick={() => onRevealMessage(messageId)}>
-            <ExecutionLocateIcon />定位原消息
-          </button></div>
+            <ExecutionLocateIcon /><UiText zh={"定位原消息"} /></button></div>
           <p title={summary}>{summary}</p>
         </div>
       </li>
@@ -6455,10 +6443,10 @@ function ExecutionInputCountPopover({
   subject: string
 }): JSX.Element | null {
   if (messageIds.length <= 1) return null
-  const label = `查看${subject}的 ${messageIds.length} 条输入`
+  const label = uiAttribute("查看{0}的 {1} 条输入", String(subject), String(messageIds.length))
   return <Popover.Root>
     <Popover.Trigger asChild>
-      <button className="execution-batch-count" type="button" aria-label={label} title={`${messageIds.length} 条输入`}>
+      <button className="execution-batch-count" type="button" aria-label={label} title={uiAttribute("{0} 条输入", String(messageIds.length))}>
         <ExecutionBatchIcon /><span>{messageIds.length}</span>
       </button>
     </Popover.Trigger>
@@ -6469,10 +6457,10 @@ function ExecutionInputCountPopover({
         align="end"
         sideOffset={6}
         collisionPadding={12}
-        aria-label={`${subject}输入`}
+        aria-label={uiAttribute("{0}输入", String(subject))}
       >
         <div className="execution-input-popover-heading">
-          <strong>{messageIds.length} 条输入</strong>
+          <strong>{messageIds.length}<UiText zh={" 条输入"} /></strong>
           <span>{subject}</span>
         </div>
         <ExecutionInputList
@@ -6871,10 +6859,10 @@ function ExecutionDrawer({
   }, [progressFollowKey, latestRun?.id])
 
   const displayName = overview
-    ? '全部队员'
+    ? uiAttribute('全部队员')
     : member?.displayName ?? profile?.displayName ?? process.agentId
   const drawerTitle = overview
-    ? '总览'
+    ? uiAttribute('总览')
     : executionDrawerTitle(displayName, profile?.runtimeConfiguration?.adapterKind ?? null)
   const runtimeConfiguration = profile?.runtimeConfiguration
     ? memberRuntimeConfigurationPresentation(profile.runtimeConfiguration, installation)
@@ -6978,18 +6966,18 @@ function ExecutionDrawer({
               messageById={messageById}
               memberById={memberById}
               onRevealMessage={onRevealMessage}
-              subject="本次执行"
+              subject={uiAttribute("本次执行")}
             />
             <span className="execution-run-trailing">
               <ExecutionRunMetric run={run} />
               <span className="execution-run-operations">
-                <button type="button" aria-label={expanded ? '收起卡片' : '展开卡片'} aria-expanded={expanded}
+                <button type="button" aria-label={expanded ? uiAttribute("收起卡片") : uiAttribute("展开卡片")} aria-expanded={expanded}
                   aria-controls={contentId} onClick={() => toggleRun(run.id)}>
                   <ExecutionCardChevron expanded={expanded} />
                 </button>
                 {(stopState === 'available' || stopState === 'stopping' || stopState === 'confirming') && (
-                  <button className="is-danger" type="button" aria-label={`终止${runMemberName}的本次执行`}
-                    title="终止本次执行" disabled={stopState !== 'available'} onClick={() => stopRun(run)}>
+                  <button className="is-danger" type="button" aria-label={uiAttribute("终止{0}的本次执行", String(runMemberName))}
+                    title={uiAttribute("终止本次执行")} disabled={stopState !== 'available'} onClick={() => stopRun(run)}>
                     <ExecutionStopIcon />
                   </button>
                 )}
@@ -7065,17 +7053,17 @@ function ExecutionDrawer({
               messageById={messageById}
               memberById={memberById}
               onRevealMessage={onRevealMessage}
-              subject="排队批次"
+              subject={uiAttribute("排队批次")}
             />
             <span className="execution-run-trailing">
-              <span className="execution-run-metric is-queued">排队中</span>
+              <span className="execution-run-metric is-queued"><UiText zh={"排队中"} /></span>
               <span className="execution-run-operations">
-                <button type="button" aria-label={expanded ? '收起排队批次' : '展开排队批次'}
+                <button type="button" aria-label={expanded ? uiAttribute("收起排队批次") : uiAttribute("展开排队批次")}
                   aria-expanded={expanded} aria-controls={contentId} onClick={toggle}>
                   <ExecutionCardChevron expanded={expanded} />
                 </button>
-                <button className="is-danger" type="button" aria-label={`终止${runMemberName}的本批排队`}
-                  title="终止本批排队" disabled={stoppingBatch} onClick={() => {
+                <button className="is-danger" type="button" aria-label={uiAttribute("终止{0}的本批排队", String(runMemberName))}
+                  title={uiAttribute("终止本批排队")} disabled={stoppingBatch} onClick={() => {
                     for (const run of batch.runs) stopRun(run)
                   }}>
                   <ExecutionStopIcon />
@@ -7087,7 +7075,7 @@ function ExecutionDrawer({
             {batchMessageIds.length > 0
               ? <ExecutionInputList messageIds={batchMessageIds} messageById={messageById}
                   memberById={memberById} onRevealMessage={onRevealMessage} />
-              : <p className="execution-queue-empty">排队输入当前未载入。</p>}
+              : <p className="execution-queue-empty"><UiText zh={"排队输入当前未载入。"} /></p>}
           </div>
         </article>
       </li>
@@ -7103,8 +7091,8 @@ function ExecutionDrawer({
     const summary = sourceMessage
       ? sourceMessage.body.trim().replace(/\s+/gu, ' ')
         || sourceMessage.attachments.map((item) => item.displayName).join('、')
-        || '排队消息'
-      : '排队消息'
+        || uiAttribute('排队消息')
+      : uiAttribute('排队消息')
     const contentId = `execution-delivery-queue-content-${batch.agentId}`
     const toggle = (): void => setExpandedQueueAgents((current) => {
       const next = new Set(current)
@@ -7133,12 +7121,12 @@ function ExecutionDrawer({
               messageById={messageById}
               memberById={memberById}
               onRevealMessage={onRevealMessage}
-              subject="排队消息"
+              subject={uiAttribute("排队消息")}
             />
             <span className="execution-run-trailing">
-              <span className="execution-run-metric is-queued">排队中</span>
+              <span className="execution-run-metric is-queued"><UiText zh={"排队中"} /></span>
               <span className="execution-run-operations">
-                <button type="button" aria-label={expanded ? '收起排队消息' : '展开排队消息'}
+                <button type="button" aria-label={expanded ? uiAttribute("收起排队消息") : uiAttribute("展开排队消息")}
                   aria-expanded={expanded} aria-controls={contentId} onClick={toggle}>
                   <ExecutionCardChevron expanded={expanded} />
                 </button>
@@ -7183,14 +7171,14 @@ function ExecutionDrawer({
         <div
           className="execution-drawer-resize-handle"
           role="separator"
-          aria-label="调整执行详情高度"
+          aria-label={uiAttribute("调整执行详情高度")}
           aria-orientation="horizontal"
           aria-valuemin={accessibleBounds.min}
           aria-valuemax={accessibleBounds.max}
           aria-valuenow={accessibleHeight}
-          aria-valuetext={`${accessibleHeight} 像素；上下方向键调整，Enter 恢复默认高度`}
+          aria-valuetext={uiAttribute("{0} 像素；上下方向键调整，Enter 恢复默认高度", String(accessibleHeight))}
           tabIndex={0}
-          title="上下拖拽调整；按 Enter 恢复默认高度"
+          title={uiAttribute("上下拖拽调整；按 Enter 恢复默认高度")}
           onPointerDown={handleResizePointerDown}
           onPointerMove={handleResizePointerMove}
           onPointerUp={finishResizeGesture}
@@ -7235,7 +7223,7 @@ function ExecutionDrawer({
         <div
           ref={drawerBodyRef}
           className="execution-drawer-body"
-          aria-label={overview ? '全部队员的执行总览' : `${displayName}的连续执行历史`}
+          aria-label={overview ? uiAttribute("全部队员的执行总览") : uiAttribute("{0}的连续执行历史", String(displayName))}
           data-following-latest={followingLatest ? 'true' : 'false'}
           onWheelCapture={finishExecutionReadingInteraction}
           onPointerDownCapture={markExecutionReadingIntent}
@@ -7265,7 +7253,7 @@ function ExecutionDrawer({
           <ExecutionLatestContext.Provider value={latestContext}>
           <ExecutionReadingContext.Provider value={setFollowingLatest}>
           <ExecutionToolGroupStateContext.Provider value={groupState}>
-          {currentEntries.length > 0 && <section aria-label="当前执行与排队">
+          {currentEntries.length > 0 && <section aria-label={uiAttribute("当前执行与排队")}>
             <ol className="execution-process-timeline">{currentEntries.map((entry) =>
               entry.kind === 'run'
                 ? renderRunCard(entry.run)
@@ -7274,18 +7262,18 @@ function ExecutionDrawer({
                   : renderDeliveryQueueBatch(entry.batch)
             )}</ol>
           </section>}
-          {(historyRuns.length > 0 || !runHistoryComplete) && <section className={`execution-history-section${currentEntries.length === 0 ? ' is-first' : ''}`} aria-label="执行历史">
+          {(historyRuns.length > 0 || !runHistoryComplete) && <section className={`execution-history-section${currentEntries.length === 0 ? ' is-first' : ''}`} aria-label={uiAttribute("执行历史")}>
             <button className="execution-history-toggle" type="button" aria-expanded={historyOpen}
               aria-controls={`execution-history-${process.agentId}`} onClick={() => setHistoryOpen((open) => !open)}>
               <ExecutionCardChevron expanded={historyOpen} />
-              <span>执行历史</span>
+              <span><UiText zh={"执行历史"} /></span>
               {historyRuns.length > 0 && <span className="execution-history-count">{historyRuns.length}</span>}
             </button>
             <div className="execution-history-list" id={`execution-history-${process.agentId}`} hidden={!historyOpen}>
               {historyRuns.length > 0
                 ? <ol className="execution-process-timeline">{historyRuns.map(renderRunCard)}</ol>
-                : <div className="execution-current-empty">暂无执行历史</div>}
-              {!runHistoryComplete && <p className="execution-history-partial">更早执行尚未载入</p>}
+                : <div className="execution-current-empty"><UiText zh={"暂无执行历史"} /></div>}
+              {!runHistoryComplete && <p className="execution-history-partial"><UiText zh={"更早执行尚未载入"} /></p>}
             </div>
           </section>}
           {executionEmptyStateShouldRender(
@@ -7293,7 +7281,7 @@ function ExecutionDrawer({
             historyRuns.length,
             runHistoryComplete
           )
-            && <div className="execution-current-empty">当前没有执行</div>}
+            && <div className="execution-current-empty"><UiText zh={"当前没有执行"} /></div>}
           <div className="execution-reading-space" aria-hidden="true" />
           </ExecutionToolGroupStateContext.Provider>
           </ExecutionReadingContext.Provider>
@@ -7332,7 +7320,7 @@ function MessageAuthorProfileTrigger({
   onActivate(agentId: string, trigger: HTMLElement, focusPanel: boolean): void
   children: React.ReactNode
 }): JSX.Element {
-  const label = `查看${displayName}的基础信息`
+  const label = uiAttribute("查看{0}的基础信息", String(displayName))
   return (
     <button
       className={`message-author-trigger message-author-${variant}-trigger`}
@@ -7378,11 +7366,11 @@ function CampMessageDeliveryFooter({
   return (
     <footer
       className="message-delivery-footer"
-      aria-label="消息发送对象"
+      aria-label={uiAttribute("消息发送对象")}
       style={{ '--delivery-accent': deliveryAccent } as CSSProperties}
     >
       <span className="message-delivery-handoff-rail" aria-hidden="true" />
-      <span className="message-delivery-label">发送给</span>
+      <span className="message-delivery-label"><UiText zh={"发送给"} /></span>
       <span className="message-delivery-recipients">
         {ordered.map((delivery, index) => {
           const recipient = memberById.get(delivery.recipientAgentId)
@@ -7409,10 +7397,10 @@ function CampMessageDeliveryFooter({
                 data-agent-id={delivery.recipientAgentId}
                 role={available ? 'button' : undefined}
                 tabIndex={available ? 0 : undefined}
-                aria-label={available ? `查看${displayName}的基础信息` : undefined}
+                aria-label={available ? uiAttribute("查看{0}的基础信息", String(displayName)) : undefined}
                 aria-haspopup={available ? 'dialog' : undefined}
                 aria-expanded={available ? false : undefined}
-                title={available ? `查看${displayName}的基础信息` : '该队员已不可用'}
+                title={available ? uiAttribute("查看{0}的基础信息", String(displayName)) : uiAttribute("该队员已不可用")}
                 onClick={(event) => showMemberProfile(event.currentTarget, true, false)}
                 onKeyDown={(event) => {
                   if ((event.key !== 'Enter' && event.key !== ' ') || !available) return
@@ -7431,13 +7419,13 @@ function CampMessageDeliveryFooter({
 }
 
 function userMessageRunStatusLabel(run: AgentRunView | null): string {
-  if (!run) return '未读'
-  if (run.status === 'queued') return '待处理'
-  if (run.status === 'running') return '处理中'
-  if (run.status === 'waiting') return '等待中'
-  if (run.status === 'succeeded') return '已完成'
-  if (run.status === 'failed') return '未完成'
-  return '已停止'
+  if (!run) return uiAttribute("未读")
+  if (run.status === 'queued') return uiAttribute("待处理")
+  if (run.status === 'running') return uiAttribute("处理中")
+  if (run.status === 'waiting') return uiAttribute("等待中")
+  if (run.status === 'succeeded') return uiAttribute("已完成")
+  if (run.status === 'failed') return uiAttribute("未完成")
+  return uiAttribute("已停止")
 }
 
 function UserMessageDeliveryReceipt({
@@ -7466,9 +7454,9 @@ function UserMessageDeliveryReceipt({
   const inProgress = ordered.filter(({ run }) => run?.status === 'running' || run?.status === 'waiting')
   const canWithdraw = message.canWithdraw && Boolean(onWithdraw)
   const presentation = pending.length > 0
-    ? { className: 'is-queued', label: `待处理 · ${pending.length}` }
+    ? { className: 'is-queued', label: uiAttribute("待处理 · {0}", String(pending.length)) }
     : inProgress.length > 0
-      ? { className: 'is-progress', label: `处理中 · ${inProgress.length}` }
+      ? { className: 'is-progress', label: uiAttribute("处理中 · {0}", String(inProgress.length)) }
       : null
   if (!presentation) return null
   return (
@@ -7478,7 +7466,7 @@ function UserMessageDeliveryReceipt({
           <button
             className={`user-message-receipt ${presentation.className}`}
             type="button"
-            aria-label={`查看消息处理状态，${presentation.label}`}
+            aria-label={uiAttribute("查看消息处理状态，{0}", String(presentation.label))}
           >
             {presentation.className === 'is-progress' ? <ExecutionIcon />
               : <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -7489,7 +7477,7 @@ function UserMessageDeliveryReceipt({
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content className="user-message-receipt-menu" sideOffset={5} align="end">
-            <h3>消息处理状态</h3>
+            <h3><UiText zh={"消息处理状态"} /></h3>
             {ordered.map(({ agentId, run }) => {
               const member = memberById.get(agentId)
               const displayName = member?.displayName ?? agentId
@@ -7497,19 +7485,19 @@ function UserMessageDeliveryReceipt({
                 <MemberAvatar agentId={agentId} avatarRef={member?.avatarRef ?? null} displayName={displayName} size="mention" decorative />
                 <span><strong>{displayName}</strong><small>{userMessageRunStatusLabel(run)}</small></span>
                 {run && <DropdownMenu.Item asChild>
-                  <button type="button" onClick={(event) => onOpenExecution(run, event.currentTarget)}>查看执行</button>
+                  <button type="button" onClick={(event) => onOpenExecution(run, event.currentTarget)}><UiText zh={"查看执行"} /></button>
                 </DropdownMenu.Item>}
               </div>
             })}
             {canWithdraw && <div className="user-message-receipt-actions">
               <DropdownMenu.Item asChild>
-                <button type="button" onClick={onWithdraw}>撤回消息</button>
+                <button type="button" onClick={onWithdraw}><UiText zh={"撤回消息"} /></button>
               </DropdownMenu.Item>
             </div>}
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
-      {canWithdraw && <button className="user-message-withdraw" type="button" aria-label="撤回尚未领取的消息" title="撤回消息" onClick={onWithdraw}>
+      {canWithdraw && <button className="user-message-withdraw" type="button" aria-label={uiAttribute("撤回尚未领取的消息")} title={uiAttribute("撤回消息")} onClick={onWithdraw}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 4H2.5v2.5M2.8 6.2A5.4 5.4 0 1 1 3 10" /></svg>
       </button>}
     </div>
@@ -7654,8 +7642,8 @@ function MentionProfilePopover({
     '--mention-popover-accent': member?.accent ?? 'var(--brand)'
   } as CSSProperties
   const ariaLabel = currentUser
-    ? `${currentUserDisplayName(currentUserProfile)}的个人资料`
-    : profile ? `${profile.displayName}的基础信息` : '所有队员范围'
+    ? uiAttribute("{0}的个人资料", String(currentUserDisplayName(currentUserProfile)))
+    : profile ? uiAttribute("{0}的基础信息", String(profile.displayName)) : uiAttribute('所有队员范围')
 
   return createPortal(
     <div
@@ -7693,9 +7681,9 @@ function MentionProfilePopover({
                 <div className="mention-profile-copy">
                   <header className="mention-profile-header">
                     <h2>{profile.displayName}</h2>
-                    <p>{profile.teamRole.trim() || '未设置角色'}</p>
+                    <p>{profile.teamRole.trim() ||uiAttribute("未设置角色")}</p>
                   </header>
-                  <div className="mention-profile-status" aria-label="队员状态">
+                  <div className="mention-profile-status" aria-label={uiAttribute("队员状态")}>
                     <span className={`presence-${profile.presence}`}>
                       <i aria-hidden="true" />
                       {mentionPresenceLabel(profile.presence)}
@@ -7708,19 +7696,19 @@ function MentionProfilePopover({
                   <div className="mention-profile-fields">
                     <dl>
                       <div>
-                        <dt>专业职责</dt>
-                        <dd>{profile.professionalResponsibilities.trim() || '未设置'}</dd>
+                        <dt><UiText zh={"专业职责"} /></dt>
+                        <dd>{profile.professionalResponsibilities.trim() ||uiAttribute("未设置")}</dd>
                       </div>
                     </dl>
                     <details className="app-dialog-disclosure">
-                      <summary>工作准则与性格底色</summary>
+                      <summary><UiText zh={"工作准则与性格底色"} /></summary>
                       <dl>
                         <div>
-                          <dt>工作准则</dt>
-                          <dd>{profile.workingPrinciples.trim() || '未设置'}</dd>
+                          <dt><UiText zh={"工作准则"} /></dt>
+                          <dd>{profile.workingPrinciples.trim() ||uiAttribute("未设置")}</dd>
                         </div>
                         <div>
-                          <dt>性格底色</dt>
+                          <dt><UiText zh={"性格底色"} /></dt>
                           <dd>
                             {profile.personalityTraits.length > 0
                               ? (
@@ -7728,7 +7716,7 @@ function MentionProfilePopover({
                                     {profile.personalityTraits.map((trait) => <span key={trait}>{trait}</span>)}
                                   </span>
                                 )
-                              : '未设置'}
+                              : uiAttribute("未设置")}
                           </dd>
                         </div>
                       </dl>
@@ -7772,17 +7760,17 @@ function MentionAllMembersPopover({
       <header className="mention-group-header">
         <span aria-hidden="true">@</span>
         <div>
-          <h2>所有队员</h2>
-          <p>群体提及</p>
+          <h2><UiText zh={"所有队员"} /></h2>
+          <p><UiText zh={"群体提及"} /></p>
         </div>
       </header>
       <div className="mention-profile-status">
-        <span><i aria-hidden="true" />{historical ? `发送时已冻结 ${rows.length} 位收件人` : `当前 ${rows.length} 位在队队员`}</span>
+        <span><i aria-hidden="true" />{historical ? uiAttribute("发送时已冻结 {0} 位收件人", String(rows.length)) : uiAttribute("当前 {0} 位在队队员", String(rows.length))}</span>
       </div>
       <div className="mention-group-body">
         <p>{historical
-          ? '历史消息展示发送接受时冻结的收件人范围，之后的加入或离队不会改写它。'
-          : '发送接受时会冻结当前实际寻址的队员集合。'}</p>
+          ? uiAttribute("历史消息展示发送接受时冻结的收件人范围，之后的加入或离队不会改写它。")
+          : uiAttribute("发送接受时会冻结当前实际寻址的队员集合。")}</p>
         <div className="mention-group-members">
           {rows.map(({ agentId, member, profile }) => {
             const displayName = profile?.displayName ?? member?.displayName ?? '不可用队员'
@@ -7800,7 +7788,7 @@ function MentionAllMembersPopover({
               </div>
             )
           })}
-          {rows.length === 0 && <p className="mention-group-empty">没有可显示的收件人。</p>}
+          {rows.length === 0 && <p className="mention-group-empty"><UiText zh={"没有可显示的收件人。"} /></p>}
         </div>
       </div>
     </div>
@@ -7808,7 +7796,7 @@ function MentionAllMembersPopover({
 }
 
 function mentionPresenceLabel(presence: AgentProfile['presence']): string {
-  return ({ present: '在队', away: '暂离', removed: '已移除' })[presence]
+  return ({ present:uiAttribute("在队"), away:uiAttribute("暂离"), removed:uiAttribute("已移除") })[presence]
 }
 
 function mentionRuntimeLabel(profile: AgentProfile): string {
@@ -7836,25 +7824,25 @@ export function RuntimeRecoveryDock({
     <section
       className="runtime-recovery-dock"
       role="alert"
-      aria-label="消息未发送，目标队员的 Agent 运行时不可用"
+      aria-label={uiAttribute("消息未发送，目标队员的 Agent 运行时不可用")}
     >
       <header>
         <div className="runtime-recovery-heading">
           <span className="runtime-recovery-symbol" aria-hidden="true">!</span>
           <div>
-            <strong>消息未发送</strong>
-            <span>{targetCount} 位目标队员暂时不可执行 · 当前输入已保留</span>
+            <strong><UiText zh={"消息未发送"} /></strong>
+            <span>{targetCount}<UiText zh={" 位目标队员暂时不可执行 · 当前输入已保留"} /></span>
           </div>
         </div>
         {onDismiss && (
-          <button className="icon-button" type="button" aria-label="关闭运行配置提示" onClick={onDismiss}>×</button>
+          <button className="icon-button" type="button" aria-label={uiAttribute("关闭运行配置提示")} onClick={onDismiss}>×</button>
         )}
       </header>
       <div className="runtime-recovery-targets">
         {recovery.targets.map((target) => {
           const displayName = memberById.get(target.agentId)?.displayName
             ?? profileById.get(target.agentId)?.displayName
-            ?? '目标队员'
+            ?? uiAttribute('目标队员')
           return (
             <div className="runtime-recovery-target" key={target.agentId}>
               <span className="runtime-recovery-target-mark" aria-hidden="true" />
@@ -7866,11 +7854,9 @@ export function RuntimeRecoveryDock({
                 <button
                   className="quiet-button compact"
                   type="button"
-                  aria-label={`配置${displayName}的 Agent 运行时`}
+                  aria-label={uiAttribute("配置{0}的 Agent 运行时", String(displayName))}
                   onClick={() => onConfigure(target.agentId)}
-                >
-                  去配置
-                </button>
+                ><UiText zh={"去配置"} /></button>
               )}
             </div>
           )
@@ -7979,22 +7965,22 @@ function CampMembersPanel({
         setAddDialogOpen(false)
         setSelectedCandidateIds(new Set())
         onNotify(outcome.addedAgentIds.length === 1
-          ? '1 位队员已加入；将在之后新建的执行中生效'
-          : `${outcome.addedAgentIds.length} 位队员已加入；将在之后新建的执行中生效`)
+          ? uiAttribute('1 位队员已加入；将在之后新建的执行中生效')
+          : uiAttribute("{0} 位队员已加入；将在之后新建的执行中生效", String(outcome.addedAgentIds.length)))
         return
       }
       setSelectedCandidateIds(new Set(outcome.failures.map((failure) => failure.agentId)))
       setAddResult({
         tone: succeeded.length > 0 ? 'attention' : 'danger',
         message: succeeded.length > 0
-          ? `已加入 ${succeeded.length} 位；另有 ${outcome.failures.length} 位未加入，可直接重试。`
-          : `${outcome.failures.length} 位队员均未加入，请检查后重试。`,
+          ? uiAttribute("已加入 {0} 位；另有 {1} 位未加入，可直接重试。", String(succeeded.length), String(outcome.failures.length))
+          : uiAttribute("{0} 位队员均未加入，请检查后重试。", String(outcome.failures.length)),
         failures: new Map(outcome.failures.map((failure) => [failure.agentId, failure.message]))
       })
     } catch (error) {
       setAddResult({
         tone: 'danger',
-        message: readErrorMessage(error, '邀请队员失败，请重试。'),
+        message: readErrorMessage(error, uiAttribute('邀请队员失败，请重试。')),
         failures: new Map()
       })
     } finally {
@@ -8004,7 +7990,7 @@ function CampMembersPanel({
 
   const loadRemovalPreview = useCallback(async (agentId: string): Promise<void> => {
     if (!onPreviewMemberRemoval) {
-      setRemovalPreviewState({ status: 'error', message: '当前版本无法读取移出影响。' })
+      setRemovalPreviewState({ status: 'error', message:uiAttribute("当前版本无法读取移出影响。") })
       return
     }
     setRemovalPreviewState({ status: 'loading' })
@@ -8014,7 +8000,7 @@ function CampMembersPanel({
     } catch (error) {
       setRemovalPreviewState({
         status: 'error',
-        message: readErrorMessage(error, '无法读取 Core 权威影响，请重试。')
+        message: readErrorMessage(error, uiAttribute('无法读取 Core 权威影响，请重试。'))
       })
     }
   }, [onPreviewMemberRemoval])
@@ -8041,20 +8027,20 @@ function CampMembersPanel({
         setRemovalTarget(null)
         setRemovalPreviewState({ status: 'idle' })
         onNotify(outcome.reconciliationStatus === 'reconciling'
-          ? `已将${displayName}移出当前会话；正在收拢已开始的工作`
-          : `已将${displayName}移出当前会话`)
+          ? uiAttribute("已将{0}移出当前会话；正在收拢已开始的工作", String(displayName))
+          : uiAttribute("已将{0}移出当前会话", String(displayName)))
         return
       }
       setRemovalPreviewState({
         status: outcome.status === 'conflict' ? 'conflict' : 'error',
         message: outcome.message ?? (outcome.status === 'conflict'
-          ? '名册已发生变化。请重新读取影响后再确认，本次没有移出任何队员。'
-          : '移出未完成，请重试。')
+          ? uiAttribute('名册已发生变化。请重新读取影响后再确认，本次没有移出任何队员。')
+          : uiAttribute('移出未完成，请重试。'))
       })
     } catch (error) {
       setRemovalPreviewState({
         status: 'error',
-        message: readErrorMessage(error, '移出未完成，请重试。')
+        message: readErrorMessage(error, uiAttribute('移出未完成，请重试。'))
       })
     } finally {
       setRemoveSubmitting(false)
@@ -8086,11 +8072,11 @@ function CampMembersPanel({
     || Boolean(removalPreview && (!removalPreview.removable || removalHasActualImpact))
 
   return (
-    <section aria-label="当前会话队员">
+    <section aria-label={uiAttribute("当前会话队员")}>
       <div className="camp-members-summary">
         <div className="camp-members-summary-line">
           <div>
-            <small>{presentCount} 位在队 · {awayCount} 位暂离</small>
+            <small>{presentCount}<UiText zh={" 位在队 · "} />{awayCount}<UiText zh={" 位暂离"} /></small>
           </div>
           <div className="camp-members-summary-actions">
             <button
@@ -8099,37 +8085,36 @@ function CampMembersPanel({
               disabled={busy || !onAddMembers}
               onClick={openAddDialog}
             >
-              <span aria-hidden="true">＋</span> 邀请
-            </button>
+              <span aria-hidden="true">＋</span><UiText zh={" 邀请"} /></button>
           </div>
         </div>
       </div>
 
       {snapshot.membershipReconciliations.map((reconciliation) => {
-        const displayName = profileById.get(reconciliation.agentId)?.displayName ?? '已移出队员'
+        const displayName = profileById.get(reconciliation.agentId)?.displayName ?? uiAttribute('已移出队员')
         return (
           <div className="camp-members-reconciliation" role="status" key={reconciliation.id}>
             <span className="camp-members-reconciliation-mark" aria-hidden="true">↻</span>
             <span>
-              <strong>正在收拢{displayName}的已开始工作</strong>
-              <small>{reconciliation.settledRunCount}/{reconciliation.targetRunCount} 个执行已结束；新消息和工具写入已停止。</small>
+              <strong><UiText zh={"正在收拢"} />{displayName}<UiText zh={"的已开始工作"} /></strong>
+              <small>{reconciliation.settledRunCount}/{reconciliation.targetRunCount}<UiText zh={" 个执行已结束；新消息和工具写入已停止。"} /></small>
             </span>
           </div>
         )
       })}
 
-      <div className="camp-inspector-member-list" role="list" aria-label="会话队员列表">
+      <div className="camp-inspector-member-list" role="list" aria-label={uiAttribute("会话队员列表")}>
         {members.map((member) => {
           const profile = profileById.get(member.agentId) ?? null
           const fastControl = memberFast.get(member.agentId)
           const fast = fastControl?.value
           const present = campMemberIsLeadEligible(member)
           const presenceLabel = member.leaveRequestedAt
-            ? '正在暂离'
+            ? uiAttribute('正在暂离')
             : member.profilePresence === 'away'
-              ? '暂离'
-              : '在队'
-          const runtimeLabel = profile ? mentionRuntimeLabel(profile) : 'Agent 运行时未载入'
+              ? uiAttribute('暂离')
+              : uiAttribute('在队')
+          const runtimeLabel = profile ? mentionRuntimeLabel(profile) : uiAttribute('Agent 运行时未载入')
           const runtimeTone = profile?.runtimeReadiness.status === 'ready'
             ? 'ready'
             : profile?.runtimeReadiness.status === 'needs_attention'
@@ -8151,7 +8136,7 @@ function CampMembersPanel({
               <span className="camp-inspector-member-copy">
                 <span className="camp-inspector-member-name">
                   <strong>{member.displayName}</strong>
-                  {member.isDefaultLead && <small>队长</small>}
+                  {member.isDefaultLead && <small><UiText zh={"队长"} /></small>}
                 </span>
                 <small title={member.teamRole || undefined}>{runtimeLabel}</small>
               </span>
@@ -8166,7 +8151,7 @@ function CampMembersPanel({
                   <button
                     className="camp-member-action-button"
                     type="button"
-                    aria-label={`${member.displayName}的队员操作`}
+                    aria-label={uiAttribute("{0}的队员操作", String(member.displayName))}
                     disabled={busy}
                   >
                     <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -8182,15 +8167,15 @@ function CampMembersPanel({
                     align="end"
                     sideOffset={5}
                     collisionPadding={10}
-                    aria-label={`${member.displayName}的队员操作`}
+                    aria-label={uiAttribute("{0}的队员操作", String(member.displayName))}
                   >
                     <DropdownMenu.Item
                       className="camp-member-menu-item"
                       disabled={busy || member.isDefaultLead || !present}
                       onSelect={() => { void onChangeLead(member.agentId).catch(() => undefined) }}
                     >
-                      <strong>{member.isDefaultLead ? '当前队长' : '设为队长'}</strong>
-                      {!present && <small>暂离的队员不可设为队长</small>}
+                      <strong>{member.isDefaultLead ? uiAttribute("当前队长") : uiAttribute("设为队长")}</strong>
+                      {!present && <small><UiText zh={"暂离的队员不可设为队长"} /></small>}
                     </DropdownMenu.Item>
                     <DropdownMenu.Separator className="camp-member-menu-separator" />
                     <DropdownMenu.Item
@@ -8198,8 +8183,8 @@ function CampMembersPanel({
                       disabled={!runtimeConfiguration}
                       onSelect={() => runtimeConfiguration && toggleRuntimeDetails(member.agentId)}
                     >
-                      <strong>模型信息</strong>
-                      {!runtimeConfiguration && <small>请先配置 Agent 运行时</small>}
+                      <strong><UiText zh={"模型信息"} /></strong>
+                      {!runtimeConfiguration && <small><UiText zh={"请先配置 Agent 运行时"} /></small>}
                     </DropdownMenu.Item>
                     <DropdownMenu.Separator className="camp-member-menu-separator" />
                     <DropdownMenu.Item
@@ -8207,8 +8192,8 @@ function CampMembersPanel({
                       disabled={members.length <= 1 || !onRemoveMember}
                       onSelect={() => openRemovalDialog(member)}
                     >
-                      <strong>移出当前会话</strong>
-                      {members.length <= 1 && <small>会话至少保留 1 位队员</small>}
+                      <strong><UiText zh={"移出当前会话"} /></strong>
+                      {members.length <= 1 && <small><UiText zh={"会话至少保留 1 位队员"} /></small>}
                     </DropdownMenu.Item>
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
@@ -8217,22 +8202,22 @@ function CampMembersPanel({
                 <dl
                   className="camp-inspector-runtime-detail"
                   id={runtimeDetailsId}
-                  aria-label={`${member.displayName}的当前模型配置`}
+                  aria-label={uiAttribute("{0}的当前模型配置", String(member.displayName))}
                 >
-                  <div><dt>模型</dt><dd>{runtimeConfiguration.model}</dd></div>
+                  <div><dt><UiText zh={"模型"} /></dt><dd>{runtimeConfiguration.model}</dd></div>
                   {runtimeConfiguration.effort && (
                     <div>
                       <dt>{runtimeConfiguration.effort.label}</dt>
                       <dd>{runtimeConfiguration.effort.value}</dd>
                     </div>
                   )}
-                  <div><dt>模型策略</dt><dd>{runtimeConfiguration.strategy}</dd></div>
+                  <div><dt><UiText zh={"模型策略"} /></dt><dd>{runtimeConfiguration.strategy}</dd></div>
                 </dl>
               )}
             </article>
           )
         })}
-        {members.length === 0 && <EmptyInline text="当前会话没有可显示的队员。" />}
+        {members.length === 0 && <EmptyInline text={uiAttribute("当前会话没有可显示的队员。")} />}
       </div>
 
       <Dialog.Root open={addDialogOpen} onOpenChange={(open) => !open && closeAddDialog()}>
@@ -8240,11 +8225,11 @@ function CampMembersPanel({
           <Dialog.Overlay className="dialog-overlay app-dialog-overlay" />
           <AppDialogContent className="camp-member-dialog" width="wide" aria-describedby="camp-add-member-description">
             <AppDialogHeader
-              title="邀请队员"
-              description="选择要加入这次讨论的队员。"
+              title={uiAttribute("邀请队员")}
+              description={uiAttribute("选择要加入这次讨论的队员。")}
               descriptionId="camp-add-member-description"
               icon="user"
-              kicker="当前会话"
+              kicker={uiAttribute("当前会话")}
               closeDisabled={addSubmitting}
               hideDescription
             />
@@ -8256,7 +8241,7 @@ function CampMembersPanel({
                 <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg>
                 <input
                   type="search"
-                  placeholder="搜索队员…"
+                  placeholder={uiAttribute("搜索队员…")}
                   value={addSearch}
                   data-dialog-autofocus
                   autoComplete="off"
@@ -8264,10 +8249,10 @@ function CampMembersPanel({
                 />
               </label>
               <div className="camp-member-candidate-caption">
-                <strong>可邀请队员</strong>
-                <span>{filteredCandidates.length} 位</span>
+                <strong><UiText zh={"可邀请队员"} /></strong>
+                <span>{filteredCandidates.length}<UiText zh={" 位"} /></span>
               </div>
-              <div className="camp-member-candidate-list" role="group" aria-label="可邀请队员">
+              <div className="camp-member-candidate-list" role="group" aria-label={uiAttribute("可邀请队员")}>
                 {filteredCandidates.map((profile) => {
                   const failure = addResult?.failures.get(profile.agentId) ?? null
                   const checked = selectedCandidateIds.has(profile.agentId)
@@ -8282,16 +8267,16 @@ function CampMembersPanel({
                         />
                         <MemberAvatar agentId={profile.agentId} avatarRef={profile.avatarRef} displayName={profile.displayName} size="list" decorative />
                         <span className="camp-member-candidate-copy">
-                          <strong>{profile.displayName}<small>{profile.teamRole || '团队角色未设置'}</small></strong>
-                          <small>{profile.professionalResponsibilities || '职责尚未填写'}</small>
+                          <strong>{profile.displayName}<small>{profile.teamRole || uiAttribute('团队角色未设置')}</small></strong>
+                          <small>{profile.professionalResponsibilities || uiAttribute('职责尚未填写')}</small>
                         </span>
                         <span className={`camp-member-candidate-runtime ${profile.runtimeReadiness.status === 'ready' ? 'is-ready' : 'is-attention'}`}>
                           <i aria-hidden="true" />{mentionRuntimeLabel(profile)}
                         </span>
                       </label>
                       <details className="camp-member-invite-detail">
-                        <summary>职责</summary>
-                        <p>{profile.professionalResponsibilities || '职责尚未填写'}</p>
+                        <summary><UiText zh={"职责"} /></summary>
+                        <p>{profile.professionalResponsibilities || uiAttribute('职责尚未填写')}</p>
                       </details>
                       {failure && <div className="camp-member-candidate-error" role="alert">{failure}</div>}
                     </div>
@@ -8299,22 +8284,22 @@ function CampMembersPanel({
                 })}
                 {filteredCandidates.length === 0 && (
                   <div className="camp-member-candidate-empty">
-                    <strong>{candidateProfiles.length === 0 ? '没有可邀请的队员' : '没有匹配的队员'}</strong>
+                    <strong>{candidateProfiles.length === 0 ? uiAttribute("没有可邀请的队员") : uiAttribute("没有匹配的队员")}</strong>
                     <p>{candidateProfiles.length === 0
-                      ? '所有当前在队的队员都已加入本会话。'
-                      : '换一个姓名或角色关键词试试。'}</p>
+                      ? uiAttribute("所有当前在队的队员都已加入本会话。")
+                      : uiAttribute("换一个姓名或角色关键词试试。")}</p>
                   </div>
                 )}
               </div>
             </AppDialogBody>
             <AppDialogFooter>
-              <Dialog.Close asChild><button className="quiet-button" type="button" disabled={addSubmitting}>取消</button></Dialog.Close>
+              <Dialog.Close asChild><button className="quiet-button" type="button" disabled={addSubmitting}><UiText zh={"取消"} /></button></Dialog.Close>
               <button
                 className="primary-button conversation-primary-button"
                 type="button"
                 disabled={selectedCandidateIds.size === 0 || addSubmitting}
                 onClick={() => void submitAddMembers()}
-              >{addSubmitting ? '正在邀请…' : `邀请队员${selectedCandidateIds.size > 0 ? ` · ${selectedCandidateIds.size}` : ''}`}</button>
+              >{addSubmitting ? uiAttribute("正在邀请…") : uiAttribute("邀请队员{0}", String(selectedCandidateIds.size > 0 ? ` · ${selectedCandidateIds.size}` : ''))}</button>
             </AppDialogFooter>
           </AppDialogContent>
         </Dialog.Portal>
@@ -8329,17 +8314,17 @@ function CampMembersPanel({
             aria-describedby="camp-remove-member-description"
           >
             <AppDialogHeader
-              title={`移出${removalTarget?.displayName ?? '这位队员'}？`}
-              description="只影响当前会话，移出后不再接收这里的新工作。"
+              title={uiAttribute("移出{0}？", String(removalTarget?.displayName ?? uiAttribute("这位队员")))}
+              description={uiAttribute("只影响当前会话，移出后不再接收这里的新工作。")}
               descriptionId="camp-remove-member-description"
               icon="user"
-              kicker="当前会话"
+              kicker={uiAttribute("当前会话")}
               closeDisabled={removeSubmitting}
             />
             {showRemovalDialogBody && (
               <AppDialogBody>
                 {(removalPreviewState.status === 'loading' || removalPreviewState.status === 'idle') && (
-                  <div className="camp-member-preview-loading" aria-label="正在读取移出影响">
+                  <div className="camp-member-preview-loading" aria-label={uiAttribute("正在读取移出影响")}>
                     <span /><span /><span className="is-short" />
                   </div>
                 )}
@@ -8351,32 +8336,27 @@ function CampMembersPanel({
                 {removalPreview && (
                   <>
                     {!removalPreview.removable && (
-                      <div className="camp-member-dialog-alert is-danger" role="alert">
-                        会话至少保留 1 位队员，本次没有移出任何队员。
-                      </div>
+                      <div className="camp-member-dialog-alert is-danger" role="alert"><UiText zh={"会话至少保留 1 位队员，本次没有移出任何队员。"} /></div>
                     )}
                     {removalHasActualImpact && (
                       <AppDialogImpactList>
                         {removalPreview.nonTerminalAgentRunCount > 0 && (
-                          <AppDialogImpact tone="warning" icon="bolt" label="已开始的执行">
-                            {removalPreview.nonTerminalAgentRunCount} 个执行将停止接收新写入，并在后台收拢。
-                          </AppDialogImpact>
+                          <AppDialogImpact tone="warning" icon="bolt" label={uiAttribute("已开始的执行")}>
+                            {removalPreview.nonTerminalAgentRunCount}<UiText zh={" 个执行将停止接收新写入，并在后台收拢。"} /></AppDialogImpact>
                         )}
                         {removalPreview.openAssignedTaskCount > 0 && (
-                          <AppDialogImpact tone="warning" icon="keep" label="未完成任务">
-                            {removalPreview.openAssignedTaskCount} 个任务将释放负责人，回到待分配状态。
-                          </AppDialogImpact>
+                          <AppDialogImpact tone="warning" icon="keep" label={uiAttribute("未完成任务")}>
+                            {removalPreview.openAssignedTaskCount}<UiText zh={" 个任务将释放负责人，回到待分配状态。"} /></AppDialogImpact>
                         )}
                         {removalDeliveryCount > 0 && (
-                          <AppDialogImpact tone="warning" icon="info" label="等待消息">
-                            {removalDeliveryCount} 个投递将取消或结束。
-                          </AppDialogImpact>
+                          <AppDialogImpact tone="warning" icon="info" label={uiAttribute("等待消息")}>
+                            {removalDeliveryCount}<UiText zh={" 个投递将取消或结束。"} /></AppDialogImpact>
                         )}
                         {removalPreview.isDefaultLead && (
-                          <AppDialogImpact tone="warning" icon="user" label="队长职责">
+                          <AppDialogImpact tone="warning" icon="user" label={uiAttribute("队长职责")}>
                             {removalPreview.nextDefaultLeadAgentId
-                              ? `将交给${profileById.get(removalPreview.nextDefaultLeadAgentId)?.displayName ?? '另一位在队队员'}。`
-                              : '剩余队员都处于暂离状态，会话将暂时没有队长；有人归队后自动恢复。'}
+                              ? uiAttribute("将交给{0}。", String(profileById.get(removalPreview.nextDefaultLeadAgentId)?.displayName ?? uiAttribute("另一位在队队员")))
+                              : uiAttribute("剩余队员都处于暂离状态，会话将暂时没有队长；有人归队后自动恢复。")}
                           </AppDialogImpact>
                         )}
                       </AppDialogImpactList>
@@ -8385,17 +8365,17 @@ function CampMembersPanel({
                 )}
               </AppDialogBody>
             )}
-            <AppDialogFooter note={removalPreviewState.status === 'ready' ? '提交后立即阻止该队员的新消息与工具写入。' : '请先读取 Core 权威影响。'}>
-              <Dialog.Close asChild><button className="quiet-button" type="button" disabled={removeSubmitting}>取消</button></Dialog.Close>
+            <AppDialogFooter note={removalPreviewState.status === 'ready' ? uiAttribute("提交后立即阻止该队员的新消息与工具写入。") : uiAttribute("请先读取 Core 权威影响。")}>
+              <Dialog.Close asChild><button className="quiet-button" type="button" disabled={removeSubmitting}><UiText zh={"取消"} /></button></Dialog.Close>
               {(removalPreviewState.status === 'conflict' || removalPreviewState.status === 'error') && removalTarget && (
-                <button className="quiet-button" type="button" disabled={removeSubmitting} onClick={() => void loadRemovalPreview(removalTarget.agentId)}>重新读取影响</button>
+                <button className="quiet-button" type="button" disabled={removeSubmitting} onClick={() => void loadRemovalPreview(removalTarget.agentId)}><UiText zh={"重新读取影响"} /></button>
               )}
               <button
                 className="danger-button"
                 type="button"
                 disabled={removeSubmitting || removalPreviewState.status !== 'ready' || !removalPreviewState.preview.removable}
                 onClick={() => void submitRemoveMember()}
-              >{removeSubmitting ? '正在移出…' : '移出当前会话'}</button>
+              >{removeSubmitting ? uiAttribute("正在移出…") : uiAttribute("移出当前会话")}</button>
             </AppDialogFooter>
           </AppDialogContent>
         </Dialog.Portal>
@@ -8504,22 +8484,22 @@ export function ApprovalDock({
   }, [activeIndex, approval.id, collapsed, containerRef, focusApprovalId, focusRequest, onFocusPresented])
 
   return (
-    <section className={collapsed ? 'approval-dock is-collapsed' : 'approval-dock'} aria-label={`${approvals.length} 项待审批`} ref={containerRef}>
+    <section className={collapsed ? 'approval-dock is-collapsed' : 'approval-dock'} aria-label={uiAttribute("{0} 项待审批", String(approvals.length))} ref={containerRef}>
       <header>
         <div className="approval-dock-heading" tabIndex={-1} data-approval-summary={approval.id}
           aria-label={`${approval.actionSummary}, ${sourceLabel}`}>
           <strong title={approval.actionSummary}>{approval.actionSummary}</strong>
           <span title={sourceLabel}>{sourceLabel}</span>
         </div>
-        <nav aria-label="审批请求控制">
+        <nav aria-label={uiAttribute("审批请求控制")}>
           {approvals.length > 1 && (
             <>
-            <button type="button" aria-label="上一项审批" aria-disabled={currentIndex === 0} onClick={(event) => {
+            <button type="button" aria-label={uiAttribute("上一项审批")} aria-disabled={currentIndex === 0} onClick={(event) => {
               event.currentTarget.focus({ preventScroll: true })
               if (currentIndex > 0) setActiveIndex(currentIndex - 1)
             }}>‹</button>
             <span>{currentIndex + 1} / {approvals.length}</span>
-            <button type="button" aria-label="下一项审批" aria-disabled={currentIndex === approvals.length - 1} onClick={(event) => {
+            <button type="button" aria-label={uiAttribute("下一项审批")} aria-disabled={currentIndex === approvals.length - 1} onClick={(event) => {
               event.currentTarget.focus({ preventScroll: true })
               if (currentIndex < approvals.length - 1) setActiveIndex(currentIndex + 1)
             }}>›</button>
@@ -8528,7 +8508,7 @@ export function ApprovalDock({
           <button
             className="approval-dock-collapse"
             type="button"
-            aria-label={collapsed ? '展开审批详情' : '收起审批详情'}
+            aria-label={collapsed ? uiAttribute("展开审批详情") : uiAttribute("收起审批详情")}
             aria-expanded={!collapsed}
             aria-controls={contentId}
             onClick={() => setCollapsed((value) => !value)}
@@ -8550,7 +8530,7 @@ export function ApprovalDock({
             else next.add(approval.id)
             return next
           })} />}
-        <pre tabIndex={0} role="region" aria-label="完整审批请求，可滚动">{JSON.stringify(approval.canonicalInput, null, 2)}</pre>
+        <pre tabIndex={0} role="region" aria-label={uiAttribute("完整审批请求，可滚动")}>{JSON.stringify(approval.canonicalInput, null, 2)}</pre>
         <div className="approval-dock-actions">
           {approval.options.map((option) => (
             <button
@@ -8566,7 +8546,7 @@ export function ApprovalDock({
             </button>
           ))}
           {approval.options.length === 0 && (
-            <p className="approval-option-error">当前 Agent 运行时未提供可无损回传的原生选项，请求无法提交。</p>
+            <p className="approval-option-error"><UiText zh={"当前 Agent 运行时未提供可无损回传的原生选项，请求无法提交。"} /></p>
           )}
         </div>
       </div>}
@@ -8604,7 +8584,7 @@ function ApprovalReason({ reason, expanded, onToggle }: {
     <p ref={reasonRef} id={reasonId} className={expanded ? 'approval-reason is-expanded' : 'approval-reason'}>{reason}</p>
     {(overflows || expanded) && <button type="button" className="approval-reason-toggle"
       aria-expanded={expanded} aria-controls={reasonId} onClick={onToggle}>
-      {expanded ? '收起全文' : '展开全文'}
+      {expanded ? uiAttribute("收起全文") : uiAttribute("展开全文")}
     </button>}
   </div>
 }
@@ -8615,6 +8595,7 @@ function EmptyCampWelcome({
   agents,
   firstRunCamp,
   starterNotice,
+  starterDisabled,
   onChoosePrompt
 }: {
   snapshot: CampSnapshot
@@ -8622,9 +8603,11 @@ function EmptyCampWelcome({
   agents: AgentProfile[]
   firstRunCamp: FirstRunCampContext | null
   starterNotice: string | null
+  starterDisabled: boolean
   onChoosePrompt(prompt: string, announceDraft?: boolean): void
 }): JSX.Element {
   const mobile = useMobileLayout()
+  const t = useUiText()
   const activeMembers = snapshot.members.filter((member) =>
     member.membershipStatus === 'active' && member.profilePresence === 'present'
   )
@@ -8632,8 +8615,8 @@ function EmptyCampWelcome({
     ?? snapshot.members.find((member) => member.isDefaultLead)
     ?? null
   const projectLabel = snapshot.camp.projectBindingKind === 'quick_chat'
-    ? '快速对话'
-    : projectName ?? '当前项目'
+    ? uiAttribute('快速对话')
+    : projectName ?? uiAttribute('当前项目')
 
   if (firstRunCamp) {
     const firstMember = activeMembers.find(
@@ -8642,13 +8625,14 @@ function EmptyCampWelcome({
     const profile = agents.find(
       (agent) => agent.agentId === firstRunCamp.memberAgentId
     ) ?? null
-    const displayName = firstMember?.displayName ?? profile?.displayName ?? '队员'
+    const displayName = firstMember?.displayName ?? profile?.displayName ?? uiAttribute('队员')
     return (
       <FirstRunCampWelcome
         displayName={displayName}
         agentId={firstRunCamp.memberAgentId}
         avatarRef={firstMember?.avatarRef ?? profile?.avatarRef ?? null}
         starterNotice={starterNotice}
+        starterDisabled={starterDisabled}
         onChoosePrompt={onChoosePrompt}
       />
     )
@@ -8658,6 +8642,7 @@ function EmptyCampWelcome({
     return (
       <MobileEmptyCampWelcome
         pending={snapshot.camp.activationState === 'pending'}
+        starterDisabled={starterDisabled}
         onChoosePrompt={onChoosePrompt}
       />
     )
@@ -8666,23 +8651,23 @@ function EmptyCampWelcome({
   const runtimeSummary = emptyCampRuntimeSummary(snapshot.members, agents)
   return (
     <section className="empty-camp-welcome camp-home-welcome" aria-labelledby="empty-camp-title">
-      <h2 id="empty-camp-title">想先做些什么？</h2>
+      <h2 id="empty-camp-title"><UiText zh={"想先做些什么？"} /></h2>
       <p className="camp-home-context">
-        <span className="sr-only">当前协作配置：</span>
+        <span className="sr-only"><UiText zh={"当前协作配置："} /></span>
         <span className="camp-home-project" title={projectLabel}>{projectLabel}</span>
         <span className="camp-home-separator">·</span>
-        <span>{lead ? `队长${lead.displayName}` : '默认队长未设置'}</span>
+        <span>{lead ? t('队长{0}', lead.displayName) : t('默认队长未设置')}</span>
         <span className="camp-home-separator">·</span>
-        <span>{activeMembers.length} 位队员</span>
+        <span>{activeMembers.length}<UiText zh={" 位队员"} /></span>
       </p>
-      <div className="camp-home-actions" aria-label="起步建议">
-        {EMPTY_CAMP_STARTERS.map((starter) => (
-          <button type="button" key={starter.title} onClick={() => onChoosePrompt(starter.prompt)}>
+      <div className="camp-home-actions" aria-label={uiAttribute("起步建议")}>
+        {emptyCampStarters().map((starter) => (
+          <button type="button" key={starter.title} disabled={starterDisabled} onClick={() => onChoosePrompt(starter.prompt)}>
             {starter.title}
           </button>
         ))}
       </div>
-      {runtimeSummary !== 'Agent 运行时可用' && (
+      {runtimeSummary !==uiAttribute("Agent 运行时可用") && (
         <p className="camp-home-runtime" role="status">{runtimeSummary}</p>
       )}
     </section>
@@ -8691,9 +8676,11 @@ function EmptyCampWelcome({
 
 function MobileEmptyCampWelcome({
   pending,
+  starterDisabled,
   onChoosePrompt
 }: {
   pending: boolean
+  starterDisabled: boolean
   onChoosePrompt(prompt: string, announceDraft?: boolean): void
 }): JSX.Element {
   const [open, setOpen] = useState(false)
@@ -8701,7 +8688,7 @@ function MobileEmptyCampWelcome({
   const suggestionsId = useId()
   return (
     <section className="empty-camp-welcome mobile-empty-camp-welcome" aria-labelledby={titleId}>
-      <h2 id={titleId}>{pending ? '开始一段新对话' : '开始这段协作'}</h2>
+      <h2 id={titleId}>{pending ? uiAttribute("开始一段新对话") : uiAttribute("开始这段协作")}</h2>
       <div className="mobile-starter-panel">
         <button
           type="button"
@@ -8710,17 +8697,18 @@ function MobileEmptyCampWelcome({
           aria-controls={suggestionsId}
           onClick={() => setOpen((current) => !current)}
         >
-          <span>起步建议</span>
+          <span><UiText zh={"起步建议"} /></span>
           <svg className={open ? 'is-open' : ''} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="m6 8 4 4 4-4" />
           </svg>
         </button>
         {open && (
-          <div className="mobile-starter-list" id={suggestionsId} aria-label="起步建议">
-            {EMPTY_CAMP_STARTERS.map((starter) => (
+          <div className="mobile-starter-list" id={suggestionsId} aria-label={uiAttribute("起步建议")}>
+            {emptyCampStarters().map((starter) => (
               <button
                 type="button"
                 key={starter.title}
+                disabled={starterDisabled}
                 onClick={() => {
                   onChoosePrompt(starter.prompt)
                   setOpen(false)
@@ -8744,15 +8732,18 @@ function FirstRunCampWelcome({
   agentId,
   avatarRef,
   starterNotice,
+  starterDisabled,
   onChoosePrompt
 }: {
   displayName: string
   agentId: string
   avatarRef: string | null
   starterNotice: string | null
+  starterDisabled: boolean
   onChoosePrompt(prompt: string, announceDraft?: boolean): void
 }): JSX.Element {
   const starters = firstRunCampStarters()
+  const t = useUiText()
   return (
     <section className="empty-camp-welcome first-run-camp-welcome" aria-labelledby="first-run-camp-title">
       <div className="first-run-camp-intro">
@@ -8764,16 +8755,17 @@ function FirstRunCampWelcome({
           className="first-run-camp-portrait"
         />
         <div>
-          <h2 id="first-run-camp-title">你好，我是{displayName}。</h2>
-          <p>从一件具体的事开始。</p>
+          <h2 id="first-run-camp-title">{t('你好，我是{0}。', displayName)}</h2>
+          <p><UiText zh={"从一件具体的事开始。"} /></p>
         </div>
       </div>
 
-      <div className="first-run-starters" aria-label="可选的起步内容">
+      <div className="first-run-starters" aria-label={uiAttribute("可选的起步内容")}>
         {starters.map((starter, index) => (
           <button
             type="button"
             key={starter.title}
+            disabled={starterDisabled}
             onClick={() => onChoosePrompt(starter.prompt, true)}
           >
             <span className="first-run-starter-glyph" aria-hidden="true">
@@ -8817,9 +8809,9 @@ export function AgentRunFileChangesTimelineCard({
           type="button"
           disabled={!defaultPreviewTarget}
           aria-label={hasReviewableDiff
-            ? `查看 Files Changed，${agentRunFileChangesSummaryLabel(changes)}`
+            ? uiAttribute("查看 Files Changed，{0}", String(agentRunFileChangesSummaryLabel(changes)))
             : defaultPreviewTarget
-              ? `打开当前文件 ${defaultPreviewTarget.file.path}，${agentRunFileChangesSummaryLabel(changes)}`
+              ? uiAttribute("打开当前文件 {0}，{1}", String(defaultPreviewTarget.file.path), String(agentRunFileChangesSummaryLabel(changes)))
               : `Files Changed，${agentRunFileChangesSummaryLabel(changes)}`}
           onClick={(event) => {
             if (!defaultPreviewTarget) return
@@ -8841,16 +8833,16 @@ export function AgentRunFileChangesTimelineCard({
             <span>{agentRunFileChangesSummaryLabel(changes)}</span>
           </span>
           <span className="run-file-changes-card-view" aria-hidden="true">
-            {hasReviewableDiff ? '查看变化' : '查看文件'}
+            {hasReviewableDiff ? uiAttribute("查看变化") : uiAttribute("查看文件")}
           </span>
         </button>
-        {find && <button type="button" className="file-find-icon" aria-label="查找这次文件变化" title="查找这次文件变化"
+        {find && <button type="button" className="file-find-icon" aria-label={uiAttribute("查找这次文件变化")} title={uiAttribute("查找这次文件变化")}
           disabled={!hasReviewableDiff}
           onClick={event => { const id = onOpenReview(undefined, event.currentTarget); if (id) find.request(id, true) }}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg>
         </button>}
       </div>
-      <div className="run-file-changes-card-files" aria-label="变更文件">
+      <div className="run-file-changes-card-files" aria-label={uiAttribute("变更文件")}>
         {visibleFiles.map((file) => {
           return (
             <button
@@ -8858,8 +8850,8 @@ export function AgentRunFileChangesTimelineCard({
               className="run-file-change-file"
               type="button"
               aria-label={agentRunFileChangeHasReviewableDiff(file)
-                ? `查看 ${file.path} 的文件变化`
-                : `打开当前文件预览：${file.path}`}
+                ? uiAttribute("查看 {0} 的文件变化", String(file.path))
+                : uiAttribute("打开当前文件预览：{0}", String(file.path))}
               onClick={(event) => {
                 if (agentRunFileChangeHasReviewableDiff(file)) {
                   onOpenReview(file.evidenceFileId, event.currentTarget)
@@ -8875,7 +8867,7 @@ export function AgentRunFileChangesTimelineCard({
                       {file.additions > 0 && <i className="addition">+{file.additions}</i>}
                       {file.deletions > 0 && <i className="deletion">−{file.deletions}</i>}
                     </>
-                  : <i>{file.operationCount} 次修改</i>}
+                  : <i>{file.operationCount}<UiText zh={" 次修改"} /></i>}
               </span>
               <svg className="run-file-change-file-arrow" viewBox="0 0 16 16" aria-hidden="true">
                 <path d="m6.25 3.75 4 4.25-4 4.25" />
@@ -8890,7 +8882,7 @@ export function AgentRunFileChangesTimelineCard({
             aria-expanded={showAllFiles}
             onClick={() => setShowAllFiles((visible) => !visible)}
           >
-            <span>{showAllFiles ? '收起文件' : `再显示 ${additionalFileCount} 个文件`}</span>
+            <span>{showAllFiles ? uiAttribute("收起文件") : uiAttribute("再显示 {0} 个文件", String(additionalFileCount))}</span>
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <path d="m4.75 6.25 3.25 3.5 3.25-3.5" />
             </svg>
@@ -8912,11 +8904,9 @@ function StopOutcomeEvent({
   return (
     <div className="timeline-node run-stopped-event" role="status">
       <div>
-        <span><i aria-hidden="true" />你已在 {item.elapsedLabel}后停止</span>
+        <span><i aria-hidden="true" /><UiText zh={"你已在 "} />{item.elapsedLabel}<UiText zh={"后停止"} /></span>
         {item.hasUnsettledExternalEffects && onOpenDrawer && (
-          <button type="button" onClick={(event) => onOpenDrawer(event.currentTarget)}>
-            结果待确认 · 查看执行详情
-          </button>
+          <button type="button" onClick={(event) => onOpenDrawer(event.currentTarget)}><UiText zh={"结果待确认 · 查看执行详情"} /></button>
         )}
       </div>
     </div>
@@ -8942,7 +8932,7 @@ function campMessageAuthorLabel(
 ): string {
   // Channel admission is Owner-only; this label does not change the stored author.
   if (message.authorType === 'user' || message.authorType === 'external_principal') return currentUserName
-  if (message.authorType === 'system') return '系统'
+  if (message.authorType === 'system') return uiAttribute("系统")
   return memberById.get(message.authorId)?.displayName ?? message.authorId
 }
 
@@ -8965,13 +8955,13 @@ function ReplyParentQuote({
     return (
       <div className={`reply-parent-quote is-static${unavailable ? ' is-unavailable' : ''}`}>
         <ReplyMark />
-        <span>{unavailable ? '引用的消息当前不可用' : loading ? '正在载入引用…' : '引用消息'}</span>
+        <span>{unavailable ? uiAttribute("引用的消息当前不可用") : loading ? uiAttribute("正在载入引用…") : uiAttribute("引用消息")}</span>
       </div>
     )
   }
   return (
     <MessageQuotePreview
-      authorLabel={authorLabel ?? '原消息'}
+      authorLabel={authorLabel ?? uiAttribute("原消息")}
       body={projectedBody}
       onReveal={onReveal}
     />
@@ -9077,18 +9067,18 @@ function MessageActions({
     <div
       className={`message-actions${copied ? ' copied' : ''}${className ? ` ${className}` : ''}`}
       role="group"
-      aria-label="消息操作"
+      aria-label={uiAttribute("消息操作")}
     >
       <span className="copy-feedback" role="status" aria-live="polite">
-        {copied ? '已复制' : ''}
+        {copied ? uiAttribute("已复制") : ''}
       </span>
       <MessageCopyButton copied={copied} onCopy={onCopy} />
       {onWithdraw && (
         <button
           className="message-withdraw-button"
           type="button"
-          aria-label={withdrawing ? '正在撤回这条消息' : '撤回这条消息'}
-          title="撤回"
+          aria-label={withdrawing ? uiAttribute("正在撤回这条消息") : uiAttribute("撤回这条消息")}
+          title={uiAttribute("撤回")}
           disabled={withdrawing}
           onClick={onWithdraw}
         >
@@ -9102,8 +9092,8 @@ function MessageActions({
         <button
           className="message-reply-button"
           type="button"
-          aria-label="回复这条消息"
-          title="回复"
+          aria-label={uiAttribute("回复这条消息")}
+          title={uiAttribute("回复")}
           onClick={(event) => onReply(event.detail === 0 ? 'keyboard' : 'pointer')}
         >
           <MessageReplyIcon />
@@ -9190,14 +9180,13 @@ function TruncatedStructuredMessageBody({
         aria-expanded={expanded}
         onClick={() => setExpanded((current) => !current)}
       >
-        <span>{expanded ? '收起' : '展开'}</span>
+        <span>{expanded ? uiAttribute("收起") : uiAttribute("展开")}</span>
         <svg viewBox="0 0 16 16" aria-hidden="true">
           <path d="m4 6 4 4 4-4" />
         </svg>
       </button>
       <span className="sr-only" aria-live="polite">
-        {expanded ? '全文已展开' : '其余内容已收起'}，共 {projection.lineCount} 行
-      </span>
+        {expanded ? uiAttribute("全文已展开") : uiAttribute("其余内容已收起")}<UiText zh={"，共 "} />{projection.lineCount}<UiText zh={" 行"} /></span>
     </div>
   )
 }
@@ -9365,7 +9354,7 @@ export function StructuredMessageBody({
             <button
               type="button"
               className="message-mention-token skill-mention is-interactive"
-              aria-label={`预览 Skill /${segment.nameAtSend} 文件`}
+              aria-label={uiAttribute("预览 Skill /{0} 文件", String(segment.nameAtSend))}
               key={`skill-${index}-${segment.skillId}`}
               onClick={(event) => onActivateSkillMention?.(segment.skillId, event.currentTarget)}
             >
@@ -9382,7 +9371,7 @@ export function StructuredMessageBody({
             <MessageQuotePreview
               key={`external-quote-${index}`}
               authorLabel={segment.senderDisplayName}
-              body={excerpt || '（无文本）'}
+              body={excerpt || uiAttribute('（无文本）')}
             />
           )
         }
@@ -9393,7 +9382,7 @@ export function StructuredMessageBody({
               className={`message-mention-token all-members${interactive ? ' is-interactive' : ''}`}
               role={interactive ? 'button' : undefined}
               tabIndex={interactive ? 0 : undefined}
-              aria-label={interactive ? '查看所有队员范围' : undefined}
+              aria-label={interactive ? uiAttribute("查看所有队员范围") : undefined}
               aria-haspopup={interactive ? 'dialog' : undefined}
               aria-expanded={interactive ? false : undefined}
               key={`all-${index}`}
@@ -9406,9 +9395,7 @@ export function StructuredMessageBody({
                 event.preventDefault()
                 onActivateAllMembersMention(event.currentTarget, true)
               }}
-            >
-              @所有队员
-            </span>
+            ><UiText zh={"@所有队员"} /></span>
           )
         }
         return (
@@ -9454,10 +9441,10 @@ function MemberMentionToken({
       data-agent-id={agentId}
       role={interactive ? 'button' : undefined}
       tabIndex={interactive ? 0 : undefined}
-      aria-label={interactive && member ? `查看${member.displayName}的基础信息` : undefined}
+      aria-label={interactive && member ? uiAttribute("查看{0}的基础信息", String(member.displayName)) : undefined}
       aria-haspopup={interactive ? 'dialog' : undefined}
       aria-expanded={interactive ? false : undefined}
-      title={available && member ? `查看${member.displayName}的基础信息` : '该队员已不可用'}
+      title={available && member ? uiAttribute("查看{0}的基础信息", String(member.displayName)) : uiAttribute("该队员已不可用")}
       onClick={(event) => showMemberProfile(event.currentTarget, true, false)}
       onKeyDown={(event) => {
         if ((event.key !== 'Enter' && event.key !== ' ') || !interactive) return
@@ -9465,7 +9452,7 @@ function MemberMentionToken({
         showMemberProfile(event.currentTarget, false, true)
       }}
     >
-      @{member?.displayName ?? '不可用队员'}
+      @{member?.displayName ?? uiAttribute("不可用队员")}
     </span>
   )
 }
@@ -9481,7 +9468,7 @@ function CurrentUserMentionToken({ onActivate }: {
       data-quote-current-user-name={displayName}
       role={onActivate ? 'button' : undefined}
       tabIndex={onActivate ? 0 : undefined}
-      aria-label={onActivate ? `查看${displayName}的个人资料` : `提及当前用户：${displayName}`}
+      aria-label={onActivate ? uiAttribute("查看{0}的个人资料", String(displayName)) : uiAttribute("提及当前用户：{0}", String(displayName))}
       aria-haspopup={onActivate ? 'dialog' : undefined}
       aria-expanded={onActivate ? false : undefined}
       onClick={(event) => {
@@ -9510,8 +9497,8 @@ function MessageCopyButton({
     <button
       className="message-copy-button"
       type="button"
-      aria-label={copied ? '已复制这条消息' : '复制这条消息'}
-      title="复制"
+      aria-label={copied ? uiAttribute("已复制这条消息") : uiAttribute("复制这条消息")}
+      title={uiAttribute("复制")}
       onClick={() => { dismissMessageQuoteSelection(); onCopy() }}
     >
       <CopyIcon copied={copied} />
@@ -9549,14 +9536,14 @@ export function MessageAttachmentGroups({
 
   if (presentation === 'user') {
     return (
-      <section className="message-attachments user-message-attachments" aria-label="消息附件">
+      <section className="message-attachments user-message-attachments" aria-label={uiAttribute("消息附件")}>
         {images.length > 0 && (
           <div className="user-message-images">
             <ImageGallery images={images} variant="user-attachment" />
           </div>
         )}
         {groups.files.length > 0 && (
-          <div className="user-message-files" role="group" aria-label="消息文件">
+          <div className="user-message-files" role="group" aria-label={uiAttribute("消息文件")}>
             {groups.files.map((attachment) => (
               <AttachmentCard
                 attachment={attachment}
@@ -9573,7 +9560,7 @@ export function MessageAttachmentGroups({
   }
 
   return (
-    <section className="message-attachments agent-message-outputs" aria-label="Agent 交付">
+    <section className="message-attachments agent-message-outputs" aria-label={uiAttribute("Agent 交付")}>
       {images.length > 0 && (
         <div className="agent-output-images">
           <ImageGallery images={images} variant="agent-output" />
@@ -9581,7 +9568,7 @@ export function MessageAttachmentGroups({
       )}
       {groups.files.length > 0 && (
         <div className="agent-output-files">
-          <div className="agent-output-file-grid" role="group" aria-label={`Agent 交付文件：${groups.files.length} 个`}>
+          <div className="agent-output-file-grid" role="group" aria-label={uiAttribute("Agent 交付文件：{0} 个", String(groups.files.length))}>
             {groups.files.map((attachment) => (
               <AttachmentCard
                 attachment={attachment}
@@ -9601,29 +9588,29 @@ export function MessageAttachmentGroups({
 
 function attachmentErrorMessage(error: unknown): string {
   const message = readErrorMessage(error)
-  if (message.includes('25 MiB')) return '文件超过 25 MiB'
-  if (message.includes('attachment_unreadable')) return '文件当前无法读取'
-  if (message.includes('attachment_kind_changed')) return '文件类型已变化'
-  if (message.includes('legacy_draft.attachments_locked')) return '请先发送或移除旧版草稿附件'
-  if (message.includes('unsupported item')) return '文件夹包含不支持的项目'
-  if (message.includes('regular files and directories')) return '仅支持普通文件或文件夹'
-  return '安全接入失败，可移除后重试'
+  if (message.includes('25 MiB')) return uiAttribute("文件超过 25 MiB")
+  if (message.includes('attachment_unreadable')) return uiAttribute("文件当前无法读取")
+  if (message.includes('attachment_kind_changed')) return uiAttribute("文件类型已变化")
+  if (message.includes('legacy_draft.attachments_locked')) return uiAttribute("请先发送或移除旧版草稿附件")
+  if (message.includes('unsupported item')) return uiAttribute("文件夹包含不支持的项目")
+  if (message.includes('regular files and directories')) return uiAttribute("仅支持普通文件或文件夹")
+  return uiAttribute("安全接入失败，可移除后重试")
 }
 
 function replyDraftErrorMessage(error: unknown): string {
   const message = readErrorMessage(error)
-  if (message.includes('draft_changed')) return '草稿已在其他位置更新，请重试。'
+  if (message.includes('draft_changed')) return uiAttribute("草稿已在其他位置更新，请重试。")
   if (message.includes('mention_target_unavailable')) {
-    return '所选成员当前不可接收，请选择其他成员。'
+    return uiAttribute("所选成员当前不可接收，请选择其他成员。")
   }
-  if (message.includes('camp_message.invalid_reply')) return '引用的消息当前不可用。'
+  if (message.includes('camp_message.invalid_reply')) return uiAttribute("引用的消息当前不可用。")
   if (message.includes('continuation_replacement_invalid')) {
-    return '原接收者当前不可接收，请选择其他成员。'
+    return uiAttribute("原接收者当前不可接收，请选择其他成员。")
   }
   if (message.includes('continuation_source_invalid')) {
-    return '延续来源已经变化，草稿已刷新，请重新确认接收者。'
+    return uiAttribute("延续来源已经变化，草稿已刷新，请重新确认接收者。")
   }
-  return '接收者状态未能更新，草稿内容已保留，请重试。'
+  return uiAttribute("接收者状态未能更新，草稿内容已保留，请重试。")
 }
 
 type TaskTimelineCardPresentation = {
@@ -9636,48 +9623,48 @@ type TaskTimelineCardPresentation = {
 function taskTimelineCardPresentation(task: TaskView): TaskTimelineCardPresentation {
   if (task.status === 'pending' && !task.assigneeAgentId) {
     return {
-      headline: '任务等待重新分配',
-      noteLabel: '需要处理',
+      headline:uiAttribute("任务等待重新分配"),
+      noteLabel:uiAttribute("需要处理"),
       note: '等待用户或默认负责人重新分配',
       unassigned: true
     }
   }
   if (task.status === 'pending') {
     return {
-      headline: '任务责任已更新',
-      noteLabel: '当前',
+      headline:uiAttribute("任务责任已更新"),
+      noteLabel:uiAttribute("当前"),
       note: '等待负责人开始；创建不会自动启动执行',
       unassigned: false
     }
   }
   if (task.status === 'in_progress') {
     return {
-      headline: '任务正在推进',
-      noteLabel: '当前',
+      headline:uiAttribute("任务正在推进"),
+      noteLabel:uiAttribute("当前"),
       note: '任务处于进行中；打开详情可查看责任与关联执行',
       unassigned: false
     }
   }
   if (task.status === 'blocked') {
     return {
-      headline: '任务暂时受阻',
-      noteLabel: '阻塞原因',
-      note: task.blockedReason?.trim() || '阻塞原因尚未提供',
+      headline:uiAttribute("任务暂时受阻"),
+      noteLabel:uiAttribute("阻塞原因"),
+      note: task.blockedReason?.trim() || uiAttribute('阻塞原因尚未提供'),
       unassigned: false
     }
   }
   if (task.status === 'completed') {
     return {
-      headline: '任务已经完成',
-      noteLabel: '完成摘要',
-      note: task.completionSummary?.trim() || '完成摘要尚未提供',
+      headline:uiAttribute("任务已经完成"),
+      noteLabel:uiAttribute("完成摘要"),
+      note: task.completionSummary?.trim() || uiAttribute('完成摘要尚未提供'),
       unassigned: false
     }
   }
   return {
-    headline: '任务已经取消',
-    noteLabel: '取消原因',
-    note: task.cancelReason?.trim() || '取消原因尚未提供',
+    headline:uiAttribute("任务已经取消"),
+    noteLabel:uiAttribute("取消原因"),
+    note: task.cancelReason?.trim() || uiAttribute('取消原因尚未提供'),
     unassigned: false
   }
 }
@@ -9754,7 +9741,7 @@ export function TaskTimelineCard({
     : undefined
   return (
     <button
-      aria-label={`打开任务：${task.title}`}
+      aria-label={uiAttribute("打开任务：{0}", String(task.title))}
       aria-describedby={descriptionId}
       className={`timeline-node timeline-event-card task-event-card status-${task.status}${presentation.unassigned ? ' is-unassigned' : ''}`}
       data-task-assignment={presentation.unassigned ? 'unassigned' : 'assigned'}
@@ -9775,9 +9762,9 @@ export function TaskTimelineCard({
         <span className="task-card-meta">
           <span className={`task-card-owner${presentation.unassigned ? ' is-unassigned' : ''}`}>
             <i className="task-owner-mark" aria-hidden="true" />
-            <span>负责人 · {assigneeName}</span>
+            <span><UiText zh={"负责人 · "} />{assigneeName}</span>
           </span>
-          <time dateTime={task.updatedAt}>更新于 {messageClockTime(task.updatedAt)}</time>
+          <time dateTime={task.updatedAt}><UiText zh={"更新于 "} />{messageClockTime(task.updatedAt)}</time>
         </span>
         <span className="task-card-note">
           <b>{presentation.noteLabel}</b>
@@ -9789,8 +9776,7 @@ export function TaskTimelineCard({
           <path d="m6 3.5 4.5 4.5L6 12.5" />
         </svg>
       </span>
-      <span className="sr-only" id={descriptionId}>
-        状态：{taskStatusLabel(task.status)}；负责人：{assigneeName}；
+      <span className="sr-only" id={descriptionId}><UiText zh={"状态："} />{taskStatusLabel(task.status)}<UiText zh={"；负责人："} />{assigneeName}；
         {presentation.noteLabel}：{presentation.note}
       </span>
     </button>
@@ -9958,11 +9944,11 @@ function RunExecutionContent({
     Boolean(finalBody),
     runtimePhase
   )
-  const phaseFeedback = thinkingAfterTool ? '思考中' : initialFeedback
-  const feedback = run.status === 'waiting' ? agentRunWaitDetail(run.waitReason) ?? '等待继续'
-    : run.failure?.code === 'runtime_network_interrupted' ? '正在恢复连接'
+  const phaseFeedback = thinkingAfterTool ? uiAttribute('思考中') : initialFeedback
+  const feedback = run.status === 'waiting' ? agentRunWaitDetail(run.waitReason) ?? uiAttribute('等待继续')
+    : run.failure?.code === 'runtime_network_interrupted' ? uiAttribute('正在恢复连接')
       : activeRetryDiagnostic
-        ? `等待 Claude Code 自动重试（${activeRetryDiagnostic.attempt}/${activeRetryDiagnostic.maxAttempts}）`
+        ? uiAttribute("等待 Claude Code 自动重试（{0}/{1}）", String(activeRetryDiagnostic.attempt), String(activeRetryDiagnostic.maxAttempts))
         : phaseFeedback
   const sequenceByKey = useMemo(() => new Map<string, number>((displayedEvidence ?? []).flatMap(item => [
     [`narration:${item.id}`, item.sequence] as const,
@@ -9988,25 +9974,23 @@ function RunExecutionContent({
         <div className={`camp-history-loader execution-history-loader${earlierLoadError ? ' is-error' : ''}`}
           role={earlierLoadError ? 'alert' : 'status'} aria-atomic="true">
           {earlierLoadError && <>
-            <span>执行记录暂时没有加载</span>
+            <span><UiText zh={"执行记录暂时没有加载"} /></span>
             <span className="camp-history-separator" aria-hidden="true">·</span>
           </>}
           <button className="camp-history-text-button" type="button" disabled={windowPage.loading} onClick={() => {
             void windowPage.move(earlierLoadError ? 'retry' : windowPage.evidence.length ? 'earlier' : 'latest')
           }}>{earlierLoading ? <>
             <span className="camp-history-spinner" aria-hidden="true" />
-            <span>{windowPage.evidence.length ? '正在加载执行记录…' : '正在加载…'}</span>
-          </> : earlierLoadError ? '重试' : <><span aria-hidden="true">↑</span><span>加载更早记录</span></>}</button>
+            <span>{windowPage.evidence.length ? uiAttribute("正在加载执行记录…") : uiAttribute("正在加载…")}</span>
+          </> : earlierLoadError ? uiAttribute("重试") : <><span aria-hidden="true">↑</span><span><UiText zh={"加载更早记录"} /></span></>}</button>
           {!earlierLoadError && windowPage.evidence.length > 0 && <>
             <span className="camp-history-separator" aria-hidden="true">·</span>
-            <span className="camp-history-count">已载入 {processItems.length} 项</span>
+            <span className="camp-history-count"><UiText zh={"已载入 "} />{processItems.length}<UiText zh={" 项"} /></span>
           </>}
         </div>
       )}
       {showUnsettledWarning && (
-        <p className="execution-uncertain" role="status">
-          仍有外部效果待确认
-        </p>
+        <p className="execution-uncertain" role="status"><UiText zh={"仍有外部效果待确认"} /></p>
       )}
       <ExecutionVirtualList items={groupedProcessItems} enabled={windowedEvidence} gap={processItemGap}
         gapAfter={(item, next) => (item.kind === 'toolGroup' && next.kind === 'compaction')
@@ -10115,43 +10099,38 @@ function RunExecutionContent({
       }}</ExecutionVirtualList>
       {windowedEvidence && windowPage.direction === 'newer' && (windowPage.loading || windowPage.error) && <div className={`camp-history-loader execution-history-loader${windowPage.error ? ' is-error' : ''}`}
         role={windowPage.error ? 'alert' : 'status'}>
-        {windowPage.loading && <span className="camp-history-spinner" aria-label="正在加载执行记录" />}
+        {windowPage.loading && <span className="camp-history-spinner" aria-label={uiAttribute("正在加载执行记录")} />}
         {windowPage.error && <button className="camp-history-text-button" type="button"
-          onClick={() => void windowPage.move('retry')}>读取失败，重试</button>}
+          onClick={() => void windowPage.move('retry')}><UiText zh={"读取失败，重试"} /></button>}
       </div>}
       {(historyStatus === 'loading' || narrationStatus === 'loading') && (
         <div className="process-action current" role="status">
           <span className="process-spinner" aria-hidden="true" />
-          <span>正在读取完整过程</span>
+          <span><UiText zh={"正在读取完整过程"} /></span>
         </div>
       )}
       {(historyStatus === 'failed' || narrationStatus === 'failed') && (
         <div className="process-action history-load-error" role="status">
-          <span>完整执行过程读取失败。</span>
+          <span><UiText zh={"完整执行过程读取失败。"} /></span>
           <button className="quiet-button compact" type="button" onClick={() => {
             if (narrationStatus === 'failed') setNarrationRetry((value) => value + 1)
             if (historyStatus === 'failed') void onLoadHistoricalEvidence()
-          }}>
-            重试
-          </button>
+          }}><UiText zh={"重试"} /></button>
         </div>
       )}
       {nonTerminal && !cancelling && run.waitReason === 'recovery_blocked' && (
         <div className="process-recovery-blocker" role="status">
           <div>
-            <strong>执行异常，正在清理</strong>
-            <p>原请求不会自动重发；清理完成后，后续消息会按正常顺序继续执行。</p>
+            <strong><UiText zh={"执行异常，正在清理"} /></strong>
+            <p><UiText zh={"原请求不会自动重发；清理完成后，后续消息会按正常顺序继续执行。"} /></p>
           </div>
         </div>
       )}
       {nonTerminal && !cancelling && run.waitReason === 'network_recovery_blocked' && (
         <div className="process-recovery-blocker" role="status">
           <div>
-            <strong>自动恢复已停止</strong>
-            <p>
-              恢复前的安全条件已经变化，Rovai AI 不会自动重发原请求。
-              请检查执行记录；需要继续时可停止本次运行，再发送后续任务。
-            </p>
+            <strong><UiText zh={"自动恢复已停止"} /></strong>
+            <p><UiText zh={"恢复前的安全条件已经变化，Rovai AI 不会自动重发原请求。\n              请检查执行记录；需要继续时可停止本次运行，再发送后续任务。"} /></p>
           </div>
         </div>
       )}
@@ -10170,9 +10149,7 @@ function RunExecutionContent({
           </div>
         )}
       {cancelling && nonTerminal && (
-        <div className="process-action cancelling" role="status">
-          正在提交停止请求，完成后即可继续发送。
-        </div>
+        <div className="process-action cancelling" role="status"><UiText zh={"正在提交停止请求，完成后即可继续发送。"} /></div>
       )}
       {publicFailure && <RuntimeFailureNotice failure={publicFailure} presentation="agent-run" />}
     </div>
@@ -10336,15 +10313,15 @@ export function RunExecutionDisclosure({
       <summary hidden={liveOpen} className={mobile ? 'mobile-run-summary' : undefined}>
         {mobile && <time className="mobile-run-time">{runIntervalLabel(run)}</time>}
         <span className="process-disclosure-label">{mobile ? agentRunPresentation(run, cancelling).label : !liveOpen && (nonTerminal
-          ? cancelling ? '正在停止' : run.status === 'waiting' ? agentRunWaitDetail(run.waitReason) ?? '等待继续'
+          ? cancelling ? uiAttribute("正在停止") : run.status === 'waiting' ? agentRunWaitDetail(run.waitReason) ?? uiAttribute("等待继续")
             : executionInitialFeedback(
               run.status,
               progress?.items ?? [],
               Boolean(finalBody),
               progress?.runtimePhase
-            ) ?? '执行中'
+            ) ?? uiAttribute("执行中")
           : executionRunSummary(run, run.updatedAt))}</span>
-        {mobile && focused && nonTerminal && <span className="current-run-badge">当前执行</span>}
+        {mobile && focused && nonTerminal && <span className="current-run-badge"><UiText zh={"当前执行"} /></span>}
         <span className="process-disclosure-slot" aria-hidden="true">
           <svg viewBox="0 0 16 16" focusable="false">
             <path d="m4.75 6.25 3.25 3.5 3.25-3.5" />
@@ -10398,7 +10375,7 @@ export function memberRuntimeConfigurationPresentation(
       model: 'Agent 运行时默认',
       effort: null,
       strategy: '跟随 Agent 运行时默认',
-      summary: 'Agent 运行时默认'
+      summary:uiAttribute("Agent 运行时默认")
     }
   }
 
@@ -10418,7 +10395,7 @@ export function memberRuntimeConfigurationPresentation(
           : '推理强度' as const,
         value: typeof rawEffort === 'string' && rawEffort
           ? runtimeEffortValueLabel(rawEffort, effortDescriptor?.values ?? [])
-          : '跟随模型默认值'
+          :uiAttribute("跟随模型默认值")
       }
     : null
 
@@ -10451,7 +10428,7 @@ function runIntervalLabel(run: AgentRunView): string {
   const endedAt = NON_TERMINAL_RUNS.has(run.status)
     ? null
     : run.endedAt ?? run.updatedAt
-  return `${messageClockTime(startedAt)}–${endedAt ? messageClockTime(endedAt) : '现在'}`
+  return `${messageClockTime(startedAt)}–${endedAt ? messageClockTime(endedAt) :uiAttribute("现在")}`
 }
 
 interface TaskEditorValues {
@@ -10588,7 +10565,7 @@ export function TaskPanel({
       setDetailTaskId(task.taskId)
     } else {
       setDetailTaskId(null)
-      setFormError('这项任务当前不可见，无法打开详情。')
+      setFormError(uiAttribute('这项任务当前不可见，无法打开详情。'))
     }
   }, [focusRequest, focusTaskId])
 
@@ -10603,7 +10580,7 @@ export function TaskPanel({
     event.preventDefault()
     if (!title.trim() || submitting || busy) return
     if (!assigneeAgentId) {
-      setFormError('请选择负责人。')
+      setFormError(uiAttribute('请选择负责人。'))
       return
     }
     setSubmitting(true)
@@ -10634,22 +10611,22 @@ export function TaskPanel({
     event.preventDefault()
     if (!selectedTask || !title.trim() || submitting || busy) return
     if ((status === 'in_progress' || status === 'blocked') && !assigneeAgentId) {
-      setFormError('进行中或已阻塞的任务必须有负责人。')
+      setFormError(uiAttribute('进行中或已阻塞的任务必须有负责人。'))
       return
     }
     if (status === 'blocked' && !blockedReason.trim()) {
-      setFormError('请填写阻塞原因。')
+      setFormError(uiAttribute('请填写阻塞原因。'))
       return
     }
     if (status === 'completed' && !completionSummary.trim()) {
-      setFormError('请填写完成摘要。')
+      setFormError(uiAttribute('请填写完成摘要。'))
       return
     }
     setSubmitting(true)
     setFormError(null)
     const base = editBase.current
     if (!base) {
-      setFormError('编辑草稿已失效，请重新打开任务。')
+      setFormError(uiAttribute('编辑草稿已失效，请重新打开任务。'))
       setSubmitting(false)
       return
     }
@@ -10668,7 +10645,7 @@ export function TaskPanel({
         ? { completionSummary: completionSummary.trim() } : {})
     }
     if (Object.keys(patch).length === 0) {
-      setFormError('没有需要提交的修改。')
+      setFormError(uiAttribute('没有需要提交的修改。'))
       setSubmitting(false)
       return
     }
@@ -10729,29 +10706,26 @@ export function TaskPanel({
     <div className="task-panel">
       {!detailTask && <>
         <div className="task-action-row">
-          <span className="task-list-summary">{openTaskCount > 0 ? `${openTaskCount} 项未完成` : `${snapshot.tasks.length} 项任务`}</span>
+          <span className="task-list-summary">{openTaskCount > 0 ? uiAttribute("{0} 项未完成", String(openTaskCount)) : uiAttribute("{0} 项任务", String(snapshot.tasks.length))}</span>
           <select
             className="task-status-filter"
-            aria-label="筛选任务状态"
+            aria-label={uiAttribute("筛选任务状态")}
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.currentTarget.value as 'all' | TaskStatus)}
           >
-            <option value="all">全部状态</option>
-            <option value="in_progress">进行中</option>
-            <option value="pending">待处理</option>
-            <option value="blocked">已阻塞</option>
-            <option value="completed">已完成</option>
-            <option value="cancelled">已取消</option>
+            <option value="all"><UiText zh={"全部状态"} /></option>
+            <option value="in_progress"><UiText zh={"进行中"} /></option>
+            <option value="pending"><UiText zh={"待处理"} /></option>
+            <option value="blocked"><UiText zh={"已阻塞"} /></option>
+            <option value="completed"><UiText zh={"已完成"} /></option>
+            <option value="cancelled"><UiText zh={"已取消"} /></option>
           </select>
           <button className="primary-button conversation-primary-button compact task-new-button" type="button" onClick={() => beginCreate()} disabled={busy}>
-            <span aria-hidden="true">＋</span> 新建
-          </button>
+            <span aria-hidden="true">＋</span><UiText zh={" 新建"} /></button>
         </div>
         {formError && !editorOpen && !cancelOpen && <p className="task-form-error" role="alert">{formError}</p>}
         {coverage && !coverage.complete && (
-          <p className="task-history-note" role="status">
-            当前显示 {coverage.loadedCount} / {coverage.totalCount} 个任务；更早的已结束任务尚未载入。
-          </p>
+          <p className="task-history-note" role="status"><UiText zh={"当前显示 "} />{coverage.loadedCount} / {coverage.totalCount}<UiText zh={" 个任务；更早的已结束任务尚未载入。"} /></p>
         )}
         <div className="task-list">
           {visibleTasks.map((task) => (
@@ -10768,32 +10742,32 @@ export function TaskPanel({
               <svg className="task-list-chevron" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="m6 4 4 4-4 4" /></svg>
             </button>
           ))}
-          {visibleTasks.length === 0 && <p className="task-empty">{snapshot.tasks.length === 0 ? '暂无任务' : '没有符合筛选条件的任务'}</p>}
+          {visibleTasks.length === 0 && <p className="task-empty">{snapshot.tasks.length === 0 ? uiAttribute("暂无任务") : uiAttribute("没有符合筛选条件的任务")}</p>}
         </div>
       </>}
 
-      {detailTask && <article className="task-detail" ref={detailRef} tabIndex={-1} aria-label="任务详情" data-task-id={detailTask.taskId}>
+      {detailTask && <article className="task-detail" ref={detailRef} tabIndex={-1} aria-label={uiAttribute("任务详情")} data-task-id={detailTask.taskId}>
         <div className="task-detail-navigation">
-          <button className="quiet-button compact" type="button" onClick={() => setDetailTaskId(null)}><span aria-hidden="true">←</span> 返回</button>
+          <button className="quiet-button compact" type="button" onClick={() => setDetailTaskId(null)}><span aria-hidden="true">←</span><UiText zh={" 返回"} /></button>
         </div>
         <h3>{detailTask.title}</h3>
         <div className="task-detail-meta"><span className={`task-detail-status state-${detailTask.status}`}>{taskStatusLabel(detailTask.status)}</span><span>{taskAssigneeName(detailTask, snapshot)}</span></div>
-        <section className="task-detail-section"><strong>责任范围与要求</strong><p className="task-detail-copy">{detailTask.description || '暂无责任范围与要求'}</p></section>
-        {detailTask.blockedReason && <section className="task-detail-section task-outcome is-blocked"><strong>阻塞原因</strong><p className="task-detail-copy">{detailTask.blockedReason}</p></section>}
-        {detailTask.completionSummary && <section className="task-detail-section task-outcome is-completed"><strong>完成摘要</strong><p className="task-detail-copy">{detailTask.completionSummary}</p></section>}
-        {detailTask.cancelReason && <section className="task-detail-section task-outcome"><strong>取消原因</strong><p className="task-detail-copy">{detailTask.cancelReason}</p></section>}
+        <section className="task-detail-section"><strong><UiText zh={"责任范围与要求"} /></strong><p className="task-detail-copy">{detailTask.description ||uiAttribute("暂无责任范围与要求")}</p></section>
+        {detailTask.blockedReason && <section className="task-detail-section task-outcome is-blocked"><strong><UiText zh={"阻塞原因"} /></strong><p className="task-detail-copy">{detailTask.blockedReason}</p></section>}
+        {detailTask.completionSummary && <section className="task-detail-section task-outcome is-completed"><strong><UiText zh={"完成摘要"} /></strong><p className="task-detail-copy">{detailTask.completionSummary}</p></section>}
+        {detailTask.cancelReason && <section className="task-detail-section task-outcome"><strong><UiText zh={"取消原因"} /></strong><p className="task-detail-copy">{detailTask.cancelReason}</p></section>}
         <RelatedTaskExecution task={detailTask} snapshot={snapshot} onOpenAgent={onOpenAgent} />
-        <details className="task-audit-disclosure"><summary>更多信息</summary><TaskAuditDetail task={detailTask} /></details>
+        <details className="task-audit-disclosure"><summary><UiText zh={"更多信息"} /></summary><TaskAuditDetail task={detailTask} /></details>
         {detailTerminal
-          ? <p className="task-terminal-note">已结束的任务保留为只读记录，不能重新打开或删除。</p>
+          ? <p className="task-terminal-note"><UiText zh={"已结束的任务保留为只读记录，不能重新打开或删除。"} /></p>
           : <div className="task-detail-actions">
-              <button className="quiet-button" type="button" disabled={busy} onClick={() => beginEdit(detailTask)}>编辑</button>
+              <button className="quiet-button" type="button" disabled={busy} onClick={() => beginEdit(detailTask)}><UiText zh={"编辑"} /></button>
               <button className="quiet-button task-cancel-action" type="button" disabled={busy} onClick={() => {
                 setSelectedTaskId(detailTask.taskId)
                 setCancelReason('')
                 setFormError(null)
                 setCancelOpen(true)
-              }}>取消任务</button>
+              }}><UiText zh={"取消任务"} /></button>
             </div>}
       </article>}
 
@@ -10801,12 +10775,12 @@ export function TaskPanel({
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay app-dialog-overlay" />
           <AppDialogContent className="task-editor-dialog" width="wide">
-            <AppDialogHeader icon="pencil" title={mode === 'create' ? '新建任务' : '编辑任务'} description={mode === 'create' ? '记录需要持续跟踪的责任范围与要求。' : '修改任务内容与状态。'}
+            <AppDialogHeader icon="pencil" title={mode === 'create' ? uiAttribute("新建任务") : uiAttribute("编辑任务")} description={mode === 'create' ? uiAttribute("记录需要持续跟踪的责任范围与要求。") : uiAttribute("修改任务内容与状态。")}
             hideDescription />
             <form className="task-editor" onSubmit={(event) => void (mode === 'create' ? submitCreate(event) : submitUpdate(event))}>
               <AppDialogBody>
                 {formError && <p className="task-form-error" role="alert">{formError}</p>}
-                {mode === 'edit' && terminal && <p className="task-terminal-note" role="status">这项任务已结束，不能再修改。你的草稿仍保留。</p>}
+                {mode === 'edit' && terminal && <p className="task-terminal-note" role="status"><UiText zh={"这项任务已结束，不能再修改。你的草稿仍保留。"} /></p>}
                 <TaskFields
                   title={title}
                   description={description}
@@ -10828,10 +10802,10 @@ export function TaskPanel({
                 />
               </AppDialogBody>
               <AppDialogFooter>
-                <small className="task-draft-note">关闭后保留本次草稿</small>
-                <button className="quiet-button" type="button" disabled={submitting} onClick={closeEditor}>收起</button>
+                <small className="task-draft-note"><UiText zh={"关闭后保留本次草稿"} /></small>
+                <button className="quiet-button" type="button" disabled={submitting} onClick={closeEditor}><UiText zh={"收起"} /></button>
                 <button className="primary-button conversation-primary-button task-submit" type="submit" disabled={!title.trim() || submitting || busy || (mode === 'edit' && (terminal || !selectedTask))}>
-                  {submitting ? '正在保存…' : mode === 'create' ? '新建' : '保存'}
+                  {submitting ? uiAttribute("正在保存…") : mode === 'create' ? uiAttribute("新建") : uiAttribute("保存")}
                 </button>
               </AppDialogFooter>
             </form>
@@ -10843,15 +10817,15 @@ export function TaskPanel({
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay app-dialog-overlay" />
           <AppDialogContent className="task-cancel-dialog" tone="danger" width="compact">
-            <AppDialogHeader icon="warning" title="取消任务？" description={selectedTask?.title} />
+            <AppDialogHeader icon="warning" title={uiAttribute("取消任务？")} description={selectedTask?.title} />
             <AppDialogBody>
-              <p className="task-cancel-description">任务将结束，已经接受或正在进行的执行不会停止。</p>
-              <label className="task-field"><span>取消原因</span><textarea data-dialog-autofocus value={cancelReason} rows={3} maxLength={4000} required disabled={submitting || busy} onChange={(event) => setCancelReason(event.currentTarget.value)} /></label>
+              <p className="task-cancel-description"><UiText zh={"任务将结束，已经接受或正在进行的执行不会停止。"} /></p>
+              <label className="task-field"><span><UiText zh={"取消原因"} /></span><textarea data-dialog-autofocus value={cancelReason} rows={3} maxLength={4000} required disabled={submitting || busy} onChange={(event) => setCancelReason(event.currentTarget.value)} /></label>
               {formError && <p className="task-form-error" role="alert">{formError}</p>}
             </AppDialogBody>
             <AppDialogFooter>
-              <button className="quiet-button" type="button" disabled={submitting} onClick={() => setCancelOpen(false)}>取消</button>
-              <button className="danger-button" type="button" disabled={!cancelReason.trim() || submitting || busy || terminal} onClick={() => void submitCancel()}>{submitting ? '正在取消…' : '取消任务'}</button>
+              <button className="quiet-button" type="button" disabled={submitting} onClick={() => setCancelOpen(false)}><UiText zh={"取消"} /></button>
+              <button className="danger-button" type="button" disabled={!cancelReason.trim() || submitting || busy || terminal} onClick={() => void submitCancel()}>{submitting ? uiAttribute("正在取消…") : uiAttribute("取消任务")}</button>
             </AppDialogFooter>
           </AppDialogContent>
         </Dialog.Portal>
@@ -10904,25 +10878,25 @@ function TaskFields({
 
   return (
     <>
-      <label className="task-field"><span>标题</span><input value={title} maxLength={160} required data-dialog-autofocus={autoFocusTitle || undefined} disabled={disabled} onChange={(event) => onTitle(event.currentTarget.value)} /></label>
-      <label className="task-field"><span>责任范围与要求</span><textarea value={description} rows={6} maxLength={16000} disabled={disabled} onChange={(event) => onDescription(event.currentTarget.value)} placeholder="记录需要跨消息持续跟踪的责任范围与要求…" /></label>
+      <label className="task-field"><span><UiText zh={"标题"} /></span><input value={title} maxLength={160} required data-dialog-autofocus={autoFocusTitle || undefined} disabled={disabled} onChange={(event) => onTitle(event.currentTarget.value)} /></label>
+      <label className="task-field"><span><UiText zh={"责任范围与要求"} /></span><textarea value={description} rows={6} maxLength={16000} disabled={disabled} onChange={(event) => onDescription(event.currentTarget.value)} placeholder={uiAttribute("记录需要跨消息持续跟踪的责任范围与要求…")} /></label>
       <div className="task-field-grid">
-        <label className="task-field"><span>负责人</span><select value={assigneeAgentId} required={requireAssignee} disabled={disabled} onChange={(event) => onAssignee(event.currentTarget.value)}><option value="">{requireAssignee ? '请选择负责人' : '未分配'}</option>{unavailableAssignee && <option value={assigneeAgentId}>队员不可用</option>}{members.map((member) => <option value={member.agentId} key={member.agentId}>{member.displayName}{member.profilePresence === 'away' ? '（离开）' : ''}</option>)}</select></label>
-        {showStatus && <label className="task-field"><span>状态</span><select value={status} disabled={disabled} onChange={(event) => onStatus(event.currentTarget.value as TaskStatus)}><option value="pending">待处理</option><option value="in_progress">进行中</option><option value="blocked">已阻塞</option><option value="completed">已完成</option>{status === 'cancelled' && <option value="cancelled">已取消</option>}</select></label>}
+        <label className="task-field"><span><UiText zh={"负责人"} /></span><select value={assigneeAgentId} required={requireAssignee} disabled={disabled} onChange={(event) => onAssignee(event.currentTarget.value)}><option value="">{requireAssignee ? uiAttribute("请选择负责人") : uiAttribute("未分配")}</option>{unavailableAssignee && <option value={assigneeAgentId}><UiText zh={"队员不可用"} /></option>}{members.map((member) => <option value={member.agentId} key={member.agentId}>{member.displayName}{member.profilePresence === 'away' ? uiAttribute("（离开）") : ''}</option>)}</select></label>
+        {showStatus && <label className="task-field"><span><UiText zh={"状态"} /></span><select value={status} disabled={disabled} onChange={(event) => onStatus(event.currentTarget.value as TaskStatus)}><option value="pending"><UiText zh={"待处理"} /></option><option value="in_progress"><UiText zh={"进行中"} /></option><option value="blocked"><UiText zh={"已阻塞"} /></option><option value="completed"><UiText zh={"已完成"} /></option>{status === 'cancelled' && <option value="cancelled"><UiText zh={"已取消"} /></option>}</select></label>}
       </div>
-      {showStatus && status === 'blocked' && <label className="task-field"><span>阻塞原因</span><textarea value={blockedReason} rows={3} maxLength={4000} required disabled={disabled} onChange={(event) => onBlockedReason(event.currentTarget.value)} /></label>}
-      {showStatus && status === 'completed' && <label className="task-field"><span>完成摘要</span><textarea value={completionSummary} rows={3} maxLength={4000} required disabled={disabled} onChange={(event) => onCompletionSummary(event.currentTarget.value)} /></label>}
-      {showStatus && status === 'cancelled' && <label className="task-field"><span>取消原因</span><textarea value={cancelReason} rows={3} disabled readOnly /></label>}
+      {showStatus && status === 'blocked' && <label className="task-field"><span><UiText zh={"阻塞原因"} /></span><textarea value={blockedReason} rows={3} maxLength={4000} required disabled={disabled} onChange={(event) => onBlockedReason(event.currentTarget.value)} /></label>}
+      {showStatus && status === 'completed' && <label className="task-field"><span><UiText zh={"完成摘要"} /></span><textarea value={completionSummary} rows={3} maxLength={4000} required disabled={disabled} onChange={(event) => onCompletionSummary(event.currentTarget.value)} /></label>}
+      {showStatus && status === 'cancelled' && <label className="task-field"><span><UiText zh={"取消原因"} /></span><textarea value={cancelReason} rows={3} disabled readOnly /></label>}
     </>
   )
 }
 
 function taskStatusLabel(status: TaskStatus): string {
-  if (status === 'in_progress') return '进行中'
-  if (status === 'blocked') return '已阻塞'
-  if (status === 'completed') return '已完成'
-  if (status === 'cancelled') return '已取消'
-  return '待处理'
+  if (status === 'in_progress') return uiAttribute("进行中")
+  if (status === 'blocked') return uiAttribute("已阻塞")
+  if (status === 'completed') return uiAttribute("已完成")
+  if (status === 'cancelled') return uiAttribute("已取消")
+  return uiAttribute("待处理")
 }
 
 function formatDateTime(value: string): string {
@@ -10934,16 +10908,16 @@ function formatDateTime(value: string): string {
 
 function TaskAuditDetail({ task }: { task: TaskView }): JSX.Element {
   return (
-    <section className="task-detail-section" aria-label="任务审计信息">
-      <strong>责任与审计</strong>
+    <section className="task-detail-section" aria-label={uiAttribute("任务审计信息")}>
+      <strong><UiText zh={"责任与审计"} /></strong>
       <dl className="task-detail-grid">
-        <div><dt>任务 ID</dt><dd>{task.taskId}</dd></div>
-        <div><dt>创建者</dt><dd>{task.createdByType} · {task.createdById}</dd></div>
-        <div><dt>来源执行</dt><dd>{task.sourceAgentRunId ?? '无'}</dd></div>
-        <div><dt>创建时间</dt><dd>{formatDateTime(task.createdAt)}</dd></div>
-        <div><dt>更新时间</dt><dd>{formatDateTime(task.updatedAt)}</dd></div>
-        <div><dt>结束者</dt><dd>{task.closedByType ? `${task.closedByType} · ${task.closedById}` : '未结束'}</dd></div>
-        <div><dt>结束时间</dt><dd>{task.closedAt ? formatDateTime(task.closedAt) : '未结束'}</dd></div>
+        <div><dt><UiText zh={"任务 ID"} /></dt><dd>{task.taskId}</dd></div>
+        <div><dt><UiText zh={"创建者"} /></dt><dd>{task.createdByType} · {task.createdById}</dd></div>
+        <div><dt><UiText zh={"来源执行"} /></dt><dd>{task.sourceAgentRunId ?? uiAttribute("无")}</dd></div>
+        <div><dt><UiText zh={"创建时间"} /></dt><dd>{formatDateTime(task.createdAt)}</dd></div>
+        <div><dt><UiText zh={"更新时间"} /></dt><dd>{formatDateTime(task.updatedAt)}</dd></div>
+        <div><dt><UiText zh={"结束者"} /></dt><dd>{task.closedByType ? `${task.closedByType} · ${task.closedById}` : uiAttribute("未结束")}</dd></div>
+        <div><dt><UiText zh={"结束时间"} /></dt><dd>{task.closedAt ? formatDateTime(task.closedAt) : uiAttribute("未结束")}</dd></div>
       </dl>
     </section>
   )
@@ -10962,9 +10936,9 @@ function RelatedTaskExecution({
   const processes = agentExecutionProcesses(runs)
   const deliveries = snapshot.messageDeliveries.filter((delivery) => delivery.taskId === task.taskId)
   return (
-    <section className="task-detail-section" aria-label="关联执行">
-      <strong>关联执行</strong>
-      <p>{runs.length} 个执行 · {deliveries.length} 个消息投递</p>
+    <section className="task-detail-section" aria-label={uiAttribute("关联执行")}>
+      <strong><UiText zh={"关联执行"} /></strong>
+      <p>{runs.length}<UiText zh={" 个执行 · "} />{deliveries.length}<UiText zh={" 个消息投递"} /></p>
       <div className="task-related-runs">
         {processes.map((process) => {
           const run = preferredAgentProcessRun(process.runs)
@@ -10977,20 +10951,20 @@ function RelatedTaskExecution({
               key={process.agentId}
               onClick={(event) => onOpenAgent(process.agentId, event.currentTarget)}
             >
-              {memberName} · {run ? agentRunPresentation(run).label : '执行过程'}
+              {memberName} · {run ? agentRunPresentation(run).label : uiAttribute("执行过程")}
             </button>
           )
         })}
-        {runs.length === 0 && <small>尚无关联执行</small>}
+        {runs.length === 0 && <small><UiText zh={"尚无关联执行"} /></small>}
       </div>
     </section>
   )
 }
 
 function taskAssigneeName(task: TaskView, snapshot: CampSnapshot): string {
-  if (!task.assigneeAgentId) return '未分配'
+  if (!task.assigneeAgentId) return uiAttribute("未分配")
   return snapshot.members.find((member) => member.agentId === task.assigneeAgentId)?.displayName
-    ?? '队员不可用'
+    ?? uiAttribute('队员不可用')
 }
 
 function taskCommandMessage(result: StoredCommandResult): string {
@@ -10999,7 +10973,7 @@ function taskCommandMessage(result: StoredCommandResult): string {
     'task.assignee_unavailable': '所选负责人已不在当前会话，或当前不可用。',
     'task.invalid_status_transition': '当前任务状态不允许这样变更。'
   }
-  return messages[result.code] ?? `修改未完成：${result.code}`
+  return messages[result.code] ?? uiAttribute("修改未完成：{0}", String(result.code))
 }
 
 function shortIdentity(value: string): string {

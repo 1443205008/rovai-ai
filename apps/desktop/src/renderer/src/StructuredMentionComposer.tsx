@@ -63,6 +63,7 @@ import {
   recoverComposerClipboardDocument,
   type ComposerLocalStatus
 } from './composer-document'
+import { UiText, uiAttribute } from './interface-language'
 
 export interface StructuredMentionMember {
   agentId: string
@@ -133,7 +134,7 @@ export function structuredMentionOptions(
 ): StructuredMentionOption[] {
   const normalizedQuery = query.toLocaleLowerCase()
   const options: StructuredMentionOption[] = []
-  if ('所有队员'.includes(normalizedQuery)) options.push({ kind: 'all_members', label: '所有队员' })
+  if ('所有队员'.includes(normalizedQuery) || uiAttribute('所有队员').toLocaleLowerCase().includes(normalizedQuery)) options.push({ kind: 'all_members', label: '所有队员' })
   for (const member of members) {
     if (member.mentionable === false) continue
     if (!member.displayName.toLocaleLowerCase().includes(normalizedQuery)) continue
@@ -143,7 +144,7 @@ export function structuredMentionOptions(
 }
 
 export function structuredMentionMemberDescription(member: StructuredMentionMember): string {
-  return member.teamRole.trim() || '团队角色未设置'
+  return member.teamRole.trim() || uiAttribute('团队角色未设置')
 }
 
 export function structuredSkillOptions(
@@ -427,10 +428,10 @@ function ComposerBridge({
     if (!saved) return
     const local = parseComposerClipboardDocument(JSON.stringify(saved.document))
     const base = parseComposerClipboardDocument(JSON.stringify(saved.base))
-    if (!local || !base) { onPersistenceErrorChange?.(new Error('未保存的编辑恢复材料无效。')); return }
+    if (!local || !base) { onPersistenceErrorChange?.(new Error(uiAttribute('未保存的编辑恢复材料无效。'))); return }
     if (composerDocumentsEqualDirect(document, local)) { recovery.set(draftIdentity, null); return }
     if (!composerDocumentsEqualDirect(document, base)) {
-      onPersistenceErrorChange?.(new Error('Host 草稿已变化，本标签页的未保存编辑仍保留，暂未覆盖当前草稿。'))
+      onPersistenceErrorChange?.(new Error(uiAttribute('Host 草稿已变化，本标签页的未保存编辑仍保留，暂未覆盖当前草稿。')))
       return
     }
     editor.update(() => { $replaceEditorWithComposerDocument(local) }, { discrete: true, tag: ROVAI_COMPOSER_INITIALIZE_TAG })
@@ -587,10 +588,10 @@ function renderMentionMenu(
   selectIndex: (index: number) => void
 ): JSX.Element {
   return <div id={menuId} className="mention-menu structured-mention-menu" role="listbox"
-    aria-label="选择接收队员">
-    <div className="mention-menu-heading"><strong>选择接收者</strong><span>↑↓ 选择 · Enter 确认</span></div>
+    aria-label={uiAttribute("选择接收队员")}>
+    <div className="mention-menu-heading"><strong><UiText zh={"选择接收者"} /></strong><span><UiText zh={"↑↓ 选择 · Enter 确认"} /></span></div>
     {options.length === 0
-      ? <p className="structured-mention-empty">没有匹配的队员</p>
+      ? <p className="structured-mention-empty"><UiText zh={"没有匹配的队员"} /></p>
       : options.map((option, index) => <button type="button" role="option" id={`${menuId}-option-${index}`}
           key={option.kind === 'all_members' ? 'all-members' : `member:${option.member.agentId}`}
           aria-selected={selectedIndex === index}
@@ -600,9 +601,9 @@ function renderMentionMenu(
           onClick={() => selectIndex(index)}>
           <StructuredMentionOptionAvatar option={option} />
           <span>
-            <strong>{option.kind === 'all_members' ? '所有队员' : option.member.displayName}</strong>
+            <strong>{option.kind === 'all_members' ? uiAttribute("所有队员") : option.member.displayName}</strong>
             <small>{option.kind === 'all_members'
-              ? '广播给当前全部队员'
+              ? uiAttribute("广播给当前全部队员")
               : structuredMentionMemberDescription(option.member)}</small>
           </span>
           <i aria-hidden="true" />
@@ -623,24 +624,24 @@ function renderSkillMenu(
   selectIndex: (index: number) => void
 ): JSX.Element {
   const sections = [
-    { label: '工具箱', entries: options.map((option, index) => ({ option, index })).filter(({ option }) => option.source === 'toolbox') },
+    { label:uiAttribute("工具箱"), entries: options.map((option, index) => ({ option, index })).filter(({ option }) => option.source === 'toolbox') },
     { label: 'Skills', entries: options.map((option, index) => ({ option, index })).filter(({ option }) => option.source !== 'toolbox') }
   ].filter(({ entries }) => entries.length > 0)
   return <div id={menuId} className="mention-menu skill-picker-menu structured-skill-menu"
-    role="listbox" aria-label="选择 Skill">
-    <div className="mention-menu-heading"><strong>选择 Skill</strong><span>↑↓ 选择 · Enter 确认</span>{onRefresh && <button type="button" aria-label="刷新 Skill 候选" disabled={refreshing} onMouseDown={(event) => event.preventDefault()} onClick={onRefresh}>刷新</button>}</div>
+    role="listbox" aria-label={uiAttribute("选择 Skill")}>
+    <div className="mention-menu-heading"><strong><UiText zh={"选择 Skill"} /></strong><span><UiText zh={"↑↓ 选择 · Enter 确认"} /></span>{onRefresh && <button type="button" aria-label={uiAttribute("刷新 Skill 候选")} disabled={refreshing} onMouseDown={(event) => event.preventDefault()} onClick={onRefresh}><UiText zh={"刷新"} /></button>}</div>
     {status === 'loading'
-      ? <p className="structured-mention-empty">正在读取可用 Skills…</p>
+      ? <p className="structured-mention-empty"><UiText zh={"正在读取可用 Skills…"} /></p>
       : status === 'error'
-        ? <p className="structured-mention-empty">Skills 暂时无法读取，请稍后重试</p>
+        ? <p className="structured-mention-empty"><UiText zh={"Skills 暂时无法读取，请稍后重试"} /></p>
         : options.length === 0
-          ? <p className="structured-mention-empty">没有匹配的 Skill</p>
+          ? <p className="structured-mention-empty"><UiText zh={"没有匹配的 Skill"} /></p>
           : sections.map((section) => <div className="skill-picker-section" role="group" aria-label={section.label} key={section.label}>
             <div className="skill-picker-group" aria-hidden="true">{section.label}</div>
             {section.entries.map(({ option, index }) => <button type="button" role="option" id={`${menuId}-option-${index}`}
               key={`skill:${option.id}`} data-skill-name={option.name}
               aria-selected={selectedIndex === index}
-              aria-label={`/${option.name}，${option.source === 'toolbox' ? '工具箱' : option.sourceScope === 'project' ? '项目 Skill' : '用户 Skill'}${option.memberIds?.length ? `，关联队员：${members.filter((member) => option.memberIds?.includes(member.agentId)).map((member) => member.displayName).join('、')}` : ''}`}
+              aria-label={`/${option.name}，${option.source === 'toolbox' ? uiAttribute("工具箱") : option.sourceScope === 'project' ? uiAttribute("项目 Skill") : uiAttribute("用户 Skill")}${option.memberIds?.length ? uiAttribute("，关联队员：{0}", String(members.filter((member) => option.memberIds?.includes(member.agentId)).map((member) => member.displayName).join('、'))) : ''}`}
               className={selectedIndex === index ? 'active' : ''}
               onMouseMove={() => setHighlightedIndex(index)}
               onMouseDown={(event) => event.preventDefault()}
@@ -650,17 +651,17 @@ function renderSkillMenu(
                 <strong>/{option.name}</strong>
                 <small>{option.description}</small>
               </span>
-              {option.memberIds && <span className="skill-picker-member-count" title={`${option.source === 'toolbox' ? '已配置此 Skill 的队员' : '在以下队员的环境中发现'}：${members.filter((member) => option.memberIds?.includes(member.agentId)).map((member) => member.displayName).join('、')}`}>{option.memberIds.slice(0, 3).map((id) => {
+              {option.memberIds && <span className="skill-picker-member-count" title={`${option.source === 'toolbox' ? uiAttribute("已配置此 Skill 的队员") : uiAttribute("在以下队员的环境中发现")}：${members.filter((member) => option.memberIds?.includes(member.agentId)).map((member) => member.displayName).join('、')}`}>{option.memberIds.slice(0, 3).map((id) => {
                 const member = members.find((candidate) => candidate.agentId === id)
                 return member ? <MemberAvatar key={id} agentId={id} avatarRef={member.avatarRef ?? null} displayName={member.displayName} size="execution" decorative /> : null
               })}{option.memberIds.length > 3 && <small>+{option.memberIds.length - 3}</small>}</span>}
               <span className="skill-picker-enter" aria-hidden="true">↵</span>
             </button>)}
           </div>)}
-    {refreshing && <p className="structured-mention-empty" role="status">正在刷新 Skill 候选…</p>}
-    {errors.includes('刷新失败')
-      ? <p className="structured-mention-empty" role="alert">刷新失败，当前显示上次读取的候选。请重试。</p>
-      : errors.length > 0 && <p className="structured-mention-empty" role="status">部分来源暂不可读，仍可选择已发现的 Skill。</p>}
+    {refreshing && <p className="structured-mention-empty" role="status"><UiText zh={"正在刷新 Skill 候选…"} /></p>}
+    {errors.includes(uiAttribute('刷新失败'))
+      ? <p className="structured-mention-empty" role="alert"><UiText zh={"刷新失败，当前显示上次读取的候选。请重试。"} /></p>
+      : errors.length > 0 && <p className="structured-mention-empty" role="status"><UiText zh={"部分来源暂不可读，仍可选择已发现的 Skill。"} /></p>}
   </div>
 }
 
@@ -674,17 +675,17 @@ function atomPresentation(
   if (atom.type === 'member') {
     const member = input.members.find((candidate) => candidate.agentId === atom.agentId)
     const available = Boolean(member && member.mentionable !== false)
-    const label = member?.displayName ?? atom.labelFallback ?? '不可用队员'
+    const label = member?.displayName ?? atom.labelFallback ?? uiAttribute('不可用队员')
     return {
       label: label.startsWith('@') ? label : `@${label}`,
       availability: available ? 'available' : 'unavailable',
       interactive: Boolean(available && input.onActivateMemberMention),
-      ariaLabel: available ? `成员 ${label}` : `成员 ${label} 当前不可用`
+      ariaLabel: available ? uiAttribute("成员 {0}", String(label)) : uiAttribute("成员 {0} 当前不可用", String(label))
     }
   }
   if (atom.type === 'all_members') {
     return {
-      label: '@所有队员',
+      label:uiAttribute("@所有队员"),
       availability: 'available',
       interactive: Boolean(input.onActivateAllMembersMention),
       ariaLabel: '所有队员'
@@ -695,7 +696,7 @@ function atomPresentation(
     label: `/${skill?.name ?? atom.nameAtSend}`,
     availability: skill ? 'available' : 'unavailable',
     interactive: Boolean(input.onActivateSkillMention),
-    ariaLabel: skill ? `Skill ${skill.name}` : `Skill ${atom.nameAtSend} 当前不可用`
+    ariaLabel: skill ? `Skill ${skill.name}` : uiAttribute("Skill {0} 当前不可用", String(atom.nameAtSend))
   }
 }
 

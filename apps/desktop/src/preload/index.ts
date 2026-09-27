@@ -14,6 +14,7 @@ import type {
   CoreMethod,
   ExecutionWebSettingsSnapshot,
   ExecutionConsolePlacement,
+  InterfaceLanguage,
   RestorableLocation,
   SettingsSection,
   StartupLocationMode,
@@ -171,6 +172,9 @@ const api: RovaiApi = {
   generalPreferences: {
     get() {
       return ipcRenderer.invoke('rovai:general-preferences-get')
+    },
+    setInterfaceLanguage(language: InterfaceLanguage) {
+      return ipcRenderer.invoke('rovai:general-preferences-set-language', language)
     },
     setStartupLocationMode(mode: StartupLocationMode) {
       return ipcRenderer.invoke('rovai:general-preferences-set-startup', mode)

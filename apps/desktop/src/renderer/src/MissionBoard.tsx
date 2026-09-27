@@ -27,6 +27,7 @@ import {
   type MissionWritingPlaneHandle
 } from './MissionDefinitionEditor'
 import { displayProjectPath } from '../../shared/project-display-name'
+import { UiText, uiAttribute } from './interface-language'
 
 type MissionActions = {
   edit(mission: MissionRecord): void
@@ -49,13 +50,13 @@ export function useMissionActions(): MissionActions {
   return actions
 }
 export function missionProject(m: MissionRecord, projects: ProjectNavigationGroup[]): string {
-  return m.projectBindingKind === 'quick_chat' ? '快速对话' : projects.find(p => p.projectPath === m.projectPath)?.name ?? m.projectPath.split(/[\\/]/).filter(Boolean).at(-1) ?? m.projectPath
+  return m.projectBindingKind === 'quick_chat' ? uiAttribute('快速对话') : projects.find(p => p.projectPath === m.projectPath)?.name ?? m.projectPath.split(/[\\/]/).filter(Boolean).at(-1) ?? m.projectPath
 }
 export function missionDate(value: string): string {
   const date = new Date(value), today = new Date(), yesterday = new Date()
   yesterday.setDate(today.getDate() - 1)
   if (date.toDateString() === today.toDateString()) return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  if (date.toDateString() === yesterday.toDateString()) return '昨天'
+  if (date.toDateString() === yesterday.toDateString()) return uiAttribute("昨天")
   return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', ...(date.getFullYear() !== today.getFullYear() ? { year: 'numeric' } as const : {}) })
 }
 
@@ -120,7 +121,7 @@ export function MissionInteractionProvider({ missions, projects, agents, onChang
     try {
       await missionCommand(client, 'missions.workspace.cleanup', { missionId: m.missionId })
       setCleanupFeedbacks(current => ({ ...current, [m.missionId]: 'cleaning' }))
-      void onWorkspaceCleaned(m.campId).catch(error => onError(`使命 Worktree 清理已开始，但信息刷新失败：${missionError(error)}`))
+      void onWorkspaceCleaned(m.campId).catch(error => onError(uiAttribute("使命 Worktree 清理已开始，但信息刷新失败：{0}", String(missionError(error)))))
     } finally {
       cleanupRequests.current.delete(m.missionId)
     }
@@ -156,8 +157,8 @@ export function MissionInteractionProvider({ missions, projects, agents, onChang
           if (!(missionId in current)) return current
           const next = { ...current }; delete next[missionId]; return next
         })
-        const label = cleanup.worktreeRemoved && !cleanup.branchRemoved ? '分支清理失败' : 'Worktree 清理失败'
-        onError(`${`M-${String(mission.number).padStart(3, '0')}`} ${label}`, { label: '查看', onSelect: () => onOpen(mission) })
+        const label = cleanup.worktreeRemoved && !cleanup.branchRemoved ? uiAttribute('分支清理失败') : uiAttribute('Worktree 清理失败')
+        onError(`${`M-${String(mission.number).padStart(3, '0')}`} ${label}`, { label:uiAttribute("查看"), onSelect: () => onOpen(mission) })
       } else if (state === 'cleaned' && (locallyCleaning || transitioned)) {
         setCleanupFeedbacks(current => current[missionId] === 'success' ? current : { ...current, [missionId]: 'success' })
         if (!cleanupTimers.current.has(missionId)) {
@@ -191,7 +192,7 @@ export function MissionInteractionProvider({ missions, projects, agents, onChang
       onSaveTags={tags => selected ? change(selected, 'update', { tags }) : Promise.resolve()}
       onCleanup={() => { if (selected) setCleaning(selected); setPosition(null) }}
       onDelete={() => { if (selected) setDeleting(selected); setPosition(null) }} />
-    {position && position.kind !== 'menu' && selected && <MissionPopover position={position} title={position.kind === 'tags' ? '编辑标签' : '使命队员'} onClose={() => setPosition(null)} className={position.kind === 'tags' ? 'mission-label-popover' : 'mission-members-popover'}>
+    {position && position.kind !== 'menu' && selected && <MissionPopover position={position} title={position.kind === 'tags' ? uiAttribute("编辑标签") : uiAttribute("使命队员")} onClose={() => setPosition(null)} className={position.kind === 'tags' ? 'mission-label-popover' : 'mission-members-popover'}>
       {position.kind === 'tags' ? <LabelsEditor key={selected.missionId} m={selected} catalog={catalog} onSave={tags => change(selected, 'update', { tags })}/> : <MissionRoster m={selected}/>}
     </MissionPopover>}
     {editing && <MissionEdit key={editing.missionId} mission={editing} projects={projects} agents={agents} catalog={catalog} onClose={() => setEditing(null)} onSaved={() => onChanged(editing.campId)} onSave={patch => change(editing, 'update', patch)}/>}
@@ -237,8 +238,8 @@ function MissionEdit({ mission, projects, agents, catalog, onSave, onSaved, onCl
     || keepAttachmentIds.join('\n') !== baseline.attachments.map(attachment => attachment.id).join('\n')
   const changed = normalizedTitle !== baseline.title || description !== baseline.description
     || tags.join('\n') !== baseline.tags.join('\n') || attachmentsChanged
-  const titleError = !normalizedTitle ? '请填写使命标题。' : [...normalizedTitle].length > 200 ? '使命标题最多 200 个字符。' : ''
-  const descriptionError = [...description].length > 12000 ? '使命描述最多 12,000 个字符。' : ''
+  const titleError = !normalizedTitle ? uiAttribute('请填写使命标题。') : [...normalizedTitle].length > 200 ? uiAttribute('使命标题最多 200 个字符。') : ''
+  const descriptionError = [...description].length > 12000 ? uiAttribute('使命描述最多 12,000 个字符。') : ''
   const invalid = !!titleError || !!descriptionError
   async function save() {
     if (!changed || invalid) return
@@ -252,7 +253,7 @@ function MissionEdit({ mission, projects, agents, catalog, onSave, onSaved, onCl
     setBusy(true); setError('')
     try {
       if (attachmentsChanged) {
-        if (!client.missionAttachments) throw new Error('当前环境不支持编辑使命附件。')
+        if (!client.missionAttachments) throw new Error(uiAttribute('当前环境不支持编辑使命附件。'))
         const result = await client.missionAttachments.update(newCommandId(), patch, keepAttachmentIds, newAttachments)
         if (result.status === 'rejected') throw new MissionCommandRejected(result)
         await onSaved()
@@ -268,8 +269,8 @@ function MissionEdit({ mission, projects, agents, catalog, onSave, onSaved, onCl
           if (!latest) throw new Error('Mission no longer exists')
           setBaseline({ title: latest.title, description: latest.description, tags: latest.tags, attachments: latest.attachments ?? [], version: latest.detailsVersion })
           setTitle(latest.title); setDescription(latest.description); setTags(latest.tags); setAttachments(storedMissionAttachments(latest.attachments))
-          setError('使命刚刚被修改，已载入最新内容。请重新编辑后保存。')
-        } catch { setError('使命刚刚被修改，但最新内容加载失败。请关闭后重试。') }
+          setError(uiAttribute('使命刚刚被修改，已载入最新内容。请重新编辑后保存。'))
+        } catch { setError(uiAttribute('使命刚刚被修改，但最新内容加载失败。请关闭后重试。')) }
       } else setError(missionError(error))
     } finally { setBusy(false) }
   }
@@ -279,23 +280,23 @@ function MissionEdit({ mission, projects, agents, catalog, onSave, onSaved, onCl
       <Dialog.Content ref={setDialogContent} className={`compact-dialog mission-definition-dialog mission-edit-dialog${expanded ? ' is-expanded' : ''}`} aria-describedby="mission-edit-description"
         onOpenAutoFocus={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault() }}>
         <header className="compact-header mission-editor-header">
-          <div className="mission-editor-heading"><Dialog.Title>编辑使命</Dialog.Title><span>{`M-${String(mission.number).padStart(3, '0')}`}</span></div>
-          <div className="mission-editor-header-actions"><button className="mission-editor-icon-button" type="button" aria-label={expanded ? '恢复编辑区域大小' : '展开编辑区域'} title={expanded ? '恢复编辑区域大小' : '展开编辑区域'} onClick={() => setExpanded(value => !value)} disabled={busy}><svg viewBox="0 0 24 24" aria-hidden="true">{expanded ? <><path d="M9 3v6H3M15 21v-6h6M3 9l6-6M21 15l-6 6"/></> : <><path d="M9 3H3v6M15 21h6v-6M3 9l6-6M21 15l-6 6"/></>}</svg></button><Dialog.Close asChild><button className="compact-close" type="button" aria-label="关闭编辑使命" disabled={busy}><DialogControlIcon name="close"/></button></Dialog.Close></div>
+          <div className="mission-editor-heading"><Dialog.Title><UiText zh={"编辑使命"} /></Dialog.Title><span>{`M-${String(mission.number).padStart(3, '0')}`}</span></div>
+          <div className="mission-editor-header-actions"><button className="mission-editor-icon-button" type="button" aria-label={expanded ? uiAttribute("恢复编辑区域大小") : uiAttribute("展开编辑区域")} title={expanded ? uiAttribute("恢复编辑区域大小") : uiAttribute("展开编辑区域")} onClick={() => setExpanded(value => !value)} disabled={busy}><svg viewBox="0 0 24 24" aria-hidden="true">{expanded ? <><path d="M9 3v6H3M15 21v-6h6M3 9l6-6M21 15l-6 6"/></> : <><path d="M9 3H3v6M15 21h6v-6M3 9l6-6M21 15l-6 6"/></>}</svg></button><Dialog.Close asChild><button className="compact-close" type="button" aria-label={uiAttribute("关闭编辑使命")} disabled={busy}><DialogControlIcon name="close"/></button></Dialog.Close></div>
         </header>
-        <Dialog.Description id="mission-edit-description" className="sr-only">编辑使命名称、描述、标签和附件。项目、队员与队长在创建后不可更改。</Dialog.Description>
+        <Dialog.Description id="mission-edit-description" className="sr-only"><UiText zh={"编辑使命名称、描述、标签和附件。项目、队员与队长在创建后不可更改。"} /></Dialog.Description>
         <form className="compact-form" onSubmit={event => { event.preventDefault(); void save() }}>
           <div className="compact-body mission-editor-body">
             <MissionWritingPlane ref={editorRef} titleInputRef={titleInputRef} title={title} description={description} attachments={attachments} disabled={busy} attachmentsDisabled={!client.missionAttachments} titleError={titleError || undefined} descriptionError={descriptionError || undefined} mission={{campId: mission.campId, missionId: mission.missionId}} onTitleChange={setTitle} onDescriptionChange={setDescription} onAttachmentsChange={setAttachments} onNotify={setError}/>
-            <div className="mission-editor-properties" aria-label="使命属性">
-              <MissionPropertyChip icon={<ProjectGlyph/>} locked className="mission-editor-project-property" title="编辑使命时不能更改项目" aria-label={`项目：${missionProject(mission, projects)}，编辑使命时不能更改`}>{missionProject(mission, projects)}</MissionPropertyChip>
-              <MissionPropertyChip icon={<TeamGlyph/>} locked className="mission-editor-team-property mission-editor-team-locked" title="编辑使命时不能更改队员或队长" aria-label={`队员与队长：${members.length} 位队员，${lead ? `队长 ${lead.displayName}` : '未设置队长'}，编辑使命时不能更改`}>
-                <span className="mission-editor-team-summary"><span className="compact-avatar-stack">{members.slice(0, 2).map(member => <MemberAvatar key={member.agentId} agentId={member.agentId} avatarRef={member.avatarRef} displayName={member.displayName} size="mention" decorative/>)}{members.length > 2 && <span className="mission-editor-team-overflow" aria-hidden="true">+{members.length - 2}</span>}</span><span className="mission-editor-team-divider" aria-hidden="true"/><span>{lead ? `队长 ${lead.displayName}` : '未设置队长'}</span></span>
+            <div className="mission-editor-properties" aria-label={uiAttribute("使命属性")}>
+              <MissionPropertyChip icon={<ProjectGlyph/>} locked className="mission-editor-project-property" title={uiAttribute("编辑使命时不能更改项目")} aria-label={uiAttribute("项目：{0}，编辑使命时不能更改", String(missionProject(mission, projects)))}>{missionProject(mission, projects)}</MissionPropertyChip>
+              <MissionPropertyChip icon={<TeamGlyph/>} locked className="mission-editor-team-property mission-editor-team-locked" title={uiAttribute("编辑使命时不能更改队员或队长")} aria-label={uiAttribute("队员与队长：{0} 位队员，{1}，编辑使命时不能更改", String(members.length), String(lead ? uiAttribute("队长 {0}", String(lead.displayName)) : uiAttribute("未设置队长")))}>
+                <span className="mission-editor-team-summary"><span className="compact-avatar-stack">{members.slice(0, 2).map(member => <MemberAvatar key={member.agentId} agentId={member.agentId} avatarRef={member.avatarRef} displayName={member.displayName} size="mention" decorative/>)}{members.length > 2 && <span className="mission-editor-team-overflow" aria-hidden="true">+{members.length - 2}</span>}</span><span className="mission-editor-team-divider" aria-hidden="true"/><span>{lead ? uiAttribute("队长 {0}", String(lead.displayName)) : uiAttribute("未设置队长")}</span></span>
               </MissionPropertyChip>
               <MissionTagPicker tags={tags} catalog={catalog} disabled={busy} portalContainer={dialogContent} onChange={setTags}/>
             </div>
             {error && <p role="alert" className="compact-inline-error mission-editor-error">{error}</p>}
           </div>
-          <footer className="compact-footer mission-editor-footer"><MissionAttachmentButton onClick={() => editorRef.current?.chooseFiles()} disabled={busy || !client.missionAttachments}/><div className="mission-editor-footer-actions"><button className="compact-cancel" type="button" disabled={busy} onClick={onClose}>取消</button><button className="compact-primary" type="submit" disabled={busy || invalid || !changed}>{busy ? '正在保存…' : '保存'}</button></div></footer>
+          <footer className="compact-footer mission-editor-footer"><MissionAttachmentButton onClick={() => editorRef.current?.chooseFiles()} disabled={busy || !client.missionAttachments}/><div className="mission-editor-footer-actions"><button className="compact-cancel" type="button" disabled={busy} onClick={onClose}><UiText zh={"取消"} /></button><button className="compact-primary" type="submit" disabled={busy || invalid || !changed}>{busy ? uiAttribute("正在保存…") : uiAttribute("保存")}</button></div></footer>
         </form>
       </Dialog.Content>
     </Dialog.Portal>
@@ -310,11 +311,11 @@ function MissionWorkspaceCleanup({ mission, onRequested, onClose }: { mission: M
       await onRequested()
     } catch (error) { setError(missionError(error)) } finally { setBusy(false) }
   }
-  return <CompactDialog title="清理使命 Worktree" className="mission-worktree-cleanup-dialog" onClose={() => { if (!busy) onClose() }} footer={<><button className="compact-cancel" onClick={onClose} disabled={busy}>取消</button><button className="compact-primary" onClick={() => void cleanup()} disabled={busy || !delivery?.workspace}>{busy ? '正在安排清理…' : '清理'}</button></>}>
-    <p>将删除此使命的 Worktree 和本地分支。</p>
+  return <CompactDialog title={uiAttribute("清理使命 Worktree")} className="mission-worktree-cleanup-dialog" onClose={() => { if (!busy) onClose() }} footer={<><button className="compact-cancel" onClick={onClose} disabled={busy}><UiText zh={"取消"} /></button><button className="compact-primary" onClick={() => void cleanup()} disabled={busy || !delivery?.workspace}>{busy ? uiAttribute("正在安排清理…") : uiAttribute("清理")}</button></>}>
+    <p><UiText zh={"将删除此使命的 Worktree 和本地分支。"} /></p>
     {delivery?.workspace && <div className="mission-delete-workspaces"><div><code>{delivery.workspace.worktreePath}</code><small>{delivery.workspace.managedBranch}</small></div></div>}
-    {!delivery && !error && <p role="status">正在读取关联工作区…</p>}
-    {error && <p className="compact-inline-error" role="alert">{error}{!delivery && <button className="mission-source-link" onClick={() => setRetry(value => value + 1)}>重试</button>}</p>}
+    {!delivery && !error && <p role="status"><UiText zh={"正在读取关联工作区…"} /></p>}
+    {error && <p className="compact-inline-error" role="alert">{error}{!delivery && <button className="mission-source-link" onClick={() => setRetry(value => value + 1)}><UiText zh={"重试"} /></button>}</p>}
   </CompactDialog>
 }
 
@@ -323,10 +324,10 @@ function MissionDelete({ mission, onDelete, onClose }: { mission: MissionRecord;
   const [cleanupWorkspace, setCleanupWorkspace] = useState(false)
   useEffect(() => { let current = true; setError(''); void client.request<MissionDelivery>('missions.delivery', { missionId: mission.missionId }).then(data => { if (current) setDelivery(data) }).catch(error => { if (current) setError(missionError(error)) }); return () => { current = false } }, [client, mission.missionId, retry])
   async function remove() { setBusy(true); setError(''); try { await onDelete(cleanupWorkspace ? 'cleanup' : 'retain') } catch (error) { setError(missionError(error)) } finally { setBusy(false) } }
-  return <CompactDialog title="删除使命" className="mission-delete-dialog" onClose={() => { if (!busy) onClose() }} footer={<><button className="compact-cancel" onClick={onClose} disabled={busy}>取消</button><button className="compact-primary mission-delete-confirm" onClick={() => void remove()} disabled={busy || !delivery}>{busy ? '正在删除…' : '删除使命'}</button></>}>
-    <p className="mission-delete-summary">删除后，使命、会话和交付文件将被一并删除，正在执行的队员会停止。此操作无法撤销。</p>
-    {mission.workspaceEverCreated && <label className="mission-delete-workspace-option"><input type="checkbox" checked={cleanupWorkspace} disabled={busy || !mission.workspaceResourcesPresent} onChange={event => setCleanupWorkspace(event.target.checked)}/><span>{mission.workspaceResourcesPresent ? '同时清理 Worktree 及本地分支' : '同时清理 Worktree 及本地分支（已清理）'}</span><span className="mission-inline-help" tabIndex={0} aria-label="未勾选时，Worktree 和本地分支保留在原位置。" data-tooltip="未勾选时，Worktree 和本地分支保留在原位置。">?</span></label>}
-    {!delivery && !error && <p role="status">正在读取关联工作区…</p>}{error && <p className="compact-inline-error" role="alert">{error}{!delivery && <button className="mission-source-link" onClick={() => setRetry(v => v + 1)}>重试</button>}</p>}
+  return <CompactDialog title={uiAttribute("删除使命")} className="mission-delete-dialog" onClose={() => { if (!busy) onClose() }} footer={<><button className="compact-cancel" onClick={onClose} disabled={busy}><UiText zh={"取消"} /></button><button className="compact-primary mission-delete-confirm" onClick={() => void remove()} disabled={busy || !delivery}>{busy ? uiAttribute("正在删除…") : uiAttribute("删除使命")}</button></>}>
+    <p className="mission-delete-summary"><UiText zh={"删除后，使命、会话和交付文件将被一并删除，正在执行的队员会停止。此操作无法撤销。"} /></p>
+    {mission.workspaceEverCreated && <label className="mission-delete-workspace-option"><input type="checkbox" checked={cleanupWorkspace} disabled={busy || !mission.workspaceResourcesPresent} onChange={event => setCleanupWorkspace(event.target.checked)}/><span>{mission.workspaceResourcesPresent ? uiAttribute("同时清理 Worktree 及本地分支") : uiAttribute("同时清理 Worktree 及本地分支（已清理）")}</span><span className="mission-inline-help" tabIndex={0} aria-label={uiAttribute("未勾选时，Worktree 和本地分支保留在原位置。")} data-tooltip={uiAttribute("未勾选时，Worktree 和本地分支保留在原位置。")}>?</span></label>}
+    {!delivery && !error && <p role="status"><UiText zh={"正在读取关联工作区…"} /></p>}{error && <p className="compact-inline-error" role="alert">{error}{!delivery && <button className="mission-source-link" onClick={() => setRetry(v => v + 1)}><UiText zh={"重试"} /></button>}</p>}
   </CompactDialog>
 }
 
@@ -496,58 +497,58 @@ export function MissionBoard({ missions, projects, loading, error, selectedId, h
       onDragEnd={stopDragging}
       onKeyDown={e => { held.current = false; if (e.key === 'ContextMenu' || e.key === 'F10' && e.shiftKey) { e.preventDefault(); const bounds = e.currentTarget.getBoundingClientRect(); e.currentTarget.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: bounds.left, clientY: bounds.bottom })) } }}>
       <div className="mission-card-meta"><span>{`M-${String(m.number).padStart(3, '0')}`}</span><div className="mission-card-top-actions"><MissionRunning mission={m} pageHidden={pageHidden}/></div></div>
-      {mobile && <button type="button" className="mobile-context-trigger" aria-label={`${m.title}的操作`} onClick={event => actions.menu(m, event)}>操作</button>}
+      {mobile && <button type="button" className="mobile-context-trigger" aria-label={uiAttribute("{0}的操作", String(m.title))} onClick={event => actions.menu(m, event)}><UiText zh={"操作"} /></button>}
       <button className="mission-card-open" onClick={() => onOpen(m)}><h3>{m.title}</h3></button>
       <div className="mission-project-tags"><span className="mission-card-project" title={displayProjectPath(m.projectPath)}><NavigationIcon name="folder-open"/>{missionProject(m, projects)}</span><MissionTags tags={m.tags}/></div>
-      <div className="mission-card-footer"><MissionAvatars m={m} compact onClick={e => actions.roster(m, e)}/>{m.hasUnread && <span className="mission-unread-message" role="img" aria-label="有未读回复" title="有未读回复；与执行状态独立"><span className="mission-unread-dot" aria-hidden="true"/><span aria-hidden="true">未读</span></span>}<time dateTime={m.updatedAt} title={new Date(m.updatedAt).toLocaleString()}>{missionDate(m.updatedAt)}</time></div>
+      <div className="mission-card-footer"><MissionAvatars m={m} compact onClick={e => actions.roster(m, e)}/>{m.hasUnread && <span className="mission-unread-message" role="img" aria-label={uiAttribute("有未读回复")} title={uiAttribute("有未读回复；与执行状态独立")}><span className="mission-unread-dot" aria-hidden="true"/><span aria-hidden="true"><UiText zh={"未读"} /></span></span>}<time dateTime={m.updatedAt} title={new Date(m.updatedAt).toLocaleString()}>{missionDate(m.updatedAt)}</time></div>
       {cleanupFeedback && (
         <MissionCleanupCardStatus mission={m} state={cleanupFeedback} onOpen={() => onOpen(m)}/>
       )}
     </article>
   }
-  if (mobile) return <section className="mission-board-page mobile-mission-board" hidden={hidden} aria-label="使命板">
-    <MobilePageHeader title="使命板" onOpenMenu={onOpenMenu} menuOpen={menuOpen} triggerRef={menuTriggerRef}>
-      <button className="mission-new mission-new-entry" onClick={onNew}><Icon name="plus" />新使命</button>
+  if (mobile) return <section className="mission-board-page mobile-mission-board" hidden={hidden} aria-label={uiAttribute("使命板")}>
+    <MobilePageHeader title={uiAttribute("使命板")} onOpenMenu={onOpenMenu} menuOpen={menuOpen} triggerRef={menuTriggerRef}>
+      <button className="mission-new mission-new-entry" onClick={onNew}><Icon name="plus" /><UiText zh={"新使命"} /></button>
     </MobilePageHeader>
     <div className="mobile-mission-toolbar">
-      {searchOpen ? <><label className="mobile-mission-search"><NavigationIcon name="search" /><input autoFocus aria-label="搜索使命" placeholder="搜索使命…" value={query} onChange={event => setQuery(event.target.value)} /></label><button type="button" onClick={() => { setSearchOpen(false); setQuery('') }}>取消</button></> : <>
-        <MissionFilter label="项目" icon={<NavigationIcon name="folder-open" />} values={projectFilter} onChange={setProjectFilter} options={paths.map(path => ({ id: path, keywords: path, icon: <NavigationIcon name="folder-open" />, label: missionProject(missions.find(m => m.projectPath === path)!, projects) }))} />
-        <MissionFilter label="标签" icon={<Icon name="tag" />} values={tags} onChange={setTags} options={catalog.map(tag => ({ id: tag, label: tag, icon: <TagColorDot tag={tag} /> }))} />
-        {!!(tags.length + projectFilter.length) && <button type="button" className="mobile-icon-button" aria-label="清除筛选" onClick={() => { setTags([]); setProjectFilter([]) }}><DialogControlIcon name="close" /></button>}
-        <button type="button" className="mobile-icon-button mobile-mission-search-trigger" aria-label="搜索使命" onClick={() => setSearchOpen(true)}><NavigationIcon name="search" /></button>
+      {searchOpen ? <><label className="mobile-mission-search"><NavigationIcon name="search" /><input autoFocus aria-label={uiAttribute("搜索使命")} placeholder={uiAttribute("搜索使命…")} value={query} onChange={event => setQuery(event.target.value)} /></label><button type="button" onClick={() => { setSearchOpen(false); setQuery('') }}><UiText zh={"取消"} /></button></> : <>
+        <MissionFilter label={uiAttribute("项目")} icon={<NavigationIcon name="folder-open" />} values={projectFilter} onChange={setProjectFilter} options={paths.map(path => ({ id: path, keywords: path, icon: <NavigationIcon name="folder-open" />, label: missionProject(missions.find(m => m.projectPath === path)!, projects) }))} />
+        <MissionFilter label={uiAttribute("标签")} icon={<Icon name="tag" />} values={tags} onChange={setTags} options={catalog.map(tag => ({ id: tag, label: tag, icon: <TagColorDot tag={tag} /> }))} />
+        {!!(tags.length + projectFilter.length) && <button type="button" className="mobile-icon-button" aria-label={uiAttribute("清除筛选")} onClick={() => { setTags([]); setProjectFilter([]) }}><DialogControlIcon name="close" /></button>}
+        <button type="button" className="mobile-icon-button mobile-mission-search-trigger" aria-label={uiAttribute("搜索使命")} onClick={() => setSearchOpen(true)}><NavigationIcon name="search" /></button>
       </>}
     </div>
-    <nav className="mission-status-tabs" aria-label="使命状态">{statuses.map(status => <button type="button" key={status.id} aria-pressed={activeLane === status.id} onClick={() => {
+    <nav className="mission-status-tabs" aria-label={uiAttribute("使命状态")}>{statuses.map(status => <button type="button" key={status.id} aria-pressed={activeLane === status.id} onClick={() => {
       cancelPress()
       if (boardScroll.current) mobileOffsets.current[activeLane] = boardScroll.current.scrollTop
       setActiveLane(status.id)
     }}><StatusIcon status={status.id} /><span>{status.label}</span><small>{filtered.filter(m => m.status === status.id).length}</small></button>)}</nav>
     <MissionCleanupNotice />
-    <div className="mobile-mission-list" ref={boardScroll} onScroll={cancelPress} aria-label={`${statuses.find(s => s.id === activeLane)?.label}的使命`}>
-      {error && <div className="mission-load-error" role="alert"><span>{error}</span><button onClick={() => void onRefresh()}>重试</button></div>}
-      {loading && !missions.length ? <p className="mission-section-empty" role="status">正在读取使命…</p> : <>
+    <div className="mobile-mission-list" ref={boardScroll} onScroll={cancelPress} aria-label={uiAttribute("{0}的使命", String(statuses.find(s => s.id === activeLane)?.label))}>
+      {error && <div className="mission-load-error" role="alert"><span>{error}</span><button onClick={() => void onRefresh()}><UiText zh={"重试"} /></button></div>}
+      {loading && !missions.length ? <p className="mission-section-empty" role="status"><UiText zh={"正在读取使命…"} /></p> : <>
         {filtered.filter(m => m.status === activeLane).map(card)}
         {!filtered.some(m => m.status === activeLane) && !error && <div className="mission-mobile-empty">
-          <MissionIcon /><h2>{query || tags.length || projectFilter.length ? '没有匹配的使命' : !missions.length ? '从一个目标开始' : `暂无${statuses.find(s => s.id === activeLane)?.label}的使命`}</h2>
-          {query || tags.length || projectFilter.length ? <button type="button" className="quiet-button" onClick={() => { setQuery(''); setTags([]); setProjectFilter([]) }}>清除筛选</button> : <button type="button" className="mission-new" onClick={onNew}><Icon name="plus" />新使命</button>}
+          <MissionIcon /><h2>{query || tags.length || projectFilter.length ? uiAttribute("没有匹配的使命") : !missions.length ? uiAttribute("从一个目标开始") : uiAttribute("暂无{0}的使命", String(statuses.find(s => s.id === activeLane)?.label))}</h2>
+          {query || tags.length || projectFilter.length ? <button type="button" className="quiet-button" onClick={() => { setQuery(''); setTags([]); setProjectFilter([]) }}><UiText zh={"清除筛选"} /></button> : <button type="button" className="mission-new" onClick={onNew}><Icon name="plus" /><UiText zh={"新使命"} /></button>}
         </div>}
       </>}
     </div>
   </section>
-  return <section className="mission-board-content mission-board-page" hidden={hidden} aria-label="使命板">
-    <header className="mission-page-header"><div><h1>使命板</h1><p>设定目标，与队伍一起推进。</p></div><button className="mission-new mission-new-entry" onClick={onNew}><Icon name="plus"/>新使命</button></header>
+  return <section className="mission-board-content mission-board-page" hidden={hidden} aria-label={uiAttribute("使命板")}>
+    <header className="mission-page-header"><div><h1><UiText zh={"使命板"} /></h1><p><UiText zh={"设定目标，与队伍一起推进。"} /></p></div><button className="mission-new mission-new-entry" onClick={onNew}><Icon name="plus"/><UiText zh={"新使命"} /></button></header>
     <div className="mission-toolbar"><div className="mission-filter-group">
-      <MissionFilter label="状态" icon={<FilterStateIcon/>} searchable={false} values={stateFilter} onChange={setStateFilter} options={statuses.map(s => ({ id: s.id, label: s.label, icon: <StatusIcon status={s.id}/> }))}/>
-      <MissionFilter label="标签" icon={<Icon name="tag"/>} values={tags} onChange={setTags} options={catalog.map(t => ({id: t, label: t, icon: <TagColorDot tag={t}/>}))}/>
-      <MissionFilter label="项目" icon={<NavigationIcon name="folder-open"/>} values={projectFilter} onChange={setProjectFilter} options={paths.map(path => ({ id: path, keywords: path, icon: <NavigationIcon name="folder-open"/>, label: missionProject(missions.find(m => m.projectPath === path)!, projects) }))}/>
-      {!!(stateFilter.length + tags.length + projectFilter.length) && <button className="mission-clear-filters" aria-label="清除筛选" onClick={() => { setStateFilter([]); setTags([]); setProjectFilter([]) }}><DialogControlIcon name="close"/></button>}
-    </div><label className="mission-search"><NavigationIcon name="search"/><input aria-label="搜索使命" placeholder="搜索使命…" value={query} onChange={e => setQuery(e.target.value)}/></label>
-    <Menu.Root><Menu.Trigger asChild><button className="mission-filter mission-view-trigger" aria-label={`切换视图，当前${view === 'board' ? '看板' : '列表'}`}><Icon name={view}/><Icon name="chevron"/></button></Menu.Trigger><Menu.Portal><Menu.Content className="compact-menu" align="end" sideOffset={6}><Menu.RadioGroup value={view} onValueChange={v => changeView(v as 'board' | 'list')}>{(['board', 'list'] as const).map(v => <Menu.RadioItem className="compact-option" value={v} key={v}><Icon name={v}/><span>{v === 'board' ? '看板' : '列表'}</span><Menu.ItemIndicator><Icon name="check"/></Menu.ItemIndicator></Menu.RadioItem>)}</Menu.RadioGroup></Menu.Content></Menu.Portal></Menu.Root>
+      <MissionFilter label={uiAttribute("状态")} icon={<FilterStateIcon/>} searchable={false} values={stateFilter} onChange={setStateFilter} options={statuses.map(s => ({ id: s.id, label: s.label, icon: <StatusIcon status={s.id}/> }))}/>
+      <MissionFilter label={uiAttribute("标签")} icon={<Icon name="tag"/>} values={tags} onChange={setTags} options={catalog.map(t => ({id: t, label: t, icon: <TagColorDot tag={t}/>}))}/>
+      <MissionFilter label={uiAttribute("项目")} icon={<NavigationIcon name="folder-open"/>} values={projectFilter} onChange={setProjectFilter} options={paths.map(path => ({ id: path, keywords: path, icon: <NavigationIcon name="folder-open"/>, label: missionProject(missions.find(m => m.projectPath === path)!, projects) }))}/>
+      {!!(stateFilter.length + tags.length + projectFilter.length) && <button className="mission-clear-filters" aria-label={uiAttribute("清除筛选")} onClick={() => { setStateFilter([]); setTags([]); setProjectFilter([]) }}><DialogControlIcon name="close"/></button>}
+    </div><label className="mission-search"><NavigationIcon name="search"/><input aria-label={uiAttribute("搜索使命")} placeholder={uiAttribute("搜索使命…")} value={query} onChange={e => setQuery(e.target.value)}/></label>
+    <Menu.Root><Menu.Trigger asChild><button className="mission-filter mission-view-trigger" aria-label={uiAttribute("切换视图，当前{0}", String(view === 'board' ? uiAttribute("看板") : uiAttribute("列表")))}><Icon name={view}/><Icon name="chevron"/></button></Menu.Trigger><Menu.Portal><Menu.Content className="compact-menu" align="end" sideOffset={6}><Menu.RadioGroup value={view} onValueChange={v => changeView(v as 'board' | 'list')}>{(['board', 'list'] as const).map(v => <Menu.RadioItem className="compact-option" value={v} key={v}><Icon name={v}/><span>{v === 'board' ? uiAttribute("看板") : uiAttribute("列表")}</span><Menu.ItemIndicator><Icon name="check"/></Menu.ItemIndicator></Menu.RadioItem>)}</Menu.RadioGroup></Menu.Content></Menu.Portal></Menu.Root>
     </div>
-    {error && <div className="mission-load-error" role="alert"><span>{error}</span><button onClick={() => void onRefresh()}>重试</button></div>}
+    {error && <div className="mission-load-error" role="alert"><span>{error}</span><button onClick={() => void onRefresh()}><UiText zh={"重试"} /></button></div>}
     <MissionCleanupNotice/>
-    <p className="sr-only" id="mission-board-lane-help">每个状态列可独立滚动。可拖动卡片，或通过卡片操作菜单修改状态。</p>
-    {view === 'board' && <nav className="mission-lane-nav" aria-label="切换状态列">{visibleStatuses.map(status => <button type="button" key={status.id} aria-pressed={activeLane === status.id} onClick={() => {
+    <p className="sr-only" id="mission-board-lane-help"><UiText zh={"每个状态列可独立滚动。可拖动卡片，或通过卡片操作菜单修改状态。"} /></p>
+    {view === 'board' && <nav className="mission-lane-nav" aria-label={uiAttribute("切换状态列")}>{visibleStatuses.map(status => <button type="button" key={status.id} aria-pressed={activeLane === status.id} onClick={() => {
       const host = boardScroll.current
       const column = laneScrolls.current.get(status.id)?.closest<HTMLElement>('.mission-column')
       if (!host || !column) return
@@ -564,7 +565,7 @@ export function MissionBoard({ missions, projects, loading, error, selectedId, h
         setDragOverStatus(null)
       }
     }}>
-      {loading && !missions.length && <p role="status" className="mission-section-empty">正在加载使命…</p>}
+      {loading && !missions.length && <p role="status" className="mission-section-empty"><UiText zh={"正在加载使命…"} /></p>}
       {view === 'board' ? <div className="mission-board" style={{gridTemplateColumns: `repeat(${visibleStatuses.length}, minmax(var(--mission-column-min-width, 200px), 1fr))`}}>
         {visibleStatuses.map(s => <section className={`mission-column${scrolledLanes[s.id] ? ' is-scrolled' : ''}${dragOverStatus === s.id ? ' is-drop-target' : ''}`} key={s.id}
           onDragOver={event => { if (!draggingId) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; dragPointer.current = { x: event.clientX, y: event.clientY, status: s.id }; setDragOverStatus(s.id); queueDragScroll() }}
@@ -583,7 +584,7 @@ export function MissionBoard({ missions, projects, loading, error, selectedId, h
         <div className="mission-list-cards" hidden={collapsedGroups.includes(s.id)}>{filtered.filter(m => m.status === s.id).map(card)}</div>
       </section>)}</div>}
     </div>
-    {!loading && missions.length > 0 && !filtered.length && <p className="mission-section-empty" role="status">没有符合筛选条件的使命。</p>}
+    {!loading && missions.length > 0 && !filtered.length && <p className="mission-section-empty" role="status"><UiText zh={"没有符合筛选条件的使命。"} /></p>}
   </section>
 }
 
@@ -591,21 +592,21 @@ function MissionCleanupCardStatus({ mission, state, onOpen }: { mission: Mission
   const branchOnly = mission.workspaceCleanup?.worktreeRemoved && !mission.workspaceCleanup.branchRemoved
   if (state === 'failed') return <div className="mission-card-cleanup-status is-failed" role="alert">
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.75 14.25 13H1.75L8 1.75Z"/><path d="M8 5.1v4.2M8 11.7v.1"/></svg>
-    <span>{branchOnly ? '分支清理失败' : 'Worktree 清理失败'}</span><span aria-hidden="true">·</span><button type="button" onClick={onOpen}>查看</button>
+    <span>{branchOnly ? uiAttribute("分支清理失败") : uiAttribute("Worktree 清理失败")}</span><span aria-hidden="true">·</span><button type="button" onClick={onOpen}><UiText zh={"查看"} /></button>
   </div>
   return <div className={`mission-card-cleanup-status is-${state}`} role="status" aria-live="polite" aria-atomic="true">
     {state === 'cleaning' ? <span className="mission-cleanup-spinner" aria-hidden="true"/> : <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.25 8.1 3 3 6.5-6.5"/></svg>}
-    <span>{state === 'cleaning' ? branchOnly ? '正在清理本地分支…' : '正在清理 Worktree…' : 'Worktree 已清理'}</span>
+    <span>{state === 'cleaning' ? branchOnly ? uiAttribute("正在清理本地分支…") : uiAttribute("正在清理 Worktree…") : uiAttribute("Worktree 已清理")}</span>
   </div>
 }
 
 function MissionRunning({ mission, pageHidden }: { mission: MissionRecord; pageHidden: boolean }) {
   const visible = mission.runningAgentIds.slice(0, 3)
   if (!visible.length) return null
-  return <span className="mission-running" role="img" aria-label={`${mission.runningAgentIds.length} 位队员执行中`}>
+  return <span className="mission-running" role="img" aria-label={uiAttribute("{0} 位队员执行中", String(mission.runningAgentIds.length))}>
     <span className="mission-running-avatars" aria-hidden="true">{visible.map(id => <Avatar key={id} id={id}/>)}</span>
     {mission.runningAgentIds.length > 3 && <small aria-hidden="true"><span className="mission-overflow-label">+{mission.runningAgentIds.length - 3}</span></small>}
-    <RunningText text="执行中" active={false}/>
+    <RunningText text={uiAttribute("执行中")} active={false}/>
     <svg className="camp-execution-orbits" aria-hidden="true" focusable="false" data-paused={pageHidden}>
       <rect width="100%" height="100%" rx="5" pathLength="100"/>
       <rect className="is-ember" width="100%" height="100%" rx="5" pathLength="100"/>
@@ -625,8 +626,8 @@ function MissionCleanupNotice() {
         if (!current || request !== sequence) return
         const previous = previousStates.current
         if (previous) next.filter(row => row.state === 'cleanup_failed' && previous.get(row.id) !== 'cleanup_failed').forEach(row => {
-          const label = row.cleanupWorktreeRemoved && !row.cleanupBranchRemoved ? '分支清理失败' : 'Worktree 清理失败'
-          notifyError(`使命 ${row.managedBranch} ${label}`, { label: '查看', onSelect: () => setOpen(true) })
+          const label = row.cleanupWorktreeRemoved && !row.cleanupBranchRemoved ? uiAttribute('分支清理失败') : uiAttribute('Worktree 清理失败')
+          notifyError(uiAttribute("使命 {0} {1}", String(row.managedBranch), String(label)), { label:uiAttribute("查看"), onSelect: () => setOpen(true) })
         })
         previousStates.current = new Map(next.map(row => [row.id, row.state]))
         setRows(next); setError('')
@@ -645,15 +646,15 @@ function MissionCleanupNotice() {
       setRows(next)
     } catch (error) { setError(missionError(error)) } finally { setBusy(null) }
   }
-  return <>{(rows.length > 0 || error) && <div className="mission-cleanup-notice"><button onClick={() => setOpen(true)}>{error ? '工作区清理状态暂不可用' : `${rows.length} 个工作区待清理`}</button></div>}
-    {open && <CompactDialog title="工作区清理" className="mission-cleanup-list" onClose={() => setOpen(false)}>{error && <p role="alert">{error}</p>}{rows.map(row => {
+  return <>{(rows.length > 0 || error) && <div className="mission-cleanup-notice"><button onClick={() => setOpen(true)}>{error ? uiAttribute("工作区清理状态暂不可用") : uiAttribute("{0} 个工作区待清理", String(rows.length))}</button></div>}
+    {open && <CompactDialog title={uiAttribute("工作区清理")} className="mission-cleanup-list" onClose={() => setOpen(false)}>{error && <p role="alert">{error}</p>}{rows.map(row => {
       const branchOnly = row.cleanupWorktreeRemoved && !row.cleanupBranchRemoved
-      return <section key={row.id}><div><code>{row.worktreePath}</code><small>受管分支：{row.managedBranch}</small><small>Worktree：{row.cleanupWorktreeRemoved ? '已清理' : '待清理'} · 本地分支：{row.cleanupBranchRemoved ? '已清理' : '待清理'}</small></div>
-        {row.state === 'cleanup_pending' && <p role="status">{branchOnly ? '正在清理本地分支…' : '正在清理 Worktree…'}</p>}
-        {row.diagnostic && <><p className="mission-cleanup-failure-title" role="alert">{branchOnly ? '分支清理失败' : 'Worktree 清理失败'}</p><p>{row.diagnostic}</p></>}
-        {row.state === 'cleanup_failed' && <button className="compact-cancel" onClick={() => void retry(row)} disabled={busy !== null}>{busy === row.id ? '正在安排重试…' : '重试未完成步骤'}</button>}
+      return <section key={row.id}><div><code>{row.worktreePath}</code><small><UiText zh={"受管分支："} />{row.managedBranch}</small><small>Worktree：{row.cleanupWorktreeRemoved ? uiAttribute("已清理") : uiAttribute("待清理")}<UiText zh={" · 本地分支："} />{row.cleanupBranchRemoved ? uiAttribute("已清理") : uiAttribute("待清理")}</small></div>
+        {row.state === 'cleanup_pending' && <p role="status">{branchOnly ? uiAttribute("正在清理本地分支…") : uiAttribute("正在清理 Worktree…")}</p>}
+        {row.diagnostic && <><p className="mission-cleanup-failure-title" role="alert">{branchOnly ? uiAttribute("分支清理失败") : uiAttribute("Worktree 清理失败")}</p><p>{row.diagnostic}</p></>}
+        {row.state === 'cleanup_failed' && <button className="compact-cancel" onClick={() => void retry(row)} disabled={busy !== null}>{busy === row.id ? uiAttribute("正在安排重试…") : uiAttribute("重试未完成步骤")}</button>}
       </section>
-    })}{!rows.length && !error && <p role="status">工作区已清理完成。</p>}</CompactDialog>}
+    })}{!rows.length && !error && <p role="status"><UiText zh={"工作区已清理完成。"} /></p>}</CompactDialog>}
   </>
 }
 
@@ -674,17 +675,17 @@ export function MissionIntro({ mission: m, projects }: { mission: MissionRecord;
     return () => observer.disconnect()
   }, [m.description])
   return <>
-    <section className="mission-intro" aria-label="会话使命" data-mission-id={m.missionId} tabIndex={-1}>
-      <div className="mission-intro-top"><span><MissionIcon/>使命</span><span className="mission-status-readonly"><StatusIcon status={m.status}/>{statuses.find(s => s.id === m.status)?.label}</span></div>
+    <section className="mission-intro" aria-label={uiAttribute("会话使命")} data-mission-id={m.missionId} tabIndex={-1}>
+      <div className="mission-intro-top"><span><MissionIcon/><UiText zh={"使命"} /></span><span className="mission-status-readonly"><StatusIcon status={m.status}/>{statuses.find(s => s.id === m.status)?.label}</span></div>
       <h2>{m.title}</h2>{m.description && <p ref={description} className={`mission-description${expanded ? ' expanded' : ''}`}>{m.description}</p>}
-      {canExpand && <button className="mission-description-toggle" aria-expanded={expanded} onClick={() => setExpanded(v => !v)}>{expanded ? '收起描述' : '展开描述'}<Icon name="chevron"/></button>}
-      {!!m.attachments.length && <ComposerAttachmentStrip ariaLabel="使命附件，使用左右方向键浏览">
+      {canExpand && <button className="mission-description-toggle" aria-expanded={expanded} onClick={() => setExpanded(v => !v)}>{expanded ? uiAttribute("收起描述") : uiAttribute("展开描述")}<Icon name="chevron"/></button>}
+      {!!m.attachments.length && <ComposerAttachmentStrip ariaLabel={uiAttribute("使命附件，使用左右方向键浏览")}>
         {m.attachments.map(attachment => <AttachmentCard key={attachment.id} attachment={attachment} locator={{owner:'mission', campId:m.campId, missionId:m.missionId, attachmentRefId:attachment.id}} presentation="composer" onNotify={setAttachmentError}/>) }
       </ComposerAttachmentStrip>}
       {attachmentError && <p className="compact-inline-error mission-intro-attachment-error" role="alert">{attachmentError}</p>}
       <div className="mission-project-tags"><span className="mission-card-project" title={displayProjectPath(m.projectPath)}><NavigationIcon name="folder-open"/>{missionProject(m, projects)}</span><MissionTags tags={m.tags}/></div>
       <div className="mission-intro-meta"><MissionAvatars m={m}/></div>
     </section>
-    {m.status === 'not_started' && m.startAvailable && !actions.startAccepted(m.missionId) && <div className="mission-start-row"><button className="mission-new mission-start" disabled={starting} aria-busy={starting} onClick={() => actions.start(m)}><Icon name="play"/>{starting ? '正在开始…' : '开始使命'}</button></div>}
+    {m.status === 'not_started' && m.startAvailable && !actions.startAccepted(m.missionId) && <div className="mission-start-row"><button className="mission-new mission-start" disabled={starting} aria-busy={starting} onClick={() => actions.start(m)}><Icon name="play"/>{starting ? uiAttribute("正在开始…") : uiAttribute("开始使命")}</button></div>}
   </>
 }

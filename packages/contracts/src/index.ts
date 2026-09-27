@@ -3029,8 +3029,11 @@ export interface NewConversationDefaults {
   defaultLeadAgentId: string
 }
 
+export type InterfaceLanguage = 'zh-CN' | 'en'
+
 export interface GeneralPreferencesSnapshot {
-  schemaVersion: 4
+  schemaVersion: 5
+  interfaceLanguage: InterfaceLanguage
   startupLocationMode: StartupLocationMode
   lastSettingsSection: SettingsSection
   executionConsolePlacement: ExecutionConsolePlacement
@@ -3066,6 +3069,7 @@ export interface DesktopSessionApi {
 
 export interface GeneralPreferencesApi {
   get(): Promise<GeneralPreferencesSnapshot>
+  setInterfaceLanguage(language: InterfaceLanguage): Promise<GeneralPreferencesSnapshot>
   setStartupLocationMode(mode: StartupLocationMode): Promise<GeneralPreferencesSnapshot>
   setLastSettingsSection(section: SettingsSection): Promise<GeneralPreferencesSnapshot>
   setExecutionConsolePlacement(placement: ExecutionConsolePlacement): Promise<GeneralPreferencesSnapshot>

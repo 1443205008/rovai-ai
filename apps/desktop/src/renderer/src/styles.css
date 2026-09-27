@@ -5012,6 +5012,14 @@ button.attachment-open:disabled { cursor: wait; opacity: .76; }
 .general-settings-section .section-heading { align-self: start; align-items: flex-start; margin: 0; }
 .general-settings-section .section-heading h2 { margin: 0; color: var(--ink); font-size: 15px; font-weight: 620; }
 .general-settings-section .section-heading p { margin: 6px 0 0; color: var(--faint); font-size: 10px; line-height: 1.45; }
+.general-language-section { align-items: center; }
+.general-language-options { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.general-language-options label, .onboarding-language label { position: relative; display: inline-flex; min-width: 90px; min-height: 32px; align-items: center; justify-content: center; padding: 0 10px; border-radius: 6px; color: var(--muted); cursor: pointer; font-size: 11px; white-space: nowrap; }
+.general-language-options label:hover, .onboarding-language label:hover { background: var(--surface-hover); }
+.general-language-options label.selected, .onboarding-language label.selected { color: var(--ink); background: var(--surface-selected); }
+.general-language-options input, .onboarding-language input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.general-language-options label:has(input:focus-visible), .onboarding-language label:has(input:focus-visible) { outline: 2px solid var(--brand); outline-offset: 2px; }
+.general-language-options label:has(input:disabled), .onboarding-language label:has(input:disabled) { cursor: default; opacity: .6; }
 .about-updates-settings { display: grid; width: min(1040px, 100%); max-width: 1040px; padding-bottom: 24px; }
 .about-updates-body { display: grid; }
 .about-updates-section { display: grid; grid-template-columns: minmax(98px, 132px) minmax(0, 1fr); align-items: start; gap: clamp(22px, 4vw, 42px); margin: 0; padding: 30px 0; border: 0; border-bottom: 1px solid var(--line); }
@@ -5236,6 +5244,7 @@ button.attachment-open:disabled { cursor: wait; opacity: .76; }
 .onboarding-brand-mark path:nth-of-type(2) { stroke: currentColor; stroke-linecap: round; stroke-width: 5; }
 .onboarding-brand-mark .brand-rendezvous-point { fill: var(--ember); }
 .onboarding-header-actions { display: flex; align-items: center; gap: 8px; -webkit-app-region: no-drag; }
+.onboarding-language { display: inline-flex; align-items: center; gap: 4px; }
 .onboarding-progress { padding: 0 8px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .onboarding-back,
 .onboarding-theme-toggle {
@@ -5308,6 +5317,7 @@ button.attachment-open:disabled { cursor: wait; opacity: .76; }
 .onboarding-shell .quiet-button:hover:not(:disabled) { color: var(--ink); background: var(--surface-hover); }
 .onboarding-member-row[aria-disabled="true"], .onboarding-runtime-row[aria-disabled="true"]:not(:disabled) { cursor: default; opacity: .6; }
 .onboarding-welcome > .onboarding-primary { margin-top: 28px; padding-inline: 18px; }
+.onboarding-language-error { margin-top: 12px; color: var(--danger); font-size: 11px; }
 .onboarding-page-heading h1 { font-size: 28px; font-weight: 560; }
 .onboarding-member-layout { display: grid; max-width: 940px; grid-template-columns: 240px minmax(0, 1fr); gap: 42px; align-items: start; margin: 28px auto 0; }
 .onboarding-selected-member { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
