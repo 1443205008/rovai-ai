@@ -16,6 +16,9 @@ A Camp has at most one Channel binding. Every Agent message published through or
 bound Camp atomically creates one idempotent ChannelDelivery for that message. The outbound payload is the
 published message and its explicit attachments, not Run inputs, logs or anchor ancestors. No `--to-channel`
 flag exists.
+For a DingTalk private conversation, a bound Camp's direct delivery resolves the target Bot's App-scoped
+`user_id` through the conversation's recorded external principal. The private IM `chat_id` is a different
+identity and cannot replace `user_id` when there is no inbound Request attached to the delivery.
 
 ChannelDelivery retry/failure is independent of the inbound message, AgentRun and Camp Delivery. It never
 reruns the model or silently converts the result to local-only publication.
@@ -44,6 +47,9 @@ resources, attempt, retryAt}`. `appId` is the aggregate's canonical acknowledgem
 DingTalk published Bots with loaded App clients); Core filters by provider and these App IDs before limiting the
 download window to 20 requests. An empty or omitted list returns no attachment tasks. Unavailable Bots retain
 their queued requests without blocking another Bot's downloads; per-conversation admission remains FIFO.
+No queue acknowledgement card is enqueued while resources are incomplete: Feishu, Lark and DingTalk wait
+silently during download. Requests already ready when first deferred still use the existing "Rovai 已接收，正在排队"
+acknowledgement. Already-sent download acknowledgements from older versions remain eligible for recall.
 For Feishu and Lark, Main downloads using each provider's SDK domain and
 the official [message-resource API](https://open.feishu.cn/document/server-docs/im-v1/message-resource/get),
 not the app-upload image/file download API. Images use `type=image`; ordinary files, audio and video bytes
@@ -94,7 +100,7 @@ retain their stored body.
 
 Transient failures receive at most three attempts, with 5/10-second retry delays persisted in the aggregate.
 Too-large, unsupported and HTTP authorization failures end immediately. Terminal failure closes the Request,
-recalls an already-sent queue acknowledgement, and enqueues a visible attention message explaining that the message was not dispatched and can be resent
+recalls any older already-sent queue acknowledgement, and enqueues a visible attention message explaining that the message was not dispatched and can be resent
 after correcting the cause. It never silently executes only the text. Startup re-reads queued resource state;
 download retry and late completion remain separate from Agent execution retry.
 DingTalk presents the attention card as a terminal failure, not an in-progress card.

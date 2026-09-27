@@ -9548,6 +9548,10 @@ fn insert_queue_ack_delivery(
     queue_position: i64,
     now: &str,
 ) -> Result<()> {
+    // Attachment downloads gate admission, but do not create a separate chat card.
+    if !inbound_attachments::for_request(transaction, request_id)?.ready() {
+        return Ok(());
+    }
     insert_delivery(
         transaction,
         request_id,
@@ -9560,11 +9564,7 @@ fn insert_queue_ack_delivery(
             "kind": "queue_ack",
             "queuePosition": queue_position,
             "status": "queued",
-            "text": if inbound_attachments::for_request(transaction, request_id)?.ready() {
-                "Rovai 已接收，正在排队"
-            } else {
-                "Rovai 已接收，正在下载附件，完成后交给队员"
-            },
+            "text": "Rovai 已接收，正在排队",
         }),
         now,
     )
@@ -11348,7 +11348,9 @@ fn claim_deliveries(
                        FROM external_principal_app_identity AS identity
                        WHERE identity.principal_id = COALESCE(
                                  request.external_principal_id,
-                                 pending.owner_principal_id
+                                 pending.owner_principal_id,
+                                 CASE WHEN bound_conversation.conversation_kind = 'p2p'
+                                      THEN bound_conversation.last_sender_principal_id END
                              )
                          AND identity.provider = COALESCE(
                              request_conversation.provider,
@@ -13753,6 +13755,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(pending.len(), 1);
+        let download_cards: i64 = database.connection().query_row(
+            "SELECT count(*) FROM channel_delivery WHERE request_id = ?1 AND delivery_kind = 'queue_ack'",
+            [&pending[0].request_id],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(download_cards, 0);
         let camp_id: String = database
             .connection()
             .query_row(
@@ -14746,6 +14754,15 @@ mod tests {
                     .unwrap();
             assert_eq!(pending.len(), 1, "{scenario}: {}", finalized.result.payload);
             let request = &pending[0];
+            let download_cards: i64 = database.connection().query_row(
+                "SELECT count(*) FROM channel_delivery WHERE request_id = ?1 AND delivery_kind = 'queue_ack'",
+                [&request.request_id],
+                |row| row.get(0),
+            ).unwrap();
+            assert_eq!(
+                download_cards, 0,
+                "{provider}/{scenario}: downloading must be silent"
+            );
             let camp_id: String = database
                 .connection()
                 .query_row(
@@ -14836,6 +14853,21 @@ mod tests {
                     .into(),
                 );
                 if scenario != "retry" {
+                    // Existing installations may still have an already-sent download card.
+                    let transaction = database.connection_mut().transaction().unwrap();
+                    insert_delivery(
+                        &transaction,
+                        &request.request_id,
+                        &format!("legacy_queue_ack:{}", request.request_id),
+                        "queue_ack",
+                        &request.app_id,
+                        None,
+                        None,
+                        &json!({ "kind": "queue_ack", "text": "旧版下载卡" }),
+                        "2026-09-27T00:00:00Z",
+                    )
+                    .unwrap();
+                    transaction.commit().unwrap();
                     let sent_ack = database.connection().execute(
                         "UPDATE channel_delivery SET status='sent', ended_at='2026-09-27T00:00:00Z',
                          external_delivery_message_id='carrier-id'
@@ -17864,6 +17896,33 @@ mod tests {
             "a later Channel message is received immediately and waits only in the Agent lane",
         );
 
+        // A public `rovai send` in this bound Camp has no inbound Request. Its
+        // private DingTalk recipient must still resolve to a user ID, not chat ID.
+        let (binding_id, source_message_id): (String, String) = database
+            .connection()
+            .query_row(
+                "SELECT binding.id, message.id FROM channel_conversation_binding AS binding
+                 JOIN camp_message AS message ON message.camp_id = binding.camp_id
+                 WHERE binding.camp_id = ?1 ORDER BY message.sequence LIMIT 1",
+                [camp_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let transaction = database.connection_mut().transaction().unwrap();
+        insert_bound_delivery(
+            &transaction,
+            &binding_id,
+            "agent_output:direct-dm-recipient-fixture",
+            "agent_output",
+            "ding-app-agent_1",
+            "agent_1",
+            &source_message_id,
+            &json!({ "kind": "agent_output", "body": "直接投递正文" }),
+            &Utc::now().to_rfc3339(),
+        )
+        .unwrap();
+        transaction.commit().unwrap();
+
         let console_tick = service
             .host_tick(
                 &mut database,
@@ -17877,6 +17936,18 @@ mod tests {
                 },
             )
             .unwrap();
+        let direct_output = console_tick
+            .deliveries
+            .iter()
+            .find(|delivery| delivery.delivery_kind == "agent_output")
+            .expect("bound Camp output must be claimed independently of an inbound request");
+        assert_eq!(direct_output.request_id, None);
+        assert_eq!(direct_output.chat_id, "ding-dm-1");
+        assert_eq!(
+            direct_output.recipient_open_id.as_deref(),
+            Some("owner-staff-1")
+        );
+        assert_eq!(direct_output.payload["body"], "直接投递正文");
         let console_delivery = console_tick
             .deliveries
             .iter()
