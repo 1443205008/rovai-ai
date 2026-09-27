@@ -6593,13 +6593,14 @@ function ExecutionDrawer({
   const resolvedFocusedRun = process.runs.find((run) => run.id === focusedRunId)
     ?? preferredAgentProcessRun(process.runs)
   const resolvedFocusedRunId = resolvedFocusedRun?.id ?? null
+  const focusedRunIsHistory = Boolean(resolvedFocusedRun && !NON_TERMINAL_RUNS.has(resolvedFocusedRun.status))
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<string>>(
     () => new Set(resolvedFocusedRunId ? [resolvedFocusedRunId] : [])
   )
   const [expandedQueueAgents, setExpandedQueueAgents] = useState<ReadonlySet<string>>(
     () => new Set()
   )
-  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(focusedRunIsHistory)
   const messageById = useMemo(
     () => new Map(messages.map((message) => [message.id, message])),
     [messages]
@@ -6850,6 +6851,7 @@ function ExecutionDrawer({
     if (!runId) return undefined
     const run = processRef.current.runs.find((candidate) => candidate.id === runId) ?? null
     const followLatest = Boolean(run && NON_TERMINAL_RUNS.has(run.status))
+    if (run && !followLatest) setHistoryOpen(true)
     followedProgressKey.current = progressFollowKey
     setExpandedRunIds((current) => current.has(runId) ? current : new Set(current).add(runId))
     setFollowingLatest(followLatest)
