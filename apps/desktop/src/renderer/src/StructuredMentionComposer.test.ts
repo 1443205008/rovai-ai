@@ -78,6 +78,28 @@ describe('StructuredMentionComposer V2', () => {
     ], '沐')).toEqual([])
   })
 
+  it('keeps Camp choices first and makes available outsiders searchable and invitational', () => {
+    const outsider = {
+      agentId: 'agent_3', displayName: '爱丽丝', teamRole: '五号街卖花女',
+      mentionable: true, inCamp: false
+    }
+    const catalog = [...members, outsider]
+    expect(structuredMentionOptions(catalog, '').map((option) => option.kind)).toEqual([
+      'all_members', 'member', 'member', 'invite_other'
+    ])
+    expect(structuredMentionOptions(catalog, '卖花女')).toEqual([
+      { kind: 'member', member: outsider }
+    ])
+    expect(structuredMentionOptions(catalog, '', true)).toEqual([
+      { kind: 'back_to_camp' }, { kind: 'member', member: outsider }
+    ])
+    const fullCamp = Array.from({ length: 60 }, (_, index) => ({
+      ...members[0], agentId: `camp-${index}`
+    }))
+    expect(structuredMentionOptions([...fullCamp, outsider], '').at(-1)).toEqual({ kind: 'invite_other' })
+    expect(structuredMentionOptions([...fullCamp, outsider], '')).toHaveLength(50)
+  })
+
   it('renders the catalog-backed member avatar in the candidate UI', () => {
     const memberMarkup = renderToStaticMarkup(createElement(StructuredMentionOptionAvatar, {
       option: { kind: 'member', member: members[0] }

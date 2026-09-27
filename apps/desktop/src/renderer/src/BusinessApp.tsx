@@ -3714,12 +3714,12 @@ export function BusinessApp({
   ): Promise<CampMessageSendReceipt | void> => {
     const hasReadyAttachment = draft.attachments.length > 0
     const hasSendablePayload = composerHasSendablePayload(draft.body, hasReadyAttachment)
-    if (!activeCampId || draft.campId !== activeCampId || !hasSendablePayload || draft.revision < 1) return
-    const campId = activeCampId
+    const campId = activeCampIdRef.current
+    if (!campId || draft.campId !== campId || !hasSendablePayload || draft.revision < 1) return
     const commandId = newCommandId()
     const selectionGeneration = campSelectionGeneration.current
     const optimisticMessage = optimisticCampMessage(
-      campSnapshot?.camp.id === campId ? campSnapshot : null,
+      campSnapshotRef.current?.camp.id === campId ? campSnapshotRef.current : null,
       commandId,
       draft
     )

@@ -32,6 +32,13 @@ const initialMembers: StructuredMentionMember[] = [{
   teamRole: '系统架构师',
   mentionable: true
 }]
+const outsideMember: StructuredMentionMember = {
+  agentId: 'agent-outside',
+  displayName: '爱丽丝',
+  teamRole: '五号街卖花女',
+  mentionable: true,
+  inCamp: false
+}
 
 const errors: string[] = []
 window.addEventListener('error', (event) => errors.push(String(event.error?.stack ?? event.message)))
@@ -46,7 +53,8 @@ let pastedFileCount = 0
 let localStatus = {
   hasContent: false,
   hasExplicitRecipient: false,
-  hasUnavailableAtom: false
+  hasUnavailableAtom: false,
+  memberAgentIds: [] as string[]
 }
 let dirty = false
 
@@ -122,6 +130,7 @@ function Harness() {
         },
         rerender() { setPropRevision((value) => value + 1) },
         setMembers,
+        includeOutsideMember() { setMembers([...initialMembers, outsideMember]) },
         renameMember(displayName: string) {
           setMembers((current) => current.map((member) => ({ ...member, displayName })))
         },

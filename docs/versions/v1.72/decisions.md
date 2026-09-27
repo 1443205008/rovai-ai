@@ -3,7 +3,7 @@ document_type: version-decisions
 version: v1.72
 authority: decision-rationale
 lifecycle: current
-last_updated: 2026-09-27
+last_updated: 2026-09-28
 ---
 
 # v1.72 版本决定
@@ -125,3 +125,24 @@ Host 的 HTTPS 限制在请求文件前拒绝该链接。原终态失败只删�
 钉钉返回 HTTP 链接时文件下载使用 HTTP；这是本次真实租户可用性取舍。未采用仅把链接升级到 HTTPS：
 当前 OSS 样本升级后可访问，但平台没有保证所有签名链接和存储域在改写协议后均有效。旧的两条请求已终态失败，
 代码修复不会自动重新执行，需要用户发送新消息验收。
+
+<a id="v1-72-d05"></a>
+## V1.72-D05：公开 Composer 在发送前逐人邀请队外 Mention
+
+- 状态：accepted
+- 日期：2026-09-28
+- 当前权威：[Public Camp Composer](../../architecture/camp-composer-draft.md#发送)与
+  [结构化 Mention](../../ui/components/structured-mentions.md#member-typeahead)
+
+### 背景与选择
+
+Principal 希望在公开 Camp 正文中直接 `@` 队外成员，同时保留逐处提及并在发送时自动邀请。Core 已有成员加入与
+消息发布命令，前者可使队员重返 Camp，后者只接受发送时可寻址的成员。采用本机 Composer 先从冻结正文去重
+提取队外身份，逐人执行现有成员加入命令；全部成功后进入原消息发送流程。待邀请从当前正文派生，不存第二份名单。
+
+### 后果与替代方案
+
+成员加入和消息发布不是一个原子事务。部分邀请成功时不发消息，保留正文并展示逐人结果；发布失败时已加入的
+队员仍在 Camp，重试需按最新名册重新判定。未采用扩展 Core 发送命令并在一笔事务中写入成员关系与消息：
+这会改变现有发送、成员权限和幂等合同，超出本次交互目标。Pending Camp 首条输入没有先加成员的命令资格，
+继续使用原激活路径。
