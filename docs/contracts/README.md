@@ -133,7 +133,9 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Channel/Main Schema Join v2（当前）](channel-main-schema-join-v2.md) | 精确来源与既有 receipt 含义不变；原库事务重映射 main 117/118/119→126/127/130，逐步恢复，128/129 历史合同保留，131 封口 |
 | [Channel/Main Schema Join v1（历史）](channel-main-schema-join-v1.md) | 主线 Pending/Fast 与渠道精确来源准入、126/127 receipt 与 128 封闭；副本执行位置由 v2 替代 |
 | [Channel Storage v1（历史）](channel-storage-v1.md) | 飞书/钉钉 credential 与 Developer Session 的 `rovai.sqlite` 明文存储、Main-only API、批量启动、账号/发布原子提交、CAS refresh 与旧 `.bin` clean break |
-| [Feishu Channel v16（当前）](feishu-channel-v16.md) | Session HTTP 扫码、被动身份归一化、三站点恢复、单调进度与本地提交结果核对 |
+| [Lark Channel v1（当前）](lark-channel-v1.md) | Lark 独立 provider：Host 身份、20 个请求名、结构等价的 `lark_*` 表、可信域与登录配置、`Domain.Lark`、模型上下文不变与真实租户能力 gate |
+| [Feishu Channel v17（当前）](feishu-channel-v17.md) | v16 不变；飞书只接受 `brand=feishu`，`larksuite.com` 移交 Lark，SDK 显式 `Domain.Feishu`，遗留 `brand=lark` 行只保留可读 |
+| [Feishu Channel v16（历史）](feishu-channel-v16.md) | Session HTTP 扫码、被动身份归一化、三站点恢复、单调进度与本地提交结果核对；三站点品牌由 v17 收窄 |
 | [Feishu Channel v15（历史）](feishu-channel-v15.md) | v14 渠道与欢迎卡不变；打开执行台使用蓝色主按钮，动作列在窄端纵向拉伸、宽端等宽同行 |
 | [Feishu Channel v14（历史）](feishu-channel-v14.md) | v13 入站与执行入口不变；新 Bot 首次发布完成后向 exact Owner 发送非阻断、稳定 UUID 的私聊欢迎卡；动作布局由 v15 替代 |
 | [Feishu Channel v13（历史）](feishu-channel-v13.md) | v12 设置、入站与执行入口不变；最近输出的安全 command 原生折叠，结果限两行，长 command 按显示列保留首尾；发布通知由 v14 替代 |
@@ -353,7 +355,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Camp Message Send v5 (historical)](camp-message-send-v5.md) | v4 Core 效果与 wire 不变；收窄 `mentionUser` / `--to-user` 的消息局部使用边界，但正文不解析显示名 alias |
 | [Camp Message Send v4 (historical)](camp-message-send-v4.md) | v3 显式 Agent 寻址/caller return 加初版 `--to-user`、Structured Current User Mention 与原子通知 |
 | [Camp Message Send v4 Errata](camp-message-send-v4-errata.md) | 历史 v4 Current User Attention 生命周期与 locator-present exact verification 勘误；其修正已由 v5 继承 |
-| [Notification Episode v8（当前）](notification-episode-v8.md) | Schema 8 wire 不变；当前前台 Camp 全语义静默且不改变精确已读 |
+| [Notification Episode v9（当前）](notification-episode-v9.md) | Schema 9；整轮完成、单聊回复、使命/任务状态、独立偏好与精确事项动作 |
+| [Notification Episode v8（历史）](notification-episode-v8.md) | Schema 8 wire 不变；当前前台 Camp 全语义静默且不改变精确已读 |
 | [Notification Episode v7（历史）](notification-episode-v7.md) | Schema 8；batch AgentRun 精确来源、导航与可见确认；历史 CampTurn 继续兼容 |
 | [Notification Episode v6（历史）](notification-episode-v6.md) | Schema 7；精确单聊来源与导航、当前阅读区抑制、单卡队列和剩余时间暂停 |
 | [Notification Episode v5（历史）](notification-episode-v5.md) | v4 生命周期不变；camp 增加只读 channelSource，schema 6 与原始 title 不变 |
@@ -361,7 +364,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Notification Episode v3 (historical)](notification-episode-v3.md) | v2 精确 signal 加 Journal acknowledgement/Clear/remove invalidation、顺序式队列归约与 reset 清空；不含普通会话可见来源确认 |
 | [Notification Episode v2 (historical)](notification-episode-v2.md) | v1 三层模型加 Active Attention、exact HeadsUpSignal、事务式 Renderer cursor、pending-first Approval 与 acknowledge-only action；不含 signal 入队后的精确失效合同 |
 | [Notification Episode v1 (historical)](notification-episode-v1.md) | 初版 immutable Occurrence、separate Disposition、materialized Episode、minimal Change Journal、bounded write、typed action、heads-up 与 retention |
-| [Current User Attention v7（当前）](current-user-attention-v7.md) | 当前前台 Camp 不弹浮层；精确来源已读独立；三位置 AgentRun 共用 Portal 定位与观察 |
+| [Current User Attention v8（当前）](current-user-attention-v8.md) | 三组设置、同来源合并、业务事项精确导航和发布消息新回复小点 |
+| [Current User Attention v7（历史）](current-user-attention-v7.md) | 当前前台 Camp 不弹浮层；精确来源已读独立；三位置 AgentRun 共用 Portal 定位与观察 |
 | [Current User Attention v6（历史）](current-user-attention-v6.md) | 公屏 / 单聊边界不变；新增 exact AgentRun 可见来源与执行台定位 |
 | [Current User Attention v5（历史）](current-user-attention-v5.md) | 公屏 / 单聊独立可见来源，抑制与已读分离 |
 | [Current User Attention v4（历史）](current-user-attention-v4.md) | v3 逐来源确认加普通进入会话后的精确可见即已读，不要求通知动作或 DOM 焦点 |

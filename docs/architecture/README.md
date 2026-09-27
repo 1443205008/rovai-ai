@@ -1,7 +1,7 @@
 ---
 document_type: architecture-index
 authority: long-lived-architecture-routing
-last_updated: 2026-09-22
+last_updated: 2026-09-24
 ---
 
 # 长期系统架构
@@ -29,12 +29,13 @@ last_updated: 2026-09-22
 | [Camp Identity](camp-identity.md) | 唯一 `rvcamp_` CampId 的生成、持久化、Context/Tool/path 流转、clean break 与 Native Session identity seam |
 | [动态 Camp 队员关系](dynamic-camp-membership.md) | 添加/移除、membership generation/lifetime、原子 cutover、持久 reconciliation、外部来源绑定与 Renderer 权威预览边界 |
 | [飞书渠道](feishu-channel.md) | Developer Session/队员 Provisioner、Owner-only 入站、Quick Chat/PendingCampBinding、ExternalPrincipal、多 Bot 聚合、统一 Camp admission、群 roster、响应式状态执行卡、LAN 只读执行台、永久输出/附件及 Main secret/Core Outbox 边界 |
+| [Lark 渠道](lark-channel.md) | 与飞书并列的独立 provider：参数化飞书 Host 与 Core 领域逻辑、结构等价的 `lark_*` 表族、按请求名推导 Host actor、可信域与 SDK 域分离、模型上下文不变及真实租户验收 gate |
 | [钉钉渠道](dingtalk-channel.md) | Renderer 可管理 Provider、Main 接口扫码/SSO/Web Session/Console API/Stream、独立队员应用机器人、Owner-only 私聊/群聊、多 App durable inbound aggregate、provider-neutral admission、群 roster、Quick Chat、三入口状态卡、更新/撤回双身份、排队卡与 Robot recall、共享 LAN 执行台、永久 Markdown 摘要、安全诊断、能力 gate、共享 credential/Session 持久化与 Main secret/Core Outbox 边界 |
 | [持久 Gather Barrier（已退役）](durable-gather-barrier.md) | 冻结历史 Gather 的只读解释；当前多人协作使用普通多目标消息，不存在 Barrier/completion |
 | [Runtime Catalog Boundaries](runtime-catalog-boundaries.md) | 可执行 Product Runtime Catalog、机器 Availability 与 Renderer-only Settings Preview 的权威分层、准入和晋升边界 |
 | [Runtime Monitoring](runtime-monitoring.md) | 五表 clean-break Usage metering、内存 parser/buffer、短 Flush、稀疏 Rollup、单 Snapshot 与 Renderer 边界 |
 | [Native Session Bootstrap Redelivery](native-session-bootstrap-redelivery.md) | compaction detector、Session Observer、Bootstrap/Member Identity 重投递、Redelivery v2、Dynamic Context 与 accepted-input 水位 |
-| [Notification Episode](notification-episodes.md) | Occurrence/Disposition/Episode/Change Journal 原子投影、可见来源精确确认、read hydration、并发边界与保留 |
+| [Notification Episode](notification-episodes.md) | 消息关联的整轮完成、Mission/Task 状态来源、Occurrence/Disposition/Episode/Journal 原子投影与精确确认 |
 | [Online Memory Capture](online-memory-capture.md) | best-effort Skill discovery、complete exact-Scope View、copyable target、active body aggregate quota、durable rejection、Agent Memory Facade、原子 Supersession、隔离 Hearth Review、formal publication、clean break 与 Forget 闭包 |
 | [Planned Shutdown](planned-shutdown.md) | Core execution/terminal 双准入、durable shutdown cycle、退出时 AgentRun 全量取消、Scheduler/maintenance 共同监督、分层 deadline、route reap 与 Desktop-local Composer/child-exit 边界 |
 | [Public Camp Message、Delivery 与 AgentRun](public-a2a-message-delivery.md) | 公共消息、per-target waiting Delivery、claim 时创建多输入 Run、实时可见性、精确 Stop、隔离与 Channel/Automation 复用 |

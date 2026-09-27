@@ -209,7 +209,7 @@ pub(crate) fn camp_channel_source_from_row(
         .and_then(|(provider, conversation_kind)| {
             matches!(
                 (provider.as_str(), conversation_kind.as_str()),
-                ("feishu", "p2p" | "group" | "topic") | ("dingtalk", "p2p" | "group")
+                ("feishu" | "lark", "p2p" | "group" | "topic") | ("dingtalk", "p2p" | "group")
             )
             .then_some(CampChannelSource {
                 provider,
@@ -5504,7 +5504,7 @@ mod slow_tests {
     }
 
     #[test]
-    fn navigation_completion_marker_is_persistent_and_view_ack_is_monotonic() {
+    fn navigation_reply_marker_requires_publication_and_view_ack_is_monotonic() {
         let directory =
             std::env::temp_dir().join(format!("rovai-navigation-marker-test-{}", Uuid::new_v4()));
         let mut database = crate::test_support::fresh_schema_database_at(&directory);
@@ -5576,6 +5576,14 @@ mod slow_tests {
             )
             .unwrap();
 
+        let terminal_only = read_model.navigation_snapshot(&mut database).unwrap();
+        assert_eq!(
+            terminal_only.projects[0].recent_camps[0].marker, "none",
+            "Run failure is not a new reply"
+        );
+        database.connection().execute("INSERT INTO camp_message(id,camp_id,sequence,author_type,author_id,body,structured_content_json,content_digest,address_mode,addressed_agent_ids_json,version,created_at,updated_at)
+          VALUES('published-reply',?1,2,'agent','agent_1','reply','[{\"kind\":\"text\",\"text\":\"reply\"}]','reply','default','[]',1,?2,?2)",params![camp_id,now]).unwrap();
+        database.connection().execute("INSERT INTO event_log(event_id,event_type,payload_json,camp_id,entity_type,entity_id,actor_type,actor_id,created_at) VALUES('reply-publication','camp_message.sent','{}',?1,'camp_message','published-reply','system','test-runtime',?2)",params![camp_id,now]).unwrap();
         let completed = read_model.navigation_snapshot(&mut database).unwrap();
         let item = &completed.projects[0].recent_camps[0];
         assert_eq!(item.marker, "unread_completed");
@@ -5639,6 +5647,29 @@ mod slow_tests {
         assert_eq!(
             renamed.projects[0].recent_camps[0].title,
             "重命名不改变活动"
+        );
+
+        let published_reply_sequence =
+            renamed.projects[0].recent_camps[0].latest_completion_global_sequence;
+        database.connection().execute("INSERT INTO event_log(event_id,event_type,payload_json,camp_id,entity_type,entity_id,actor_type,actor_id,created_at)
+            VALUES('reply-duplicate','camp_message.public_a2a_sent','{}',?1,'camp_message','published-reply','system','test-runtime',?2)",params![camp_id,now]).unwrap();
+        let duplicate = read_model.navigation_snapshot(&mut database).unwrap();
+        assert_eq!(
+            duplicate.projects[0].recent_camps[0].latest_completion_global_sequence,
+            published_reply_sequence,
+            "a second publication event does not create a newer reply"
+        );
+        database
+            .connection()
+            .execute(
+                "UPDATE camp_message SET tombstoned_at = ?1 WHERE id = 'published-reply'",
+                params![now],
+            )
+            .unwrap();
+        let withdrawn = read_model.navigation_snapshot(&mut database).unwrap();
+        assert_eq!(
+            withdrawn.projects[0].recent_camps[0].latest_completion_global_sequence,
+            0
         );
 
         drop(database);

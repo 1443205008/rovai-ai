@@ -1,7 +1,7 @@
 ---
 document_type: version-overview
 version: v1.70
-lifecycle: current
+lifecycle: historical
 authority: version-scope-and-status
 design_status: confirmed
 implementation_status: in_progress
@@ -16,6 +16,8 @@ last_updated: 2026-09-25
 后续独立修复按已确认的 [Charter 精简稿 revision 1](model-context-change-charter-simplification.md) 压缩公开 Camp 正文，去掉 `Authority boundaries` 小标题，将等待队友回复时结束 Run 的规则放在正文末尾并从 CLI Contract 删除重复句。当前新建 Charter revision 16，Binding 兼容摘要也升至 16，让已有 Session 在下一次正常执行时切换；旧冻结输入与 Bootstrap Evidence 不回写。当前规则见 [Built-in Tool Runtime](../../architecture/builtin-tool-runtime.md) 与 [ContextManifest v31](../../contracts/context-manifest-evidence-v31.md)。
 
 实施步骤与验收证据见[实施计划](implementation-plan.md)。旧导入记录、受管 Revision、冻结的 Run 和 Native Binding 保留；新的 Skills 路径不再以项目投影或旧 Revision 校验作为准入。旧项目入口不随升级自动删除；诊断与修复提供唯一问题和用户显式触发的统一清理动作。Windows 对九个固定官方 Skill 名称使用 [D04](decisions.md#v1-70-d04) 的显式清理规则，并按 [D05](decisions.md#v1-70-d05) 补足已登记项目中无 observation 的残留目录。
+
+后续：[v1.71](../v1.71/README.md)。
 
 同期交付桌面「关于与更新」页的已安装版本日志：构建时内置的发布说明按运行版本校验并离线展示；新版日志继续复用更新检查结果，可在两版之间切换而不增加在线查询。合同见 [App Update v5](../../contracts/app-update-v5.md)，用户已验收开发包界面。
 
@@ -45,12 +47,4 @@ Skills migration 173 及其已安装本地构建的数据合同标记仍为 `v1.
 可逆输入兼容扩展，合同已完整解释）；Runtime Activity、Runtime compatibility、Root README 确认无需更新（无新增
 Runtime、活动或产品入口）。Bootstrap、CLI 教学、Context formatter/选择/预算与冻结证据不变；不新增核心模型上下文格式变更。
 
-## 侧栏读取与会话切换收敛
-
-按 2026-09-26 Principal 评审，实施 [Navigation Read v1](../../contracts/navigation-read-v1.md) 与
-[侧栏刷新架构](../../architecture/desktop-navigation-refresh.md)：Migration 175 在 camp 增加三个摘要字段、
-三个索引并一次回填，目标仍为 v1.70、schema 125。没有新增持久化表或通用增量同步；在线按行/组刷新，
-完整性兜底从摘要恢复完整快照。取舍见 [D06](decisions.md#v1-70-d06)，验证记录见[实施计划](implementation-plan.md)。
-
-跨版本影响：Version、Contracts、Architecture、UI、Decisions 与路由同步；Runtime Activity、Runtime
-compatibility、Root README 无需更新（没有新 Runtime/活动/产品入口），不改变模型上下文与冻结格式。
+后续版本：[v1.71](../v1.71/README.md)。本版范围和验收事实冻结。

@@ -953,7 +953,7 @@ export interface EditSingleChatPendingInputCommand {
 export type NavigationCampMarker = 'loading' | 'unread_completed' | 'none'
 
 export type CampChannelSource =
-  | { provider: 'feishu'; conversationKind: 'p2p' | 'group' | 'topic' }
+  | { provider: 'feishu' | 'lark'; conversationKind: 'p2p' | 'group' | 'topic' }
   | { provider: 'dingtalk'; conversationKind: 'p2p' | 'group' }
 
 export interface NavigationCampItem {
@@ -2471,7 +2471,7 @@ export interface EventBatch {
   events: DomainEventView[]
 }
 
-export type NotificationEpisodeKind = 'collaboration' | 'message' | 'approval'
+export type NotificationEpisodeKind = 'collaboration' | 'message' | 'approval' | 'round' | 'mission' | 'task' | 'single_chat'
 
 export type NotificationSemantic =
   | 'approval_pending'
@@ -2479,6 +2479,11 @@ export type NotificationSemantic =
   | 'turn_completed'
   | 'turn_failed'
   | 'turn_incomplete'
+  | 'round_completed'
+  | 'single_chat_reply'
+  | 'mission_needs_you'
+  | 'mission_status_changed'
+  | 'task_status_changed'
 
 export type NotificationEpisodeFilter = 'all' | 'unread'
 
@@ -2498,6 +2503,8 @@ export type NotificationActionKind =
   | 'open_single_chat'
   | 'open_camp'
   | 'acknowledge_only'
+  | 'open_mission'
+  | 'open_task'
 
 export interface NotificationReasonView {
   semantic: NotificationSemantic
@@ -2521,6 +2528,16 @@ export interface NotificationSingleChatSource {
   agentRunId: string
 }
 
+export interface NotificationSubject {
+  kind: 'round' | 'mission' | 'task'
+  id: string
+  title: string
+  status: string | null
+  sourceMessageId: string | null
+  sourceAgentRunId: string | null
+  relatedRunIds: string[]
+}
+
 export interface NotificationActionView {
   actionId: string
   kind: NotificationActionKind
@@ -2533,6 +2550,7 @@ export interface NotificationActionView {
   acknowledgementId: string | null
   observedEpisodeVersion: number
   singleChat?: NotificationSingleChatSource | null
+  subject?: NotificationSubject | null
 }
 
 export interface NotificationEpisodeView {
@@ -2564,7 +2582,7 @@ export interface NotificationEpisodeView {
 }
 
 export interface NotificationEpisodeInbox {
-  schemaVersion: 8
+  schemaVersion: 9
   throughChangeSequence: number
   unreadCount: number
   items: NotificationEpisodeView[]
@@ -2615,7 +2633,7 @@ export type NotificationHeadsUpInvalidation =
   }
 
 export interface NotificationEpisodeChangeBatch {
-  schemaVersion: 8
+  schemaVersion: 9
   requestedAfterChangeSequence: number
   nextChangeSequence: number
   throughChangeSequence: number
@@ -2630,6 +2648,12 @@ export interface NotificationPreference {
   userMentionHeadsUpEnabled: boolean
   turnCompletedHeadsUpEnabled: boolean
   turnIncompleteHeadsUpEnabled: boolean
+  singleChatHeadsUpEnabled: boolean
+  missionNeedsYouHeadsUpEnabled: boolean
+  missionStatusHeadsUpEnabled: boolean
+  taskStatusHeadsUpEnabled: boolean
+  missionStatuses: Exclude<MissionStatus, 'needs_you'>[]
+  taskStatuses: TaskStatus[]
   version: number
   updatedAt: string
 }
@@ -2833,7 +2857,7 @@ export type SettingsSection =
   | 'diagnostics'
   | 'about'
 
-export type ChannelKind = 'feishu' | 'dingtalk'
+export type ChannelKind = 'feishu' | 'lark' | 'dingtalk'
 
 export type ChannelHostStatus = 'unavailable' | 'ready'
 
@@ -3692,7 +3716,7 @@ export interface RejectHearthReviewItemCommand {
   expectedReviewItemVersion: number
 }
 
-export type AutomationNotifyChannel = 'feishu' | 'dingtalk'
+export type AutomationNotifyChannel = 'feishu' | 'lark' | 'dingtalk'
 export type AutomationWeekday =
   | 'monday' | 'tuesday' | 'wednesday' | 'thursday'
   | 'friday' | 'saturday' | 'sunday'
@@ -3900,6 +3924,26 @@ export type CoreMethod =
   | 'channels.feishu.owner.verify'
   | 'channels.feishu.dm.startNew'
   | 'channels.feishu.pendingBinding.resolve'
+  | 'channels.lark.snapshot'
+  | 'channels.lark.account.upsert'
+  | 'channels.lark.account.commitConnection'
+  | 'channels.lark.account.disconnect'
+  | 'channels.lark.account.expire'
+  | 'channels.lark.publicationIntent.create'
+  | 'channels.lark.publicationIntent.advance'
+  | 'channels.lark.publicationIntent.storeCredential'
+  | 'channels.lark.memberBot.upsert'
+  | 'channels.lark.owner.verify'
+  | 'channels.lark.dm.startNew'
+  | 'channels.lark.pendingBinding.resolve'
+  | 'channels.lark.inbound.observe'
+  | 'channels.lark.inbound.finalize'
+  | 'channels.lark.roster.reconcile'
+  | 'channels.lark.deliveries.settle'
+  | 'channels.lark.host.tick'
+  | 'channels.lark.executionConsole.page.authorize'
+  | 'channels.lark.executionConsole.recentOutput.authorize'
+  | 'channels.lark.executionConsole.agentRun.cancel'
   | 'channels.dingtalk.snapshot'
   | 'channels.dingtalk.account.upsert'
   | 'channels.dingtalk.account.commitConnection'

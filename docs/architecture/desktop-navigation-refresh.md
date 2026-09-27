@@ -55,10 +55,16 @@ Navigation Preferences 拥有本机项目顺序和显示名称。字段见 [Navi
 
 ### Camp ordering
 
-仅 `camp_message.sent` / `camp_message.public_a2a_sent` 中 author_type 为 user/external_principal 的已发布消息
-推进活动时间/序号。队员/A2A、系统、Run/Turn 状态、查看和改名不推进。无发布活动时使用 camp.created_at、
-序号 0；按时间降序、序号降序、ID 升序。完成序号独立维护，loading 仍从现有活跃 Run 读取，已读复用
-camp_view_state。Sidecar 已保存项目顺序不受消息排序影响。
+Navigation 的 `lastActivityAt` / `lastActivityGlobalSequence` 只由已发布的用户 CampMessage 推进：
+`author_type = user` 或 `external_principal`（包括飞书、钉钉等渠道用户），通过统一公共消息 publication seam
+读取。队员消息（含 A2A）、系统消息、工具活动以及 AgentRun/CampTurn 状态均不推进排序。
+没有已发布用户消息时使用 Camp 的 `created_at` 和 sequence 0；Renderer-local 输入、未发送附件、查看和重命名
+不改变这个初始排序时间。时间降序、global sequence 降序、Camp ID 升序的确定性比较规则保持不变。
+
+`latestCompletionGlobalSequence` 沿用 wire 名称但读取非撤回 Agent 消息的首次发布水位，`unread_completed` 表示新回复；
+loading 继续独立读取 Run 事实。Run 终态本身不产生新回复小点，查看水位保持单调；
+状态刷新不能借用用户消息排序水位，否则后台完成提示会丢失。Core Project 聚合使用组内最近用户消息字段，
+Sidecar 已保存的 Project 顺序仍按下文的本机偏好规则保持稳定。
 
 ### Snapshot prefixes
 
@@ -72,7 +78,7 @@ camp_view_state。Sidecar 已保存项目顺序不受消息排序影响。
 
 ## Storage migration
 
-Migration 175 接受经核验的 v1.70/schema 124，升级到 schema 125，新增持久化表为 0。
+Migration 177 接受经核验的 v1.72/schema 126，升级到 schema 127，新增持久化表为 0。
 
 | 对象 | 迁移 |
 | --- | --- |
@@ -83,9 +89,10 @@ Migration 175 接受经核验的 v1.70/schema 124，升级到 schema 125，新�
 | camp_navigation_window_idx | 分组表达式、活动时间 DESC、序号 DESC、ID，排除删除中的 Camp |
 | agent_run_navigation_active_idx | queued/running/waiting 的 camp_id |
 | agent_run_navigation_legacy_active_idx | camp_id 为空的活跃 Run 的 camp_turn_id |
-| camp_navigation_event_insert / sequence | 处理显式序号插入和自动序号分配，只维护目标 Camp；和事件一起回滚 |
+| camp_navigation_event_insert / sequence | 处理消息首次发布的显式序号插入和自动序号分配，只维护目标 Camp；和事件一起回滚 |
+| camp_navigation_reply_tombstone | Agent 消息撤回状态变化时重算该 Camp 的最新可见回复水位 |
 
-迁移事务内按原 publication/terminal 规则进行一次回填；既有 camp_view_state、消息/事件字节和排序规则保留。
+迁移事务内按消息首次 publication 规则进行一次回填；既有 camp_view_state、消息/事件字节和排序规则保留。
 新数据在写入时更新三项摘要；正常一行、一组及完整快照不访问 event_log。不引入持久化组状态、删除记录、
 保留期或通用增量同步；不另造数据库调度层，先移除无关刷新与昂贵读取。
 
