@@ -3,7 +3,7 @@ document_type: ui-component
 component: channel-settings
 authority: channel-settings-presentation-and-interaction
 status: accepted
-last_updated: 2026-09-24
+last_updated: 2026-09-27
 ---
 
 # 渠道设置
@@ -11,7 +11,7 @@ last_updated: 2026-09-24
 渠道设置是 Owner 在 Rovai 本机维护当前开放渠道连接与队员 Bot 的 Renderer surface。群首次项目选择发生在对应外部会话的
 Owner-only 卡片中；Renderer 不提供 Channel 项目目录或会话绑定操作。领域状态和错误按 Provider 分别见
 [Feishu Channel v17](../../contracts/feishu-channel-v17.md)、[Lark Channel v1](../../contracts/lark-channel-v1.md)与
-[DingTalk Channel v13](../../contracts/dingtalk-channel-v13.md)；本页只拥有信息层级、交互与可访问性。
+[DingTalk Channel v14](../../contracts/dingtalk-channel-v14.md)；本页只拥有信息层级、交互与可访问性。
 
 当前渠道页同时开放飞书、Lark 和钉钉管理，页签顺序固定为飞书、Lark、钉钉。三个 Provider 使用同一 Tab、连接、账号、队员 Bot 和管理信息层级；Renderer 只展示
 typed Snapshot 已提供的 Provider，不制造缺失平台。钉钉已有账号、Bot、发布、重连与受控管理链接按真实状态呈现，Cookie、
@@ -210,7 +210,7 @@ Unicode 字符，超长用省略号收尾。引用只作展示，不跳转、不
 下一轮召回后不留下完成占位。钉钉真正排队时发送排队 AI Card，admission 后与旧执行卡都通过 Robot recall 删除，
 不更新成“已开始”“状态已结束”或“此执行记录已结束”。安全、固定 URL、Token、callback、双身份和串行更新边界由
 [Feishu Channel v17](../../contracts/feishu-channel-v17.md)、[Lark Channel v1](../../contracts/lark-channel-v1.md)和
-[DingTalk Channel v13](../../contracts/dingtalk-channel-v13.md)拥有。
+[DingTalk Channel v14](../../contracts/dingtalk-channel-v14.md)拥有。
 
 ## 局域网执行台设置
 
@@ -252,5 +252,5 @@ Web 执行台延续 Porcelain Day / Steel Night 的冷瓷灰、Steel 品牌、�
 - [飞书渠道架构](../../architecture/feishu-channel.md)
 - [Lark Channel v1](../../contracts/lark-channel-v1.md)
 - [Lark 渠道架构](../../architecture/lark-channel.md)
-- [DingTalk Channel v13](../../contracts/dingtalk-channel-v13.md)
+- [DingTalk Channel v14](../../contracts/dingtalk-channel-v14.md)
 - [钉钉渠道架构](../../architecture/dingtalk-channel.md)
