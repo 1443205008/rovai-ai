@@ -8120,29 +8120,34 @@ impl Core {
                 }
                 let runtime_search = self.runtime_search_environment.read().await.clone();
                 let mut references = Vec::new();
-                for (member_id, kind) in roster {
-                    let Some(kind) = kind else {
-                        continue;
-                    };
-                    let Ok(kind) = kind.parse::<rovai_core::agent_profile::AdapterKind>() else {
-                        errors.push(format!("{member_id}: unknown Runtime {kind}"));
-                        continue;
-                    };
-                    let project_for_member = project.clone();
-                    let refresh = params.refresh;
-                    let configuration = runtime_search.startup_configuration(kind);
-                    let discovery = self.native_skill_discovery.clone();
-                    match tokio::task::spawn_blocking(move || {
-                        discovery.discover(
-                            kind,
-                            project_for_member.as_deref(),
-                            false,
-                            refresh,
-                            &configuration,
-                        )
-                    })
-                    .await?
-                    {
+                let discovery = self.native_skill_discovery.clone();
+                let refresh = params.refresh;
+                let scans = tokio::task::spawn_blocking(move || {
+                    let mut request = discovery.request(refresh);
+                    roster
+                        .into_iter()
+                        .filter_map(|(member_id, kind)| {
+                            let kind = kind?;
+                            let scan = kind
+                                .parse::<rovai_core::agent_profile::AdapterKind>()
+                                .map_err(|_| format!("unknown Runtime {kind}"))
+                                .and_then(|kind| {
+                                    request
+                                        .discover(
+                                            kind,
+                                            project.as_deref(),
+                                            false,
+                                            &runtime_search.startup_configuration(kind),
+                                        )
+                                        .map_err(|error| format!("{error:#}"))
+                                });
+                            Some((member_id, scan))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await?;
+                for (member_id, scan) in scans {
+                    match scan {
                         Ok(scan) => {
                             errors.extend(scan.errors);
                             for skill in scan.skills {
@@ -8164,7 +8169,7 @@ impl Core {
                                 references.push(skill);
                             }
                         }
-                        Err(error) => errors.push(format!("{member_id}: {error:#}")),
+                        Err(error) => errors.push(format!("{member_id}: {error}")),
                     }
                 }
                 let mut database = self.database.lock().await;

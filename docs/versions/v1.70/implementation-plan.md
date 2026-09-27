@@ -10,7 +10,7 @@ last_updated: 2026-09-27
 
 1. 发布普通文件形式的 Rovai 受管 Skills，统一执行 Host 路径与安全同步；旧导入 Library、Revision 与项目入口留存，新 Run 停止项目投影，Core 启动不自动清理旧项目文件。
 2. 新建队员 × 五项工具箱配置，迁移时所有队员只默认开启 `member-studio`，其余四项关闭；设置页按第九版交互稿提供即时保存、批量选择、完整说明和失败回退。
-3. 只读发现各 Harness 的用户级与当前项目 Skill，支持来源身份、路径、部分失败和按 Core 实例有界缓存；Settings 只展示用户级，会话候选按全队并集。
+3. 只读发现各 Harness 的用户级与当前项目 Skill，支持来源身份、路径、部分失败和按 Core 实例有界目录缓存；Settings 只展示用户级，会话候选按全队并集。目录缓存替换旧上下文缓存，同目录在途扫描合并，Camp 手动刷新在一次请求内按目录去重；启动和普通切换不预热。
 4. 冻结消息局部来源与 Run 的 Skill 选择／解析；新 Bootstrap 与动态索引依已确认的 [Skills revision 5](model-context-change.md) 生成。追加 [historyHint revision 5](model-context-change-history-hint-additional.md)：保留 Skills migration 173／主线公开 30／10／7，新增 174／公开 31／10／8，claim 冻结 `P` 与额外可见消息判断；旧 Binding／Manifest 按原证据与字节有界恢复，分支专有冲突 173 不自动升级。
 5. 同步当前 Architecture、Contracts、UI 和文档路由；按「诊断与修复」HTML 交互稿交付单项旧入口问题和显式统一清理，执行定向验证、文档门禁、隔离 App 验收与真实任务 Gate，并记录未覆盖的真实 Runtime 条件。
 6. 既有 Skills PR #517 与 historyHint PR #529 已合入 `main`。撤回 #529 增加的“已有 Native Session 缺失 Bootstrap Evidence 即拒绝”判断，保留冻结复用和校验；验证受影响 Runtime 首轮、续轮与目标 Camp 现有重试入口，再经任务分支 PR 合入 `main` 并安装本机日常 App。保护运行中的 App 与日常数据，不把构建当作验收。
