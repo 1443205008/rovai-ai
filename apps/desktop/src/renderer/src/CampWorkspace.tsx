@@ -35,6 +35,7 @@ import {
 import { executionInitialFeedback, executionRunSummary } from './execution-run-summary'
 import { ComposerPrimaryAction } from './ComposerPrimaryAction'
 import { CampMemberFastToggle } from './CampMemberFastToggle'
+import { LiveTokenSpeed } from './execution-token-speed'
 import { useCampMemberFast, type CampMemberFastControls } from './useCampMemberFast'
 import type {
   ActionApprovalView,
@@ -45,6 +46,7 @@ import type {
   AgentRunExecutionEvidencePage,
   AgentRunExecutionEvidenceView,
   AgentRunView,
+  RuntimeExecutionMetricsSnapshot,
   BuiltinMemberAvatarRole,
   CampComposerDraftView,
   ComposerDocument,
@@ -4570,6 +4572,7 @@ export function CampWorkspace({
       progressByRunId={executionProgressByRunId}
       windowedEvidence={openCoverage !== null}
       executionEventsByRunId={executionEventsByRunId}
+      liveRuntimeEvents={liveRuntimeEvents}
       campId={snapshot.camp.id}
       truncatedEvidenceByRunId={truncatedEvidenceByRunId}
       loadedEvidenceCountByRunId={loadedEvidenceCountByRunId}
@@ -6464,16 +6467,101 @@ function executionRunDurationLabel(run: AgentRunView, now: number): string {
   return uiAttribute("{0}分 {1}秒", String(minutes), String(String(seconds).padStart(2, '0')))
 }
 
-function ExecutionRunMetric({ run }: { run: AgentRunView }): JSX.Element {
+function metricK(value: number | null): string {
+  if (value === null || !Number.isSafeInteger(value) || value < 0) return '—'
+  return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`
+}
+
+type RunUsage = RuntimeExecutionMetricsSnapshot['runs'][number]
+type SessionContext = RuntimeExecutionMetricsSnapshot['sessions'][number]
+
+function ExecutionUsagePopover({ run, usage }: { run: AgentRunView; usage: RunUsage | null }): JSX.Element {
+  const complete = run.status === 'succeeded' && usage?.finalizedAt != null
+    && usage.promptInputTotalTokens !== null && usage.outputTokens !== null
+  const total = complete
+    ? usage!.promptInputTotalTokens! + usage!.outputTokens!
+    : null
+  const rows = [
+    ['Input Token', usage?.promptInputTotalTokens ?? null],
+    ['Output Token', usage?.outputTokens ?? null],
+    ['Cache Read', usage?.cacheReadTokens ?? null],
+    ['Cache Write', usage?.cacheWriteTokens ?? null]
+  ] as const
+  return <Popover.Root>
+    <Popover.Trigger asChild>
+      <button className="execution-usage-trigger" type="button"
+        aria-label={uiAttribute('查看本次执行用量；{0}', complete ? metricK(total) : '部分或未知')}
+        title={uiAttribute('查看本次执行用量')}>
+        {metricK(total)}
+      </button>
+    </Popover.Trigger>
+    <Popover.Portal>
+      <Popover.Content className="execution-metric-popover" sideOffset={6} align="end">
+        <dl>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{metricK(value)}</dd></div>)}</dl>
+      </Popover.Content>
+    </Popover.Portal>
+  </Popover.Root>
+}
+
+function ExecutionContextPopover({ context }: { context: SessionContext | null }): JSX.Element {
+  const used = context?.usedTokens ?? null
+  const windowTokens = context?.windowTokens ?? null
+  const percent = used !== null && windowTokens !== null && windowTokens > 0
+    ? Math.min(100, Math.max(0, used / windowTokens * 100))
+    : null
+  return <Popover.Root>
+    <Popover.Trigger asChild>
+      <button className="execution-context-trigger" type="button"
+        aria-label={uiAttribute('当前原生会话上下文：{0} / {1}，{2}', metricK(used), metricK(windowTokens), percent === null ? '比例未知' : `${percent.toFixed(1)}%`)}
+        title={uiAttribute('当前原生会话上下文')}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle className="execution-context-track" cx="12" cy="12" r="8" />
+          {percent !== null && <circle className="execution-context-fill" cx="12" cy="12" r="8"
+            strokeDasharray={`${percent * 0.50265} 50.265`} />}
+        </svg>
+      </button>
+    </Popover.Trigger>
+    <Popover.Portal>
+      <Popover.Content className="execution-metric-popover execution-context-popover" sideOffset={6} align="end">
+        <span>{metricK(used)} / {metricK(windowTokens)}</span>
+        <span>{percent === null ? '—' : `${percent.toFixed(1)}%`}</span>
+      </Popover.Content>
+    </Popover.Portal>
+  </Popover.Root>
+}
+
+function ExecutionRunMetric({ run, liveTextEvents, usage }: {
+  run: AgentRunView
+  liveTextEvents: readonly LiveRuntimeEvent[]
+  usage: RunUsage | null
+}): JSX.Element {
   const live = NON_TERMINAL_RUNS.has(run.status) && run.status !== 'queued'
-  const [now, setNow] = useState(() => Date.now())
+  const [speed, setSpeed] = useState<number | null>(null)
+  const meter = useRef<LiveTokenSpeed | null>(null)
   useEffect(() => {
-    if (!live) return undefined
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    if (!live) {
+      meter.current = null
+      setSpeed(null)
+      return undefined
+    }
+    const now = window.performance.now()
+    meter.current = new LiveTokenSpeed(now)
+    meter.current.observe(liveTextEvents, run.id, run.executionEpoch, now)
+    const timer = window.setInterval(() => setSpeed(meter.current?.sample(window.performance.now()) ?? null), 500)
     return () => window.clearInterval(timer)
-  }, [live])
-  return <span className={`execution-run-metric${live ? ' is-live' : ''}${run.status === 'queued' ? ' is-queued' : ''}`}>
-    {run.status === 'queued' ? uiAttribute("排队中") : executionRunDurationLabel(run, now)}
+  }, [live, run.id, run.executionEpoch])
+  useEffect(() => {
+    if (live) meter.current?.observe(liveTextEvents, run.id, run.executionEpoch, window.performance.now())
+  }, [live, liveTextEvents, run.id, run.executionEpoch])
+  if (run.status === 'queued') return <span className="execution-run-metric is-queued">{uiAttribute('排队中')}</span>
+  if (live) return <span className="execution-run-metric is-live"
+    title={uiAttribute('根据公开正文增量估算的当前速度')}
+    aria-label={uiAttribute('当前估算输出速度：{0}', speed === null ? '未知' : `${speed.toFixed(1)} tok/s`)}>
+    {speed === null ? '— tok/s' : `${speed.toFixed(1)} tok/s`}
+  </span>
+  return <span className="execution-run-metric-group">
+    <span className="execution-run-metric">{executionRunDurationLabel(run, Date.now())}</span>
+    <ExecutionUsagePopover run={run} usage={usage} />
   </span>
 }
 
@@ -6602,6 +6690,7 @@ function ExecutionDrawer({
   progressByRunId,
   windowedEvidence,
   executionEventsByRunId,
+  liveRuntimeEvents,
   campId,
   truncatedEvidenceByRunId,
   loadedEvidenceCountByRunId,
@@ -6630,6 +6719,7 @@ function ExecutionDrawer({
   progressByRunId: Map<string, LiveExecutionProgress>
   windowedEvidence: boolean
   executionEventsByRunId: Map<string, LiveRuntimeEvent[]>
+  liveRuntimeEvents: readonly LiveRuntimeEvent[]
   campId: string
   truncatedEvidenceByRunId: Map<string, AgentRunExecutionEvidenceView[]>
   loadedEvidenceCountByRunId: Map<string, number>
@@ -6645,6 +6735,7 @@ function ExecutionDrawer({
   onRevealMessage(messageId: string): void
   onFileOpenError(message: string): void
 }): JSX.Element {
+  const client = useCampClient()
   const mobile = useMobileLayout()
   const recovery = useEditingRecovery()
   const groupKey = `mobile-execution-groups:${campId}:${process.agentId}`
@@ -6702,6 +6793,52 @@ function ExecutionDrawer({
   const newestFirstRuns = useMemo(() => process.runs.slice().sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id)
   ), [process.runs])
+  const requestedRunIds = newestFirstRuns.slice(0, 500).map((run) => run.id)
+  const runIdsKey = requestedRunIds.join('\u0000')
+  const runStateKey = newestFirstRuns.map((run) => `${run.id}:${run.executionEpoch}:${run.status}`).join('\u0000')
+  const [metrics, setMetrics] = useState<RuntimeExecutionMetricsSnapshot | null>(null)
+  useEffect(() => {
+    let disposed = false
+    let inFlight = false
+    setMetrics(null)
+    const refresh = async (): Promise<void> => {
+      if (inFlight) return
+      inFlight = true
+      try {
+        const next = await client.request<RuntimeExecutionMetricsSnapshot>('monitoring.execution', {
+          campId,
+          agentRunIds: requestedRunIds
+        })
+        if (!disposed && next.schemaVersion === 1) setMetrics(next)
+      } catch {
+        // Metrics are optional evidence; a failed read leaves them unknown.
+      } finally {
+        inFlight = false
+      }
+    }
+    void refresh()
+    const active = newestFirstRuns.some((run) => NON_TERMINAL_RUNS.has(run.status) && run.status !== 'queued')
+    const timer = active ? window.setInterval(() => { void refresh() }, 4_000) : null
+    return () => {
+      disposed = true
+      if (timer !== null) window.clearInterval(timer)
+    }
+  }, [client, campId, runIdsKey, runStateKey])
+  const usageByRunId = useMemo(() => new Map(metrics?.runs.map((run) => [run.agentRunId, run]) ?? []), [metrics])
+  const liveTextEventsByRunId = useMemo(() => {
+    const grouped = new Map<string, LiveRuntimeEvent[]>()
+    for (const event of liveRuntimeEvents) {
+      if (event.eventType !== 'agent.text.delta') continue
+      const events = grouped.get(event.agentRunId) ?? []
+      events.push(event)
+      grouped.set(event.agentRunId, events)
+    }
+    return grouped
+  }, [liveRuntimeEvents])
+  const currentConversationId = newestFirstRuns[0]?.conversationId ?? null
+  const sessionContext = overview || !currentConversationId ? null
+    : metrics?.sessions.find((session) => session.conversationId === currentConversationId
+        && session.agentId === process.agentId) ?? null
   const currentRuns = newestFirstRuns.filter((run) =>
     NON_TERMINAL_RUNS.has(run.status) && run.status !== 'queued'
   )
@@ -7085,7 +7222,9 @@ function ExecutionDrawer({
               subject={uiAttribute("本次执行")}
             />
             <span className="execution-run-trailing">
-              <ExecutionRunMetric run={run} />
+              <ExecutionRunMetric run={run}
+                liveTextEvents={liveTextEventsByRunId.get(run.id) ?? []}
+                usage={usageByRunId.get(run.id) ?? null} />
               <span className="execution-run-operations">
                 <button type="button" aria-label={expanded ? uiAttribute("收起卡片") : uiAttribute("展开卡片")} aria-expanded={expanded}
                   aria-controls={contentId} onClick={() => toggleRun(run.id)}>
@@ -7335,6 +7474,7 @@ function ExecutionDrawer({
               </div>
             </div>
           </div>
+          {!overview && <ExecutionContextPopover context={sessionContext} />}
         </header>
         <div
           ref={drawerBodyRef}

@@ -33,7 +33,7 @@ last_updated: 2026-09-24
 | [钉钉渠道](dingtalk-channel.md) | Renderer 可管理 Provider、Main 接口扫码/SSO/Web Session/Console API/Stream、独立队员应用机器人、Owner-only 私聊/群聊、多 App durable inbound aggregate、provider-neutral admission、群 roster、Quick Chat、三入口状态卡、更新/撤回双身份、排队卡与 Robot recall、共享 LAN 执行台、永久 Markdown 摘要、安全诊断、能力 gate、共享 credential/Session 持久化与 Main secret/Core Outbox 边界 |
 | [持久 Gather Barrier（已退役）](durable-gather-barrier.md) | 冻结历史 Gather 的只读解释；当前多人协作使用普通多目标消息，不存在 Barrier/completion |
 | [Runtime Catalog Boundaries](runtime-catalog-boundaries.md) | 可执行 Product Runtime Catalog、机器 Availability 与 Renderer-only Settings Preview 的权威分层、准入和晋升边界 |
-| [Runtime Monitoring](runtime-monitoring.md) | 五表 clean-break Usage metering、内存 parser/buffer、短 Flush、稀疏 Rollup、单 Snapshot 与 Renderer 边界 |
+| [Runtime Monitoring](runtime-monitoring.md) | 五表 clean-break Usage metering、执行台独立 Session 上下文、内存 parser/buffer、短 Flush、稀疏 Rollup 与 Renderer 边界 |
 | [Native Session Bootstrap Redelivery](native-session-bootstrap-redelivery.md) | compaction detector、Session Observer、Bootstrap/Member Identity 重投递、Redelivery v2、Dynamic Context 与 accepted-input 水位 |
 | [Notification Episode](notification-episodes.md) | 消息关联的整轮完成、Mission/Task 状态来源、Occurrence/Disposition/Episode/Journal 原子投影与精确确认 |
 | [Online Memory Capture](online-memory-capture.md) | best-effort Skill discovery、complete exact-Scope View、copyable target、active body aggregate quota、durable rejection、Agent Memory Facade、原子 Supersession、隔离 Hearth Review、formal publication、clean break 与 Forget 闭包 |

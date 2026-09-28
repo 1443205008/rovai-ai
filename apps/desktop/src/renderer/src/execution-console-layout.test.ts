@@ -147,7 +147,7 @@ describe('execution console layout', () => {
   })
 
   it('swaps live elapsed time only on title hover or visible keyboard focus in a fixed slot', () => {
-    expect(styleBlock('.execution-process-stage.status-running .execution-run-trailing')).toMatch(/width:\s*77px/)
+    expect(styleBlock('.execution-process-stage.status-running .execution-run-trailing')).toMatch(/width:\s*91px/)
     expect(styleBlock('.execution-process-stage.status-running .execution-run-operations')).toMatch(/opacity:\s*0/)
     expect(styleBlock('.execution-process-stage.status-running .execution-run-operations')).toMatch(/right:\s*9px/)
     const activeTitle = '.execution-process-stage.status-running .execution-run-card-header:is(:hover, :has(:focus-visible))'

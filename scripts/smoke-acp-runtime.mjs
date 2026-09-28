@@ -16,7 +16,8 @@ import {
 } from './lib/runtime-camp-files-root.mjs'
 
 const root = resolve(import.meta.dirname, '..')
-const fixtureRoot = await realpath(await mkdtemp(join(tmpdir(), 'rovai-acp-runtime-smoke-')))
+const fixtureRoot = await realpath(process.env.ROVAI_ACP_SMOKE_FIXTURE_ROOT
+  ?? await mkdtemp(join(tmpdir(), 'rovai-acp-runtime-smoke-')))
 const projectRoot = join(fixtureRoot, 'project')
 const dataDir = join(fixtureRoot, 'data')
 const commandOutputOnly = process.env.ROVAI_ACP_COMMAND_OUTPUT_ONLY === '1'
@@ -25,6 +26,7 @@ const fullCommandOutputMatrix = process.env.ROVAI_ACP_FULL_COMMAND_MATRIX === '1
 const fileOperationMatrix = process.env.ROVAI_ACP_FILE_OPERATION_MATRIX === '1'
 const useProductPermissionDefaults = process.env.ROVAI_ACP_USE_PRODUCT_PERMISSION_DEFAULTS === '1'
 const plainTwoTurn = process.env.ROVAI_ACP_PLAIN_TWO_TURN === '1'
+const metricsOneTurn = process.env.ROVAI_ACP_METRICS_ONE_TURN === '1'
 const cancelRunningTool = process.env.ROVAI_ACP_CANCEL_RUNNING_TOOL === '1'
 const grokCompactionAcceptance = process.env.ROVAI_GROK_COMPACTION_ACCEPTANCE === '1'
 const zcodeCompactionAcceptance = process.env.ROVAI_ZCODE_COMPACTION_ACCEPTANCE === '1'
@@ -335,6 +337,13 @@ try {
         throw new Error(`TRAE execution did not persist a Ready snapshot: ${JSON.stringify(verifiedInstallation)}`)
       }
     }
+    const executionMetrics = await request('monitoring.execution', {
+      campId: camp.id,
+      agentRunIds: [agentRunId]
+    })
+    if (executionMetrics.schemaVersion !== 1) {
+      throw new Error(`${specification.adapterKind} returned an unknown execution metrics schema`)
+    }
     results.push({
       adapterKind: specification.adapterKind,
       version: verifiedInstallation.snapshot.reportedVersion,
@@ -342,8 +351,16 @@ try {
       model: start.params.modelId,
       hostInstanceId: start.params.hostInstanceId,
       nativeSessionId: nativeThreadId,
-      output: output.body
+      output: output.body,
+      visibleTextDeltaCount: events.filter((event) => event.method === 'agent.text.delta'
+        && event.params?.agentRunId === agentRunId).length,
+      executionMetrics: {
+        run: executionMetrics.runs.find((entry) => entry.agentRunId === agentRunId) ?? null,
+        session: executionMetrics.sessions.find((entry) => entry.conversationId === agentRun.conversationId) ?? null
+      }
     })
+
+    if (metricsOneTurn) continue
 
     if (fileOperationMatrix) {
       results.at(-1).fileOperations = await runFileOperationMatrix({
@@ -464,6 +481,14 @@ try {
         nativeSessionContinued: commandStart.params.nativeThreadId === results.at(-1).nativeSessionId,
         warmHostReused: commandStart.params.hostInstanceId === results.at(-1).hostInstanceId,
         hostInstanceId: commandStart.params.hostInstanceId
+      }
+      const continuedMetrics = await request('monitoring.execution', {
+        campId: camp.id,
+        agentRunIds: [commandRunId]
+      })
+      results.at(-1).commandOutput.executionMetrics = {
+        run: continuedMetrics.runs.find((entry) => entry.agentRunId === commandRunId) ?? null,
+        session: continuedMetrics.sessions.find((entry) => entry.conversationId === commandRun.conversationId) ?? null
       }
       if (plainTwoTurn) {
         verifyBootstrapEvidenceReused(dataDir, agentRunId, commandRunId)
@@ -829,7 +854,7 @@ try {
     }
   }
 
-  console.log(JSON.stringify({ ok: true, results }, null, 2))
+  console.log(JSON.stringify({ ok: true, fixtureRoot, results }, null, 2))
 } finally {
   if (core && !core.killed) {
     shuttingDown = true

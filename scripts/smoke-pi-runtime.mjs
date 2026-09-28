@@ -18,6 +18,7 @@ if (process.platform !== 'darwin') {
 const root = resolve(import.meta.dirname, '..')
 const traceEnabled = process.env.ROVAI_PI_SMOKE_TRACE === '1'
 const fileOperationMatrix = process.env.ROVAI_PI_FILE_OPERATION_MATRIX === '1'
+const metricsOneTurn = process.env.ROVAI_PI_METRICS_ONE_TURN === '1'
 const fixtureRoot = await realpath(await mkdtemp(join(tmpdir(), 'rovai-pi-runtime-')))
 const projectRoot = join(fixtureRoot, 'project')
 const dataDir = join(fixtureRoot, 'data')
@@ -123,16 +124,46 @@ try {
     address: { mode: 'explicit', agentIds: [agentId] },
     purpose: 'Begin an ordinary conversation in the Pi Native Session before Core restart.'
   })
-  const firstAccepted = acceptedRun(first)
+  const firstAccepted = metricsOneTurn
+    ? {
+        campId: (first.commandResult ?? first).payload?.campId,
+        agentRunId: await waitForMessageRun(
+          client.request,
+          (first.commandResult ?? first).payload?.campId,
+          (first.commandResult ?? first).payload?.campMessageId
+        )
+      }
+    : acceptedRun(first)
   const firstResult = await waitForRun(client, firstAccepted.campId, firstAccepted.agentRunId)
   const firstOutput = outputForRun(firstResult.snapshot, firstAccepted.agentRunId)
   const firstStart = startForRun(client.events, firstAccepted.agentRunId)
+  const firstExecutionMetrics = await client.request('monitoring.execution', {
+    campId: firstAccepted.campId,
+    agentRunIds: [firstAccepted.agentRunId]
+  })
   if (firstResult.run.status !== 'succeeded'
       || !firstOutput?.body.includes('42')
       || !isUuid(firstStart?.params?.nativeThreadId)
       || !isUuid(firstStart?.params?.hostInstanceId)) {
     throw new Error(`Initial Pi run failed: ${diagnostics(client, firstResult, firstAccepted.agentRunId)}`)
   }
+
+  if (metricsOneTurn) {
+    console.log(JSON.stringify({
+      ok: true,
+      fixtureRoot,
+      adapterKind: 'pi',
+      reportedVersion: installation.snapshot.reportedVersion,
+      model: firstResult.run.runtimeModel?.modelId ?? null,
+      visibleTextDeltaCount: client.events.filter((event) =>
+        event.method === 'agent.text.delta' && event.params?.agentRunId === firstAccepted.agentRunId
+      ).length,
+      firstExecutionMetrics: {
+        run: firstExecutionMetrics.runs.find((run) => run.agentRunId === firstAccepted.agentRunId) ?? null,
+        session: firstExecutionMetrics.sessions.find((session) => session.conversationId === firstResult.run.conversationId) ?? null
+      }
+    }, null, 2))
+  } else {
 
   await client.stop()
   client = startCore(dataDir, piAgentDir, piBinary)
@@ -408,6 +439,10 @@ try {
     externalMcpStreamableHttp: false,
     managedSkillDelivery: '.pi/skills',
     structuredUsageObserved: true,
+    firstExecutionMetrics: {
+      run: firstExecutionMetrics.runs.find((run) => run.agentRunId === firstAccepted.agentRunId) ?? null,
+      session: firstExecutionMetrics.sessions.find((session) => session.conversationId === firstResult.run.conversationId) ?? null
+    },
     plannedShutdown: {
       graceful: true,
       observedResidentHostCount: residentPiProcesses.length,
@@ -416,10 +451,13 @@ try {
     }
   }, null, 2))
   }
+  }
 } finally {
   await client?.stop()
   await removeEphemeralRuntimeCampFilesRoot(dataDir)
-  await rm(fixtureRoot, { recursive: true, force: true })
+  if (process.env.ROVAI_KEEP_PI_RUNTIME_FIXTURE !== '1') {
+    await rm(fixtureRoot, { recursive: true, force: true })
+  }
 }
 
 async function runPiFileOperationMatrix({ client, workspace, agentId, projectRoot, reportedVersion, piVersion }) {
@@ -746,6 +784,20 @@ function acceptedRun(result, knownCampId = null) {
   return { campId, agentRunId }
 }
 
+async function waitForMessageRun(request, campId, messageId) {
+  if (!campId || !messageId) throw new Error('Pi smoke Camp message was not accepted')
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    const snapshot = await request('camps.snapshot', { campId })
+    const run = snapshot.agentRuns.find((candidate) =>
+      candidate.inputMessageIds?.includes(messageId) || candidate.anchorMessageId === messageId
+    )
+    if (run) return run.id
+    await new Promise((done) => setTimeout(done, 250))
+  }
+  throw new Error(`Pi smoke Camp message ${messageId} did not dispatch an AgentRun`)
+}
+
 async function waitForRun(client, campId, agentRunId) {
   const deadline = Date.now() + 300_000
   let snapshot
@@ -1070,11 +1122,11 @@ async function prepareIsolatedPiConfig(source, destination) {
     await chmod(destinationFile, 0o600)
   }
   const settings = JSON.parse(await readFile(join(destination, 'settings.json'), 'utf8'))
-  if (settings.defaultProvider !== 'minimax-cn' || settings.defaultModel !== 'MiniMax-M3') {
+  if (!metricsOneTurn && (settings.defaultProvider !== 'minimax-cn' || settings.defaultModel !== 'MiniMax-M3')) {
     throw new Error('Pi smoke requires official settings.json default minimax-cn/MiniMax-M3')
   }
   const auth = JSON.parse(await readFile(join(destination, 'auth.json'), 'utf8'))
-  if (auth['minimax-cn']?.type !== 'api_key' || !auth['minimax-cn']?.key) {
+  if (!metricsOneTurn && (auth['minimax-cn']?.type !== 'api_key' || !auth['minimax-cn']?.key)) {
     throw new Error('Pi smoke requires official auth.json MiniMax China API-key credential')
   }
 }

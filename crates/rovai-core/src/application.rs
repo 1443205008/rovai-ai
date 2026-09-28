@@ -215,10 +215,10 @@ use rovai_core::{
         runtime_waiting_camps, runtime_waiting_recipients,
     },
     monitoring::{
-        MonitoringFilter, MonitoringService, ParsedRuntimeUsage, RuntimeUsageBuffer,
-        RuntimeUsageFlushTarget, acp_usage_source_identity, codex_usage_source_identity,
-        parse_acp_usage_message, parse_claude_result_usage, parse_codex_usage_message,
-        parse_pi_usage_message, pi_usage_source_identity,
+        MonitoringExecutionParams, MonitoringFilter, MonitoringService, ParsedRuntimeUsage,
+        RuntimeUsageBuffer, RuntimeUsageFlushTarget, acp_usage_source_identity,
+        codex_usage_source_identity, parse_acp_usage_message, parse_claude_result_usage,
+        parse_codex_usage_message, parse_pi_usage_message, pi_usage_source_identity,
     },
     network_recovery::{
         NetworkFailureCategory, NetworkRecoveryAttempt, NetworkRecoveryQueue,
@@ -800,6 +800,7 @@ fn request_runs_outside_main_queue(method: &str) -> bool {
             | "diagnostics.check"
             | "diagnostics.export"
             | "monitoring.snapshot"
+            | "monitoring.execution"
             | "runtime.installations.refresh"
             | "runtime.discovery.rescan"
             | "runtime.product.ensure"
@@ -10439,6 +10440,12 @@ impl Core {
                     if result.is_ok() { "ok" } else { "error" },
                 );
                 result
+            }
+            "monitoring.execution" => {
+                let params: MonitoringExecutionParams =
+                    serde_json::from_value(request.params.clone())?;
+                let database = self.database.lock().await;
+                MonitoringService::execution_snapshot(&database, &params)
             }
             "diagnostics.export" => {
                 let report = self.diagnostics_report().await;

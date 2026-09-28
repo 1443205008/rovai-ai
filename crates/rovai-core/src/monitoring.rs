@@ -337,9 +337,13 @@ impl RuntimeUsageBuffer {
     ) -> Result<()> {
         self.runs.insert(run.key.clone(), run.clone());
         for usage in observations {
-            validate_usage(usage)?;
-            normalize_usage(usage)?;
-            let key = BufferedUsageKey::new(&run.key, usage);
+            let mut usage = usage.clone();
+            if usage.occurred_at.is_none() {
+                usage.occurred_at = Some(Utc::now().to_rfc3339());
+            }
+            validate_usage(&usage)?;
+            normalize_usage(&usage)?;
+            let key = BufferedUsageKey::new(&run.key, &usage);
             if !self
                 .seen_source_identities
                 .insert((key.clone(), source_identity.to_string()))
@@ -349,7 +353,7 @@ impl RuntimeUsageBuffer {
             self.pending_since.entry(run.key.clone()).or_insert(now);
             let incoming = BufferedUsageRecord {
                 key: key.clone(),
-                usage: usage.clone(),
+                usage,
                 source_identities: vec![source_identity.to_string()],
             };
             merge_buffered_record(&mut self.pending, incoming)?;
@@ -524,6 +528,13 @@ pub struct MonitoringFilter {
     pub cost_kind: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitoringExecutionParams {
+    pub camp_id: String,
+    pub agent_run_ids: Vec<String>,
+}
+
 impl MonitoringFilter {
     pub fn validate(&self) -> Result<()> {
         if !matches!(self.range.as_str(), "24h" | "7d" | "30d") {
@@ -554,6 +565,103 @@ impl MonitoringFilter {
 pub struct MonitoringService;
 
 impl MonitoringService {
+    pub fn execution_snapshot(
+        database: &Database,
+        params: &MonitoringExecutionParams,
+    ) -> Result<Value> {
+        validate_key(&params.camp_id, "Camp ID")?;
+        anyhow::ensure!(
+            params.agent_run_ids.len() <= 500,
+            "too many AgentRuns requested"
+        );
+        let connection = database.connection();
+        let mut run_query = connection.prepare(r#"
+            SELECT ar.execution_epoch, s.prompt_input_total_tokens, s.output_tokens,
+                   s.cache_read_tokens, s.cache_write_tokens,
+                   s.finalized_at, s.last_observed_at
+            FROM agent_run ar
+            JOIN conversation c ON c.id = ar.conversation_id
+            JOIN runtime_usage_run_summary s ON s.agent_run_id = ar.id
+                AND s.collection_epoch = (
+                    SELECT collection_epoch FROM runtime_usage_collection_state WHERE singleton_id = 1
+                )
+            WHERE c.camp_id = ?1 AND ar.id = ?2
+        "#)?;
+        let mut runs = Vec::new();
+        for agent_run_id in &params.agent_run_ids {
+            validate_key(agent_run_id, "AgentRun ID")?;
+            let row = run_query
+                .query_row(params![params.camp_id, agent_run_id], |row| {
+                    Ok(json!({
+                        "agentRunId": agent_run_id,
+                        "executionEpoch": row.get::<_, i64>(0)?,
+                        "promptInputTotalTokens": row.get::<_, Option<i64>>(1)?,
+                        "outputTokens": row.get::<_, Option<i64>>(2)?,
+                        "cacheReadTokens": row.get::<_, Option<i64>>(3)?,
+                        "cacheWriteTokens": row.get::<_, Option<i64>>(4)?,
+                        "finalizedAt": row.get::<_, Option<String>>(5)?,
+                        "lastObservedAt": row.get::<_, Option<String>>(6)?,
+                    }))
+                })
+                .optional()?;
+            if let Some(row) = row {
+                runs.push(row);
+            }
+        }
+        let mut session_query = connection.prepare(
+            r#"
+            SELECT c.id, c.agent_id, x.native_binding_generation, x.runtime_kind,
+                   x.model_key, x.context_used_tokens, x.context_window_tokens,
+                   x.source, x.dialect_id, x.observed_at
+            FROM conversation c
+            JOIN runtime_session_context_latest x ON x.conversation_id = c.id
+                AND x.native_binding_id = c.native_binding_id
+                AND x.native_binding_generation = c.native_binding_generation
+                AND x.native_session_id = c.native_session_id
+            JOIN agent_run source_run ON source_run.id = x.source_agent_run_id
+            WHERE c.camp_id = ?1
+              AND NOT EXISTS (
+                  SELECT 1 FROM native_session_compaction_observation compacted
+                  WHERE compacted.native_binding_id = c.native_binding_id
+                    AND compacted.native_binding_generation = c.native_binding_generation
+                    AND compacted.committed_at > x.observed_at
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM agent_run newer
+                  JOIN runtime_input_delivery nd ON nd.agent_run_id = newer.id
+                      AND nd.execution_epoch = newer.execution_epoch
+                  WHERE newer.conversation_id = c.id
+                    AND nd.native_binding_id = c.native_binding_id
+                    AND nd.native_binding_generation = c.native_binding_generation
+                    AND nd.status = 'accepted'
+                    AND (newer.started_at > source_run.started_at
+                        OR (newer.started_at = source_run.started_at AND newer.id > source_run.id))
+                    AND (newer.runtime_host_config_digest IS NOT x.effective_config_digest
+                        OR (newer.runtime_observed_model_id IS NOT NULL
+                            AND x.model_key IS NOT NULL
+                            AND newer.runtime_observed_model_id <> x.model_key))
+              )
+        "#,
+        )?;
+        let sessions = session_query
+            .query_map([&params.camp_id], |row| {
+                Ok(json!({
+                    "conversationId": row.get::<_, String>(0)?,
+                    "agentId": row.get::<_, String>(1)?,
+                    "sessionGeneration": row.get::<_, i64>(2)?,
+                    "runtimeKind": row.get::<_, String>(3)?,
+                    "modelKey": row.get::<_, Option<String>>(4)?,
+                    "usedTokens": row.get::<_, Option<i64>>(5)?,
+                    "windowTokens": row.get::<_, Option<i64>>(6)?,
+                    "source": row.get::<_, String>(7)?,
+                    "dialectId": row.get::<_, String>(8)?,
+                    "observedAt": row.get::<_, String>(9)?,
+                }))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(json!({"schemaVersion": 1, "runs": runs, "sessions": sessions}))
+    }
+
     pub fn enroll_run(
         database: &mut Database,
         execution: &AgentRunExecution,
@@ -895,6 +1003,11 @@ fn persist_usage_record(
     {
         return Ok(false);
     }
+    if record.usage.fields.context_used_tokens.is_some()
+        || record.usage.fields.context_size_tokens.is_some()
+    {
+        persist_session_context(transaction, run, &record.usage)?;
+    }
     let (delta, cost_delta) = match record.usage.counter_mode {
         RuntimeUsageCounterMode::Delta => (normalized.clone(), record.usage.cost.clone()),
         RuntimeUsageCounterMode::Cumulative | RuntimeUsageCounterMode::Gauge => {
@@ -955,6 +1068,98 @@ fn persist_usage_record(
         &now,
     )?;
     Ok(true)
+}
+
+fn persist_session_context(
+    transaction: &rusqlite::Transaction<'_>,
+    run: &RuntimeUsageRun,
+    usage: &ParsedRuntimeUsage,
+) -> Result<()> {
+    let Some(native_session_id) = usage.native_session_id.as_deref() else {
+        return Ok(());
+    };
+    if usage.scope != "session" || usage.counter_mode != RuntimeUsageCounterMode::Gauge {
+        return Ok(());
+    }
+    let used = usage.fields.context_used_tokens;
+    let window = usage.fields.context_size_tokens.filter(|value| *value > 0);
+    if used.is_none() && window.is_none() {
+        return Ok(());
+    }
+    if used.zip(window).is_some_and(|(used, window)| used > window) {
+        return Ok(());
+    }
+    let observed_at = usage
+        .occurred_at
+        .as_deref()
+        .context("Context observation has no time")?;
+    parse_time(observed_at)?;
+    transaction.execute(
+        r#"
+        INSERT INTO runtime_session_context_latest (
+            conversation_id, native_binding_id, native_binding_generation,
+            native_session_id, runtime_kind, runtime_version, model_key,
+            effective_config_digest, context_used_tokens, context_window_tokens,
+            source, dialect_id, observed_at, source_agent_run_id, source_execution_epoch
+        )
+        SELECT c.id, d.native_binding_id, d.native_binding_generation,
+               c.native_session_id, ?4, ?5,
+               COALESCE(NULLIF(ar.runtime_observed_model_id, ''), ?6),
+               ar.runtime_host_config_digest, ?7, ?8, ?9, ?10, ?11, ?1, ?2
+        FROM agent_run ar
+        JOIN runtime_input_delivery d ON d.agent_run_id = ar.id
+            AND d.execution_epoch = ar.execution_epoch
+        JOIN conversation c ON c.id = ar.conversation_id
+        WHERE ar.id = ?1 AND ar.execution_epoch = ?2
+          AND c.native_session_id = ?3
+          AND c.native_binding_id = d.native_binding_id
+          AND c.native_binding_generation = d.native_binding_generation
+          AND d.status = 'accepted'
+          AND NOT EXISTS (
+              SELECT 1 FROM agent_run newer
+              JOIN runtime_input_delivery nd ON nd.agent_run_id = newer.id
+                  AND nd.execution_epoch = newer.execution_epoch
+              WHERE newer.conversation_id = ar.conversation_id
+                AND nd.native_binding_id = d.native_binding_id
+                AND nd.native_binding_generation = d.native_binding_generation
+                AND nd.status = 'accepted'
+                AND (newer.started_at > ar.started_at
+                    OR (newer.started_at = ar.started_at AND newer.id > ar.id))
+          )
+        ON CONFLICT(conversation_id) DO UPDATE SET
+            native_binding_id = excluded.native_binding_id,
+            native_binding_generation = excluded.native_binding_generation,
+            native_session_id = excluded.native_session_id,
+            runtime_kind = excluded.runtime_kind,
+            runtime_version = excluded.runtime_version,
+            model_key = excluded.model_key,
+            effective_config_digest = excluded.effective_config_digest,
+            context_used_tokens = excluded.context_used_tokens,
+            context_window_tokens = excluded.context_window_tokens,
+            source = excluded.source,
+            dialect_id = excluded.dialect_id,
+            observed_at = excluded.observed_at,
+            source_agent_run_id = excluded.source_agent_run_id,
+            source_execution_epoch = excluded.source_execution_epoch
+        WHERE excluded.native_binding_id <> runtime_session_context_latest.native_binding_id
+           OR excluded.native_binding_generation <> runtime_session_context_latest.native_binding_generation
+           OR excluded.observed_at >= runtime_session_context_latest.observed_at
+        "#,
+        params![
+            run.key.agent_run_id,
+            run.key.execution_epoch,
+            native_session_id,
+            run.runtime_kind.as_str(),
+            run.runtime_version,
+            run.model_key,
+            used,
+            window,
+            usage.source,
+            usage.dialect_id,
+            observed_at,
+        ],
+    )?;
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -2683,6 +2888,7 @@ pub fn parse_codex_usage_message(method: &str, params: &Value) -> Vec<ParsedRunt
         return Vec::new();
     }
     let value = &params["tokenUsage"]["last"];
+    let native_session_id = string_at_any(params, &["/threadId"]);
     let fields = RuntimeUsageFields {
         input_tokens: integer_at_any(value, &["/inputTokens"]),
         uncached_input_tokens: None,
@@ -2693,22 +2899,41 @@ pub fn parse_codex_usage_message(method: &str, params: &Value) -> Vec<ParsedRunt
         context_used_tokens: None,
         context_size_tokens: None,
     };
-    if fields.is_empty() {
-        return Vec::new();
+    let mut observations = Vec::new();
+    if !fields.is_empty() {
+        observations.push(ParsedRuntimeUsage {
+            identity_suffix: "last".to_string(),
+            dialect_id: "codex-thread-token-usage-v2".to_string(),
+            source: "runtime_event".to_string(),
+            scope: "turn".to_string(),
+            counter_mode: RuntimeUsageCounterMode::Delta,
+            input_semantics: RuntimeInputSemantics::CacheInclusiveTotal,
+            native_session_id: native_session_id.clone(),
+            native_turn_id: string_at_any(params, &["/turnId"]),
+            fields,
+            cost: None,
+            occurred_at: None,
+        });
     }
-    vec![ParsedRuntimeUsage {
-        identity_suffix: "last".to_string(),
-        dialect_id: "codex-thread-token-usage-v2".to_string(),
-        source: "runtime_event".to_string(),
-        scope: "turn".to_string(),
-        counter_mode: RuntimeUsageCounterMode::Delta,
-        input_semantics: RuntimeInputSemantics::CacheInclusiveTotal,
-        native_session_id: string_at_any(params, &["/threadId"]),
-        native_turn_id: string_at_any(params, &["/turnId"]),
-        fields,
-        cost: None,
-        occurred_at: None,
-    }]
+    if let Some(window) = integer_at_any(params, &["/tokenUsage/modelContextWindow"]) {
+        observations.push(ParsedRuntimeUsage {
+            identity_suffix: format!("context_window:{window}"),
+            dialect_id: "codex-thread-context-window-v1".to_string(),
+            source: "runtime_event".to_string(),
+            scope: "session".to_string(),
+            counter_mode: RuntimeUsageCounterMode::Gauge,
+            input_semantics: RuntimeInputSemantics::Unknown,
+            native_session_id,
+            native_turn_id: None,
+            fields: RuntimeUsageFields {
+                context_size_tokens: Some(window),
+                ..Default::default()
+            },
+            cost: None,
+            occurred_at: None,
+        });
+    }
+    observations
 }
 
 pub fn codex_usage_source_identity(params: &Value) -> Result<String> {
@@ -2784,10 +3009,9 @@ pub fn parse_acp_usage_message(
                 });
             }
         }
-        if let (Some(used), Some(size)) = (
-            integer_at_any(update, &["/used"]),
-            integer_at_any(update, &["/size"]),
-        ) {
+        let used = integer_at_any(update, &["/used"]);
+        let size = integer_at_any(update, &["/size"]);
+        if used.is_some() || size.is_some() {
             observations.push(ParsedRuntimeUsage {
                 identity_suffix: "context_occupancy".to_string(),
                 dialect_id: "dsh-acp-context-gauge-v1".to_string(),
@@ -2798,8 +3022,8 @@ pub fn parse_acp_usage_message(
                 native_session_id: string_at_any(params, &["/sessionId"]),
                 native_turn_id: None,
                 fields: RuntimeUsageFields {
-                    context_used_tokens: Some(used),
-                    context_size_tokens: Some(size),
+                    context_used_tokens: used,
+                    context_size_tokens: size,
                     ..Default::default()
                 },
                 cost: None,
@@ -2940,9 +3164,37 @@ pub fn parse_acp_usage_message(
                 )
             })
         };
+        let context = RuntimeUsageFields {
+            context_used_tokens: integer_at_any(update, &["/used"]),
+            context_size_tokens: integer_at_any(update, &["/size"]),
+            ..Default::default()
+        };
+        if !context.is_empty() {
+            observations.push(ParsedRuntimeUsage {
+                identity_suffix: format!(
+                    "context:{}:{}",
+                    context
+                        .context_used_tokens
+                        .map_or("missing".to_string(), |value| value.to_string()),
+                    context
+                        .context_size_tokens
+                        .map_or("missing".to_string(), |value| value.to_string()),
+                ),
+                dialect_id: "acp-session-context-gauge-v1".to_string(),
+                source: "runtime_event".to_string(),
+                scope: "session".to_string(),
+                counter_mode: RuntimeUsageCounterMode::Gauge,
+                input_semantics: RuntimeInputSemantics::Unknown,
+                native_session_id: string_at_any(params, &["/sessionId"]),
+                native_turn_id: None,
+                fields: context,
+                cost: None,
+                occurred_at: None,
+            });
+        }
         if let Some(cost) = cost {
             observations.push(ParsedRuntimeUsage {
-                identity_suffix: "usage_update".to_string(),
+                identity_suffix: "usage_update_cost".to_string(),
                 dialect_id: "acp-usage-update-v2".to_string(),
                 source: "runtime_event".to_string(),
                 scope: "session".to_string(),
@@ -3475,7 +3727,119 @@ mod tests {
     }
 
     #[test]
-    fn cumulative_checkpoint_dedupes_advances_and_is_deleted_at_terminal() {
+    fn session_context_rejects_late_observations_after_binding_rotation() {
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(r#"
+            CREATE TABLE conversation (
+                id TEXT PRIMARY KEY, native_session_id TEXT, native_binding_id TEXT,
+                native_binding_generation INTEGER
+            );
+            CREATE TABLE agent_run (
+                id TEXT PRIMARY KEY, conversation_id TEXT, execution_epoch INTEGER,
+                started_at TEXT, runtime_observed_model_id TEXT, runtime_host_config_digest TEXT
+            );
+            CREATE TABLE runtime_input_delivery (
+                agent_run_id TEXT, execution_epoch INTEGER, native_binding_id TEXT,
+                native_binding_generation INTEGER, status TEXT
+            );
+            CREATE TABLE runtime_session_context_latest (
+                conversation_id TEXT PRIMARY KEY, native_binding_id TEXT,
+                native_binding_generation INTEGER, native_session_id TEXT,
+                runtime_kind TEXT, runtime_version TEXT, model_key TEXT,
+                effective_config_digest TEXT, context_used_tokens INTEGER,
+                context_window_tokens INTEGER, source TEXT, dialect_id TEXT,
+                observed_at TEXT, source_agent_run_id TEXT, source_execution_epoch INTEGER
+            );
+            INSERT INTO conversation VALUES ('conversation', 'session-a', 'binding-a', 1);
+            INSERT INTO agent_run VALUES ('run-a', 'conversation', 1, '2026-09-28T00:00:00Z', NULL, NULL);
+            INSERT INTO runtime_input_delivery VALUES ('run-a', 1, 'binding-a', 1, 'accepted');
+            INSERT INTO agent_run VALUES ('run-b', 'conversation', 1, '2026-09-28T00:01:00Z', NULL, NULL);
+            INSERT INTO runtime_input_delivery VALUES ('run-b', 1, 'binding-b', 2, 'accepted');
+        "#).unwrap();
+        let run = |id: &str| RuntimeUsageRun {
+            key: UsageRunKey {
+                agent_run_id: id.to_string(),
+                execution_epoch: 1,
+            },
+            runtime_kind: AdapterKind::CodexCli,
+            runtime_version: Some("0.157.1".to_string()),
+            provider_key: None,
+            model_key: None,
+            service_tier: None,
+        };
+        let observation = |session: &str, used: i64, at: &str| ParsedRuntimeUsage {
+            identity_suffix: "context".to_string(),
+            dialect_id: "fixture-context-v1".to_string(),
+            source: "runtime_event".to_string(),
+            scope: "session".to_string(),
+            counter_mode: RuntimeUsageCounterMode::Gauge,
+            input_semantics: RuntimeInputSemantics::Unknown,
+            native_session_id: Some(session.to_string()),
+            native_turn_id: None,
+            fields: RuntimeUsageFields {
+                context_used_tokens: Some(used),
+                context_size_tokens: Some(1000),
+                ..Default::default()
+            },
+            cost: None,
+            occurred_at: Some(at.to_string()),
+        };
+        let tx = connection.transaction().unwrap();
+        persist_session_context(
+            &tx,
+            &run("run-a"),
+            &observation("session-a", 400, "2026-09-28T00:00:30Z"),
+        )
+        .unwrap();
+        persist_session_context(
+            &tx,
+            &run("run-a"),
+            &observation("session-a", 100, "2026-09-28T00:00:20Z"),
+        )
+        .unwrap();
+        let used: i64 = tx
+            .query_row(
+                "SELECT context_used_tokens FROM runtime_session_context_latest",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            used, 400,
+            "an older observation must not overwrite a newer one"
+        );
+
+        tx.execute("UPDATE conversation SET native_session_id='session-b', native_binding_id='binding-b', native_binding_generation=2 WHERE id='conversation'", []).unwrap();
+        persist_session_context(
+            &tx,
+            &run("run-a"),
+            &observation("session-a", 600, "2026-09-28T00:02:00Z"),
+        )
+        .unwrap();
+        let current_count: i64 = tx.query_row("SELECT COUNT(*) FROM conversation c JOIN runtime_session_context_latest x ON x.conversation_id=c.id AND x.native_binding_id=c.native_binding_id AND x.native_binding_generation=c.native_binding_generation AND x.native_session_id=c.native_session_id", [], |row| row.get(0)).unwrap();
+        assert_eq!(
+            current_count, 0,
+            "the old Session context must disappear from the current read"
+        );
+        persist_session_context(
+            &tx,
+            &run("run-b"),
+            &observation("session-b", 200, "2026-09-28T00:02:10Z"),
+        )
+        .unwrap();
+        let current: (String, i64) = tx
+            .query_row(
+                "SELECT native_session_id, context_used_tokens FROM runtime_session_context_latest",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(current, ("session-b".to_string(), 200));
+        tx.commit().unwrap();
+    }
+
+    #[test]
+    fn cumulative_checkpoint_dedupes_resets_and_fences_resume_before_terminal() {
         let directory = std::env::temp_dir().join(format!(
             "rovai-runtime-usage-checkpoint-{}",
             uuid::Uuid::new_v4()
@@ -3505,33 +3869,37 @@ mod tests {
             model_key: Some("gpt-test".to_string()),
             service_tier: None,
         };
-        let persist =
-            |database: &mut Database, source_identity: &str, input: i64, read: i64, output: i64| {
-                let parsed = usage(
-                    RuntimeUsageCounterMode::Cumulative,
-                    RuntimeInputSemantics::CacheInclusiveTotal,
-                    Some(input),
-                    Some(read),
-                    None,
-                    Some(output),
-                );
-                MonitoringService::record_usage_batches(
-                    database,
-                    &[RuntimeUsageFlushBatch {
-                        run: run.clone(),
-                        records: vec![BufferedUsageRecord {
-                            key: BufferedUsageKey::new(&run.key, &parsed),
-                            usage: parsed,
-                            source_identities: vec![source_identity.to_string()],
-                        }],
-                        pending_since: Instant::now(),
+        let persist = |database: &mut Database,
+                       run: &RuntimeUsageRun,
+                       source_identity: &str,
+                       input: i64,
+                       read: i64,
+                       output: i64| {
+            let parsed = usage(
+                RuntimeUsageCounterMode::Cumulative,
+                RuntimeInputSemantics::CacheInclusiveTotal,
+                Some(input),
+                Some(read),
+                None,
+                Some(output),
+            );
+            MonitoringService::record_usage_batches(
+                database,
+                &[RuntimeUsageFlushBatch {
+                    run: run.clone(),
+                    records: vec![BufferedUsageRecord {
+                        key: BufferedUsageKey::new(&run.key, &parsed),
+                        usage: parsed,
+                        source_identities: vec![source_identity.to_string()],
                     }],
-                )
-                .unwrap();
-            };
+                    pending_since: Instant::now(),
+                }],
+            )
+            .unwrap();
+        };
 
-        persist(&mut database, "event-1", 100, 40, 20);
-        persist(&mut database, "event-2", 100, 40, 20);
+        persist(&mut database, &run, "event-1", 100, 40, 20);
+        persist(&mut database, &run, "event-2", 100, 40, 20);
         let before_advance: (Option<i64>, Option<i64>, Option<i64>) = database
             .connection()
             .query_row(
@@ -3545,8 +3913,8 @@ mod tests {
             .unwrap();
         assert_eq!(before_advance, (None, None, None));
 
-        persist(&mut database, "event-3", 150, 60, 30);
-        persist(&mut database, "event-4", 150, 60, 30);
+        persist(&mut database, &run, "event-3", 150, 60, 30);
+        persist(&mut database, &run, "event-4", 150, 60, 30);
         let after_advance: (Option<i64>, Option<i64>, Option<i64>) = database
             .connection()
             .query_row(
@@ -3567,6 +3935,24 @@ mod tests {
             .unwrap();
         assert_eq!(checkpoint_count, 1);
 
+        // A restarted native counter only establishes a new baseline. The next
+        // advance belongs to this Run; a resumed execution uses its own baseline.
+        persist(&mut database, &run, "event-reset", 10, 2, 1);
+        persist(&mut database, &run, "event-after-reset", 30, 7, 6);
+        let mut resumed = run.clone();
+        resumed.key.execution_epoch = 2;
+        persist(&mut database, &resumed, "event-resume-baseline", 80, 20, 8);
+        persist(&mut database, &resumed, "event-resume-advance", 100, 25, 10);
+        let after_resume: (Option<i64>, Option<i64>, Option<i64>) = database
+            .connection()
+            .query_row(
+                "SELECT prompt_input_total_tokens, cache_read_tokens, output_tokens FROM runtime_usage_run_summary WHERE agent_run_id='run-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(after_resume, (Some(90), Some(30), Some(17)));
+
         assert!(MonitoringService::finalize_usage_run(&mut database, "run-1").unwrap());
         let checkpoint_count: i64 = database
             .connection()
@@ -3575,6 +3961,15 @@ mod tests {
             })
             .unwrap();
         assert_eq!(checkpoint_count, 0);
+        let retained: (Option<i64>, Option<i64>, Option<i64>, bool) = database
+            .connection()
+            .query_row(
+                "SELECT prompt_input_total_tokens, cache_read_tokens, output_tokens, finalized_at IS NOT NULL FROM runtime_usage_run_summary WHERE agent_run_id='run-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(retained, (Some(90), Some(30), Some(17), true));
         drop(database);
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -3730,9 +4125,12 @@ mod tests {
             serde_json::from_str(include_str!("../tests/fixtures/runtime-usage/codex.json"))
                 .unwrap();
         let parsed = parse_codex_usage_message(codex["method"].as_str().unwrap(), &codex["params"]);
-        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].counter_mode, RuntimeUsageCounterMode::Delta);
         assert_eq!(parsed[0].fields.input_tokens, Some(120));
+        assert_eq!(parsed[1].scope, "session");
+        assert_eq!(parsed[1].fields.context_size_tokens, Some(200000));
+        assert_eq!(parsed[1].fields.context_used_tokens, None);
         assert_eq!(
             eligible_mask(AdapterKind::CodexCli, None) & ELIGIBLE_CACHE_WRITE,
             0,
@@ -3776,16 +4174,16 @@ mod tests {
             ),
         ] {
             let fixture: Value = serde_json::from_str(fixture).unwrap();
-            assert!(
-                parse_acp_usage_message(
-                    runtime,
-                    None,
-                    fixture["method"].as_str().unwrap(),
-                    &fixture["params"],
-                )
-                .is_empty(),
-                "Context-only ACP usage_update must not be stored as Token Usage"
+            let observations = parse_acp_usage_message(
+                runtime,
+                None,
+                fixture["method"].as_str().unwrap(),
+                &fixture["params"],
             );
+            assert_eq!(observations.len(), 1);
+            assert_eq!(observations[0].scope, "session");
+            assert_eq!(observations[0].fields.input_tokens, None);
+            assert_eq!(observations[0].fields.output_tokens, None);
         }
 
         let gauge = parse_acp_usage_message(
@@ -3912,7 +4310,7 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        assert!(codebuddy_usage.iter().all(|usage| usage.len() == 1));
+        assert!(codebuddy_usage.iter().all(|usage| usage.len() == 2));
         assert_eq!(codebuddy_usage[0][0].fields.input_tokens, Some(26073));
         assert_eq!(codebuddy_usage[0][0].fields.output_tokens, Some(101));
         assert_eq!(
@@ -3959,16 +4357,49 @@ mod tests {
                 .observe_run(&codebuddy_run, identity, usage, Instant::now())
                 .unwrap();
         }
+        let mut changed_context = codebuddy_messages[0].clone();
+        changed_context["params"]["update"]["used"] = json!(30000);
+        let changed_observations = parse_acp_usage_message(
+            AdapterKind::CodebuddyCli,
+            codebuddy["runtimeVersion"].as_str(),
+            "session/update",
+            &changed_context["params"],
+        );
+        codebuddy_buffer
+            .observe_run(
+                &codebuddy_run,
+                &codebuddy_identities[0],
+                &changed_observations,
+                Instant::now(),
+            )
+            .unwrap();
         let codebuddy_batches = codebuddy_buffer.drain(RuntimeUsageFlushTarget::Run {
             agent_run_id: "codebuddy-run-fixture".to_string(),
             execution_epoch: 1,
         });
         assert_eq!(codebuddy_batches.len(), 1);
-        assert_eq!(codebuddy_batches[0].records.len(), 1);
+        assert_eq!(codebuddy_batches[0].records.len(), 3);
         assert_eq!(
-            codebuddy_batches[0].records[0].usage.fields.output_tokens,
+            codebuddy_batches[0]
+                .records
+                .iter()
+                .find(|record| record.usage.scope == "model_call")
+                .unwrap()
+                .usage
+                .fields
+                .output_tokens,
             Some(101),
             "duplicate final Usage updates must not double-count the model call"
+        );
+        assert_eq!(
+            codebuddy_batches[0]
+                .records
+                .iter()
+                .filter(|record| record.usage.scope == "session")
+                .map(|record| record.usage.fields.context_used_tokens)
+                .collect::<Vec<_>>(),
+            vec![Some(26073), Some(30000)],
+            "a changed Session gauge must pass even if the private request ID repeats"
         );
 
         let qwen: Value =

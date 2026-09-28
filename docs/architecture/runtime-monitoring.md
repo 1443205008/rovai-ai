@@ -8,7 +8,7 @@ last_updated: 2026-08-17
 
 # Runtime Monitoring 架构
 
-精确字段与方法见 [Runtime Usage Monitoring v4](../contracts/runtime-usage-monitoring-v4.md)。长期最小化、
+精确字段与方法见 [Runtime Usage Monitoring v4](../contracts/runtime-usage-monitoring-v4.md)；执行台的三种指标另见 [Runtime Execution Metrics v1](../contracts/runtime-execution-metrics-v1.md)。长期最小化、
 稀疏语义、clean break 与 Cost grain 由
 [Evidence 与 Usage 不变量](foundational-invariants.md#evidence-usage)拥有。本架构只说明 Usage Transport、内存归一化、
 Projection/Rollup、Read Side 和 Renderer 如何组合。
@@ -29,6 +29,8 @@ Projection/Rollup、Read Side 和 Renderer 如何组合。
 
 Execution Evidence、Canonical Activity、AgentRun、Approval、Delivery、Recovery、Context 和 Runtime health
 继续由各自 Core domain 拥有。Monitoring 不复制、不删除也不重建这些事实。
+
+执行台增加一条窄读取路径：现有 Run summary 提供每 Run 四项用量，当前原生 Session 上下文单独保存在 `runtime_session_context_latest`。后者由 Session gauge 写入，并由 `Conversation` 的当前 Binding ID、代次和原生 Session ID 在读取时栅栏；Migration 178 从 v1.72/schema 127 建立空表并提升到 schema 128，不回填旧 Run 或旧 Session。Renderer 的 `LiveTokenSpeed` 只消费公开正文增量，不进入 Usage buffer、checkpoint 或 hourly rollup。
 
 ## Write path
 

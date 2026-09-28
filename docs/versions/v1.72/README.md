@@ -73,6 +73,10 @@ Migration 177 从 v1.72/schema 126 升到 schema 127，只在 camp 增加摘要�
 手动刷新均去重，不预热或增加异步订阅。取舍见 [V1.72-D02](decisions.md#v1-72-d02)，实现与验收记录见
 [实施计划](implementation-plan.md)。
 
+## 并行交付：执行指标
+
+执行台把当前正文输出速度、每 Run 原生四项用量与当前原生 Session 上下文分别呈现。速度由 Renderer 的公开增量估算；用量复用 Monitoring Run summary；Migration 178 增加当前 Session 上下文小投影，把 v1.72/schema 127 升至 schema 128。没有真实回包的 Runtime 字段维持未验证，不回填历史 Run 的结束上下文。字段与 UI 规则由 [Runtime Execution Metrics v1](../../contracts/runtime-execution-metrics-v1.md) 和 [Camp 会话工作区](../../ui/components/conversation-workspace.md#camp-执行过程) 拥有；当前机器核验与未决事项见[执行指标核验记录](../../research/runtime-monitoring/execution-metrics-verification-2026-09-28.md)。
+
 ## 并行交付：公开 Composer 队外 Mention
 
 Active Camp 中的用户可以从 `@` 候选选择资料仍在的队外队员。正文保留每处提及；发送时按身份去重，先逐人加入

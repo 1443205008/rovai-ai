@@ -646,6 +646,32 @@ export interface RuntimeUsageSnapshot {
   }
 }
 
+export interface RuntimeExecutionMetricsSnapshot {
+  schemaVersion: 1
+  runs: Array<{
+    agentRunId: string
+    executionEpoch: number
+    promptInputTotalTokens: number | null
+    outputTokens: number | null
+    cacheReadTokens: number | null
+    cacheWriteTokens: number | null
+    finalizedAt: string | null
+    lastObservedAt: string | null
+  }>
+  sessions: Array<{
+    conversationId: string
+    agentId: string
+    sessionGeneration: number
+    runtimeKind: AdapterKind
+    modelKey: string | null
+    usedTokens: number | null
+    windowTokens: number | null
+    source: string
+    dialectId: string
+    observedAt: string
+  }>
+}
+
 export type StartPreflightBlockerCode =
   | 'runtime_not_configured'
   | 'runtime_probe_required'
@@ -3809,6 +3835,7 @@ export type CoreMethod =
   | 'health.check'
   | 'diagnostics.check'
   | 'monitoring.snapshot'
+  | 'monitoring.execution'
   | 'runtime.discovery.rescan'
   | 'runtime.networkRecovery.wake'
   | 'runtime.subsystems.get'
