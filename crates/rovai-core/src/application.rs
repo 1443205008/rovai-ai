@@ -322,8 +322,8 @@ const DELIVERY_BATCH_SCHEDULER_PAGE_LIMIT: i64 = 16;
 const DELIVERY_BATCH_FALLBACK_INTERVAL: Duration = Duration::from_secs(30);
 const NON_BATCH_AGENT_RUN_DISPATCH_LIMIT: i64 = 16;
 const ORDERED_REQUEST_QUEUE_CAPACITY: usize = 128;
-const CAMP_READ_QUEUE_CAPACITY: usize = 16;
-const CAMP_READ_WORKERS: usize = 2;
+const INDEPENDENT_READ_QUEUE_CAPACITY: usize = 16;
+const INDEPENDENT_READ_WORKERS: usize = 2;
 const MISSION_GIT_READ_CONCURRENCY_LIMIT: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -838,8 +838,16 @@ fn request_runs_outside_main_queue(method: &str) -> bool {
     )
 }
 
-fn request_uses_camp_read_queue(method: &str) -> bool {
-    matches!(method, "camps.open" | "camps.enter")
+fn request_uses_independent_read_queue(method: &str) -> bool {
+    matches!(
+        method,
+        "camps.open"
+            | "camps.enter"
+            | "navigation.snapshot"
+            | "navigation.camps"
+            | "navigation.groupCamps"
+            | "navigation.findCamp"
+    )
 }
 
 fn is_execution_window_request(method: &str) -> bool {
@@ -1034,7 +1042,7 @@ async fn process_ordered_requests(
     Ok(())
 }
 
-async fn process_camp_read_requests(
+async fn process_independent_read_requests(
     core: Arc<Core>,
     requests: Arc<Mutex<mpsc::Receiver<ReceivedRequest>>>,
     ordered_requests: mpsc::Sender<ReceivedRequest>,
@@ -1044,7 +1052,7 @@ async fn process_camp_read_requests(
         let Some(received) = requests.lock().await.recv().await else {
             return Ok(());
         };
-        if received.request.method == "camps.open" {
+        if received.request.method != "camps.enter" {
             let response =
                 response_for_request(&core, &received.request, received.received_at).await;
             enqueue_response(&output, &response)?;
@@ -17462,13 +17470,13 @@ async fn run_core(
         output_tx.clone(),
         host_control.clone(),
     ));
-    let (camp_read_tx, camp_read_rx) = mpsc::channel(CAMP_READ_QUEUE_CAPACITY);
-    let camp_read_rx = Arc::new(Mutex::new(camp_read_rx));
-    let mut camp_read_workers = Vec::with_capacity(CAMP_READ_WORKERS);
-    for _ in 0..CAMP_READ_WORKERS {
-        camp_read_workers.push(tokio::spawn(process_camp_read_requests(
+    let (independent_read_tx, independent_read_rx) = mpsc::channel(INDEPENDENT_READ_QUEUE_CAPACITY);
+    let independent_read_rx = Arc::new(Mutex::new(independent_read_rx));
+    let mut independent_read_workers = Vec::with_capacity(INDEPENDENT_READ_WORKERS);
+    for _ in 0..INDEPENDENT_READ_WORKERS {
+        independent_read_workers.push(tokio::spawn(process_independent_read_requests(
             core.clone(),
-            camp_read_rx.clone(),
+            independent_read_rx.clone(),
             ordered_request_tx.clone(),
             output_tx.clone(),
         )));
@@ -17510,14 +17518,16 @@ async fn run_core(
             }
         }
 
-        if request_uses_camp_read_queue(&request.method) {
-            camp_read_tx
+        if request_uses_independent_read_queue(&request.method) {
+            independent_read_tx
                 .send(ReceivedRequest {
                     request,
                     received_at,
                 })
                 .await
-                .map_err(|_| anyhow::anyhow!("Camp read request workers stopped unexpectedly"))?;
+                .map_err(|_| {
+                    anyhow::anyhow!("independent read request workers stopped unexpectedly")
+                })?;
             continue;
         }
 
@@ -17542,9 +17552,11 @@ async fn run_core(
             .map_err(|_| anyhow::anyhow!("ordered Core request worker stopped unexpectedly"))?;
     }
 
-    drop(camp_read_tx);
-    for worker in camp_read_workers {
-        worker.await.context("Camp read request worker failed")??;
+    drop(independent_read_tx);
+    for worker in independent_read_workers {
+        worker
+            .await
+            .context("independent read request worker failed")??;
     }
     drop(ordered_request_tx);
     ordered_request_worker
@@ -27713,9 +27725,18 @@ done
         assert!(!request_runs_outside_main_queue("camps.snapshot"));
         assert!(!request_runs_outside_main_queue("camps.enter"));
         assert!(!request_runs_outside_main_queue("camps.open"));
-        assert!(request_uses_camp_read_queue("camps.enter"));
-        assert!(request_uses_camp_read_queue("camps.open"));
-        assert!(!request_uses_camp_read_queue("camps.reconcileDefaultLead"));
+        assert!(request_uses_independent_read_queue("camps.enter"));
+        assert!(request_uses_independent_read_queue("camps.open"));
+        assert!(request_uses_independent_read_queue("navigation.snapshot"));
+        assert!(request_uses_independent_read_queue("navigation.camps"));
+        assert!(request_uses_independent_read_queue("navigation.groupCamps"));
+        assert!(request_uses_independent_read_queue("navigation.findCamp"));
+        assert!(!request_uses_independent_read_queue(
+            "navigation.campViewed"
+        ));
+        assert!(!request_uses_independent_read_queue(
+            "camps.reconcileDefaultLead"
+        ));
         assert!(!request_runs_outside_main_queue("camp.messages.page"));
         assert!(request_runs_outside_main_queue("agentRunExecution.page"));
         assert!(request_runs_outside_main_queue("agentRunExecution.changes"));
@@ -27864,6 +27885,7 @@ done
                 )
                 .await
         });
+        let navigation_group_key = format!("directory:{}", workspace_dir.to_string_lossy());
         let inspection_service = service.clone();
         let mut inspection_request = tokio::spawn(async move {
             inspection_service
@@ -27907,6 +27929,15 @@ done
                 )
                 .await
         });
+        let navigation_service = service.clone();
+        let mut navigation_request = tokio::spawn(async move {
+            navigation_service
+                .request(
+                    "navigation.snapshot",
+                    json!({ "groupKeys": [navigation_group_key] }),
+                )
+                .await
+        });
         let repair_service = service.clone();
         let repair_target = repair_camp_id.clone();
         let mut repair_request = tokio::spawn(async move {
@@ -27939,6 +27970,8 @@ done
         }
         let open_before_release =
             tokio::time::timeout_at(barrier_release_at, &mut open_request).await;
+        let navigation_before_release =
+            tokio::time::timeout_at(barrier_release_at, &mut navigation_request).await;
         let repair_before_release =
             tokio::time::timeout_at(barrier_release_at, &mut repair_request).await;
         let repair_waited_for_ordered_queue = repair_before_release.is_err();
@@ -27947,6 +27980,7 @@ done
             .filter(|result| result.is_ok())
             .count();
         let open_finished_while_blocked = open_before_release.is_ok();
+        let navigation_finished_while_blocked = navigation_before_release.is_ok();
         eprintln!(
             "[camp-open-dispatch-fixture] rapid_clicks=3 completed_before_release={} latest_response_ms={}",
             camp_before_release_count,
@@ -27976,6 +28010,10 @@ done
         let open_reply = match open_before_release {
             Ok(completed) => completed.unwrap().unwrap(),
             Err(_) => open_request.await.unwrap().unwrap(),
+        };
+        let navigation_reply = match navigation_before_release {
+            Ok(completed) => completed.unwrap().unwrap(),
+            Err(_) => navigation_request.await.unwrap().unwrap(),
         };
         let repair_reply = match repair_before_release {
             Ok(completed) => completed.unwrap().unwrap(),
@@ -28083,6 +28121,19 @@ done
         assert!(
             open_finished_while_blocked,
             "Camp open waited for unrelated FIFO work"
+        );
+        assert!(
+            navigation_finished_while_blocked,
+            "navigation snapshot waited for unrelated FIFO work"
+        );
+        assert!(
+            navigation_reply.error.is_none(),
+            "navigation snapshot failed: {:?}",
+            navigation_reply.error
+        );
+        assert_eq!(
+            navigation_reply.result.unwrap()["projects"][0]["totalCount"],
+            4
         );
         assert!(
             repair_waited_for_ordered_queue,

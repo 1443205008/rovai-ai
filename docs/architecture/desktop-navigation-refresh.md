@@ -3,7 +3,7 @@ document_type: architecture
 architecture: desktop-navigation-refresh
 authority: desktop-navigation-invalidation-and-refresh-boundaries
 status: accepted
-last_updated: 2026-09-27
+last_updated: 2026-09-28
 ---
 
 # Desktop Navigation Refresh 架构
@@ -21,6 +21,10 @@ Navigation Preferences 拥有本机项目顺序和显示名称。字段见 [Navi
 | Renderer window reader + refresh coordinator | 一处合并行/组/完整范围，串行执行、trailing、退避与窗口旧响应保护 |
 | Foreground safety refresh | 保留前台约 20 秒与聚焦完整性兜底，从摘要取完整快照；隐藏时停止 |
 | Overview loader | 首次建立完整导航与其他页面基础；普通 Camp 切换不调用 Overview |
+
+`navigation.snapshot`、`navigation.camps`、`navigation.groupCamps` 和 `navigation.findCamp` 是纯读取，
+进入 Core 已有的有界独立读取队列，避免被无关的顺序命令阻塞。实际 SQLite 操作仍通过同一数据库锁串行化。
+`navigation.campViewed` 会更新已读水位，继续走顺序命令队列；`camps.enter` 需要修复 Lead 时也回到该队列。
 
 ## Post-commit invalidation flow
 
