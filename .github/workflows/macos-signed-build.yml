@@ -97,6 +97,7 @@ jobs:
           P12_PATH="$RUNNER_TEMP/rovai-release-signing.p12"
           CERT_PEM="$RUNNER_TEMP/rovai-release-signing.pem"
           API_KEY_PATH="$RUNNER_TEMP/rovai-notarization-key.p8"
+          G2_CERT_PATH="$RUNNER_TEMP/rovai-developer-id-g2.cer"
           KEYCHAIN_PATH="$RUNNER_TEMP/rovai-signing.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
           DEFAULT_KEYCHAIN="$(security default-keychain -d user | tr -d '"')"
@@ -128,6 +129,17 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" "$DEFAULT_KEYCHAIN"
+
+          curl --fail --location --silent --show-error \
+            --output "$G2_CERT_PATH" \
+            'https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer'
+          G2_CERT_SHA256="$(shasum -a 256 "$G2_CERT_PATH" | awk '{print $1}')"
+          test "$G2_CERT_SHA256" = \
+            'f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a' || {
+            echo "Developer ID G2 intermediate fingerprint mismatch" >&2
+            exit 1
+          }
+          security add-certificates -k "$KEYCHAIN_PATH" "$G2_CERT_PATH"
 
           security import "$P12_PATH" \
             -k "$KEYCHAIN_PATH" \
@@ -183,6 +195,7 @@ jobs:
           P12_PATH="$RUNNER_TEMP/rovai-release-signing.p12"
           CERT_PEM="$RUNNER_TEMP/rovai-release-signing.pem"
           API_KEY_PATH="$RUNNER_TEMP/rovai-notarization-key.p8"
+          G2_CERT_PATH="$RUNNER_TEMP/rovai-developer-id-g2.cer"
           KEYCHAIN_PATH="$RUNNER_TEMP/rovai-signing.keychain-db"
           DEFAULT_KEYCHAIN="$(
             security default-keychain -d user 2>/dev/null |
@@ -202,6 +215,7 @@ jobs:
             "$P12_PATH" \
             "$CERT_PEM" \
             "$API_KEY_PATH" \
+            "$G2_CERT_PATH" \
             "$KEYCHAIN_PATH"
 
           exit 0
