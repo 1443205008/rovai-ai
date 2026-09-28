@@ -6571,6 +6571,7 @@ impl ChannelService {
             decline_unattended_channel_retries(&transaction, actor, &now_text)?;
             project_active_request_deliveries(&transaction, &now_text)?;
             reconcile_terminal_pending_execution_consoles(&transaction, &now_text)?;
+            reconcile_superseded_execution_consoles(&transaction, provider, &now_text)?;
             settle_terminal_requests(&transaction, &now_text)?;
             promote_ready_requests(&transaction, &now_text, &mut settled_run_ids)?;
             let mut claims = claim_deliveries(
@@ -9463,7 +9464,6 @@ fn try_admit_request(
         ],
     )?;
     close_queue_ack_for_request(transaction, request_id, &ack_app_id, now)?;
-    recall_older_execution_consoles(transaction, request_id, now)?;
     Ok(AdmissionAttempt::Admitted)
 }
 
@@ -9799,29 +9799,51 @@ fn delivery_priority(delivery_kind: &str) -> i64 {
     }
 }
 
-fn recall_older_execution_consoles(
+/// Reconstruct card supersession from durable Run starts. The member lane is
+/// scoped to one external conversation, and an unfinished Run keeps its stop
+/// action even if a newer Run has already started.
+fn reconcile_superseded_execution_consoles(
     transaction: &Transaction<'_>,
-    new_request_id: &str,
+    provider: &str,
     now: &str,
 ) -> Result<()> {
     let consoles = query_rows(
         transaction,
         r#"
-        SELECT console.id, console.request_id, console.target_app_id,
-               console.agent_id, console.external_message_id
-        FROM channel_turn_request AS incoming
-        JOIN channel_conversation_binding AS incoming_binding
-          ON incoming_binding.id = incoming.binding_id
-        JOIN channel_execution_console AS console
-          ON console.channel_conversation_id = incoming_binding.channel_conversation_id
-        JOIN channel_turn_request AS earlier ON earlier.id = console.request_id
-        WHERE incoming.id = ?1
-          AND (earlier.created_at < incoming.created_at
-               OR (earlier.created_at = incoming.created_at AND earlier.id < incoming.id))
-          AND console.state <> 'recalled'
-        ORDER BY console.created_at, console.agent_run_id
+        SELECT id, request_id, target_app_id, agent_id,
+               external_message_id, successor_run_id
+        FROM (
+            SELECT console.id, console.request_id, console.target_app_id,
+                   console.agent_id, console.external_message_id,
+                   (
+                       SELECT successor.agent_run_id
+                       FROM channel_execution_console AS successor
+                       JOIN agent_run AS successor_run
+                         ON successor_run.id = successor.agent_run_id
+                       WHERE successor.channel_conversation_id = console.channel_conversation_id
+                         AND successor.agent_id = console.agent_id
+                         AND successor_run.started_at IS NOT NULL
+                         AND (
+                             successor_run.started_at >
+                               COALESCE(run.started_at, run.created_at)
+                             OR (successor_run.started_at =
+                                   COALESCE(run.started_at, run.created_at)
+                                 AND successor.agent_run_id > console.agent_run_id)
+                         )
+                       ORDER BY successor_run.started_at DESC, successor.agent_run_id DESC
+                       LIMIT 1
+                   ) AS successor_run_id
+            FROM channel_execution_console AS console
+            JOIN agent_run AS run ON run.id = console.agent_run_id
+            JOIN channel_conversation AS conversation
+              ON conversation.id = console.channel_conversation_id
+            WHERE conversation.provider = ?1
+              AND run.status IN ('succeeded', 'failed', 'cancelled')
+              AND console.state IN ('terminal_sealed', 'recall_failed')
+        ) WHERE successor_run_id IS NOT NULL
+        ORDER BY id
         "#,
-        [new_request_id],
+        [provider],
         |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -9829,10 +9851,22 @@ fn recall_older_execution_consoles(
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
             ))
         },
     )?;
-    for (console_id, request_id, target_app_id, agent_id, external_message_id) in consoles {
+    for (console_id, request_id, target_app_id, agent_id, external_message_id, successor_run_id) in
+        consoles
+    {
+        let dedupe_key = format!("execution_console_recall:{console_id}:{successor_run_id}");
+        let already_attempted: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM channel_delivery WHERE dedupe_key = ?1)",
+            [&dedupe_key],
+            |row| row.get(0),
+        )?;
+        if already_attempted {
+            continue;
+        }
         let recall_open: bool = transaction.query_row(
             r#"
             SELECT EXISTS(
@@ -9893,7 +9927,7 @@ fn recall_older_execution_consoles(
             transaction,
             &request_id,
             &console_id,
-            &format!("execution_console_recall:{console_id}:{new_request_id}"),
+            &dedupe_key,
             "execution_console_recall",
             &target_app_id,
             Some(&agent_id),
@@ -10629,29 +10663,6 @@ fn materialize_execution_console(
     output_sequence: i64,
     now: &str,
 ) -> Result<()> {
-    let superseded: bool = transaction.query_row(
-        r#"
-        SELECT EXISTS(
-            SELECT 1
-            FROM channel_turn_request AS source
-            JOIN channel_turn_request AS later
-              ON (later.created_at > source.created_at
-                  OR (later.created_at = source.created_at AND later.id > source.id))
-            JOIN channel_conversation_binding AS later_binding
-              ON later_binding.id = later.binding_id
-            WHERE source.id = ?1
-              AND later_binding.channel_conversation_id = ?2
-              AND later.status IN ('admitted', 'completed')
-        )
-        "#,
-        params![request_id, channel_conversation_id],
-        |row| row.get(0),
-    )?;
-    if superseded {
-        // A Run from an earlier root can start after a newer root was
-        // admitted. It must not recreate a card that the newer root revoked.
-        return Ok(());
-    }
     let digest = canonical_json_digest(&json!({
         "runStatus": run_status,
         "runVersion": run_version,
@@ -14746,7 +14757,7 @@ mod tests {
     }
 
     #[test]
-    fn next_root_recalls_prior_execution_card_for_feishu_and_lark() {
+    fn next_claimed_run_recalls_prior_same_member_card_for_feishu_and_lark() {
         assert_provider_execution_recall::<false>();
         assert_provider_execution_recall::<true>();
     }
@@ -14757,6 +14768,21 @@ mod tests {
         let world = provider_world::<LARK>(&mut database, &quick_chat_path);
         let service = ChannelService::default();
         let provider = world.spec.provider;
+        let prior_at = (Utc::now() - Duration::seconds(2)).to_rfc3339();
+        database
+            .connection()
+            .execute(
+                "UPDATE agent_run SET status = 'succeeded', started_at = ?2, ended_at = ?2, updated_at = ?2 WHERE id = ?1",
+                params![world.agent_run_id, prior_at],
+            )
+            .unwrap();
+        database
+            .connection()
+            .execute(
+                "UPDATE channel_execution_console SET state = 'terminal_sealed' WHERE agent_run_id = ?1",
+                [&world.agent_run_id],
+            )
+            .unwrap();
         let mut message = observation_command(
             &world.app_id,
             &format!("om_{provider}_next_root"),
@@ -14792,6 +14818,34 @@ mod tests {
             .unwrap();
         assert_eq!(admitted.result.code, "channel.turn.admitted", "{provider}");
         let worker_id = format!("{provider}-recall-worker");
+        let queued_runs = claim_waiting_runs(&mut database);
+        assert_eq!(queued_runs.len(), 1, "{provider}");
+        let queued_tick = service
+            .host_tick(
+                &mut database,
+                &ActorRef::System {
+                    component_id: world.spec.host_component.to_string(),
+                },
+                &ChannelHostTickRequest {
+                    worker_id: format!("{provider}-queued-worker"),
+                    inbound_attachment_app_ids: Vec::new(),
+                    limit: 20,
+                },
+            )
+            .unwrap();
+        assert!(
+            queued_tick
+                .deliveries
+                .iter()
+                .all(|delivery| delivery.delivery_kind != "execution_console_recall")
+        );
+        database
+            .connection()
+            .execute(
+                "UPDATE agent_run SET status = 'running', started_at = ?2, updated_at = ?2 WHERE id = ?1",
+                params![queued_runs[0], Utc::now().to_rfc3339()],
+            )
+            .unwrap();
         let tick = service
             .host_tick(
                 &mut database,
@@ -14809,7 +14863,7 @@ mod tests {
             .deliveries
             .iter()
             .find(|delivery| delivery.delivery_kind == "execution_console_recall")
-            .expect("a later root must claim the old execution card recall");
+            .expect("a later claimed Run must recall the old execution card");
         assert_eq!(recall.target_app_id, world.app_id, "{provider}");
         assert_eq!(
             recall.update_message_id.as_deref(),
@@ -14847,7 +14901,7 @@ mod tests {
     }
 
     #[test]
-    fn run_claimed_after_newer_root_does_not_open_an_obsolete_execution_card() {
+    fn later_root_admission_does_not_hide_an_earlier_run_card() {
         let mut database = seeded_runtime_database_owned();
         let service = ChannelService::default();
         connect_account(&service, &mut database);
@@ -14946,10 +15000,15 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(tick.deliveries.iter().all(|delivery| {
-            delivery.delivery_kind != "execution_console_upsert"
-                || delivery.payload["agentRunId"] != first_run_id
+        assert!(tick.deliveries.iter().any(|delivery| {
+            delivery.delivery_kind == "execution_console_upsert"
+                && delivery.payload["agentRunId"] == first_run_id
         }));
+        assert!(
+            tick.deliveries
+                .iter()
+                .all(|delivery| delivery.delivery_kind != "execution_console_recall")
+        );
         let console_count: i64 = database
             .connection()
             .query_row(
@@ -14958,7 +15017,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(console_count, 0);
+        assert_eq!(console_count, 1);
     }
 
     #[test]
@@ -14976,9 +15035,16 @@ mod tests {
             )
             .unwrap();
         let transaction = database.connection_mut().transaction().unwrap();
+        let prior_at = (Utc::now() - Duration::seconds(2)).to_rfc3339();
         transaction
             .execute(
-                "UPDATE channel_execution_console SET latest_sequence = 3 WHERE id = ?1",
+                "UPDATE agent_run SET status = 'succeeded', started_at = ?2, ended_at = ?2, updated_at = ?2 WHERE id = ?1",
+                params![world.agent_run_id, prior_at],
+            )
+            .unwrap();
+        transaction
+            .execute(
+                "UPDATE channel_execution_console SET latest_sequence = 3, state = 'terminal_sealed' WHERE id = ?1",
                 [&console_id],
             )
             .unwrap();
@@ -15053,6 +15119,15 @@ mod tests {
                             .to_string(),
                     },
                 ),
+            )
+            .unwrap();
+        let successor_runs = claim_waiting_runs(&mut database);
+        assert_eq!(successor_runs.len(), 1);
+        database
+            .connection()
+            .execute(
+                "UPDATE agent_run SET status = 'running', started_at = ?2, updated_at = ?2 WHERE id = ?1",
+                params![successor_runs[0], Utc::now().to_rfc3339()],
             )
             .unwrap();
         let blocked_tick = service
@@ -18617,6 +18692,13 @@ mod tests {
             .unwrap();
         assert_eq!(cancelled.result.status, CommandResultStatus::Applied);
         assert_eq!(cancelled.result.payload["status"], "cancelled");
+        database
+            .connection()
+            .execute(
+                "UPDATE channel_execution_console SET state = 'terminal_sealed' WHERE agent_run_id = ?1",
+                [&console_source.agent_run_id],
+            )
+            .unwrap();
         let mut queued_observation = observation_command(
             "ding-app-agent_1",
             "ding-message-2",
@@ -18667,11 +18749,19 @@ mod tests {
             1,
             "a later Channel message is received immediately and waits only in the Agent lane",
         );
+        let successor_runs = claim_waiting_runs(&mut database);
         assert_eq!(
-            claim_waiting_runs(&mut database).len(),
+            successor_runs.len(),
             1,
-            "the ordinary batch Scheduler claims the successor after terminal settlement"
+            "the Scheduler must create one successor"
         );
+        database
+            .connection()
+            .execute(
+                "UPDATE agent_run SET status = 'running', started_at = ?2, updated_at = ?2 WHERE id = ?1",
+                params![successor_runs[0], Utc::now().to_rfc3339()],
+            )
+            .unwrap();
 
         let next_tick = service
             .host_tick(
@@ -18690,7 +18780,7 @@ mod tests {
             .deliveries
             .iter()
             .find(|delivery| delivery.delivery_kind == "execution_console_recall")
-            .expect("the next root must recall the previous DingTalk card");
+            .expect("the next started Run must recall the previous DingTalk card");
         assert_eq!(
             execution_recall.update_message_id.as_deref(),
             Some("ding-card-run-1")
@@ -21730,10 +21820,21 @@ mod tests {
         let descendants = claim_waiting_runs(&mut restarted);
         assert_eq!(descendants.len(), 1);
         let descendant_run_id = &descendants[0];
-        let descendant_ended_at = (Utc::now() - Duration::seconds(2)).to_rfc3339();
+        assert_eq!(
+            restarted
+                .connection()
+                .query_row(
+                    "SELECT COUNT(*) FROM channel_delivery WHERE delivery_kind = 'execution_console_recall'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0,
+            "a queued A2A descendant does not supersede the previous card"
+        );
         restarted.connection().execute(
-            "UPDATE agent_run SET status = 'succeeded', ended_at = ?2, updated_at = ?2 WHERE id = ?1",
-            params![descendant_run_id, descendant_ended_at],
+            "UPDATE agent_run SET status = 'running', started_at = ?2, updated_at = ?2 WHERE id = ?1",
+            params![descendant_run_id, Utc::now().to_rfc3339()],
         ).unwrap();
         let descendant_tick = service
             .host_tick(
@@ -21748,11 +21849,80 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(descendant_tick.deliveries.iter().any(|delivery| {
-            delivery.delivery_kind == "execution_console_upsert"
-                && delivery.target_app_id == "cli_app_2"
-                && delivery.payload["agentRunId"] == *descendant_run_id
-        }));
+        let descendant_card = descendant_tick
+            .deliveries
+            .iter()
+            .find(|delivery| {
+                delivery.delivery_kind == "execution_console_upsert"
+                    && delivery.target_app_id == "cli_app_2"
+                    && delivery.payload["agentRunId"] == *descendant_run_id
+            })
+            .expect("the started A2A descendant must open a card");
+        assert!(
+            descendant_tick
+                .deliveries
+                .iter()
+                .all(|delivery| { delivery.delivery_kind != "execution_console_recall" }),
+            "another member's Run must not recall agent_1's card"
+        );
+        service
+            .settle_delivery(
+                &mut restarted,
+                &host_envelope(
+                    "settle-a2a-descendant-card",
+                    SettleChannelDeliveryCommand {
+                        delivery_id: descendant_card.delivery_id.clone(),
+                        worker_id: "a2a-console-worker".to_string(),
+                        outcome: "sent".to_string(),
+                        external_delivery_message_id: Some("om_a2a_descendant_card".to_string()),
+                        external_update_message_id: Some("om_a2a_descendant_card".to_string()),
+                        failure_code: None,
+                        retryable: false,
+                    },
+                ),
+            )
+            .unwrap();
+        let descendant_ended_at = Utc::now().to_rfc3339();
+        restarted.connection().execute(
+            "UPDATE agent_run SET status = 'succeeded', ended_at = ?2, updated_at = ?2 WHERE id = ?1",
+            params![descendant_run_id, descendant_ended_at],
+        ).unwrap();
+        service
+            .host_tick(
+                &mut restarted,
+                &ActorRef::System {
+                    component_id: FEISHU_CHANNEL_HOST_COMPONENT.to_string(),
+                },
+                &ChannelHostTickRequest {
+                    worker_id: "a2a-terminal-pending-worker".to_string(),
+                    inbound_attachment_app_ids: Vec::new(),
+                    limit: 20,
+                },
+            )
+            .unwrap();
+        restarted
+            .connection()
+            .execute(
+                "UPDATE channel_execution_console SET updated_at = ?2 WHERE agent_run_id = ?1",
+                params![
+                    descendant_run_id,
+                    (Utc::now() - Duration::seconds(2)).to_rfc3339()
+                ],
+            )
+            .unwrap();
+        service
+            .host_tick(
+                &mut restarted,
+                &ActorRef::System {
+                    component_id: FEISHU_CHANNEL_HOST_COMPONENT.to_string(),
+                },
+                &ChannelHostTickRequest {
+                    worker_id: "a2a-terminal-sealed-worker".to_string(),
+                    inbound_attachment_app_ids: Vec::new(),
+                    limit: 20,
+                },
+            )
+            .unwrap();
         assert_eq!(
             restarted
                 .connection()
@@ -21763,6 +21933,102 @@ mod tests {
                 )
                 .unwrap(),
             request_id
+        );
+        let return_at = Utc::now().to_rfc3339();
+        restarted
+            .connection()
+            .execute(
+                "UPDATE camp SET last_message_sequence = last_message_sequence + 1 WHERE id = ?1",
+                [&camp_id],
+            )
+            .unwrap();
+        let return_sequence: i64 = restarted
+            .connection()
+            .query_row(
+                "SELECT last_message_sequence FROM camp WHERE id = ?1",
+                [&camp_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        restarted
+            .connection()
+            .execute(
+                r#"
+            INSERT INTO camp_message(
+                id, camp_id, sequence, author_type, author_id,
+                source_agent_run_id, body, structured_content_json, content_digest,
+                address_mode, addressed_agent_ids_json, reply_to_camp_message_id,
+                camp_turn_id, agent_run_id, tombstoned_at, version,
+                created_at, updated_at, effective_recipient_ids_json,
+                recipient_set_digest, recipient_presentation_json, source_operation_id
+            ) VALUES (
+                'channel-a2a-return', ?1, ?2, 'agent', 'agent_2',
+                ?3, '请继续处理', ?4, ?5,
+                'explicit', '["agent_1"]', NULL,
+                NULL, ?3, NULL, 1,
+                ?6, ?6, '["agent_1"]', NULL, '{}', NULL
+            )
+            "#,
+                params![
+                    camp_id,
+                    return_sequence,
+                    descendant_run_id,
+                    serde_json::to_string(&a2a_content).unwrap(),
+                    canonical_content_digest(&a2a_content).unwrap(),
+                    return_at,
+                ],
+            )
+            .unwrap();
+        {
+            let transaction = restarted.connection_mut().transaction().unwrap();
+            crate::delivery_queue::enqueue_message_deliveries(
+                &transaction,
+                &camp_id,
+                "channel-a2a-return",
+                return_sequence,
+                &["agent_1".to_string()],
+                &return_at,
+            )
+            .unwrap();
+            transaction.commit().unwrap();
+        }
+        let return_runs = claim_waiting_runs(&mut restarted);
+        assert_eq!(return_runs.len(), 1);
+        restarted.connection().execute(
+            "UPDATE agent_run SET status = 'running', started_at = ?2, updated_at = ?2 WHERE id = ?1",
+            params![return_runs[0], Utc::now().to_rfc3339()],
+        ).unwrap();
+        let return_tick = service
+            .host_tick(
+                &mut restarted,
+                &ActorRef::System {
+                    component_id: FEISHU_CHANNEL_HOST_COMPONENT.to_string(),
+                },
+                &ChannelHostTickRequest {
+                    worker_id: "a2a-return-worker".to_string(),
+                    inbound_attachment_app_ids: Vec::new(),
+                    limit: 20,
+                },
+            )
+            .unwrap();
+        assert!(
+            return_tick.deliveries.iter().any(|delivery| {
+                delivery.delivery_kind == "execution_console_recall"
+                    && delivery.update_message_id.as_deref() == Some("om_terminal_console_card")
+            }),
+            "the next started Run for agent_1 must recall agent_1's previous card"
+        );
+        assert_eq!(
+            restarted
+                .connection()
+                .query_row(
+                    "SELECT state FROM channel_execution_console WHERE agent_run_id = ?1",
+                    [descendant_run_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "terminal_sealed",
+            "agent_2's card must remain visible"
         );
     }
 

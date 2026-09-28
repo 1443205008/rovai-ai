@@ -3,7 +3,7 @@ document_type: architecture
 architecture: dingtalk-channel
 authority: dingtalk-channel-component-and-authority-boundaries
 status: accepted
-last_updated: 2026-09-27
+last_updated: 2026-09-28
 ---
 
 # 钉钉渠道架构
@@ -187,10 +187,11 @@ OAPI multipart 媒体上传和 `sampleFile`。群与私聊沿用当前 Bot 的 R
 不通过错误文案猜测。Robot send 没有已采用的客户端幂等键，响应丢失后重试可能重复投递；真实租户验证前，
 不能把 fixture 通过表述为平台文件收发验收。
 
-下一条 root request admission 后，执行卡使用按 group/p2p 选择的 Robot recall API 与持久 carrier identity 真正撤回，
-成功后撤销内存 URL grant；不再更新为“此执行记录已结束”。只有真正进入 FIFO 的请求发送排队 AI Card，admission 后
-使用同样的 carrier identity 撤回，不更新为“已开始”或结束占位。运行中的停止按钮保持 Owner-only exact-run callback，
-终态继续移除；终态卡在下一条 root 入场前仍可见。
+同一 ChannelConversation 中同一队员的后继 Run 被领取并开始后，更早且已封存的执行卡使用按 group/p2p 选择的
+Robot recall API 与持久 carrier identity 真正撤回，成功后撤销内存 URL grant；不再更新为“此执行记录已结束”。
+旧 Run 仍在执行时保留卡片与 Owner-only exact-run 停止按钮，待它封存后再撤回；其他队员的卡片互不影响。
+只有真正进入 FIFO 的请求发送排队 AI Card，admission 后使用同样的 carrier identity 撤回，不更新为“已开始”或结束占位。
+排队未领取的 Run 与新 root request admission 均不触发执行卡撤回；最新 Run 的终态卡在同队员后继 Run 开始前仍可见。
 
 ## Core 复用与入站准入
 
