@@ -6863,19 +6863,22 @@ impl ChannelService {
                                 "execution console external message identity changed unexpectedly"
                             );
                         }
-                        let (agent_run_id, latest_sequence, delivered_sequence): (
+                        let (agent_run_id, latest_sequence, delivered_sequence, state): (
                             String,
                             i64,
                             i64,
+                            String,
                         ) = transaction.query_row(
                             r#"
-                            SELECT agent_run_id, latest_sequence, delivered_sequence
+                            SELECT agent_run_id, latest_sequence, delivered_sequence, state
                             FROM channel_execution_console WHERE id = ?1
                             "#,
                             [console_id],
-                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                         )?;
-                        if delivered_sequence < latest_sequence {
+                        if delivered_sequence < latest_sequence
+                            && !matches!(state.as_str(), "recall_pending" | "recalled" | "recall_failed")
+                        {
                             queue_execution_console_upsert(
                                 transaction,
                                 request_id.as_deref().context(
@@ -9460,6 +9463,7 @@ fn try_admit_request(
         ],
     )?;
     close_queue_ack_for_request(transaction, request_id, &ack_app_id, now)?;
+    recall_older_execution_consoles(transaction, request_id, now)?;
     Ok(AdmissionAttempt::Admitted)
 }
 
@@ -9793,6 +9797,114 @@ fn delivery_priority(delivery_kind: &str) -> i64 {
         "project_selection" => 5,
         _ => 60,
     }
+}
+
+fn recall_older_execution_consoles(
+    transaction: &Transaction<'_>,
+    new_request_id: &str,
+    now: &str,
+) -> Result<()> {
+    let consoles = query_rows(
+        transaction,
+        r#"
+        SELECT console.id, console.request_id, console.target_app_id,
+               console.agent_id, console.external_message_id
+        FROM channel_turn_request AS incoming
+        JOIN channel_conversation_binding AS incoming_binding
+          ON incoming_binding.id = incoming.binding_id
+        JOIN channel_execution_console AS console
+          ON console.channel_conversation_id = incoming_binding.channel_conversation_id
+        JOIN channel_turn_request AS earlier ON earlier.id = console.request_id
+        WHERE incoming.id = ?1
+          AND (earlier.created_at < incoming.created_at
+               OR (earlier.created_at = incoming.created_at AND earlier.id < incoming.id))
+          AND console.state <> 'recalled'
+        ORDER BY console.created_at, console.agent_run_id
+        "#,
+        [new_request_id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        },
+    )?;
+    for (console_id, request_id, target_app_id, agent_id, external_message_id) in consoles {
+        let recall_open: bool = transaction.query_row(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM channel_delivery
+                WHERE console_id = ?1 AND delivery_kind = 'execution_console_recall'
+                  AND status IN ('pending', 'attempting')
+            )
+            "#,
+            [&console_id],
+            |row| row.get(0),
+        )?;
+        if recall_open {
+            continue;
+        }
+        transaction.execute(
+            r#"
+            DELETE FROM channel_delivery
+            WHERE console_id = ?1 AND delivery_kind = 'execution_console_upsert'
+              AND status = 'pending'
+            "#,
+            [&console_id],
+        )?;
+        let update_in_flight: bool = transaction.query_row(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM channel_delivery
+                WHERE console_id = ?1 AND delivery_kind = 'execution_console_upsert'
+                  AND status = 'attempting'
+            )
+            "#,
+            [&console_id],
+            |row| row.get(0),
+        )?;
+        // A card never sent to the provider has no message to recall. An
+        // in-flight send may still produce its identity, so it must be awaited.
+        if external_message_id.is_none() && !update_in_flight {
+            transaction.execute(
+                r#"
+                UPDATE channel_execution_console
+                SET state = 'recalled', failure_code = NULL,
+                    recalled_at = ?2, updated_at = ?2
+                WHERE id = ?1
+                "#,
+                params![console_id, now],
+            )?;
+            continue;
+        }
+        transaction.execute(
+            r#"
+            UPDATE channel_execution_console
+            SET state = 'recall_pending', failure_code = NULL,
+                recalled_at = NULL, updated_at = ?2
+            WHERE id = ?1
+            "#,
+            params![console_id, now],
+        )?;
+        insert_console_delivery(
+            transaction,
+            &request_id,
+            &console_id,
+            &format!("execution_console_recall:{console_id}:{new_request_id}"),
+            "execution_console_recall",
+            &target_app_id,
+            Some(&agent_id),
+            &json!({
+                "kind": "execution_console_recall",
+                "executionConsoleId": console_id,
+            }),
+            now,
+        )?;
+    }
+    Ok(())
 }
 
 fn decline_unattended_channel_retries(
@@ -10517,6 +10629,29 @@ fn materialize_execution_console(
     output_sequence: i64,
     now: &str,
 ) -> Result<()> {
+    let superseded: bool = transaction.query_row(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM channel_turn_request AS source
+            JOIN channel_turn_request AS later
+              ON (later.created_at > source.created_at
+                  OR (later.created_at = source.created_at AND later.id > source.id))
+            JOIN channel_conversation_binding AS later_binding
+              ON later_binding.id = later.binding_id
+            WHERE source.id = ?1
+              AND later_binding.channel_conversation_id = ?2
+              AND later.status IN ('admitted', 'completed')
+        )
+        "#,
+        params![request_id, channel_conversation_id],
+        |row| row.get(0),
+    )?;
+    if superseded {
+        // A Run from an earlier root can start after a newer root was
+        // admitted. It must not recreate a card that the newer root revoked.
+        return Ok(());
+    }
     let digest = canonical_json_digest(&json!({
         "runStatus": run_status,
         "runVersion": run_version,
@@ -14610,6 +14745,375 @@ mod tests {
         }
     }
 
+    #[test]
+    fn next_root_recalls_prior_execution_card_for_feishu_and_lark() {
+        assert_provider_execution_recall::<false>();
+        assert_provider_execution_recall::<true>();
+    }
+
+    fn assert_provider_execution_recall<const LARK: bool>() {
+        let mut database = seeded_runtime_database_owned();
+        let quick_chat_path = quick_chat_path(&database);
+        let world = provider_world::<LARK>(&mut database, &quick_chat_path);
+        let service = ChannelService::default();
+        let provider = world.spec.provider;
+        let mut message = observation_command(
+            &world.app_id,
+            &format!("om_{provider}_next_root"),
+            &format!("oc_{provider}_dm"),
+            "",
+            "p2p",
+            "继续检查",
+            &[("agent_1", &world.app_id)],
+            true,
+        );
+        message.provider = provider.to_string();
+        let observed = service
+            .observe_inbound(
+                &mut database,
+                &host_envelope_for(world.spec, "observe-next-root", message),
+            )
+            .unwrap();
+        let admitted = service
+            .finalize_inbound(
+                &mut database,
+                &quick_chat_path,
+                &host_envelope_for(
+                    world.spec,
+                    "finalize-next-root",
+                    FinalizeChannelInboundCommand {
+                        aggregate_id: observed.result.payload["aggregateId"]
+                            .as_str()
+                            .unwrap()
+                            .to_string(),
+                    },
+                ),
+            )
+            .unwrap();
+        assert_eq!(admitted.result.code, "channel.turn.admitted", "{provider}");
+        let worker_id = format!("{provider}-recall-worker");
+        let tick = service
+            .host_tick(
+                &mut database,
+                &ActorRef::System {
+                    component_id: world.spec.host_component.to_string(),
+                },
+                &ChannelHostTickRequest {
+                    worker_id: worker_id.clone(),
+                    inbound_attachment_app_ids: Vec::new(),
+                    limit: 20,
+                },
+            )
+            .unwrap();
+        let recall = tick
+            .deliveries
+            .iter()
+            .find(|delivery| delivery.delivery_kind == "execution_console_recall")
+            .expect("a later root must claim the old execution card recall");
+        assert_eq!(recall.target_app_id, world.app_id, "{provider}");
+        assert_eq!(
+            recall.update_message_id.as_deref(),
+            Some(world.console_message_id.as_str()),
+            "{provider}"
+        );
+        assert_eq!(recall.recall_message_id, None, "{provider}");
+        service
+            .settle_delivery(
+                &mut database,
+                &host_envelope_for(
+                    world.spec,
+                    "settle-next-root-recall",
+                    SettleChannelDeliveryCommand {
+                        delivery_id: recall.delivery_id.clone(),
+                        worker_id,
+                        outcome: "sent".to_string(),
+                        external_delivery_message_id: None,
+                        external_update_message_id: None,
+                        failure_code: None,
+                        retryable: false,
+                    },
+                ),
+            )
+            .unwrap();
+        let state: String = database
+            .connection()
+            .query_row(
+                "SELECT state FROM channel_execution_console WHERE agent_run_id = ?1",
+                [&world.agent_run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "recalled", "{provider}");
+    }
+
+    #[test]
+    fn run_claimed_after_newer_root_does_not_open_an_obsolete_execution_card() {
+        let mut database = seeded_runtime_database_owned();
+        let service = ChannelService::default();
+        connect_account(&service, &mut database);
+        publish_bot(&service, &mut database, "agent_1", "cli_app_1");
+        service
+            .verify_feishu_owner(
+                &mut database,
+                &host_envelope(
+                    "verify-owner-for-late-console",
+                    VerifyFeishuOwnerCommand {
+                        provider: FEISHU_PROVIDER.to_string(),
+                        app_id: "cli_app_1".to_string(),
+                        tenant_key: "tenant_1".to_string(),
+                        sender_open_id: Some("ou_user".to_string()),
+                        sender_user_id: Some("user_1".to_string()),
+                        sender_union_id: Some("union_user".to_string()),
+                        sender_display_name: "Owner".to_string(),
+                    },
+                ),
+            )
+            .unwrap();
+        let quick_chat_path = quick_chat_path(&database);
+        service
+            .start_new_feishu_dm(
+                &mut database,
+                &quick_chat_path,
+                &host_envelope(
+                    "start-dm-for-late-console",
+                    StartNewFeishuDmCommand {
+                        provider: FEISHU_PROVIDER.to_string(),
+                        app_id: "cli_app_1".to_string(),
+                        tenant_key: "tenant_1".to_string(),
+                        chat_id: "oc_late_console".to_string(),
+                        conversation_display_name: "Owner 私聊".to_string(),
+                        target_agent_id: "agent_1".to_string(),
+                    },
+                ),
+            )
+            .unwrap();
+        let mut first_run_id = None;
+        for ordinal in 1..=2 {
+            let observed = service
+                .observe_inbound(
+                    &mut database,
+                    &host_envelope(
+                        &format!("observe-late-console-{ordinal}"),
+                        observation_command(
+                            "cli_app_1",
+                            &format!("om_late_console_{ordinal}"),
+                            "oc_late_console",
+                            "",
+                            "p2p",
+                            "继续检查",
+                            &[("agent_1", "cli_app_1")],
+                            true,
+                        ),
+                    ),
+                )
+                .unwrap();
+            let admitted = service
+                .finalize_inbound(
+                    &mut database,
+                    &quick_chat_path,
+                    &host_envelope(
+                        &format!("finalize-late-console-{ordinal}"),
+                        FinalizeChannelInboundCommand {
+                            aggregate_id: observed.result.payload["aggregateId"]
+                                .as_str()
+                                .unwrap()
+                                .to_string(),
+                        },
+                    ),
+                )
+                .unwrap();
+            assert_eq!(admitted.result.code, "channel.turn.admitted");
+            if ordinal == 1 {
+                first_run_id = Some(
+                    claim_waiting_runs(&mut database)
+                        .into_iter()
+                        .next()
+                        .expect("the first root must start before the second is admitted"),
+                );
+            }
+        }
+        let first_run_id = first_run_id.unwrap();
+        let tick = service
+            .host_tick(
+                &mut database,
+                &ActorRef::System {
+                    component_id: FEISHU_CHANNEL_HOST_COMPONENT.to_string(),
+                },
+                &ChannelHostTickRequest {
+                    worker_id: "late-console-worker".to_string(),
+                    inbound_attachment_app_ids: Vec::new(),
+                    limit: 20,
+                },
+            )
+            .unwrap();
+        assert!(tick.deliveries.iter().all(|delivery| {
+            delivery.delivery_kind != "execution_console_upsert"
+                || delivery.payload["agentRunId"] != first_run_id
+        }));
+        let console_count: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM channel_execution_console WHERE agent_run_id = ?1",
+                [&first_run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(console_count, 0);
+    }
+
+    #[test]
+    fn in_flight_card_update_settles_before_recall_without_requeueing_an_old_card() {
+        let mut database = seeded_runtime_database_owned();
+        let quick_chat_path = quick_chat_path(&database);
+        let world = provider_world::<false>(&mut database, &quick_chat_path);
+        let service = ChannelService::default();
+        let (console_id, old_request_id): (String, String) = database
+            .connection()
+            .query_row(
+                "SELECT id, request_id FROM channel_execution_console WHERE agent_run_id = ?1",
+                [&world.agent_run_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let transaction = database.connection_mut().transaction().unwrap();
+        transaction
+            .execute(
+                "UPDATE channel_execution_console SET latest_sequence = 3 WHERE id = ?1",
+                [&console_id],
+            )
+            .unwrap();
+        insert_console_delivery(
+            &transaction,
+            &old_request_id,
+            &console_id,
+            "in-flight-card-update-before-recall",
+            "execution_console_upsert",
+            &world.app_id,
+            Some("agent_1"),
+            &json!({
+                "kind": "execution_console_upsert",
+                "executionConsoleId": console_id,
+                "agentRunId": world.agent_run_id,
+                "expectedSequence": 2,
+            }),
+            &Utc::now().to_rfc3339(),
+        )
+        .unwrap();
+        transaction.commit().unwrap();
+        let update_worker = "in-flight-card-update-worker";
+        let updating_tick = service
+            .host_tick(
+                &mut database,
+                &ActorRef::System {
+                    component_id: FEISHU_CHANNEL_HOST_COMPONENT.to_string(),
+                },
+                &ChannelHostTickRequest {
+                    worker_id: update_worker.to_string(),
+                    inbound_attachment_app_ids: Vec::new(),
+                    limit: 20,
+                },
+            )
+            .unwrap();
+        let update = updating_tick
+            .deliveries
+            .iter()
+            .find(|delivery| {
+                delivery.delivery_kind == "execution_console_upsert"
+                    && delivery.payload["agentRunId"] == world.agent_run_id
+            })
+            .expect("the old card update must be in flight");
+        let observed = service
+            .observe_inbound(
+                &mut database,
+                &host_envelope(
+                    "observe-root-during-card-update",
+                    observation_command(
+                        &world.app_id,
+                        "om_feishu_during_card_update",
+                        "oc_feishu_dm",
+                        "",
+                        "p2p",
+                        "继续检查",
+                        &[("agent_1", &world.app_id)],
+                        true,
+                    ),
+                ),
+            )
+            .unwrap();
+        service
+            .finalize_inbound(
+                &mut database,
+                &quick_chat_path,
+                &host_envelope(
+                    "finalize-root-during-card-update",
+                    FinalizeChannelInboundCommand {
+                        aggregate_id: observed.result.payload["aggregateId"]
+                            .as_str()
+                            .unwrap()
+                            .to_string(),
+                    },
+                ),
+            )
+            .unwrap();
+        let blocked_tick = service
+            .host_tick(
+                &mut database,
+                &ActorRef::System {
+                    component_id: FEISHU_CHANNEL_HOST_COMPONENT.to_string(),
+                },
+                &ChannelHostTickRequest {
+                    worker_id: "blocked-recall-worker".to_string(),
+                    inbound_attachment_app_ids: Vec::new(),
+                    limit: 20,
+                },
+            )
+            .unwrap();
+        assert!(
+            blocked_tick
+                .deliveries
+                .iter()
+                .all(|delivery| delivery.delivery_kind != "execution_console_recall")
+        );
+        service
+            .settle_delivery(
+                &mut database,
+                &host_envelope(
+                    "settle-in-flight-card-update",
+                    SettleChannelDeliveryCommand {
+                        delivery_id: update.delivery_id.clone(),
+                        worker_id: update_worker.to_string(),
+                        outcome: "sent".to_string(),
+                        external_delivery_message_id: Some(world.console_message_id.clone()),
+                        external_update_message_id: Some(world.console_message_id.clone()),
+                        failure_code: None,
+                        retryable: false,
+                    },
+                ),
+            )
+            .unwrap();
+        let recall_tick = service
+            .host_tick(
+                &mut database,
+                &ActorRef::System {
+                    component_id: FEISHU_CHANNEL_HOST_COMPONENT.to_string(),
+                },
+                &ChannelHostTickRequest {
+                    worker_id: "after-update-recall-worker".to_string(),
+                    inbound_attachment_app_ids: Vec::new(),
+                    limit: 20,
+                },
+            )
+            .unwrap();
+        assert!(recall_tick.deliveries.iter().any(|delivery| {
+            delivery.delivery_kind == "execution_console_recall"
+                && delivery.update_message_id.as_deref() == Some(world.console_message_id.as_str())
+        }));
+        assert!(recall_tick.deliveries.iter().all(|delivery| {
+            delivery.delivery_kind != "execution_console_upsert"
+                || delivery.payload["agentRunId"] != world.agent_run_id
+        }));
+    }
+
     fn connection_account(provider: &str, account_id: &str) -> FeishuConnectionAccountInput {
         FeishuConnectionAccountInput {
             account_id: account_id.to_string(),
@@ -17943,57 +18447,6 @@ mod tests {
         }
         assert_eq!(claim_waiting_runs(&mut database).len(), 1);
 
-        let mut queued_observation = observation_command(
-            "ding-app-agent_1",
-            "ding-message-2",
-            "ding-dm-1",
-            "",
-            "p2p",
-            "继续检查会话过期逻辑",
-            &[("agent_1", "ding-app-agent_1")],
-            true,
-        );
-        queued_observation.provider = DINGTALK_PROVIDER.to_string();
-        queued_observation.tenant_key = "ding-corp-1".to_string();
-        queued_observation.sender_external_user_id = "owner-staff-1".to_string();
-        queued_observation.sender_open_id = None;
-        queued_observation.sender_user_id = Some("owner-staff-1".to_string());
-        queued_observation.sender_union_id = None;
-        let queued_observed = service
-            .observe_inbound(
-                &mut database,
-                &dingtalk_host_envelope("dingtalk-observe-queued", queued_observation),
-            )
-            .unwrap();
-        let second_admission = service
-            .finalize_inbound(
-                &mut database,
-                &quick_chat_path,
-                &dingtalk_host_envelope(
-                    "dingtalk-finalize-queued",
-                    FinalizeChannelInboundCommand {
-                        aggregate_id: queued_observed.result.payload["aggregateId"]
-                            .as_str()
-                            .unwrap()
-                            .to_string(),
-                    },
-                ),
-            )
-            .unwrap();
-        assert_eq!(second_admission.result.code, "channel.turn.admitted");
-        assert_eq!(
-            database
-                .connection()
-                .query_row(
-                    "SELECT COUNT(*) FROM camp_message_delivery WHERE status = 'waiting'",
-                    [],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap(),
-            1,
-            "a later Channel message is received immediately and waits only in the Agent lane",
-        );
-
         // A public `rovai send` in this bound Camp has no inbound Request. Its
         // private DingTalk recipient must still resolve to a user ID, not chat ID.
         let (binding_id, source_message_id): (String, String) = database
@@ -18164,6 +18617,56 @@ mod tests {
             .unwrap();
         assert_eq!(cancelled.result.status, CommandResultStatus::Applied);
         assert_eq!(cancelled.result.payload["status"], "cancelled");
+        let mut queued_observation = observation_command(
+            "ding-app-agent_1",
+            "ding-message-2",
+            "ding-dm-1",
+            "",
+            "p2p",
+            "继续检查会话过期逻辑",
+            &[("agent_1", "ding-app-agent_1")],
+            true,
+        );
+        queued_observation.provider = DINGTALK_PROVIDER.to_string();
+        queued_observation.tenant_key = "ding-corp-1".to_string();
+        queued_observation.sender_external_user_id = "owner-staff-1".to_string();
+        queued_observation.sender_open_id = None;
+        queued_observation.sender_user_id = Some("owner-staff-1".to_string());
+        queued_observation.sender_union_id = None;
+        let queued_observed = service
+            .observe_inbound(
+                &mut database,
+                &dingtalk_host_envelope("dingtalk-observe-queued", queued_observation),
+            )
+            .unwrap();
+        let second_admission = service
+            .finalize_inbound(
+                &mut database,
+                &quick_chat_path,
+                &dingtalk_host_envelope(
+                    "dingtalk-finalize-queued",
+                    FinalizeChannelInboundCommand {
+                        aggregate_id: queued_observed.result.payload["aggregateId"]
+                            .as_str()
+                            .unwrap()
+                            .to_string(),
+                    },
+                ),
+            )
+            .unwrap();
+        assert_eq!(second_admission.result.code, "channel.turn.admitted");
+        assert_eq!(
+            database
+                .connection()
+                .query_row(
+                    "SELECT COUNT(*) FROM camp_message_delivery WHERE status = 'waiting'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1,
+            "a later Channel message is received immediately and waits only in the Agent lane",
+        );
         assert_eq!(
             claim_waiting_runs(&mut database).len(),
             1,
@@ -18183,6 +18686,19 @@ mod tests {
                 },
             )
             .unwrap();
+        let execution_recall = next_tick
+            .deliveries
+            .iter()
+            .find(|delivery| delivery.delivery_kind == "execution_console_recall")
+            .expect("the next root must recall the previous DingTalk card");
+        assert_eq!(
+            execution_recall.update_message_id.as_deref(),
+            Some("ding-card-run-1")
+        );
+        assert_eq!(
+            execution_recall.recall_message_id.as_deref(),
+            Some("ding-carrier-run-1")
+        );
         assert!(next_tick.deliveries.iter().any(|delivery| {
             delivery.delivery_kind == "execution_console_upsert"
                 && delivery.payload["agentRunId"] != console_source.agent_run_id
