@@ -76,10 +76,16 @@ without downloading, publish a visible failure notice, and prevent text-only exe
 for download by this ingress. Quoted attachment summaries,
 merged forwards and card-embedded resources are outside this ingress contract.
 
-For DingTalk, the normalizer retains `picture` and ordered `richText` text/image segments, plus private-chat
+For DingTalk, the normalizer retains user-written `richText` text as the body and preserves the original
+positions of `picture` nodes as resources, plus private-chat
 `file`, `audio` and `video` resources. Each resource uses a stable source-position `fileKey` and optional
 `downloadCode` (falling back to legacy `pictureDownloadCode`); a missing grant still gates admission and
 settles as download failure instead of running text alone. Quoted images remain summaries.
+Resource-only messages have an empty body; the normalizer does not add `[图片]` or attachment summaries to
+the current message text. For DingTalk groups, Core removes one textual `@<Bot display name>` for each
+observed target Bot when building Camp content, since it adds a structured MemberMention for that target.
+This presentation cleanup leaves the normalized transport body unchanged for the cross-Bot observation digest and
+keeps mentions of other people as text.
 The acknowledgement Bot's App client sends `{robotCode, downloadCode}` to
 `POST /v1.0/robot/messageFiles/download`, then streams the returned HTTP or HTTPS signed `downloadUrl` as issued,
 without forwarding

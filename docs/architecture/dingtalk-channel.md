@@ -234,7 +234,9 @@ Main 正常存活时在 3 秒后提交完整集合；Main 重启错过定时器�
 私聊不依赖 `isInAtList` 或 mention identity，继续直接进入 Quick Chat。
 
 附件状态、重试、Core 文件导入与 FIFO 复用 [Channel Message Bridge v1](../contracts/channel-message-bridge-v1.md#inbound-attachments)。
-钉钉适配器保留 `richText` 的正文与图片次序，用首观察 Bot 的 `downloadCode` 和 `robotCode` 换取 HTTPS 下载地址，
+钉钉适配器从 `richText` 提取用户正文，图片按原节点位置作为附件资源；Core 发布 CampMessage 时清理
+目标 Bot 的文本 `@`，保留结构化 MemberMention，多 Bot 共同摘要仍使用清理前的标准化正文。
+附件用首观察 Bot 的 `downloadCode` 和 `robotCode` 换取 HTTPS 下载地址，
 不向存储地址传递 App token。多 Bot 的 grant 不进入共同内容摘要，原接收 Bot 与资源授权保持绑定。
 同一消息全部附件就绪前不发布 CampMessage 或 Agent Delivery；终止失败由正常 attention 路径提示用户重新发送。
 
