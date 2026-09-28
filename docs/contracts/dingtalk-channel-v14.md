@@ -5,12 +5,16 @@ authority: dingtalk-outbound-retry-and-attachment-delivery
 status: accepted
 version: 14
 source_version: v1.72
-last_updated: 2026-09-27
+last_updated: 2026-09-28
 ---
 
 # DingTalk Channel v14
 
 继承 [v13](dingtalk-channel-v13.md) 的登录、身份、发布、入站附件与渠道管理合同。本版仅替换出站附件 Gate 和钉钉 Host 的外部投递错误分类；Core 的 Outbox、lease、顺序和失败提示语义继续由 [Channel Message Bridge v1](channel-message-bridge-v1.md) 拥有。
+
+当前执行卡撤回时机同样以 [Channel Message Bridge v1](channel-message-bridge-v1.md#execution-card-recall) 为准，
+覆盖继承版本的根请求入场规则。按同一渠道会话和队员等待后继 Run 真正开始；旧 Run 仍在执行时保留停止入口，
+终态封存后再用持久 carrier identity 调用 Robot recall。排队卡仍在对应 Request 入场后撤回。
 
 ## 原生出站附件
 

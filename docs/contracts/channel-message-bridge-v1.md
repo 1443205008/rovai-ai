@@ -3,7 +3,7 @@ document_type: protocol-contract
 contract: channel-message-bridge-v1
 status: accepted
 target_version: v1.60
-last_updated: 2026-09-27
+last_updated: 2026-09-28
 ---
 
 # Channel Message Bridge v1
@@ -22,6 +22,23 @@ identity and cannot replace `user_id` when there is no inbound Request attached 
 
 ChannelDelivery retry/failure is independent of the inbound message, AgentRun and Camp Delivery. It never
 reruns the model or silently converts the result to local-only publication.
+
+## Execution card recall
+
+Feishu, Lark and DingTalk share one Core-owned execution console per channel-related AgentRun. A later
+AgentRun supersedes earlier execution cards only within the same `ChannelConversation` and `agent_id`.
+The later Run must have been claimed into `running`, evidenced by its durable `agent_run.started_at`;
+a waiting Delivery or queued Run does not trigger recall. Root Request admission by itself does not
+trigger execution card recall, and A2A descendants of the same Request follow the same Run rule.
+
+When a later Run has started, an earlier terminal Run's card is recalled after its terminal snapshot
+is sealed. An earlier Run still executing keeps its card and exact-Run stop action until it ends;
+the next Host reconciliation then recalls it. The latest started Run's terminal card remains until
+another Run for that member starts. Core derives this from existing Run and console facts without a
+new persisted field. Host restart and repeated ticks use the same durable facts and Outbox dedupe key.
+Pending updates are removed before recall; an in-flight send or update settles first. Provider
+recall uses the card's persisted external identity. Other members' cards and permanent Agent output
+are unaffected. A terminal recall failure may be retried when a still later Run for that member starts.
 
 ## Inbound attachments
 

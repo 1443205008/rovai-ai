@@ -5,13 +5,14 @@ authority: feishu-channel-account-provisioning-admission-delivery
 status: accepted
 version: 17
 source_version: v1.72
-last_updated: 2026-09-24
+last_updated: 2026-09-28
 ---
 
 # Feishu Channel v17 Contract
 
-继承 [v16](feishu-channel-v16.md) 的全部登录、身份、发布、入站、执行卡与投递合同。本版只收窄飞书 provider 的
-品牌与可信域：`open.larksuite.com` 及其账号站点改由独立 provider [Lark Channel v1](lark-channel-v1.md) 拥有。
+继承 [v16](feishu-channel-v16.md) 的登录、身份、发布、入站、执行卡与投递合同。当前共享执行卡撤回时机
+由 [Channel Message Bridge v1](channel-message-bridge-v1.md#execution-card-recall) 覆盖继承版本的根请求入场规则；
+其余本版只收窄飞书 provider 的品牌与可信域：`open.larksuite.com` 及其账号站点改由独立 provider [Lark Channel v1](lark-channel-v1.md) 拥有。
 飞书表结构不变，无飞书数据迁移。
 
 ## 1. 品牌与可信域

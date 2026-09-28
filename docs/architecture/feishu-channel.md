@@ -3,7 +3,7 @@ document_type: architecture
 architecture: feishu-channel
 authority: feishu-channel-component-and-authority-boundaries
 status: accepted
-last_updated: 2026-09-24
+last_updated: 2026-09-28
 ---
 
 # 飞书渠道架构
@@ -358,8 +358,10 @@ SDK event ID 继续承担 callback 防重。可响应故障返回安全 Toast；
 不承诺自定义飞书提示。
 
 Core 既有 `terminal_pending / terminal_sealed` 与不可变 terminal snapshot 继续供安全读取和历史兼容，但 v10 飞书卡不再
-呈现旧双层折叠或终态分页。钉钉只消费共享的安全 command 标签，不消费飞书折叠结果。下一条 root request admission 召回同 ChannelConversation 更早
-Turn 的执行卡，等待在途更新并把 target revoked 当作幂等成功；执行卡不是 CampMessage，也不参与请求业务 settlement。
+呈现旧双层折叠或终态分页。钉钉只消费共享的安全 command 标签，不消费飞书折叠结果。同一 ChannelConversation
+中同一队员的后继 Run 真正开始后，Host 撤回其更早且已封存的执行卡；旧 Run 仍在执行时保留停止入口，待它封存后撤回。
+排队未领取的 Run 和新 root request admission 均不触发执行卡撤回。Core 等待在途更新，并把 target revoked 当作幂等成功；
+执行卡不是 CampMessage，也不参与请求业务 settlement。
 
 公开 Agent 正文新建无标题 Card 2.0，不覆盖控制台、queue ack 或其他正文。正文下方的“发送给”行只消费 Core 从公共
 CampMessage 冻结的 `effective_recipient_ids_json` 提取的有序 A2A 接收对象及 Structured CurrentUserMention；
