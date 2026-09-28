@@ -2982,7 +2982,10 @@ function canonicalInboundBody(
     }
   }
   for (const mention of message.mentions) {
-    if (mention.isBot || !mention.name || !expectedBotNames.has(mention.name)) continue
+    // The SDK strips its own Bot's placeholder in text messages, but a rich-post
+    // `at` node can already be rendered as @name before that stripping pass.
+    // Remove one occurrence for every target Bot, including the receiving Bot.
+    if (!mention.name || !expectedBotNames.has(mention.name)) continue
     const token = `@${mention.name}`
     const index = body.indexOf(token)
     if (index >= 0) body = `${body.slice(0, index)}${body.slice(index + token.length)}`

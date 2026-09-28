@@ -7,7 +7,9 @@ import {
   createLarkChannel,
   Domain,
   LarkChannelError,
-  LoggerLevel
+  LoggerLevel,
+  normalize,
+  type RawMessageEvent
 } from '@larksuiteoapi/node-sdk'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentRunExecutionEvidenceView } from '@contracts'
@@ -3765,6 +3767,86 @@ describe('channel settings service', () => {
       })
     ]))
     expect(JSON.stringify(observations)).not.toMatch(/tag|@_user_|en_us/u)
+    await service.stop()
+  })
+
+  it('normalizes Lark rich-post Bot mentions left visible by the SDK before comparing observations', async () => {
+    const harness = controlledChannels({
+      cli_alice: { openId: 'ou_alice', name: '爱丽丝' },
+      cli_kirigiri: { openId: 'ou_kirigiri', name: '雾切响子' }
+    })
+    const bots = [
+      { agentId: 'agent_6', appId: 'cli_alice', botDisplayName: '爱丽丝',
+        credentialRef: 'lark-alice' },
+      { agentId: 'agent_7', appId: 'cli_kirigiri', botDisplayName: '雾切响子',
+        credentialRef: 'lark-kirigiri' }
+    ].map(bot => ({ ...bot, accountId: 'account-1', brand: 'lark', status: 'published',
+      failureCode: null, version: 1, ownerIdentityStatus: 'verified' }))
+    const observations: Record<string, unknown>[] = []
+    const service = new ChannelSettingsService({
+      profile: LARK_PROVIDER_PROFILE,
+      credentialStore: memoryCredentialStore({
+        'lark-alice': { appId: 'cli_alice', appSecret: 'secret-alice' },
+        'lark-kirigiri': { appId: 'cli_kirigiri', appSecret: 'secret-kirigiri' }
+      }, () => 'lark'),
+      createChannel: harness.createChannel,
+      ...inertInterval(),
+      core: channelCore((method, rawParams) => {
+        const command = ((rawParams as { command?: Record<string, unknown> } | undefined)?.command ?? {})
+        if (method === 'channels.lark.snapshot') return coreSnapshot({ memberBots: bots })
+        if (method === 'channels.lark.owner.verify') return {
+          status: 'applied', code: 'channel.owner.verified', payload: { classification: 'owner' }
+        }
+        if (method === 'channels.lark.inbound.observe') {
+          observations.push(command)
+          return { status: 'accepted', code: 'channel.inbound.collecting',
+            payload: { aggregateId: 'rvcia_lark_post', readyToFinalize: false } }
+        }
+        if (method === 'channels.lark.host.tick') return { deliveries: [] }
+        return { status: 'applied', code: `${method}.applied`, payload: {} }
+      })
+    })
+    await service.start()
+    const event: RawMessageEvent = {
+      sender: { tenant_key: 'tenant-1', sender_id: {
+        open_id: 'ou_owner', user_id: 'owner-user-id' } },
+      message: {
+        message_id: 'om_lark_post_image', chat_id: 'oc_multi', chat_type: 'group',
+        message_type: 'post',
+        content: JSON.stringify({ zh_cn: { title: '', content: [[
+          { tag: 'at', user_id: '@_user_1', user_name: '爱丽丝' },
+          { tag: 'text', text: ' ' },
+          { tag: 'at', user_id: '@_user_2', user_name: '雾切响子' },
+          { tag: 'text', text: ' 你们能看到这是什么吗 ' },
+          { tag: 'img', image_key: 'img_lark_post' }
+        ]] } }),
+        mentions: [
+          { key: '@_user_1', id: { open_id: 'ou_alice' }, name: '爱丽丝' },
+          { key: '@_user_2', id: { open_id: 'ou_kirigiri' }, name: '雾切响子' }
+        ]
+      }
+    }
+    for (const [appId, openId, name] of [
+      ['cli_alice', 'ou_alice', '爱丽丝'],
+      ['cli_kirigiri', 'ou_kirigiri', '雾切响子']
+    ] as const) {
+      const message = await normalize(event, {
+        botIdentity: { openId, name }, stripBotMentions: true, includeRaw: true
+      })
+      await harness.handlers.get(`${appId}:message`)!(message)
+    }
+    expect(observations).toHaveLength(2)
+    expect(observations.map(observation => observation.body)).toEqual([
+      '你们能看到这是什么吗', '你们能看到这是什么吗'
+    ])
+    expect(observations.map(({ appId: _appId, ...observation }) => observation)[0]).toEqual(
+      observations.map(({ appId: _appId, ...observation }) => observation)[1]
+    )
+    expect(observations[0]).toMatchObject({
+      expectedAppIds: ['cli_alice', 'cli_kirigiri'],
+      canonicalAgentIds: ['agent_6', 'agent_7'],
+      resources: [{ fileKey: 'img_lark_post', name: 'image', kind: 'image' }]
+    })
     await service.stop()
   })
 
