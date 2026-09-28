@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppUpdateRelease, AppUpdateSnapshot } from '@contracts'
-import { currentReleaseFromBundledNotes } from '../../shared/app-current-release'
+import { currentReleaseFromBundledSources } from '../../shared/app-current-release'
 import { displayReleaseNotes } from './release-notes-display'
 import { SafeMarkdown } from './SafeMarkdown'
 import { SettingsPageHeader } from './SettingsPageHeader'
@@ -63,7 +63,7 @@ export function AboutUpdatesSettingsView({
   const currentRelease = snapshot
     ? snapshot.currentRelease?.version === snapshot.currentVersion.replace(/^v/iu, '')
       ? snapshot.currentRelease
-      : currentReleaseFromBundledNotes(snapshot.currentVersion, null)
+      : currentReleaseFromBundledSources(snapshot.currentVersion, null)
     : null
   const showCurrent = !availableRelease || showCurrentForVersion === availableRelease.version
   const release = showCurrent ? currentRelease : availableRelease

@@ -355,3 +355,20 @@ Principal 确认本地交互稿后，以主线 `41aa0e2e` 为实施基线，完�
 
 本机 Git 忽略的旧 `docs/prototypes/` 含失效相对链接，直接在原 checkout 运行 `pnpm test` 会在文档检查阶段被这些未提交文件拦截；
 提交范围内的文档门禁在干净源码快照复核，其余测试按相同子命令在原 checkout 复核，不改动该本地原型目录。
+
+## 2026-09-28 当前版本发布日期
+
+v0.4.0 的 `build/release-metadata.json` 使用[正式 GitHub Release](https://github.com/murray17/rovai-ai/releases/tag/v0.4.0) 的 `publishedAt`：
+`2026-09-25T18:30:52.000Z`。Desktop Main 与 Desktop 托管 Web 将其随包编译，并只在运行版本一致且日期规范时
+投影给当前版本；候选版本仍取 updater 返回值。缺失、旧版本或无效值维持日期未知。桌面构建入口增加源文件
+前置校验，使后续版本提升必须同时更新日志与日期。
+
+| 验证 | 结果与边界 |
+| --- | --- |
+| `node --test scripts/lib/release-notes.test.mjs`、定向 App Update Vitest | 6 项源校验与 28 项 Main/Renderer 测试通过；覆盖版本不符、无效日期、离线快照、成功检查后保留日期及页面日期呈现 |
+| `pnpm typecheck`、`pnpm build:desktop`、`pnpm test` | 通过；构建输出的 Main、Renderer 与 Web 均包含版本绑定时间戳 |
+| `pnpm test:rust:pr` | 通过；共享 Rust workspace 无回归 |
+| `pnpm package:mac`、`pnpm accept:app-updates-ui` | 通过；隔离打包 App 在 Day/Night、1440×920、1040×700 及 200% 等效宽度下，快照日期与页面一致；当前时区显示 2026 年 9 月 26 日，无横向溢出 |
+| `pnpm docs:test`、`pnpm docs:check`、`DOCS_BASE_REF=<本次 origin/main 基线> pnpm docs:check:ci` | 通用文档治理、版本与 PR 差异门禁通过 |
+
+正式签名发布和跨版本升级不在这次本地验收范围；本次打包只验证版本绑定的离线日期投影。

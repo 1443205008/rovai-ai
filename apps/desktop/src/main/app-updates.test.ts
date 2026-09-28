@@ -7,6 +7,7 @@ import {
   FIRST_CHECK_DELAY_MS,
   type DesktopAutoUpdater
 } from './app-updates'
+import { currentReleaseFromBundledSources, type BundledReleaseMetadata } from '../shared/app-current-release'
 
 const NOW = new Date('2026-08-24T08:00:00.000Z')
 
@@ -29,11 +30,13 @@ function service(
     clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
     warn?: (message: string) => void
     bundledReleaseNotes?: string
+    bundledReleaseMetadata?: BundledReleaseMetadata
   } = {}
 ): AppUpdatesService {
   return new AppUpdatesService({
     currentVersion: () => '0.0.2',
     bundledReleaseNotes: options.bundledReleaseNotes ?? '# Rovai AI v0.0.2\n\n- Installed release',
+    bundledReleaseMetadata: options.bundledReleaseMetadata,
     isPackaged: () => options.isPackaged ?? true,
     updater: updater as unknown as DesktopAutoUpdater | null,
     now: () => NOW,
@@ -112,6 +115,32 @@ describe('AppUpdatesService', () => {
     expect(updater.autoInstallOnAppQuit).toBe(false)
     expect(updater.autoRunAppAfterInstall).toBe(true)
     expect(updater.allowPrerelease).toBe(false)
+  })
+
+  it('shows the matching bundled release date offline and after an up-to-date check', async () => {
+    const updater = new FakeUpdater()
+    const releaseDate = '2026-08-24T08:00:00.000Z'
+    const updates = service(updater, {
+      bundledReleaseMetadata: { version: '0.0.2', releaseDate }
+    })
+
+    expect(updates.get().currentRelease?.releaseDate).toBe(releaseDate)
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('update-not-available', { version: '0.0.2' })
+      return {}
+    })
+    await updates.check()
+    expect(updates.get().currentRelease?.releaseDate).toBe(releaseDate)
+  })
+
+  it('does not attach a stale or malformed bundled date to another version', () => {
+    const notes = '# Rovai AI v0.0.2\n\n- Installed release'
+    expect(currentReleaseFromBundledSources('0.0.2', notes, {
+      version: '0.0.1', releaseDate: '2026-08-24T08:00:00.000Z'
+    }).releaseDate).toBeNull()
+    expect(currentReleaseFromBundledSources('0.0.2', notes, {
+      version: '0.0.2', releaseDate: '2026-02-30T08:00:00.000Z'
+    }).releaseDate).toBeNull()
   })
 
   it('keeps manual checks on the page without creating a global prompt', async () => {

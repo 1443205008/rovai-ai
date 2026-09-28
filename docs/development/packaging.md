@@ -94,7 +94,7 @@ App 的 `app-update.yml` 读取官方 `murray17/rovai-ai` GitHub Release 通道�
 
 本地隔离 packaged UI 验收可以在同时满足隔离实例 admission 时设置
 `ROVAI_DISABLE_AUTO_UPDATE_CHECKS=1`，避免访问真实 Release 通道。该变量不对日常实例生效，也不构成
-更新功能或签名连续性的发布证据。完整状态合同见 [App Update v5](../contracts/app-update-v5.md)。
+更新功能或签名连续性的发布证据。完整状态合同见 [App Update v6](../contracts/app-update-v6.md)。
 
 [`build/release-notes.md`](../../build/release-notes.md) 是 macOS 与 Windows 共用的唯一发布说明源；
 `package.json#build.releaseInfo.releaseNotesFile` 必须显式指向它。首个非空行必须是
@@ -106,6 +106,11 @@ GitHub 请求；版本提升必须在同一个 Release PR 中更新该文件。
 Desktop Main 也在构建时内嵌此文件，并只在首标题与运行版本完全匹配时把它作为当前版本日志投影给
 Renderer。更新页离线显示当前日志；新版日志继续只来自既有更新检查结果。`releaseInfo.releaseNotesFile`
 本身仅保证更新清单内容，不能替代 App 内嵌。验收打包产物时应核对 Main 快照与页面都含当前日志。
+
+[`build/release-metadata.json`](../../build/release-metadata.json) 记录与包版本绑定的发布日期 UTC 时间戳。
+版本提升时与更新日志一同更新；`build:desktop` 在打包前校验版本一致且日期规范，避免把上一版日期带入
+新包。正式发布时对照 GitHub Release 的实际发布日期；若跨日，须在分发产物前修正元数据并重新构建。
+Main 与 Desktop 托管的 Web 页面只在元数据版本匹配运行版本时离线展示该日期；新版日期仍取自 updater。
 
 macOS 正式 Release 必须在同一个版本标签中上传以下完整集合：
 

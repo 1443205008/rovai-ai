@@ -271,7 +271,7 @@ ready/installing and failed states use different icon/copy and accessible names,
 
 The page keeps the installed version visible through idle, checking, available, downloading, up-to-date,
 ready-to-install, installing and recoverable check/download/install failure states. Its bundled, version-matched
-release notes remain visible offline after an install. A known newer release is a separate fact and remains visible
+release notes and publication date remain visible offline after an install. A known newer release is a separate fact and remains visible
 when a later check fails. When a newer release exists, the page defaults to its notes and offers keyboard-accessible
 tabs to switch between new and installed versions; the switch does not start a network request. An absent source has
 an explicit empty state. A duplicate first version heading is removed only from the display copy; long notes scroll
