@@ -3,7 +3,7 @@ document_type: ui-component
 component: channel-settings
 authority: channel-settings-presentation-and-interaction
 status: accepted
-last_updated: 2026-09-27
+last_updated: 2026-09-28
 ---
 
 # 渠道设置
@@ -226,10 +226,13 @@ Unicode 字符，超长用省略号收尾。引用只作展示，不跳转、不
 详情仍默认折叠，不增加确认框或迁移提示。
 
 Web 执行台延续 Porcelain Day / Steel Night 的冷瓷灰、Steel 品牌、身份色与中性 Evidence 层级，不建立暖色替代主题。
-顶部只保留 Camp 名与“只读”，随后显示当前选中 Run 的触发消息和该队员的连续历史时间线；外部触发者在该阅读面固定显示
-为“你”，不显示“飞书成员”，A2A Run 则显示实际发起队员的名称与首字头像。每个 AgentRun 都有独立过程 disclosure，当前 Run 默认展开、历史 Run 默认收起；连续操作组
+顶部只保留 Camp 名与“只读”，随后显示当前选中 Run 的触发消息和该队员的执行记录；外部触发者在该阅读面固定显示
+为“你”，不显示“飞书成员”，A2A Run 则显示实际发起队员的名称与首字头像。进行中的 Run 直接显示，终态 Run 收在默认折叠的“执行历史”下；
+终态链接明确聚焦的 Run 应展开历史区以显示该条记录。每个 AgentRun 都有独立过程 disclosure，当前链接聚焦的 Run 默认展开、其他历史 Run 默认收起；连续操作组
 与每个 Command 继续使用生产执行台的嵌套 disclosure，即使没有公开结果也保留可展开行。点击 Run 标题只切换顶部触发消息，
 不代替折叠入口。
+Run 卡头、状态图形、工具组、命令结果与 Markdown 正文沿用桌面执行台的生产组件和语义 Token；网页外壳只拥有 Camp 顶栏、触发消息、只读身份、历史区与手机触控尺寸。
+文件变化只展开公开路径与增删计数，不显示私有 diff 或本地文件预览入口。SSE 快照更新不得清空用户已展开的 Run、工具组和结果；断线时保留最近内容并显示重连状态。
 页面无写控制、分页或解释性图例，桌面与手机使用同一阅读顺序，无横向滚动；状态有文本、可见键盘焦点和最小 44px 手机点击区域。
 
 ## 状态、错误与键盘

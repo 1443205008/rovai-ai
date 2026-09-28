@@ -3,7 +3,7 @@ document_type: implementation-plan
 version: v1.72
 authority: version-implementation-and-acceptance
 status: in_progress
-last_updated: 2026-09-27
+last_updated: 2026-09-28
 ---
 
 # v1.72 实施与验收
@@ -335,3 +335,23 @@ Camp 手动刷新中的重复目录；Settings 与选择器仍按需同步返回
 合并主线 `0f7b101a2` 后的集成验证：Rust 默认 workspace 436 项通过、1 项既有 ignore；导航 Migration 177、
 无历史读取、回复首次发布／撤回、Lark Migration 176 定向测试通过。Vitest 219 文件／2,317 项、TypeScript
 检查、Desktop 构建、Product Contract Fingerprint、Rust 格式及通用文档门禁通过。未运行日常 App 的真实点击到绘制复测。
+
+## 2026-09-28 渠道网页执行台还原
+
+Principal 确认本地交互稿后，以主线 `41aa0e2e` 为实施基线，完成飞书、Lark、钉钉共用的只读网页执行台。
+网页阅读面从生产 Renderer 复用 `ToolActivityGroup`、`ExecutionStatusGlyph`、`SafeMarkdown`、Run 卡片 CSS 与主题 Token；
+独立 Vite 入口随 `pnpm dev` / `pnpm build:desktop` 生成同源静态资源，由原局域网服务按固定白名单提供。
+原 `channels.executionConsole.webSnapshot`、Bearer grant、SSE 和公开字段范围保持原有权威边界；网页没有新增私有 Evidence 读取、文件预览、停止或重跑入口。
+
+| 验证 | 结果与边界 |
+| --- | --- |
+| `pnpm typecheck`、`pnpm build:desktop` | 通过；Web、只读执行台、Main、Preload、Renderer 均构建成功 |
+| `pnpm exec vitest run --maxWorkers=2` | 222 个文件、2348 项通过；网页服务 owner 覆盖只读页面与静态资源白名单、公开 Snapshot 授权及 SSE |
+| `pnpm test:rust:pr` | 通过；default-feature Rust workspace 无失败 |
+| 文档治理与版本门禁 | 在仅含 Git 跟踪文件的源码快照运行 Decision 单元测试（10 项）、版本检查及含 `--require-base` 的 PR 差异检查，均通过 |
+| 其余 `pnpm test` 子门禁 | 在原 checkout 逐项运行：Skills 测试 3 项、Skills 检查 12 项、Electron sandbox 测试 7 项、Node 测试 346 项通过且 2 项跳过 |
+| Chrome 局域网预览 | 使用固定公开演示 Snapshot，在桌面与 390px 手机宽度核对交互稿；Run 标题只切换触发消息，历史区与 Command 独立展开，结果保持只读；未连接真实渠道或 Runtime |
+| Impeccable 机械检查 | 对新网页入口、样式与页面壳运行一次 detector，结果 `[]` |
+
+本机 Git 忽略的旧 `docs/prototypes/` 含失效相对链接，直接在原 checkout 运行 `pnpm test` 会在文档检查阶段被这些未提交文件拦截；
+提交范围内的文档门禁在干净源码快照复核，其余测试按相同子命令在原 checkout 复核，不改动该本地原型目录。
