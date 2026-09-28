@@ -6490,7 +6490,7 @@ function ExecutionUsagePopover({ run, usage }: { run: AgentRunView; usage: RunUs
   return <Popover.Root>
     <Popover.Trigger asChild>
       <button className="execution-usage-trigger" type="button"
-        aria-label={uiAttribute('查看本次执行用量；{0}', complete ? metricK(total) : '部分或未知')}
+        aria-label={uiAttribute('查看本次执行用量；{0}', complete ? metricK(total) : uiAttribute('部分或未知'))}
         title={uiAttribute('查看本次执行用量')}>
         {metricK(total)}
       </button>
@@ -6512,7 +6512,7 @@ function ExecutionContextPopover({ context }: { context: SessionContext | null }
   return <Popover.Root>
     <Popover.Trigger asChild>
       <button className="execution-context-trigger" type="button"
-        aria-label={uiAttribute('当前原生会话上下文：{0} / {1}，{2}', metricK(used), metricK(windowTokens), percent === null ? '比例未知' : `${percent.toFixed(1)}%`)}
+        aria-label={uiAttribute('当前原生会话上下文：{0} / {1}，{2}', metricK(used), metricK(windowTokens), percent === null ? uiAttribute('比例未知') : `${percent.toFixed(1)}%`)}
         title={uiAttribute('当前原生会话上下文')}>
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <circle className="execution-context-track" cx="12" cy="12" r="8" />
@@ -6556,7 +6556,7 @@ function ExecutionRunMetric({ run, liveTextEvents, usage }: {
   if (run.status === 'queued') return <span className="execution-run-metric is-queued">{uiAttribute('排队中')}</span>
   if (live) return <span className="execution-run-metric is-live"
     title={uiAttribute('根据公开正文增量估算的当前速度')}
-    aria-label={uiAttribute('当前估算输出速度：{0}', speed === null ? '未知' : `${speed.toFixed(1)} tok/s`)}>
+    aria-label={uiAttribute('当前估算输出速度：{0}', speed === null ? uiAttribute('未知') : `${speed.toFixed(1)} tok/s`)}>
     {speed === null ? '— tok/s' : `${speed.toFixed(1)} tok/s`}
   </span>
   return <span className="execution-run-metric-group">

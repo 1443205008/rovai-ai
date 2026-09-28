@@ -3318,5 +3318,13 @@
   "重新连接{0}": "Reconnect {0}",
   "智能体类型": "Agent",
   "智能体类型，{0}": "Agent, {0}",
-  "未知智能体": "Unknown Agent"
+  "未知智能体": "Unknown Agent",
+  "查看本次执行用量；{0}": "View usage for this run; {0}",
+  "查看本次执行用量": "View usage for this run",
+  "当前原生会话上下文：{0} / {1}，{2}": "Current native session context: {0} / {1}, {2}",
+  "当前原生会话上下文": "Current native session context",
+  "部分或未知": "Partial or unknown",
+  "比例未知": "Ratio unknown",
+  "根据公开正文增量估算的当前速度": "Current speed estimated from visible text updates",
+  "当前估算输出速度：{0}": "Current estimated output speed: {0}"
 }
