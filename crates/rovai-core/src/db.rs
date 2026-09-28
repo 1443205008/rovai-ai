@@ -48285,6 +48285,16 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
+        // This v99 fixture verifies preservation of the legacy manifest and
+        // attachment receipts. Materialization now creates v5 Bootstrap
+        // evidence, which cannot exist in the v98 source schema.
+        database
+            .connection()
+            .execute(
+                "UPDATE native_session_bootstrap_evidence SET contract_version='native_session_bootstrap_v3', bootstrap_formatter_version=3 WHERE id=(SELECT bootstrap_evidence_id FROM context_manifest WHERE id=?1)",
+                [&manifest_id],
+            )
+            .unwrap();
         view.remove_camp_view(&mut database, &camp_id).unwrap();
         drop(view);
         downgrade_current_schema_to_v98_source_for_test(database.connection());
@@ -48620,7 +48630,8 @@ mod tests {
             .migrate_unified_attachment_publication_v102()
             .unwrap();
         let view = CampAttachmentViewStore::for_test(&database).unwrap();
-        view.reconcile(&mut database, &attachment_store).unwrap();
+        view.reconcile_camp(&mut database, &attachment_store, &camp_id)
+            .unwrap();
         assert_eq!(
             database
                 .connection()
@@ -50183,7 +50194,6 @@ mod tests {
                         title: "will be reset".to_string(),
                         description: String::new(),
                         assignee_agent_id: "agent_1".to_string(),
-                        ..Default::default()
                     },
                 },
             )
@@ -51202,16 +51212,21 @@ mod tests {
                 r#"
                 PRAGMA foreign_keys = OFF;
                 DROP TABLE skill_projection_observation;
-                DROP TABLE skill_group_assignment;
                 DROP TABLE skill_revision;
                 DROP TABLE skill;
                 ALTER TABLE context_manifest DROP COLUMN skill_exposure_json;
                 ALTER TABLE context_manifest DROP COLUMN skill_exposure_digest;
-                DELETE FROM schema_migration WHERE version IN (19, 49);
+                DELETE FROM schema_migration WHERE version = 19;
                 PRAGMA foreign_keys = ON;
                 "#,
             )
             .expect("test should restore the pre-v19 schema");
+        // A source with only the v19 receipt removed is not an admitted upgrade
+        // source for today's full migration runner. Exercise the historical step
+        // directly, then require the repaired current database to reopen.
+        database
+            .migrate_skill_library_v19()
+            .expect("v19 should restore its owned schema and receipt");
         drop(database);
 
         let reopened = Database::open(&directory).expect("v19 database should reopen");
@@ -52605,7 +52620,8 @@ mod tests {
             .execute_batch(
                 r#"
                 PRAGMA foreign_keys = OFF;
-                ALTER TABLE agent_run DROP COLUMN task_version_at_admission;
+                -- v171 already removed this column from the current fixture;
+                -- the v65 migration below must recreate it from the older shape.
                 ALTER TABLE agent_run DROP COLUMN assignee_agent_id_at_admission;
                 DROP INDEX task_camp_status_created_idx;
                 DROP INDEX task_camp_assignee_status_idx;

@@ -24621,6 +24621,25 @@ mod tests {
     use std::fs;
 
     #[cfg(feature = "slow-tests")]
+    fn test_git_binary() -> PathBuf {
+        // Parallel Runtime tests replace the process-wide active command path.
+        // These Git fixtures need a stable host utility independent of that state.
+        #[cfg(unix)]
+        for path in [
+            "/usr/bin/git",
+            "/opt/homebrew/bin/git",
+            "/usr/local/bin/git",
+        ] {
+            let candidate = PathBuf::from(path);
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+        crate::runtime_discovery::resolve_active_command_path("git")
+            .expect("Git is required for Mission fixture tests")
+    }
+
+    #[cfg(all(target_os = "macos", feature = "slow-tests"))]
     fn text_composer_document(text: &str) -> ComposerDocument {
         ComposerDocument {
             version: rovai_core::camp_content::COMPOSER_DOCUMENT_VERSION,
@@ -27619,7 +27638,7 @@ done
     }
 
     #[test]
-    fn pi_qualified_platform_enters_discovery_and_dispatch_with_bound_evidence() {
+    fn pi_platform_enters_discovery_and_dispatch_with_platform_appropriate_evidence() {
         let enabled = current_platform_enabled_runtime_kinds();
         assert!(enabled.contains(&AdapterKind::Pi));
         assert!(!enabled.contains(&AdapterKind::CursorAgent));
@@ -27627,8 +27646,9 @@ done
 
         let admission = current_runtime_platform_admission(AdapterKind::Pi).unwrap();
         assert!(admission.allows_runtime_use());
-        assert!(admission.is_qualified());
-        assert!(admission.evidence_revision().is_some());
+        let qualified = HostPlatformKey::current() != Some(HostPlatformKey::LinuxX64);
+        assert_eq!(admission.is_qualified(), qualified);
+        assert_eq!(admission.evidence_revision().is_some(), qualified);
     }
 
     #[test]
@@ -28240,7 +28260,7 @@ done
             camp_id: &str,
             agent_run_id: &str,
             evidence_id: &str,
-            expected_output: &str,
+            expected_explanation: &str,
         ) {
             let open_service = service.clone();
             let event_service = service.clone();
@@ -28305,8 +28325,8 @@ done
                 );
             }
             assert_eq!(
-                replies[3].result.as_ref().unwrap()["payload"]["item"]["aggregatedOutput"],
-                expected_output,
+                replies[3].result.as_ref().unwrap()["payload"]["explanation"],
+                expected_explanation,
                 "getContent must return the full managed Blob while Mission Git is blocked"
             );
         }
@@ -28331,8 +28351,7 @@ done
         let root = fs::canonicalize(&root).unwrap();
         let source = root.join("source");
         fs::create_dir_all(&source).unwrap();
-        let git_path = crate::runtime_discovery::resolve_active_command_path("git")
-            .expect("Git is required for the real Mission dispatch test");
+        let git_path = test_git_binary();
         let git = |arguments: &[&str]| {
             let output = std::process::Command::new(&git_path)
                 .arg("-C")
@@ -28455,41 +28474,19 @@ done
                 [&agent_run_id],
             )
             .unwrap();
-        let secret = format!("MISSION_GIT_BLOB_{}", "x".repeat(573_647));
-        ExecutionEvidenceService
-            .record_runtime_event(
-                &mut database,
-                &ManagedBlobStore::new(&data_dir),
-                &agent_run_id,
-                1,
-                "activity.started",
-                &json!({
-                    "item": {
-                        "id": "command-1",
-                        "type": "commandExecution",
-                        "command": "git status",
-                        "status": "inProgress",
-                    }
-                }),
-            )
-            .unwrap()
-            .unwrap();
+        // Tool output is bounded before persistence. A plan explanation uses
+        // the ordinary managed-Blob path that this concurrency test reads.
+        let secret = format!("MISSION_GIT_BLOB_{}", "x".repeat(24_000));
         let evidence = ExecutionEvidenceService
             .record_runtime_event(
                 &mut database,
                 &ManagedBlobStore::new(&data_dir),
                 &agent_run_id,
                 1,
-                "activity.completed",
+                "runtime.plan",
                 &json!({
-                    "item": {
-                        "id": "command-1",
-                        "type": "commandExecution",
-                        "command": "git status",
-                        "status": "completed",
-                        "exitCode": 0,
-                        "aggregatedOutput": secret.clone(),
-                    }
+                    "explanation": secret,
+                    "plan": [],
                 }),
             )
             .unwrap()
@@ -28938,8 +28935,7 @@ done
         fs::create_dir_all(&source).unwrap();
         let root = fs::canonicalize(&root).unwrap();
         let source = fs::canonicalize(&source).unwrap();
-        let git_path = crate::runtime_discovery::resolve_active_command_path("git")
-            .expect("Git is required for the Mission deletion race regression");
+        let git_path = test_git_binary();
         let git = |arguments: &[&str]| {
             let output = std::process::Command::new(&git_path)
                 .arg("-C")
