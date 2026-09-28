@@ -19,7 +19,7 @@ function snapshot(overrides: Partial<AppUpdateSnapshot> = {}): AppUpdateSnapshot
     currentRelease: {
       version: '0.0.2',
       releaseName: 'Rovai AI v0.0.2',
-      releaseDate: null,
+      releaseDate: '2026-08-22T08:00:00.000Z',
       releaseNotes: '# Rovai AI v0.0.2\n\n- 已安装版本日志'
     },
     status: 'idle',
@@ -67,6 +67,7 @@ describe('AboutUpdatesSettingsView', () => {
     expect(markup).toContain('下载与安装由你决定')
     expect(markup).toContain('更新日志</h2>')
     expect(markup).toContain('已安装版本日志')
+    expect(markup).toContain('发布日期：<time dateTime="2026-08-22T08:00:00.000Z">2026年8月22日</time>')
     expect(markup.match(/Rovai AI v0\.0\.2/g)).toHaveLength(1)
     expect(markup).not.toContain('role="tablist"')
     expect(markup).not.toContain('官方 Releases')

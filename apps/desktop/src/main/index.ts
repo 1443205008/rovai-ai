@@ -6,6 +6,7 @@ import { chmod, lstat, mkdir, readFile, readdir, rename, unlink, writeFile } fro
 import { openHostWebLink } from './host-web-link'
 import { randomUUID } from 'node:crypto'
 import bundledReleaseNotes from '../../../../build/release-notes.md?raw'
+import bundledReleaseMetadata from '../../../../build/release-metadata.json'
 import { dirname, extname, join } from 'node:path'
 import {
   app,
@@ -670,6 +671,7 @@ async function initializeAppUpdates(): Promise<void> {
   const service = createAppUpdatesServiceFailOpen({
     currentVersion: () => app.getVersion(),
     bundledReleaseNotes,
+    bundledReleaseMetadata,
     isPackaged: () => app.isPackaged,
     updater: autoUpdater as unknown as DesktopAutoUpdater | null,
     automaticChecksEnabled: !(

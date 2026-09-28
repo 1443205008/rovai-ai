@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import { seedCompletedOnboardingForAcceptance } from './lib/dev-desktop.mjs'
 
 const root = resolve(import.meta.dirname, '..')
+const releaseMetadata = JSON.parse(await readFile(join(root, 'build', 'release-metadata.json'), 'utf8'))
 const appPath = resolve(process.argv[2] ?? join(root, 'dist', 'mac-arm64', 'Rovai AI.app'))
 const fixtureRoot = process.env.ROVAI_APP_UPDATES_ACCEPT_FIXTURE_ROOT
   ?? await mkdtemp(join(tmpdir(), 'rovai-app-updates-ui-accept-'))
@@ -59,6 +60,7 @@ try {
       packagedVersion: '0.4.0',
       typedIdleUpdaterSnapshot: true,
       bundledCurrentRelease: true,
+      bundledCurrentReleaseDate: true,
       duplicateReleaseTitleRemoved: true,
       productAndBundleName: 'Rovai AI',
       existingSettingsVisualWorld: true,
@@ -102,6 +104,7 @@ async function assertAboutUpdates(cdp, context) {
   const updaterSnapshot = await evaluate(cdp, 'window.rovai.appUpdates.get()', true)
   assert(updaterSnapshot?.currentVersion === '0.4.0'
     && updaterSnapshot.currentRelease?.version === '0.4.0'
+    && updaterSnapshot.currentRelease.releaseDate === releaseMetadata.releaseDate
     && updaterSnapshot.currentRelease.releaseNotes?.startsWith('# Rovai AI v0.4.0\n')
     && updaterSnapshot.status === 'idle'
     && updaterSnapshot.availableRelease === null
@@ -130,6 +133,8 @@ async function assertAboutUpdates(cdp, context) {
       releaseVisible: Boolean(surface?.querySelector('.about-release-section')),
       releaseVersion: surface?.querySelector('.about-release-section')?.dataset.appUpdateReleaseVersion,
       releaseNotesText: surface?.querySelector('.about-release-notes')?.textContent ?? '',
+      releaseDate: surface?.querySelector('.about-release-header time')?.getAttribute('datetime') ?? '',
+      releaseDateText: surface?.querySelector('.about-release-header time')?.textContent ?? '',
       repeatedReleaseTitle: Boolean(surface?.querySelector('[data-markdown-heading="Rovai AI v0.4.0"]')),
       fallbackVisible: Boolean(surface?.querySelector('.about-update-fallback')),
       globalPromptVisible: Boolean(document.querySelector('.app-update-prompt')),
@@ -151,6 +156,10 @@ async function assertAboutUpdates(cdp, context) {
     `${context} omitted updater status/source evidence`)
   assert(state.releaseVisible && state.releaseVersion === '0.4.0'
     && state.releaseNotesText.includes('Skills 的管理方式')
+    && state.releaseDate === releaseMetadata.releaseDate
+    && state.releaseDateText === new Intl.DateTimeFormat('zh-CN', {
+      year: 'numeric', month: 'long', day: 'numeric'
+    }).format(new Date(releaseMetadata.releaseDate))
     && !state.repeatedReleaseTitle,
     `${context} omitted or duplicated bundled release notes: ${JSON.stringify(state)}`)
   assert(!state.progressVisible

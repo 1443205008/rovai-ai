@@ -2,7 +2,7 @@
 document_type: architecture
 authority: desktop-application-update-component-boundary
 status: accepted
-last_updated: 2026-09-25
+last_updated: 2026-09-28
 ---
 
 # Desktop App Updates
@@ -11,10 +11,10 @@ last_updated: 2026-09-25
 
 | Component | Responsibility |
 | --- | --- |
-| Release packaging pipeline | Owns one version-bound Markdown source, embeds it into the Desktop Main bundle and every platform update manifest, and fails release verification when source and manifest differ. |
+| Release packaging pipeline | Owns version-bound Markdown notes and release-date metadata, embeds both into the Desktop Main bundle, writes notes to every platform update manifest, and rejects stale sources or mismatched notes. |
 | Electron Main update service | Owns the single snapshot, installed-release version binding, check source coalescing, timers, candidate normalization, prompt generations, download/install mutexes and updater degradation. |
 | `electron-updater` adapter | Reads packaged channel configuration, performs provider checks/downloads and synchronously stages the platform installer; it never decides Renderer presentation. |
-| Preload bridge | Exposes the closed App Update v5 API to the current Main Window, forwards typed snapshots and carries the private quit-preparation request; no provider object, installer path or credential crosses the bridge. |
+| Preload bridge | Exposes the closed App Update v6 API to the current Main Window, forwards typed snapshots and carries the private quit-preparation request; no provider object, installer path or credential crosses the bridge. |
 | Renderer update controller | Hydrates with `get`, subscribes once, shares the same snapshot across Shell and About, and reports action-call failures without replacing Main facts. |
 | App Shell prompt/badges | Projects Main-owned prompt generation and actionable release states without reusing Notification Episode authority. |
 | About & Updates | Projects all operation/result states, explicit actions, safe release notes and the narrowly admitted fallback links. |
@@ -30,6 +30,10 @@ build/release-notes.md
      -> electron-updater UpdateInfo.releaseNotes
      -> Main bounded candidate normalization -> availableRelease
   -> Renderer exact-title display cleanup -> SafeMarkdown
+
+build/release-metadata.json
+  -> Desktop Main and Desktop-hosted Web bundles
+  -> version and date validation against running App -> currentRelease.releaseDate
 ```
 
 [`build/release-notes.md`](../../build/release-notes.md) is the only repository-owned release-note source. Its first
@@ -43,6 +47,11 @@ source heading matches the running App version, the body is non-empty and the si
 an installed release with null notes. This keeps current-version notes available after an install or offline. The
 `releaseInfo.releaseNotesFile` setting alone writes manifests and does not guarantee that the source is in the App, so
 the Main import explicitly places it in the bundle.
+
+The version-bound metadata holds the installed release date independently of the notes. Main uses it only when its
+version matches the running App and its UTC timestamp is canonical. The build gate rejects stale metadata when the
+package version changes; the publisher checks its date against the official GitHub Release before distribution. An
+invalid or missing bundled date remains an explicit unknown, never a build or update-check timestamp.
 
 The GitHub provider may still use the Releases Atom feed to discover a tag. Manifest `releaseNotes` takes precedence over
 the provider's Atom-content fallback, so Rovai does not add a second GitHub REST request or a Renderer network path for
@@ -142,7 +151,7 @@ updater-unavailable or download-failed states.
 
 ## References
 
-- [App Update v5](../contracts/app-update-v5.md)
+- [App Update v6](../contracts/app-update-v6.md)
 - [Planned Shutdown](planned-shutdown.md)
 - [App Shell navigation](../ui/components/app-shell-navigation.md)
 - [macOS packaging](../development/packaging.md)
