@@ -774,8 +774,8 @@ Evidence 的 Run 不生成卡片；Review 也只读取同一 projection/detail�
 项目行为一致。执行台不增加共享 workspace observation，
 底部/右侧 placement、会话连接轨、Tool list 宽度和其他既有视觉结构保持不变。
 
-使用“Agent 运行时默认”的 Run 在既有 `.execution-run-meta` 中保持一个模型字段：尚无可信观测时显示
-“模型 Agent 运行时默认”，首次 Runtime-native 观测到达后原位收敛为“模型 {modelId} · 默认”。固定模型
+使用“智能体默认”的 Run 在既有 `.execution-run-meta` 中保持一个模型字段：尚无可信观测时显示
+“模型 智能体默认”，首次 Runtime-native 观测到达后原位收敛为“模型 {modelId} · 默认”。固定模型
 不增加本版字段；运行中后续换模不覆盖首值。长 ID 使用等宽单行省略并允许键盘聚焦取得完整 title，底部和
 Inspector 复用同一语义。刷新不得自动打开执行台、改变 Run selection、移动焦点或创建 Toast/时间线消息。
 

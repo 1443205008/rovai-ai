@@ -143,7 +143,7 @@ export function RuntimeModelSearch({ open, onOpenChange, models, value, label, m
         <div className="runtime-picker-default">
           <button type="button" tabIndex={-1} role="option" aria-selected={value === DEFAULT_MODEL}
             id={`${id}-option-${filtered.length}`} className="runtime-model-picker-item"
-            data-highlighted={active === DEFAULT_MODEL ? '' : undefined} title={uiAttribute("跟随 Agent 运行时默认")}
+            data-highlighted={active === DEFAULT_MODEL ? '' : undefined} title={uiAttribute("跟随智能体默认")}
             onMouseDown={event => event.preventDefault()} onPointerMove={() => setActiveId(DEFAULT_MODEL)} onClick={() => choose(DEFAULT_MODEL)}>
             <span className="runtime-model-picker-copy"><strong><UiText zh={"默认"} /></strong></span>
             <span className="runtime-model-picker-check">{value === DEFAULT_MODEL && <RuntimePickerCheck />}</span>

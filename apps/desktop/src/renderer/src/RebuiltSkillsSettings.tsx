@@ -77,11 +77,11 @@ export function NativeSkillsSettings(): React.JSX.Element {
   }
   return <div className="rebuilt-skills-page">
     <header className="rebuilt-skills-header">
-      <div><h1>Skills</h1><p><UiText zh={"查看各运行时的 Skills。"} /></p></div>
+      <div><h1>Skills</h1><p><UiText zh={"查看各智能体的 Skills。"} /></p></div>
     </header>
-    <div className="rebuilt-runtime-bar"><span><UiText zh={"运行时"} /></span>
+    <div className="rebuilt-runtime-bar"><span><UiText zh={"智能体"} /></span>
       <Menu.Root>
-        <Menu.Trigger asChild><button className="member-runtime-picker rebuilt-runtime-trigger" type="button" aria-label={uiAttribute("选择运行时，当前为 {0}", String(adapterLabel(runtime)))}><RuntimeGlyph kind={runtime} /><span>{adapterLabel(runtime)}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></button></Menu.Trigger>
+        <Menu.Trigger asChild><button className="member-runtime-picker rebuilt-runtime-trigger" type="button" aria-label={uiAttribute("选择智能体，当前为 {0}", String(adapterLabel(runtime)))}><RuntimeGlyph kind={runtime} /><span>{adapterLabel(runtime)}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></button></Menu.Trigger>
         <Menu.Portal><Menu.Content className="runtime-model-picker-menu member-runtime-menu" align="end" sideOffset={5} loop>
           <Menu.RadioGroup className="runtime-picker-options" value={runtime} onValueChange={(value) => setRuntime(value as AdapterKind)}>
             <div className="runtime-picker-scroll">{VISIBLE_PRODUCT_RUNTIMES.map((kind) => <Menu.RadioItem key={kind} value={kind} textValue={adapterLabel(kind)} className="runtime-model-picker-item member-runtime-menu-item"><RuntimeGlyph kind={kind} /><span className="runtime-model-picker-copy"><strong>{adapterLabel(kind)}</strong></span><Menu.ItemIndicator className="runtime-model-picker-check">✓</Menu.ItemIndicator></Menu.RadioItem>)}</div>
@@ -97,7 +97,7 @@ export function NativeSkillsSettings(): React.JSX.Element {
         {error && <div className="rebuilt-skills-error" role="alert"><UiText zh={"执行端暂不可读："} />{error}<button type="button" onClick={() => void load(true)}><UiText zh={"重试"} /></button></div>}
         {scan?.errors.length ? <div className="rebuilt-skills-error" role="status"><UiText zh={"部分来源暂不可读。已发现的 Skill 仍可查看。"} /><button type="button" onClick={() => void load(true)}><UiText zh={"重试"} /></button></div> : null}
         {loading && !scan && <p className="rebuilt-skills-empty"><UiText zh={"正在读取 Skills…"} /></p>}
-        {!loading && scan && scan.skills.length === 0 && <p className="rebuilt-skills-empty"><UiText zh={"这个运行时尚未发现 Skills。"} /></p>}
+        {!loading && scan && scan.skills.length === 0 && <p className="rebuilt-skills-empty"><UiText zh={"这个智能体尚未发现 Skills。"} /></p>}
         {scan && visible.length === 0 && scan.skills.length > 0 && <p className="rebuilt-skills-empty"><UiText zh={"没有匹配的 Skill。"} /></p>}
         <div className="rebuilt-skills-list-scroll">{visible.map((skill) => <button type="button" key={skill.id} className={`rebuilt-skill-row ${selectedId === skill.id ? 'is-selected' : ''}`} onClick={() => { if (selectedId !== skill.id) { setSelectedId(skill.id); setFilePath('SKILL.md'); setFiles([]) } setRaw(false); setDetailVisible(true) }}><SkillIdentityMark skillId={skill.id} name={skill.name} /><span><strong>{skill.name}</strong><small>{skill.description}</small></span></button>)}</div>
       </aside>

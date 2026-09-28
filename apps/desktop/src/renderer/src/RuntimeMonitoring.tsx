@@ -260,9 +260,9 @@ export function RuntimeMonitoring({
   return (
     <div className="runtime-monitoring">
       <SettingsPageHeader
-        eyebrow="Settings / Runtime Usage"
+        eyebrow="Settings / Agent Usage"
         title={uiAttribute("运行监控")}
-        description={uiAttribute("汇总 Runtime 实际上报的 Token、Cache 与成本；未上报字段显示为未知。")}
+        description={uiAttribute("汇总智能体实际报告的 Token、Cache 与成本；未报告字段显示为未知。")}
         aside={(
           <>
             <button className="quiet-button" type="button" onClick={() => setRefreshKey((value) => value + 1)} disabled={loading}>
@@ -344,7 +344,7 @@ function MonitoringFilters({
           <option value="7d"><UiText zh={"过去 7 天"} /></option>
           <option value="30d"><UiText zh={"过去 30 天"} /></option>
         </Filter>
-        <Filter label="Runtime" value={filter.runtimeKind ?? ''} disabled={disabled} onChange={(value) => onChange('runtimeKind', value ? value as AdapterKind : undefined)}>
+        <Filter label={uiAttribute("智能体")} value={filter.runtimeKind ?? ''} disabled={disabled} onChange={(value) => onChange('runtimeKind', value ? value as AdapterKind : undefined)}>
           <option value=""><UiText zh={"全部"} /></option>
           {ADAPTERS.map((adapter) => <option key={adapter.value} value={adapter.value}>{adapter.label}</option>)}
         </Filter>
@@ -406,7 +406,7 @@ export function RuntimeUsageView({ snapshot }: { snapshot: RuntimeUsageSnapshot 
         <UsageTrend points={snapshot.trend} />
       </section>
 
-      <BreakdownTable id="monitoring-runtime-heading" title="Runtime" description={uiAttribute("按 Runtime 汇总 Token、Cache、成本与数据覆盖。")} rows={snapshot.byRuntime} mode="runtime" />
+      <BreakdownTable id="monitoring-runtime-heading" title={uiAttribute("智能体")} description={uiAttribute("按智能体汇总 Token、Cache、成本与数据覆盖。")} rows={snapshot.byRuntime} mode="runtime" />
       <BreakdownTable id="monitoring-model-heading" title={uiAttribute("模型")} description={uiAttribute("最多展示用量最高的 10 组，其余合并为“其他”。")} rows={snapshot.byModel} mode="model" />
 
       {snapshot.summary.cost?.reconciliation.length ? <Reconciliation snapshot={snapshot} /> : null}
@@ -468,7 +468,7 @@ function BreakdownTable({ id, title, description, rows, mode }: {
       ) : (
         <div className="monitoring-table-wrap">
           <table>
-            <thead><tr><th>{mode === 'runtime' ? 'Runtime' : uiAttribute("Runtime / Provider / 模型")}</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cache Write</th><th><UiText zh={"Read 占比"} /></th><th><UiText zh={"成本"} /></th><th><UiText zh={"覆盖"} /></th></tr></thead>
+            <thead><tr><th>{mode === 'runtime' ? uiAttribute("智能体") : uiAttribute("智能体 / Provider / 模型")}</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cache Write</th><th><UiText zh={"Read 占比"} /></th><th><UiText zh={"成本"} /></th><th><UiText zh={"覆盖"} /></th></tr></thead>
             <tbody>{rows.map((row, index) => (
               <tr key={`${row.runtimeKind}:${row.providerKey}:${row.modelKey}:${index}`}>
                 <th scope="row">

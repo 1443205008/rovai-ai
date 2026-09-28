@@ -284,7 +284,7 @@ export class OnboardingStore {
     const parsed = selection === null ? null : parseRuntimeSelection(selection)
     if (selection !== null && !parsed) return Promise.reject(new Error('Invalid onboarding Runtime selection'))
     return this.#mutateInProgress((current) => {
-      if (current.step !== 'runtime') throw new Error('当前不在 Agent 运行时配置页')
+      if (current.step !== 'runtime') throw new Error('当前不在智能体配置页')
       if (current.provisioning) throw new Error('首次引导初始化已经开始，不能修改运行配置')
       return { ...current, runtimeSelection: parsed }
     })
@@ -294,7 +294,7 @@ export class OnboardingStore {
     return this.#enqueue(async () => {
       const current = requireInProgress(this.#snapshot)
       if (current.step !== 'runtime') {
-        throw new Error('当前不在 Agent 运行时配置页')
+        throw new Error('当前不在智能体配置页')
       }
       if (current.provisioning) {
         throw new Error('首次引导初始化已经开始，不能跳过运行配置')
@@ -316,10 +316,10 @@ export class OnboardingStore {
     runtimePermissions: unknown
   ): Promise<OnboardingSnapshot> {
     const parsed = parseRuntimeSelection(selection)
-    if (!parsed?.model) return Promise.reject(new Error('请先完成 Agent 运行时与模型配置'))
+    if (!parsed?.model) return Promise.reject(new Error('请先完成智能体与模型配置'))
     const parsedPermissions = parseRuntimePermissions(runtimePermissions)
     if (!parsedPermissions || parsedPermissions.adapterKind !== parsed.adapterKind) {
-      return Promise.reject(new Error('Agent 运行时默认权限与当前选择不匹配'))
+      return Promise.reject(new Error('智能体默认权限与当前选择不匹配'))
     }
     return this.#mutateInProgress((current) => {
       if (current.step !== 'runtime' || !current.selectedMemberRole) {

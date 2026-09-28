@@ -794,7 +794,7 @@ const MemberEditor = forwardRef<
                 onOpenRuntimeSettings={onOpenRuntimeSettings}
               />
             ) : (
-              <p className="member-editor-new-runtime"><UiText zh={"创建队员后，可在这里选择 Agent 运行时、模型与权限。"} /></p>
+              <p className="member-editor-new-runtime"><UiText zh={"创建队员后，可在这里选择智能体、模型与权限。"} /></p>
             )}
           </section>
         </div>
@@ -956,14 +956,14 @@ function MemberDetailHeader({
               className={`member-header-runtime status-${runtime.status}`}
               type="button"
               onClick={onRuntime}
-              aria-label={agent.runtimeConfiguration?.adapterKind ? uiAttribute("{0}，{1}；打开运行配置", String(adapterLabel(agent.runtimeConfiguration.adapterKind)), String(runtime.label)) : uiAttribute("未配置运行时；打开运行配置")}
+              aria-label={agent.runtimeConfiguration?.adapterKind ? uiAttribute("{0}，{1}；打开运行配置", String(adapterLabel(agent.runtimeConfiguration.adapterKind)), String(runtime.label)) : uiAttribute("未配置智能体；打开运行配置")}
               title={uiAttribute("打开运行配置")}
             >
               <i aria-hidden="true" />
               <span>
                 {agent.runtimeConfiguration?.adapterKind
                   ? adapterLabel(agent.runtimeConfiguration.adapterKind)
-                  : uiAttribute("未配置运行时")}
+                  : uiAttribute("未配置智能体")}
               </span>
               <svg
                 className="member-runtime-entry-arrow"
@@ -1316,7 +1316,7 @@ export const MemberRuntimeForm = forwardRef<
                     className="quiet-button"
                     type="button"
                     onClick={onOpenRuntimeSettings}
-                  ><UiText zh={"前往 Agent 运行时"} /></button>
+                  ><UiText zh={"前往智能体"} /></button>
                 </div>
               )}
           </div>
@@ -1476,9 +1476,9 @@ export function RuntimeInstallationsPanel({
   return (
     <>
       <SettingsPageHeader
-        eyebrow="Settings / Runtime"
-        title={uiAttribute("运行时")}
-        description={uiAttribute("管理本机 Agent 运行时，只需安装你准备使用的。")}
+        eyebrow="Settings / Agents"
+        title={uiAttribute("智能体")}
+        description={uiAttribute("管理本机智能体，只需安装你准备使用的。")}
         aside={
           <button
             className="quiet-button"
@@ -1491,14 +1491,14 @@ export function RuntimeInstallationsPanel({
                 ? uiAttribute("重新检测")
                 : hasEnabledRuntime
                   ? uiAttribute("重新检测")
-                  : uiAttribute("当前平台尚无可检测 Runtime")}
+                  : uiAttribute("当前平台尚无可检测的智能体")}
           </button>
         }
       />
       <section className="section-block runtime-installations">
         <div className="section-heading">
           <div>
-            <h2><UiText zh={"运行时目录"} /></h2>
+            <h2><UiText zh={"智能体目录"} /></h2>
           </div>
           {health && <span className="runtime-catalog-platform"><UiText zh={"当前平台："} />{HOST_PLATFORM_LABELS[health.hostPlatform]}</span>}
         </div>
@@ -1647,8 +1647,8 @@ function commandCodeLabel(code: string): string {
         version_conflict: '配置已被其他操作更新，请重新载入后确认修改。填写内容已保留。',
         runtime_model_catalog_refresh_required: '暂时无法验证所选模型，本次修改尚未保存，填写内容已保留。',
         runtime_save_outcome_unknown: '暂时无法确认保存结果，请重新载入后核对配置。填写内容已保留。',
-        runtime_model_requires_verification: '运行环境尚未完成验证，请先检查 Agent 运行时。填写内容已保留。',
-        runtime_configuration_unavailable: '当前运行环境不可用，请检查 Agent 运行时。填写内容已保留。',
+        runtime_model_requires_verification: '运行环境尚未完成验证，请先检查智能体。填写内容已保留。',
+        runtime_configuration_unavailable: '当前运行环境不可用，请检查智能体。填写内容已保留。',
         runtime_model_unavailable: '所选模型已不在当前可选列表中，请调整模型选择。填写内容已保留。',
         runtime_model_options_invalid: '所选模型的参数格式无效，请调整模型参数。填写内容已保留。',
         runtime_model_option_unknown: '所选模型不支持此参数，请调整模型参数。填写内容已保留。',
@@ -1662,9 +1662,9 @@ function commandCodeLabel(code: string): string {
         runtime_permission_value_invalid: '权限选项值无效，请调整权限。填写内容已保留。',
         'agent_profile.default_lead_successor_required':
           '该队员仍是某个会话的默认负责人，请先在对应会话中指定继任者',
-        'adapter_installation.already_exists': '这个 Agent 运行时已经存在',
+        'adapter_installation.already_exists': '这个智能体已经存在',
         'adapter_installation.version_conflict':
-          'Agent 运行时已被更新，请刷新后重试'
+          '智能体已被更新，请刷新后重试'
       } as Record<string, string>
     )[code] ?? uiAttribute('操作未完成，请稍后重试；详细原因可在诊断中查看。')
   )

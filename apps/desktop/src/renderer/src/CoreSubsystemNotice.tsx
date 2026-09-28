@@ -12,7 +12,7 @@ function subsystemLabel(id: string): string {
     maintenance: '后台维护',
     'builtin-tools': '内置工具连接'
   }
-  return labels[id] ? uiAttribute(labels[id]) : id.startsWith('runtime.') ? uiAttribute('Runtime：{0}', id.slice(8)) : id
+  return labels[id] ? uiAttribute(labels[id]) : id.startsWith('runtime.') ? uiAttribute('执行组件：{0}', id.slice(8)) : id
 }
 
 /** Authority stays mounted while a feature is repaired in the same Core. */

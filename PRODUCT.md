@@ -37,7 +37,7 @@ coordinates them while preserving which facts came from Rovai Core and which cam
 
 ## Capabilities and Constraints
 
-- Supported product language includes “Camp”, “队员”, “记忆”, “Agent 运行时” and “快速对话”.
+- Supported product language includes “Camp”, “队员”, “记忆”, “智能体” and “快速对话”. In the interface, “智能体” names a selectable coding-agent product; “队员” names the long-lived team identity.
 - SQLite-backed Core facts are authoritative; Renderer pages consume typed, read-only projections.
 - Runtime Usage is sparse and source-qualified. Missing fields remain unknown and never become zero.
 - Each Monitoring schema begins at a persistent clean-break collection boundary; older Core runs are

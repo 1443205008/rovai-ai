@@ -2307,7 +2307,7 @@ ipcMain.handle('rovai:select-workspace-directory', async () => {
 
 ipcMain.handle('rovai:select-runtime-executable', async () => {
   const options = {
-    title: '选择本机 Agent 运行时可执行文件',
+    title: '选择本机智能体可执行文件',
     buttonLabel: '选择 Runtime',
     properties: ['openFile'] as Array<'openFile'>
   }

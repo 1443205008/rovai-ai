@@ -279,7 +279,7 @@ describe('member runtime parameters', () => {
       onChange: () => undefined
     }))
 
-    expect(markup).toContain('模型、模型参数与 Agent 运行时原生权限。')
+    expect(markup).toContain('模型、模型参数与智能体原生权限。')
     expect(markup).toContain('<span>模型</span>')
     expect(markup).not.toContain('审批模式')
     expect(markup).not.toContain('partial_managed')

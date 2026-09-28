@@ -1020,15 +1020,15 @@ type MentionPopoverRequest = {
 export function runtimeRecoveryReason(blockerCode: string): string {
   switch (blockerCode) {
     case 'runtime_not_configured':
-      return uiAttribute("尚未配置 Agent 运行时")
+      return uiAttribute("尚未配置智能体")
     case 'runtime_authentication_required':
-      return uiAttribute("Agent 运行时需要登录")
+      return uiAttribute("智能体需要登录")
     case 'adapter_installation_missing':
-      return uiAttribute("所选 Agent 运行时尚未安装")
+      return uiAttribute("所选智能体尚未安装")
     case 'adapter_installation_disabled':
-      return uiAttribute("所选 Agent 运行时已停用")
+      return uiAttribute("所选智能体已停用")
     case 'runtime_probe_required':
-      return uiAttribute("Agent 运行时需要重新检查")
+      return uiAttribute("智能体需要重新检查")
     case 'runtime_configuration_adapter_mismatch':
       return uiAttribute("运行配置已变更，请重新选择")
     case 'conversation_runtime_override_unsupported':
@@ -1044,7 +1044,7 @@ export function runtimeRecoveryReason(blockerCode: string): string {
     case 'agent_unavailable':
       return uiAttribute("队员当前不可用")
     default:
-      return uiAttribute("Agent 运行时暂不可用")
+      return uiAttribute("智能体暂不可用")
   }
 }
 
@@ -1494,15 +1494,15 @@ export function emptyCampRuntimeSummary(
 
   const profileById = new Map(agents.map((agent) => [agent.agentId, agent]))
   const profiles = activeMembers.map((member) => profileById.get(member.agentId))
-  if (profiles.some((profile) => !profile)) return uiAttribute("正在检查 Agent 运行时…")
+  if (profiles.some((profile) => !profile)) return uiAttribute("正在检查智能体…")
 
   const readyCount = profiles.filter((profile) => (
     profile?.runtimeReadiness.status === 'ready'
     || profile?.runtimeReadiness.status === 'light_ready'
   )).length
-  if (readyCount === activeMembers.length) return uiAttribute("Agent 运行时可用")
-  if (readyCount === 0) return uiAttribute("Agent 运行时不可用")
-  return uiAttribute("{0}/{1} 个 Agent 运行时可用", String(readyCount), String(activeMembers.length))
+  if (readyCount === activeMembers.length) return uiAttribute("智能体可用")
+  if (readyCount === 0) return uiAttribute("智能体不可用")
+  return uiAttribute("{0}/{1} 个智能体可用", String(readyCount), String(activeMembers.length))
 }
 
 export function QuickChatWorkspace({
@@ -1539,7 +1539,7 @@ export function QuickChatWorkspace({
           <div className="quick-chat-empty">
             {hasAvailableMember
               ? <button className="quick-chat-create" type="button" onClick={onNewConversation}><span aria-hidden="true">＋</span><UiText zh={"新对话"} /></button>
-              : <><button className="quick-chat-create" type="button" onClick={onOpenMembers}><UiText zh={"前往队员"} /></button><button className="quiet-button" type="button" onClick={onOpenRuntimeSettings}><UiText zh={"查看运行时"} /></button></>}
+              : <><button className="quick-chat-create" type="button" onClick={onOpenMembers}><UiText zh={"前往队员"} /></button><button className="quiet-button" type="button" onClick={onOpenRuntimeSettings}><UiText zh={"查看智能体"} /></button></>}
           </div>
           </>}
           {recentCamps.length > 0 && (
@@ -7940,7 +7940,7 @@ export function RuntimeRecoveryDock({
     <section
       className="runtime-recovery-dock"
       role="alert"
-      aria-label={uiAttribute("消息未发送，目标队员的 Agent 运行时不可用")}
+      aria-label={uiAttribute("消息未发送，目标队员的智能体不可用")}
     >
       <header>
         <div className="runtime-recovery-heading">
@@ -7970,7 +7970,7 @@ export function RuntimeRecoveryDock({
                 <button
                   className="quiet-button compact"
                   type="button"
-                  aria-label={uiAttribute("配置{0}的 Agent 运行时", String(displayName))}
+                  aria-label={uiAttribute("配置{0}的智能体", String(displayName))}
                   onClick={() => onConfigure(target.agentId)}
                 ><UiText zh={"去配置"} /></button>
               )}
@@ -8230,7 +8230,7 @@ function CampMembersPanel({
             : member.profilePresence === 'away'
               ? uiAttribute('暂离')
               : uiAttribute('在队')
-          const runtimeLabel = profile ? mentionRuntimeLabel(profile) : uiAttribute('Agent 运行时未载入')
+          const runtimeLabel = profile ? mentionRuntimeLabel(profile) : uiAttribute('智能体未载入')
           const runtimeTone = profile?.runtimeReadiness.status === 'ready'
             ? 'ready'
             : profile?.runtimeReadiness.status === 'needs_attention'
@@ -8300,7 +8300,7 @@ function CampMembersPanel({
                       onSelect={() => runtimeConfiguration && toggleRuntimeDetails(member.agentId)}
                     >
                       <strong><UiText zh={"模型信息"} /></strong>
-                      {!runtimeConfiguration && <small><UiText zh={"请先配置 Agent 运行时"} /></small>}
+                      {!runtimeConfiguration && <small><UiText zh={"请先配置智能体"} /></small>}
                     </DropdownMenu.Item>
                     <DropdownMenu.Separator className="camp-member-menu-separator" />
                     <DropdownMenu.Item
@@ -8662,7 +8662,7 @@ export function ApprovalDock({
             </button>
           ))}
           {approval.options.length === 0 && (
-            <p className="approval-option-error"><UiText zh={"当前 Agent 运行时未提供可无损回传的原生选项，请求无法提交。"} /></p>
+            <p className="approval-option-error"><UiText zh={"当前智能体未提供可无损回传的原生选项，请求无法提交。"} /></p>
           )}
         </div>
       </div>}
@@ -8783,7 +8783,7 @@ function EmptyCampWelcome({
           </button>
         ))}
       </div>
-      {runtimeSummary !==uiAttribute("Agent 运行时可用") && (
+      {runtimeSummary !==uiAttribute("智能体可用") && (
         <p className="camp-home-runtime" role="status">{runtimeSummary}</p>
       )}
     </section>
@@ -10477,7 +10477,7 @@ function runtimeAdapterLabel(kind: string): string {
 export type MemberRuntimeConfigurationPresentation = {
   model: string
   effort: { label: '推理强度' | '思考强度'; value: string } | null
-  strategy: '固定模型' | '跟随 Agent 运行时默认'
+  strategy: '固定模型' | '跟随智能体默认'
   summary: string
 }
 
@@ -10488,10 +10488,10 @@ export function memberRuntimeConfigurationPresentation(
   const modelSelection = configuration.model
   if (modelSelection.mode === 'runtime_default') {
     return {
-      model: 'Agent 运行时默认',
+      model: '智能体默认',
       effort: null,
-      strategy: '跟随 Agent 运行时默认',
-      summary:uiAttribute("Agent 运行时默认")
+      strategy: '跟随智能体默认',
+      summary:uiAttribute("智能体默认")
     }
   }
 

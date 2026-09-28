@@ -206,7 +206,7 @@ describe('onboarding preferences', () => {
     const filePath = await temporaryFile()
     const store = await OnboardingStore.load(filePath)
     await store.initialize(false)
-    await expect(store.deferRuntimeSetup()).rejects.toThrow('运行时配置页')
+    await expect(store.deferRuntimeSetup()).rejects.toThrow('智能体配置页')
     await store.completeWelcome()
     await store.completeMemberSelection()
     await store.beginProvisioning({

@@ -282,7 +282,7 @@ function storeBoolean(key: string, value: boolean): void {
 function resultMessage(result: StoredCommandResult): string {
   const message = result.payload.message
   if (typeof message === 'string' && message.trim()) return message
-  if (result.code === 'single_chat.runtime_not_ready') return uiAttribute("这位队员的运行时暂不可用。")
+  if (result.code === 'single_chat.runtime_not_ready') return uiAttribute("这位队员的智能体暂不可用。")
   if (result.code === 'single_chat.member_unavailable') return uiAttribute("这位队员已不在当前会话中。")
   if (result.code === 'single_chat.draft_changed') return uiAttribute("附件草稿刚刚发生变化，请重试。")
   if (result.code === 'single_chat.pending_input_changed') return uiAttribute("这条排队消息刚刚发生变化，请重试。")

@@ -183,7 +183,7 @@ export function runStatus(run: AutomationRunSummary | null): { label: string; to
     timeout: '运行超过后台时限，已停止。',
     interrupted: '应用退出中断了本次运行。',
     no_result: '运行结束，但没有发布公共结果。',
-    runtime_not_ready: '所选队员的 Runtime 当前不可用。',
+    runtime_not_ready: '所选队员的智能体当前不可用。',
     execution_failed: '运行对话执行失败。'
   }
   return { label: uiAttribute('运行失败'), tone: 'danger', detail: run.reason ? reasons[run.reason] ? uiAttribute(reasons[run.reason]) : run.reason : null }

@@ -15,7 +15,7 @@ export function CampMemberFastToggle({
 }): React.JSX.Element {
   const enabled = effectiveCampMemberFast(value)
   const unknown = value.fastOverride === null && value.runtimeDefaultFast === null
-  const stateLabel = unknown ? uiAttribute('跟随运行时默认') : enabled ? uiAttribute('后续执行请求 Fast') : uiAttribute('后续执行请求标准速度')
+  const stateLabel = unknown ? uiAttribute('跟随智能体默认') : enabled ? uiAttribute('后续执行请求 Fast') : uiAttribute('后续执行请求标准速度')
   return <span className="camp-fast-control">
     <button
       type="button"
