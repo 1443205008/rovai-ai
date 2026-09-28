@@ -5,7 +5,7 @@ authority: channel-host-adaptive-maintenance-and-quiescence
 status: accepted
 version: 5
 source_version: v1.38
-last_updated: 2026-09-26
+last_updated: 2026-09-28
 ---
 
 # Channel Host Maintenance v5
@@ -44,6 +44,7 @@ Core 在同一个 IMMEDIATE 事务完成超时、投影、终态封存、FIFO、
 计算 `hasOutstandingWork`。以下任一事实仍存在即为 `true`：
 
 - `channel_turn_request` 为 `queued | admitted`；
+- 已完成的渠道 Request 仍有 `waiting` 的 Camp 消息交付，或 `claimed` 交付对应的 Run 仍为 `queued | running | waiting`；此时 Agent 可能尚未生成执行台或回复，Host 不得休眠；
 - `channel_delivery` 为 `pending | attempting`；
 - `channel_execution_console` 为 `opening | active | terminal_pending | recall_pending`；
 - `channel_inbound_aggregate` 为 `collecting`；
@@ -78,7 +79,8 @@ active 门禁；已经休眠的 Host 不得被这些事件重新激活。渠道�
 飞书 Service 在启动恢复探测前先把历史群 roster sweep deadline 推迟一个正常 sweep 周期。首次 Pump 必须直接完成
 遗留 Request、Delivery 与 Execution Console 的 Core 恢复，不得先遍历全部历史群发起 roster 网络请求。若首次 tick
 返回 `false`，Host 可以直接休眠，不承诺在 deadline 到达时仅为全量 sweep 自行唤醒；之后的实际渠道活动超过 deadline
-时仍可执行运行期 fallback。新群消息的精确刷新、Core 请求的 exact roster refresh 和 Bot roster 事件保持不变。
+时仍可执行运行期 fallback。历史群 roster sweep 和待完成聚合的恢复在后台执行，不能先等待外部 roster 请求再调用
+Core tick 或处理已领取的投递；后台恢复产生新工作后唤醒 Pump。新群消息的精确刷新、Core 请求的 exact roster refresh 和 Bot roster 事件保持不变。
 钉钉启动 roster 行为本版不变。
 
 Delivery settlement 必须追泵，以便 Core 结算 exact Request 并提升 FIFO；若 retry settlement 返回 `availableAt`，

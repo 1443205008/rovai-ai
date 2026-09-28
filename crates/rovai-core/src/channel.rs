@@ -11452,6 +11452,28 @@ fn channel_host_has_outstanding_work(
             )
             OR EXISTS(
                 SELECT 1
+                FROM channel_turn_request AS request
+                JOIN channel_conversation_binding AS binding
+                  ON binding.id = request.binding_id
+                JOIN channel_conversation AS conversation
+                  ON conversation.id = binding.channel_conversation_id
+                JOIN json_each(request.delivery_ids_json) AS requested_delivery
+                JOIN camp_message_delivery AS camp_delivery
+                  ON camp_delivery.id = requested_delivery.value
+                LEFT JOIN agent_run AS run
+                  ON run.id = camp_delivery.claimed_agent_run_id
+                WHERE conversation.provider = ?1
+                  AND request.status = 'completed'
+                  AND (
+                      camp_delivery.status = 'waiting'
+                      OR (
+                          camp_delivery.status = 'claimed'
+                          AND run.status IN ('queued', 'running', 'waiting')
+                      )
+                  )
+            )
+            OR EXISTS(
+                SELECT 1
                 FROM channel_delivery AS delivery
                 LEFT JOIN channel_turn_request AS request
                   ON request.id = delivery.request_id
@@ -20586,6 +20608,24 @@ mod tests {
                 ),
             )
             .unwrap();
+        let waiting_delivery: String = database
+            .connection()
+            .query_row(
+                r#"
+            SELECT delivery.status
+            FROM channel_turn_request AS request
+            JOIN json_each(request.delivery_ids_json) AS requested
+            JOIN camp_message_delivery AS delivery ON delivery.id = requested.value
+            WHERE request.status = 'completed'
+            "#,
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(waiting_delivery, "waiting");
+        let transaction = database.connection_mut().transaction().unwrap();
+        assert!(channel_host_has_outstanding_work(&transaction, FEISHU_PROVIDER).unwrap());
+        transaction.rollback().unwrap();
         let claimed = claim_waiting_runs(&mut database);
         assert_eq!(claimed.len(), 1);
         let agent_run_id = claimed[0].clone();
@@ -20601,6 +20641,21 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
+        // The inbound request has completed, but its Camp delivery is still
+        // claimed. A tick in this gap must keep the provider awake until the
+        // Run can be projected into a console and its reply is delivered.
+        assert_eq!(
+            database
+                .connection()
+                .query_row("SELECT COUNT(*) FROM channel_delivery", [], |row| row
+                    .get::<_, i64>(0),)
+                .unwrap(),
+            0,
+        );
+        let transaction = database.connection_mut().transaction().unwrap();
+        assert!(channel_host_has_outstanding_work(&transaction, FEISHU_PROVIDER).unwrap());
+        assert!(!channel_host_has_outstanding_work(&transaction, DINGTALK_PROVIDER).unwrap());
+        transaction.rollback().unwrap();
         let opening_tick = service
             .host_tick(
                 &mut database,

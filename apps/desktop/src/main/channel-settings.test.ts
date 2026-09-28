@@ -3173,6 +3173,74 @@ describe('channel settings service', () => {
     await service.stop()
   })
 
+  it.each([
+    ['feishu', FEISHU_PROVIDER_PROFILE],
+    ['lark', LARK_PROVIDER_PROFILE]
+  ] as const)('delivers %s replies while a historical group roster request is pending', async (provider, profile) => {
+    const harness = controlledChannels({ cli_a: { openId: 'ou_bot_a', name: '审阅员' } })
+    const settlements: Array<Record<string, unknown>> = []
+    let now = 100_000
+    let delivered = false
+    let ticks = 0
+    const hostPrefix = provider === 'feishu' ? 'channels.' : 'channels.lark.'
+    const service = new ChannelSettingsService({
+      profile,
+      credentialStore: memoryCredentialStore({
+        'member-a': { appId: 'cli_a', appSecret: 'secret-a' }
+      }, () => provider),
+      createChannel: harness.createChannel,
+      ...inertInterval(),
+      now: () => now,
+      core: channelCore((method, rawParams) => {
+        if (method === `channels.${provider}.snapshot`) {
+          return coreSnapshot({
+            memberBots: [{
+              agentId: 'agent-a', accountId: 'account-1', brand: provider, appId: 'cli_a',
+              botDisplayName: '审阅员', credentialRef: 'member-a', status: 'published',
+              failureCode: null, version: 1, ownerIdentityStatus: 'verified'
+            }],
+            transportConversations: [{ tenantKey: 'tenant-1', chatId: 'oc_group' }]
+          })
+        }
+        if (method === `${hostPrefix}host.tick`) {
+          ticks += 1
+          if (delivered) return { deliveries: [], rosterRefreshes: [], hasOutstandingWork: true }
+          if (now < 130_000) return { deliveries: [], rosterRefreshes: [], hasOutstandingWork: true }
+          delivered = true
+          return { deliveries: [{
+            deliveryId: 'delivery-output', requestId: null, deliveryKind: 'agent_output',
+            targetAppId: 'cli_a', credentialRef: 'member-a', chatId: 'oc_private',
+            topicKey: '', conversationKind: 'p2p', attemptCount: 1,
+            updateMessageId: null, recipientOpenId: null,
+            payload: { kind: 'agent_output', presentationVersion: 1, body: '回复已生成。',
+              mentionPrincipal: false, memberRecipients: [] }
+          }], rosterRefreshes: [], hasOutstandingWork: true }
+        }
+        if (method === `${hostPrefix}deliveries.settle`) {
+          settlements.push((rawParams as { command: Record<string, unknown> }).command)
+        }
+        return { status: 'applied', payload: {} }
+      })
+    })
+
+    await service.start()
+    await vi.waitFor(() => expect(ticks).toBe(1))
+    let releaseRoster!: () => void
+    const delayedRoster = new Promise((resolve) => {
+      releaseRoster = () => resolve({ code: 0, data: { is_in_chat: true } })
+    })
+    harness.isInChat.get('cli_a')!.mockImplementation(() => delayedRoster)
+    now = 140_000
+    service.handleCoreEvent({ method: 'agent_run.started', params: { agentRunId: 'run-1' } })
+    await vi.waitFor(() => expect(settlements).toHaveLength(1))
+
+    expect(harness.createMessage).toHaveBeenCalledOnce()
+    expect(settlements[0]).toMatchObject({ outcome: 'sent', deliveryId: 'delivery-output' })
+    expect(harness.isInChat.get('cli_a')).toHaveBeenCalledOnce()
+    await service.stop()
+    releaseRoster()
+  })
+
   it.each([true, false])('delivers group/topic workspace pickers and recalls them durably (projects: %s)', async (hasProjects) => {
     const harness = controlledChannels({ cli_a: { openId: 'ou_bot_a', name: '审阅员' } })
     const settlements: Array<Record<string, unknown>> = []
