@@ -1,7 +1,7 @@
 ---
 document_type: development-guide
 authority: macos-build-and-packaging
-last_updated: 2026-08-26
+last_updated: 2026-09-28
 ---
 
 # macOS 构建、签名与打包
@@ -125,7 +125,14 @@ latest-mac.yml
 清单日志与源 Markdown 完全相同；合并器拒绝两个架构之间任何稳定 Release 元数据差异。
 
 已发布的 v0.0.1 没有 ZIP/`latest-mac.yml`，旧 App 也没有自动安装能力，所以
-`v0.0.1 → v0.0.2` 是一次性手动迁移；从 v0.0.2 安装完成后，后续完整 Release 才能使用应用内升级。
+`v0.0.1 → v0.0.2` 是一次性手动迁移。后来到 v0.4.0 的公共 macOS 包使用仓库原有的临时自签名
+`Rovai Release Signing`；本地 daily 包是 ad-hoc 签名。它们的 designated requirement 均不与
+Apple Developer ID 身份兼容。切换到 Developer ID 的第一个版本，即使旧 App 在“关于与更新”中查到并下载了
+新版本，Squirrel.Mac 的安装阶段也不能作为成功升级路径。发布说明和公告必须明确要求这两类 macOS
+用户首次手动下载新版 DMG、退出旧 App、替换 `Rovai AI.app` 后再启动。保持 Bundle ID
+`ai.rovai.desktop` 和原有用户数据路径；不要卸载或清理用户数据。只有完成这次迁移并安装 Developer ID
+版本后，后续同一 Apple Team ID 的正式版本才能使用应用内“安装并重启”；发布前仍须以真实旧版→新版
+升级验收确认。
 
 ## 本地签名
 
@@ -144,11 +151,34 @@ codesign --verify --strict \
   "dist/mac-arm64/Rovai AI.app/Contents/Resources/bin/rovai"
 ```
 
-仓库签名 workflow 与本地安装入口相互独立：它从 GitHub Actions Secrets 导入固定证书，仅调用
-`dist:mac:release:arm64` / `dist:mac:release:x64`，并校验证书 SHA-256 指纹、Authority 与 certificate root，
-使相邻正式版本具备同一 designated-requirement 根。本地 daily 命令不得调用或放宽这两个 Release 入口。
-正式公共分发仍需要独立配置 Developer ID、Hardened Runtime entitlement 和 Apple Notarization 凭据，并
-验证公证结果。不要把证书、密码或 notarization 凭据写入仓库。
+仓库签名 workflow 与本地安装入口相互独立：它从受保护的 `release-signing` 环境导入 Developer ID
+Application 证书，校验 SHA-256 指纹和 Team ID，使用现有 Hardened Runtime entitlements，分别公证并
+贴票 App 与 DMG。每个架构的 verifier 检查 Apple Developer ID 签名链、Team ID、designated requirement、
+App/CLI/Core/Host 架构、App/DMG 票据和 Gatekeeper 准入；任何一项失败都不得发布。本地 daily 命令不得
+调用或放宽这两个 Release 入口。证书、密码和公证 API Key 不得写入仓库。
+
+### 首次配置 Apple Developer ID 发布环境
+
+1. 在 Apple Developer 的 Certificates 中创建 **Developer ID Application** 证书（不是 Apple Development、
+   Apple Distribution 或 Developer ID Installer）。在生成 CSR 的同一台 Mac 钥匙串中保留私钥，把证书与
+   私钥导出为有密码的 `.p12`。Apple Developer Team ID 应与证书名称末尾的括号内容一致。
+2. 在 App Store Connect 的“用户与访问 → 集成”确认 Team API Key 权限；首次使用 API 时 Account Holder
+   可能需要先申请访问。创建可用于 Notary Service 的 **Team Key**，妥善保存只能下载一次的 `.p8`、
+   Key ID 和 Issuer ID。Individual API Key 不能用于 `notarytool`。不要把 `.p12`、`.p8`、密码或
+   base64 内容提交到仓库或贴到 Issue/日志。
+3. 在 GitHub 仓库的 `release-signing` Environment 设置变量 `MAC_RELEASE_TEAM_ID`（10 位 Team ID）和
+   `MAC_RELEASE_CERT_SHA256`（证书 SHA-256 指纹，64 位大写十六进制、无冒号）。设置 Secrets：
+   `MAC_CSC_LINK`（`.p12` 的 base64）、`MAC_CSC_KEY_PASSWORD`（导出密码）、
+   `APPLE_API_KEY_BASE64`（`.p8` 的 base64）、`APPLE_API_KEY_ID`、`APPLE_API_ISSUER`。
+   本地可用 `openssl x509 -in certificate.pem -noout -fingerprint -sha256` 读取指纹，或从 Keychain
+   Access 导出证书后读取；只记录指纹，不公开私钥。
+4. 合入发布代码并提升版本与 `build/release-notes.md` 后，从 `main` 手动运行
+   `.github/workflows/macos-signed-build.yml`。它先检查证书指纹和有效身份，分别签名、公证 App，
+   再公证 DMG，最后验证两种架构并合并唯一的 `latest-mac.yml`。只有完整的
+   `rovai-macos-signed` artifact 和全部验证通过后，才能把五件发布集合上传到同一 GitHub Release。
+5. 用隔离机器或隔离用户数据验证新 DMG 的首次安装；再用上一版 Developer ID 正式包测试“关于与更新”
+   下载和“安装并重启”。切换时的旧临时签名用户按上文执行一次手动迁移，不能把其旧 App 能显示更新视为
+   安装已获验证。
 
 本机需要把已验收构建提升为日常安装版时，使用专用 ad-hoc 入口：
 
