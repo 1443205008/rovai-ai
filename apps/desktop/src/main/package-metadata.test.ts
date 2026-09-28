@@ -31,7 +31,7 @@ describe('desktop package metadata', () => {
     expect(packageMetadata.scripts['dist:mac:release:x64']).toContain('--mac dmg zip')
   })
 
-  it('keeps local ad-hoc installation separate from fixed release signing', () => {
+  it('keeps local ad-hoc installation separate from Developer ID releases', () => {
     const localDailyCommand = packageMetadata.scripts['package:mac:daily']
     expect(localDailyCommand).toContain('CSC_IDENTITY_AUTO_DISCOVERY=false')
     expect(localDailyCommand).toContain('identity=-')
@@ -39,13 +39,14 @@ describe('desktop package metadata', () => {
     expect(localDailyCommand).not.toContain('forceCodeSigning')
     expect(localDailyCommand).toContain('scripts/verify-macos-app.mjs arm64')
 
-    const stableReleaseSigning = [
+    const developerIdReleaseCommands = [
       packageMetadata.scripts['dist:mac:release:arm64'],
       packageMetadata.scripts['dist:mac:release:x64']
     ]
-    for (const command of stableReleaseSigning) {
-      expect(command).toContain('-c.mac.identity="Rovai Release Signing"')
+    for (const command of developerIdReleaseCommands) {
       expect(command).toContain('-c.forceCodeSigning=true')
+      expect(command).toContain('-c.mac.notarize=true')
+      expect(command).not.toContain('Rovai Release Signing')
       expect(command).not.toContain('identity=-')
     }
     expect(packageMetadata.scripts['install:mac:daily']).toContain(
