@@ -68,6 +68,7 @@ import {
   type ToolProgressItem
 } from './execution-tool-grouping'
 import { UiText, uiAttribute } from './interface-language'
+import { useCampDetailCopy } from './camp-detail-copy'
 
 const NON_TERMINAL_RUNS = new Set<SingleChatRunView['status']>(['queued', 'running', 'waiting'])
 export const SINGLE_CHAT_POLL_INTERVAL_MS = 800
@@ -664,6 +665,7 @@ export function SingleChatPanel({
 }): React.JSX.Element {
   const client = useCampClient()
   const mobile = useMobileLayout()
+  const copy = useCampDetailCopy()
   const panelId = useId()
   const initialAgentId = members.find((member) => memberCanSingleChat(member) && member.isDefaultLead)?.agentId
     ?? members.find(memberCanSingleChat)?.agentId
@@ -1570,6 +1572,7 @@ export function SingleChatPanel({
         className="camp-detail-entry"
         type="button"
         data-detail="single-chat"
+        title={copy.singleChatTitle}
         aria-expanded={visible}
         aria-controls={panelId}
         aria-haspopup="dialog"
@@ -1585,8 +1588,10 @@ export function SingleChatPanel({
         {runningCount > 0
           ? <span className="camp-loading-spinner" role="img" aria-label={uiAttribute("{0} 段单聊正在回复", String(runningCount))} />
           : <SingleChatGlyph />}
-        <span><UiText zh={"单聊"} /></span>
-        <small>{conversations.length}</small>
+        <span className="camp-detail-entry-copy">
+          <span>{copy.singleChat}</span>
+          <small>{conversations.length}</small>
+        </span>
       </button>
     </div>
   )
@@ -1610,7 +1615,7 @@ export function SingleChatPanel({
     >
       <header className="single-chat-heading">
         <SingleChatGlyph />
-        <strong id={`${panelId}-title`}><UiText zh={"单聊"} /></strong>
+        <strong id={`${panelId}-title`}>{copy.singleChatTitle}</strong>
         <span><UiText zh={"当前会话"} /></span>
         <button className="icon-button" type="button" aria-label={uiAttribute("收起单聊")} title={uiAttribute("收起 · Esc")} onClick={() => {
           onClose()

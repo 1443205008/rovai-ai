@@ -1269,6 +1269,8 @@ html[data-rovai-platform="win32"] .bootstrap-shell-brand { padding-left: 20px; }
 .camp-detail-entry > svg { width: 14px; height: 14px; }
 .camp-detail-entry > .camp-loading-spinner { width: 12px; height: 12px; flex: 0 0 12px; color: var(--brand-ink); }
 .camp-detail-entry > small { min-width: 8px; color: var(--faint); font: 500 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.camp-detail-entry-copy { display: inline-flex; align-items: baseline; gap: 5px; line-height: 16px; white-space: nowrap; }
+.camp-detail-entry-copy > small { min-width: 1ch; color: var(--muted); font: inherit; font-weight: 500; font-variant-numeric: tabular-nums; text-align: center; }
 .camp-detail-entry:hover { color: var(--ink); background: var(--surface-hover); }
 .camp-detail-entry[aria-expanded="true"] { color: var(--ink); background: var(--surface-muted); }
 .camp-detail-entry[aria-expanded="true"] > span { font-weight: 650; }
