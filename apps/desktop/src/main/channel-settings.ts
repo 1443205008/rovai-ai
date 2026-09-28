@@ -327,6 +327,8 @@ export class ChannelSettingsService {
   #inboundAbort = new AbortController()
   #nextRosterSweepAt = 0
   #nextAggregateRecoveryAt = 0
+  #rosterSweep: Promise<boolean> | null = null
+  #aggregateRecovery: Promise<boolean> | null = null
   #sessionStatus: 'valid' | 'invalid' | 'unavailable' | 'unknown' = 'unknown'
   #sessionCheckGeneration = 0
 
@@ -407,6 +409,8 @@ export class ChannelSettingsService {
 
   async stop(): Promise<void> {
     this.#stopped = true
+    this.#rosterSweep = null
+    this.#aggregateRecovery = null
     this.#inboundAbort.abort()
     this.#sessionCheckGeneration += 1
     this.#sessionStatus = 'unknown'
@@ -2064,8 +2068,10 @@ export class ChannelSettingsService {
     void managed
   }
 
-  async #recoverPendingAggregates(): Promise<void> {
+  async #recoverPendingAggregates(): Promise<boolean> {
+    const lifetimeSignal = this.#inboundAbort.signal
     const snapshot = await this.#coreSnapshot()
+    if (lifetimeSignal.aborted || this.#stopped) return false
     await Promise.allSettled(snapshot.pendingAggregates.map((aggregate) => this.#finalizeAggregate(
       this.#managedChannels.get(aggregate.acknowledgementAppId) ?? null,
       aggregate.tenantKey,
@@ -2074,6 +2080,7 @@ export class ChannelSettingsService {
       aggregate.conversationKind,
       aggregate.aggregateId
     )))
+    return snapshot.pendingAggregates.length > 0
   }
 
   async #handleBotRosterChanged(event: BotAddedEvent): Promise<void> {
@@ -2129,6 +2136,7 @@ export class ChannelSettingsService {
     force: boolean,
     suppliedSnapshot?: CoreChannelSnapshot
   ): Promise<boolean> {
+    const lifetimeSignal = this.#inboundAbort.signal
     const key = `${tenantKey}\0${chatId}`
     if (!force && this.#now() - (this.#rosterReconciledAt.get(key) ?? 0) < ROSTER_CACHE_MS) {
       return true
@@ -2149,7 +2157,7 @@ export class ChannelSettingsService {
         }
         return { appId: managed!.appId, present: response.data.is_in_chat }
       })).catch(() => null)
-      if (!observations) return false
+      if (!observations || lifetimeSignal.aborted || this.#stopped) return false
       const result = await this.#commandWithId(this.#hostMethod('roster.reconcile'), randomUUID(), {
         provider: this.#profile.kind,
         tenantKey,
@@ -2164,8 +2172,10 @@ export class ChannelSettingsService {
     return reconciliation
   }
 
-  async #reconcileKnownGroupRosters(): Promise<void> {
+  async #reconcileKnownGroupRosters(): Promise<boolean> {
+    const lifetimeSignal = this.#inboundAbort.signal
     const snapshot = await this.#coreSnapshot()
+    if (lifetimeSignal.aborted || this.#stopped) return false
     const unique = new Map<string, { tenantKey: string; chatId: string }>()
     for (const conversation of snapshot.transportConversations) {
       unique.set(`${conversation.tenantKey}\0${conversation.chatId}`, {
@@ -2173,7 +2183,7 @@ export class ChannelSettingsService {
         chatId: conversation.chatId
       })
     }
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       [...unique.values()].map((conversation) => this.#reconcileChatRoster(
         conversation.chatId,
         conversation.tenantKey,
@@ -2181,6 +2191,7 @@ export class ChannelSettingsService {
         snapshot
       ))
     )
+    return results.some((result) => result.status === 'fulfilled' && result.value)
   }
 
   async #readExternalQuote(channel: LarkChannel, messageId: string): Promise<{
@@ -2241,14 +2252,6 @@ export class ChannelSettingsService {
 
   async #pumpOnce(): Promise<boolean> {
     if (!this.#dependencies || this.#stopped) return false
-    if (this.#now() >= this.#nextAggregateRecoveryAt) {
-      this.#nextAggregateRecoveryAt = this.#now() + 2_000
-      await this.#recoverPendingAggregates()
-    }
-    if (this.#now() >= this.#nextRosterSweepAt) {
-      this.#nextRosterSweepAt = this.#now() + ROSTER_SWEEP_MS
-      await this.#reconcileKnownGroupRosters()
-    }
     const tick = await this.#dependencies.core.request<{
       deliveries: ClaimedChannelDelivery[]
       rosterRefreshes: TopicRosterRefreshRequest[]
@@ -2300,9 +2303,45 @@ export class ChannelSettingsService {
           }
         })
     }
+    this.#scheduleBackgroundMaintenance()
     return tick.hasOutstandingWork === true
       || rosterRefreshes.length > 0
       || deliveries.length > 0
+  }
+
+  #scheduleBackgroundMaintenance(): void {
+    if (this.#now() >= this.#nextAggregateRecoveryAt) {
+      this.#nextAggregateRecoveryAt = this.#now() + 2_000
+      if (!this.#aggregateRecovery) {
+        const recovery = this.#recoverPendingAggregates()
+        this.#aggregateRecovery = recovery
+        void recovery.then((hadPending) => {
+          if (hadPending && this.#aggregateRecovery === recovery && !this.#stopped) {
+            this.#hostPump?.wake()
+          }
+        }, (error) => {
+          console.warn(`[rovai] ${this.#profile.logLabel} aggregate recovery failed: ${channelFailureCode(error)}`)
+        }).finally(() => {
+          if (this.#aggregateRecovery === recovery) this.#aggregateRecovery = null
+        })
+      }
+    }
+    if (this.#now() >= this.#nextRosterSweepAt) {
+      this.#nextRosterSweepAt = this.#now() + ROSTER_SWEEP_MS
+      if (!this.#rosterSweep) {
+        const sweep = this.#reconcileKnownGroupRosters()
+        this.#rosterSweep = sweep
+        void sweep.then((changed) => {
+          if (changed && this.#rosterSweep === sweep && !this.#stopped) {
+            this.#hostPump?.wake()
+          }
+        }, (error) => {
+          console.warn(`[rovai] ${this.#profile.logLabel} roster sweep failed: ${channelFailureCode(error)}`)
+        }).finally(() => {
+          if (this.#rosterSweep === sweep) this.#rosterSweep = null
+        })
+      }
+    }
   }
 
   async #downloadInboundAttachments(
