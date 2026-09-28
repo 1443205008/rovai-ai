@@ -44,7 +44,7 @@ the splitter and collapse button. The detail scrolls internally instead of shrin
 
 The header uses the controlled portrait plus a separate circular icon. Presence and Runtime are two
 distinct inline facts: “在队” is static; “{Runtime} →” uses arrow, hover, focus and an accessible name
-to show it opens existing Runtime configuration. An unconfigured teammate says “未配置运行时 →” once.
+to show it opens existing Runtime configuration. An unconfigured teammate says “未配置智能体 →” once.
 Keep full configured Runtime status in the accessible name and in the configuration section. Do not put
 the Runtime fact in a grey card or merge the two meanings.
 

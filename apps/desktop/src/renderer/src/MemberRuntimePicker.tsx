@@ -66,7 +66,7 @@ export function MemberRuntimePicker({
   const label = value ? adapterLabel(value) : uiAttribute('暂不配置')
   return (
     <div className="member-editor-field member-runtime-picker-field">
-      <label className="member-editor-field-label" htmlFor={id}><UiText zh={"Agent 运行时"} /></label>
+      <label className="member-editor-field-label" htmlFor={id}><UiText zh={"智能体类型"} /></label>
       <Menu.Root>
         <Menu.Trigger asChild>
           <button
@@ -75,7 +75,7 @@ export function MemberRuntimePicker({
             type="button"
             className="member-runtime-picker"
             disabled={disabled}
-            aria-label={uiAttribute("Agent 运行时，{0}", String(label))}
+            aria-label={uiAttribute("智能体类型，{0}", String(label))}
           >
             <RuntimeGlyph kind={value} />
             <span>{label}</span>

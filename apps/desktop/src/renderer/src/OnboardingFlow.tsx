@@ -340,7 +340,7 @@ function MemberStep({
             })}
           </div>
           <footer className="onboarding-member-footer">
-            <span>{t('接下来：选择运行时')}</span>
+            <span>{t('接下来：选择智能体')}</span>
             <button className="primary-button conversation-primary-button onboarding-primary" type="button" disabled={busy} onClick={onContinue}>
               {t('下一步')}
               <ForwardIcon />
@@ -447,8 +447,8 @@ function RuntimeStep({
     <section className="onboarding-track onboarding-runtime-track" aria-labelledby="onboarding-runtime-title">
       <header className="onboarding-page-heading onboarding-runtime-heading">
         <div>
-          <h1 id="onboarding-runtime-title">{t('选择运行时')}</h1>
-          <p>{t('使用这台电脑上已安装的运行时，为{0}提供模型与工具。', member.displayName)}</p>
+          <h1 id="onboarding-runtime-title">{t('选择智能体')}</h1>
+          <p>{t('使用这台电脑上已安装的智能体，为{0}提供模型与工具。', member.displayName)}</p>
         </div>
       </header>
       <div className="onboarding-runtime-layout">
@@ -481,7 +481,7 @@ function RuntimeStep({
                 <>
           <section className="onboarding-runtime-panel">
             <header>
-              <span><strong>{t('本机运行时')}</strong><small>{t(scanning ? uiAttribute("正在读取本机环境") : hasEnabledRuntime ? uiAttribute("选择一个可用的运行时") : uiAttribute("当前平台的 Runtime 资格状态"))}</small></span>
+              <span><strong>{t('本机智能体')}</strong><small>{t(scanning ? uiAttribute("正在读取本机环境") : hasEnabledRuntime ? uiAttribute("选择一个可用的智能体") : uiAttribute("当前平台的智能体资格状态"))}</small></span>
               {scanning && <span className="onboarding-scan-status"><i />{t('正在检查')}</span>}
               {!scanning && hasEnabledRuntime && (
                 <button className="onboarding-refresh" type="button" disabled={busy} onClick={onRefresh} aria-label={t('重新扫描')} title={t('重新扫描')}>
@@ -492,11 +492,11 @@ function RuntimeStep({
             {scanning
               ? <RuntimeScanProgress phase={phase} />
               : (
-                  <div role="radiogroup" aria-label={t('选择运行时')} onKeyDown={moveRadioSelection}>
+                  <div role="radiogroup" aria-label={t('选择智能体')} onKeyDown={moveRadioSelection}>
                     <div className="onboarding-runtime-list">{primaryChoices.map(renderRuntimeChoice)}</div>
                     {otherChoices.length > 0 && (
                       <details className="onboarding-other-runtimes">
-                        <summary>{t('其他运行时 · {0}', otherChoices.length)}</summary>
+                        <summary>{t('其他智能体 · {0}', otherChoices.length)}</summary>
                         <div className="onboarding-runtime-list">{otherChoices.map(renderRuntimeChoice)}</div>
                       </details>
                     )}
@@ -525,7 +525,7 @@ function RuntimeStep({
                         onChange={(model) => onSelectionChange({ ...selection, model })}
                       />
                     )
-                  : <p className="onboarding-model-empty">{t('从上方选择一个可用的运行时。')}</p>}
+                  : <p className="onboarding-model-empty">{t('从上方选择一个可用的智能体。')}</p>}
               </div>
             </section>
           )}
@@ -584,7 +584,7 @@ function RuntimeEmptyState({
         aria-labelledby="onboarding-runtime-empty-title"
       >
         <header>
-          <strong>{t('本机运行时')}</strong>
+          <strong>{t('本机智能体')}</strong>
           <span className="onboarding-runtime-state">{t(scanFailed ? uiAttribute("扫描未完成") : uiAttribute("无可用入口"))}</span>
         </header>
         <div className="onboarding-runtime-empty">
@@ -597,8 +597,8 @@ function RuntimeEmptyState({
             )}
           </div>
           <div className="onboarding-runtime-empty-copy">
-            <h2 id="onboarding-runtime-empty-title">{t(scanFailed ? uiAttribute("这次扫描未完成") : uiAttribute("暂未找到可用的运行时"))}</h2>
-            <p>{t(scanFailed ? uiAttribute("请重新扫描，确认这台电脑上的可用运行时。") : uiAttribute("安装或完成运行配置后，回到这里重新扫描。"))}</p>
+            <h2 id="onboarding-runtime-empty-title">{t(scanFailed ? uiAttribute("这次扫描未完成") : uiAttribute("暂未找到可用的智能体"))}</h2>
+            <p>{t(scanFailed ? uiAttribute("请重新扫描，确认这台电脑上的可用智能体。") : uiAttribute("安装或完成运行配置后，回到这里重新扫描。"))}</p>
             <div className="onboarding-runtime-empty-actions">
               {scanFailed && (
                 <button className="primary-button conversation-primary-button" type="button" disabled={busy} onClick={onRefresh}>
@@ -637,8 +637,8 @@ function RuntimeScanProgress({ phase }: { phase: OnboardingRuntimePhase }): Reac
   return (
     <div className="onboarding-scan-progress" role="status" aria-live="polite">
       {[
-        ['查找安装入口', '查找这台电脑上已安装的运行时'],
-        ['确认运行时身份', '读取本机运行时的轻度检查结果'],
+        ['查找安装入口', '查找这台电脑上已安装的智能体'],
+        ['确认智能体身份', '读取本机智能体的轻度检查结果'],
         ['读取运行配置', '准备当前安装的默认配置']
       ].map(([title, detail], index) => {
         const done = index < current

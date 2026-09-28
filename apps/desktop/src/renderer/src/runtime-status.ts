@@ -49,7 +49,7 @@ function incompatibleRuntimeDetail(availability: ProductRuntimeAvailability): st
 }
 
 const STATUS_LABELS: Record<RuntimeUserStatus, string> = {
-  unconfigured: '未配置 Agent 运行时',
+  unconfigured: '未配置智能体',
   checking: '正在检查…',
   available: '可用',
   authentication_required: '需要登录',
@@ -116,7 +116,7 @@ export function runtimeAvailabilityPresentation(
     case 'authentication_required':
       return presentation(
         'authentication_required',
-        publicFailureDetail(availability, uiAttribute('请先完成该 Agent 运行时的登录。'))
+        publicFailureDetail(availability, uiAttribute('请先完成该智能体的登录。'))
       )
     case 'needs_attention':
       return {
@@ -124,14 +124,14 @@ export function runtimeAvailabilityPresentation(
         label: uiAttribute('需要处理'),
         detail: publicFailureDetail(
           availability,
-          uiAttribute('最近一次 Runtime 验证未完成，请重试扫描或检查，并按诊断提示处理。')
+          uiAttribute('最近一次智能体验证未完成，请重试扫描或检查，并按诊断提示处理。')
         )
       }
     case 'missing':
     case 'path_missing':
       return presentation(
         'not_installed',
-        publicFailureDetail(availability, uiAttribute('本机未找到可用的 Agent 运行时入口。'))
+        publicFailureDetail(availability, uiAttribute('本机未找到可用的智能体入口。'))
       )
     case 'incompatible':
       return presentation(
@@ -139,7 +139,7 @@ export function runtimeAvailabilityPresentation(
         incompatibleRuntimeDetail(availability)
       )
     case 'disabled':
-      return presentation('unavailable', uiAttribute('该 Agent 运行时已停用。'))
+      return presentation('unavailable', uiAttribute('该智能体已停用。'))
   }
 }
 
@@ -168,7 +168,7 @@ export function runtimeProductPresentation(
   if (!admission) {
     return pending
       ? presentation('checking')
-      : presentation('unknown', uiAttribute('尚无当前平台的 Runtime 准入信息。'))
+      : presentation('unknown', uiAttribute('尚无当前平台的智能体准入信息。'))
   }
   if (admission.status === 'not_qualified') {
     const windows = admission.platform === 'windows-x64'
@@ -176,12 +176,12 @@ export function runtimeProductPresentation(
       status: 'not_qualified',
       label: windows ? uiAttribute('Windows 尚未验证') : uiAttribute('当前平台尚未验证'),
       detail: windows
-        ? uiAttribute('该 Agent 运行时尚未完成 Windows 资格验证；这不是本机安装、登录或扫描故障。')
-        : uiAttribute('该 Agent 运行时尚未完成当前平台资格验证；这不是本机安装、登录或扫描故障。')
+        ? uiAttribute('该智能体尚未完成 Windows 资格验证；这不是本机安装、登录或扫描故障。')
+        : uiAttribute('该智能体尚未完成当前平台资格验证；这不是本机安装、登录或扫描故障。')
     }
   }
   if (admission.status === 'unsupported') {
-    return presentation('unsupported', uiAttribute('该 Agent 运行时不支持当前平台。'))
+    return presentation('unsupported', uiAttribute('该智能体不支持当前平台。'))
   }
   const availabilityPresentation = runtimeAvailabilityPresentation(availability, pending)
   if (admission.status !== 'preview') return availabilityPresentation
@@ -271,7 +271,7 @@ export function memberRuntimePresentation(
     )
   }
   if (blockerCodes.has('runtime_authentication_required')) {
-    return presentation('authentication_required', uiAttribute('请先完成该 Agent 运行时的登录。'))
+    return presentation('authentication_required', uiAttribute('请先完成该智能体的登录。'))
   }
 
   if (agent.runtimeReadiness.status === 'needs_attention') {
@@ -309,7 +309,7 @@ export function runtimeReadinessLabel(
   status: AgentProfile['runtimeReadiness']['status']
 ): string {
   return ({
-    runtime_not_configured: uiAttribute('未配置 Agent 运行时'),
+    runtime_not_configured: uiAttribute('未配置智能体'),
     needs_attention: uiAttribute('不可用'),
     light_ready: uiAttribute('可用'),
     installed_unverified: uiAttribute('不可用，待检查'),

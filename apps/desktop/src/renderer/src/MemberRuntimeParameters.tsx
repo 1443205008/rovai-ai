@@ -141,13 +141,13 @@ export function MemberRuntimeParameters({
         onChange
       })
     : (
-        <p className="runtime-parameter-empty"><UiText zh={"当前还没有可编辑的能力快照。你仍可保存 Agent 运行时选择；检查完成后需要回来保存运行参数。"} /></p>
+        <p className="runtime-parameter-empty"><UiText zh={"当前还没有可编辑的能力快照。你仍可保存智能体选择；检查完成后需要回来保存运行参数。"} /></p>
       )
   return (
     <section className={inline ? 'member-runtime-parameters member-editor-runtime-fields' : 'member-runtime-parameters'} aria-label={inline ? uiAttribute("运行参数") : undefined} aria-labelledby={inline ? undefined : titleId}>
       {!inline && <header className="member-runtime-parameters-heading">
         <strong id={titleId}><UiText zh={"运行参数"} /></strong>
-        <small><UiText zh={"模型、模型参数与 Agent 运行时原生权限。"} /></small>
+        <small><UiText zh={"模型、模型参数与智能体原生权限。"} /></small>
       </header>}
       <div className="member-runtime-parameters-body" aria-labelledby={inline ? undefined : titleId}>
         {content}
@@ -175,7 +175,7 @@ export function MemberModelParameters({
   const defaults = installation?.memberRuntimeDefaults ?? null
   if (!installation || !snapshot || !defaults || !model) {
     return (
-      <p className="runtime-parameter-empty"><UiText zh={"当前没有可编辑的模型目录；如果 Agent 运行时已准备好，将使用它的默认模型。"} /></p>
+      <p className="runtime-parameter-empty"><UiText zh={"当前没有可编辑的模型目录；如果智能体已准备好，将使用它的默认模型。"} /></p>
     )
   }
   const draft: MemberRuntimeDraft = {

@@ -35,7 +35,7 @@ function Picker({ label, value, options, onChange, children, disabled = false }:
 function MemberCopy({ member }: { member: AgentProfile }): React.JSX.Element {
   const runtime = member.runtimeConfiguration
   return <><MemberAvatar agentId={member.agentId} avatarRef={member.avatarRef} displayName={member.displayName} size="mention" decorative />
-    <span className="automation-picker-copy"><span><strong>{member.displayName}</strong><em>{member.teamRole}</em></span><small>{runtime ? `${runtimeAdapterDisplayLabel(runtime.adapterKind)}${runtime.model.mode === 'explicit' ? ` · ${runtime.model.modelId}` : ''}` : uiAttribute("尚未配置运行时")}</small></span></>
+    <span className="automation-picker-copy"><span><strong>{member.displayName}</strong><em>{member.teamRole}</em></span><small>{runtime ? `${runtimeAdapterDisplayLabel(runtime.adapterKind)}${runtime.model.mode === 'explicit' ? ` · ${runtime.model.modelId}` : ''}` : uiAttribute("尚未配置智能体")}</small></span></>
 }
 
 function RunHistory({ automation, onOpenCamp }: { automation: AutomationView; onOpenCamp(campId: string): void }): React.JSX.Element {

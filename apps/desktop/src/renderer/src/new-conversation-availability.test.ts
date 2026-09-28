@@ -7,12 +7,12 @@ describe('new conversation member availability', () => {
   it.each([
     [true, 'ready', true, '可用'],
     [true, 'light_ready', true, '可用'],
-    [false, 'ready', false, '未配置运行时'],
-    [false, 'light_ready', false, '未配置运行时'],
-    [false, 'runtime_not_configured', false, '未配置运行时'],
-    [true, 'runtime_not_configured', false, '未配置运行时'],
-    [true, 'installed_unverified', false, '运行时不可用'],
-    [true, 'needs_attention', false, '运行时不可用']
+    [false, 'ready', false, '未配置智能体'],
+    [false, 'light_ready', false, '未配置智能体'],
+    [false, 'runtime_not_configured', false, '未配置智能体'],
+    [true, 'runtime_not_configured', false, '未配置智能体'],
+    [true, 'installed_unverified', false, '智能体不可用'],
+    [true, 'needs_attention', false, '智能体不可用']
   ] as const)('configured=%s readiness=%s', (runtimeConfigured, runtimeReadiness, available, label) => {
     const member = { runtimeConfigured, runtimeReadiness }
     expect(isNewConversationMemberAvailable(member)).toBe(available)

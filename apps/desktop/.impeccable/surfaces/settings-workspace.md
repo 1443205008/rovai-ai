@@ -157,7 +157,7 @@ uses compact whole-card buttons with real avatars. Like Skill groups, selected c
 secret values stay masked and out of ordinary errors. Conflicts retain the JSON draft and require
 refresh/review before retrying. Do not display source file paths as routine configuration content.
 
-## Agent 运行时与诊断
+## 智能体与诊断
 
 Missing and authentication-required Runtimes expose a quiet, initially collapsed installation or login
 guide inside their catalog row. Only one guide is open at a time. On admitted macOS platforms, Claude

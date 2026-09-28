@@ -152,7 +152,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
 
   return <section className="runtime-startup-page" aria-busy={busy === 'load' || busy === 'save'}>
     <button className="quiet-button runtime-startup-back" type="button" disabled={busy !== null}
-      onClick={() => dirty ? setConfirmBack(true) : onBack()}><DialogControlIcon name="back" /><UiText zh={"运行时"} /></button>
+      onClick={() => dirty ? setConfirmBack(true) : onBack()}><DialogControlIcon name="back" /><UiText zh={"智能体"} /></button>
     <header className="runtime-startup-heading">
       <span className="runtime-product-logo" aria-hidden="true"><img src={PRODUCT_RUNTIME_LOGOS[runtimeKind]} alt="" /></span>
       <div><h1>{label}</h1><p><UiText zh={"启动设置"} /></p></div>

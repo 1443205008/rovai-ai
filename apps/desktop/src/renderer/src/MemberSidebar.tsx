@@ -298,7 +298,7 @@ export function MemberSidebar({
             <div className="member-sidebar-empty">
               <span aria-hidden="true">◎</span>
               <strong><UiText zh={"还没有队员"} /></strong>
-              <p><UiText zh={"创建一个长期身份后，可为其配置 Agent 运行时。"} /></p>
+              <p><UiText zh={"创建一个长期身份后，可为其配置智能体。"} /></p>
               <button className="primary-button conversation-primary-button" type="button" onClick={(event) => onCreate(event.currentTarget)}><UiText zh={"新增队员"} /></button>
             </div>
           )}
@@ -362,10 +362,10 @@ function MemberSidebarRow({
   const compact = compactRuntimeState(runtime.status)
   const product = agent.runtimeConfiguration?.adapterKind
     ? adapterLabel(agent.runtimeConfiguration.adapterKind)
-    : uiAttribute('Agent 运行时')
+    : uiAttribute('智能体')
   const configured = Boolean(agent.runtimeConfiguration?.adapterKind)
-  const runtimeLabel = configured ? uiAttribute("{0}，{1}，{2}；打开运行配置", String(agent.displayName), String(product), String(runtime.label)) : uiAttribute("{0}，未配置运行时；打开运行配置", String(agent.displayName))
-  const runtimeTooltip = configured ? `${product} · ${runtime.label}${runtime.detail ? ` · ${runtime.detail}` : ''}` : uiAttribute('未配置运行时')
+  const runtimeLabel = configured ? uiAttribute("{0}，{1}，{2}；打开运行配置", String(agent.displayName), String(product), String(runtime.label)) : uiAttribute("{0}，未配置智能体；打开运行配置", String(agent.displayName))
+  const runtimeTooltip = configured ? `${product} · ${runtime.label}${runtime.detail ? ` · ${runtime.detail}` : ''}` : uiAttribute('未配置智能体')
   return (
     <div
       className={`member-sidebar-row presence-${agent.presence} ${selected ? 'selected' : ''} ${dragOver ? 'drag-over' : ''}`}

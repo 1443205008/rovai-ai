@@ -388,12 +388,12 @@ export function NewConversationDialog({
               {isMission && <>
                 {gitPresentation.kind === 'warning' && <p className="compact-inline-error" role="alert">{gitPresentation.label}：{gitPresentation.detail}</p>}
                 {memberError && <p id="new-camp-members-error" role="alert" className="compact-inline-error new-camp-members-error">{memberError}</p>}
-                {availableMembers.length === 0 && <p className="new-camp-empty-note"><UiText zh={"暂无可用队员，请先在「队员」中配置 Agent 运行时。"} /></p>}
+                {availableMembers.length === 0 && <p className="new-camp-empty-note"><UiText zh={"暂无可用队员，请先在「队员」中配置智能体。"} /></p>}
                 {hasUnavailableSelection && <p className="compact-inline-error" role="alert"><UiText zh={"所选队员已不可用，请重新选择。"} /></p>}
               </>}
               {!isMission && <>
                 {memberError && <p id="new-camp-members-error" role="alert" className="compact-inline-error new-camp-members-error">{memberError}</p>}
-                {availableMembers.length === 0 && <p className="new-camp-empty-note"><UiText zh={"暂无可用队员，请先在「队员」中配置 Agent 运行时。"} /></p>}
+                {availableMembers.length === 0 && <p className="new-camp-empty-note"><UiText zh={"暂无可用队员，请先在「队员」中配置智能体。"} /></p>}
                 {hasUnavailableSelection && <p className="compact-inline-error" role="alert"><UiText zh={"所选队员已不可用，请重新选择。"} /></p>}
                 <div className="compact-row">
                 <span id="new-camp-lead-label"><UiText zh={"队长"} /></span>

@@ -3823,7 +3823,7 @@ export function BusinessApp({
         approvalId: approval.id,
         expectedVersion: approval.version,
         optionId,
-        reason: `用户选择 Agent 运行时原生选项：${optionId}。`
+        reason: `用户选择智能体原生选项：${optionId}。`
       })
       if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
       const { snapshot } = await requestCampProjection(activeCampId, 'open')
@@ -5056,7 +5056,7 @@ export function commandFailureMessage(result: StoredCommandResult): string {
     return uiAttribute("当前无可用队员。")
   }
   if (result.code === 'agent_run.runtime_not_ready') {
-    return uiAttribute("目标队员的 Agent 运行时暂不可用。")
+    return uiAttribute("目标队员的智能体暂不可用。")
   }
   if (result.code === 'camp.last_member_required') {
     return uiAttribute("会话至少保留 1 位队员。")

@@ -192,7 +192,7 @@ export function DiagnosticsCenter({
       if (rechecked?.status === 'ok') {
         setNotice({
           tone: 'success',
-          title: action.kind === 'cleanup_legacy_skill' ?uiAttribute("旧版 Skill 入口已清理") : action.kind === 'repair_mcp' ?uiAttribute("MCP 权限已修复") :uiAttribute("Runtime 重新检测完成"),
+          title: action.kind === 'cleanup_legacy_skill' ?uiAttribute("旧版 Skill 入口已清理") : action.kind === 'repair_mcp' ?uiAttribute("MCP 权限已修复") :uiAttribute("智能体重新检测完成"),
           detail: action.kind === 'cleanup_legacy_skill' && cleanupResult
             ? legacyCleanupMessage(cleanupResult)
             :uiAttribute("复检已确认该项目恢复正常；摘要和完整结果已同步更新。")
@@ -246,7 +246,7 @@ export function DiagnosticsCenter({
       />
 
       <div className="diagnostics-body">
-      <details className="settings-disclosure diagnostics-policy"><summary><DiagnosticGlyph name="shield" /><span><UiText zh={"诊断会包含哪些内容？"} /></span><DiagnosticGlyph name="chevron" /></summary><div><p><UiText zh={"只包含检查状态与必要的诊断信息，敏感内容已排除。"} /></p><p><UiText zh={"不包含 Token、Cookie、登录信息、消息与记忆正文、附件内容、工具输出或本机绝对路径。"} /></p><p><UiText zh={"检查只读；修复需逐项点击，不会自动登录或替换运行时。"} /></p></div></details>
+      <details className="settings-disclosure diagnostics-policy"><summary><DiagnosticGlyph name="shield" /><span><UiText zh={"诊断会包含哪些内容？"} /></span><DiagnosticGlyph name="chevron" /></summary><div><p><UiText zh={"只包含检查状态与必要的诊断信息，敏感内容已排除。"} /></p><p><UiText zh={"不包含 Token、Cookie、登录信息、消息与记忆正文、附件内容、工具输出或本机绝对路径。"} /></p><p><UiText zh={"检查只读；修复需逐项点击，不会自动登录或替换智能体。"} /></p></div></details>
 
       {loading && <DiagnosticsLoading />}
       {!loading && initialError && !report && (
@@ -262,7 +262,7 @@ export function DiagnosticsCenter({
           {running && (
             <div className="diagnostics-running" role="status" aria-live="polite">
               <span className="diagnostics-spinner" aria-hidden="true" />
-              <div><strong><UiText zh={"正在运行严格只读的完整自检"} /></strong><span><UiText zh={"读取当前 Core、SQLite、Skill、MCP 与 Runtime 缓存事实；不会触发同步、修复或 Runtime 重检。"} /></span></div>
+              <div><strong><UiText zh={"正在运行严格只读的完整自检"} /></strong><span><UiText zh={"读取当前 Core、SQLite、Skill、MCP 与智能体缓存事实；不会触发同步、修复或智能体重检。"} /></span></div>
             </div>
           )}
           {recoveryError && (
@@ -349,7 +349,7 @@ function DiagnosticsSummary({ report, recovery }: { report: DiagnosticsReport; r
         <div className="is-attention"><dt><UiText zh={"需要处理"} /></dt><dd>{summary.attention}</dd></div>
         <div className="is-unknown"><dt><UiText zh={"暂时无法确认"} /></dt><dd>{summary.unknown}</dd></div>
       </dl>
-      <p className="diagnostics-summary-boundary"><UiText zh={"Rovai 只在你明确点击单项操作后修复可安全重建的受管状态；不会自动修改 SQLite、覆盖损坏的 MCP 配置、登录或替换 Runtime。"} /></p>
+      <p className="diagnostics-summary-boundary"><UiText zh={"Rovai 只在你明确点击单项操作后修复可安全重建的受管状态；不会自动修改 SQLite、覆盖损坏的 MCP 配置、登录或替换智能体。"} /></p>
     </section>
   )
 }
@@ -483,7 +483,7 @@ export function diagnosticActionForCheck(check: DiagnosticCheck): DiagnosticActi
   if (check.id === 'legacy-skill-entries' && check.status === 'attention') return { kind: 'cleanup_legacy_skill', label:uiAttribute("清理旧入口") }
   if (check.id === 'mcp-config' && check.code === 'mcp_config_permissions_too_broad') return { kind: 'repair_mcp', label:uiAttribute("修复权限") }
   if (check.id === 'mcp-config' && check.status === 'attention') return { kind: 'open_mcp', label:uiAttribute("前往 MCP 设置") }
-  if (check.subjectKind === 'runtime' && check.subjectId && check.status === 'attention') return { kind: 'open_runtime', label:uiAttribute("前往 Agent 运行时"), runtimeKind: check.subjectId as AdapterKind }
+  if (check.subjectKind === 'runtime' && check.subjectId && check.status === 'attention') return { kind: 'open_runtime', label:uiAttribute("前往智能体"), runtimeKind: check.subjectId as AdapterKind }
   if (check.subjectKind === 'runtime' && check.subjectId && check.status === 'unknown') return { kind: 'retry_runtime', label:uiAttribute("重新检测"), runtimeKind: check.subjectId as AdapterKind }
   if ((check.id === 'database' || check.id === 'data-directory') && check.status !== 'ok') return { kind: 'export', label:uiAttribute("导出诊断 JSON") }
   if (check.status === 'attention') return { kind: 'export', label:uiAttribute("导出诊断 JSON") }
@@ -552,17 +552,17 @@ export function diagnosticCheckDetail(check: DiagnosticCheck): string {
 
 function runtimeReason(code: string): string {
   if (code === 'runtime_authentication_required') return uiAttribute("最近一次可用性证据表明需要登录。")
-  if (code === 'runtime_missing') return uiAttribute("当前未找到已选择的 Runtime。")
+  if (code === 'runtime_missing') return uiAttribute("当前未找到已选择的智能体。")
   if (code === 'runtime_incompatible') return uiAttribute("已安装版本不在支持范围内。")
   if (code === 'runtime_path_missing') return uiAttribute("已配置的可执行入口不再存在。")
-  if (code === 'runtime_disabled') return uiAttribute("Runtime 已停用，但仍被队员选择。")
-  return uiAttribute("当前 Runtime 证据表明它不可用于新执行。")
+  if (code === 'runtime_disabled') return uiAttribute("智能体已停用，但仍被队员选择。")
+  return uiAttribute("目前的检查结果表明，这个智能体无法用于新执行。")
 }
 
 function groupLabel(group: DiagnosticGroup): string {
   if (group === 'local_dependencies') return uiAttribute("本地依赖")
   if (group === 'managed_content') return uiAttribute("受管内容")
-  return uiAttribute("Agent 运行时")
+  return uiAttribute("智能体")
 }
 
 function factValue(check: DiagnosticCheck, key: string): string | null {
@@ -579,7 +579,7 @@ function factLabel(key: string): string {
     serverCount: 'Server 数',
     expectedMode: '期望权限',
     usedByMemberCount: '使用队员数',
-    availabilityStatus: 'Runtime 状态',
+    availabilityStatus: '智能体状态',
     reportedVersion: '报告版本',
     diagnosticCode: '诊断代码',
     lastSuccessfulProbeAt: '最近成功检查'

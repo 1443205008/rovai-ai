@@ -267,7 +267,7 @@ function agentRunFileChangeTruthNote(
   presentationKind: AgentRunFileChangesView['files'][number]['presentationKind']
 ): string | null {
   if (presentationKind === 'operation_only') {
-    return uiAttribute("Runtime 只可靠报告了成功文件操作与路径，没有提供可审查的 old/new 或标准差异。")
+    return uiAttribute("智能体只可靠报告了成功文件操作与路径，没有提供可审查的 old/new 或标准差异。")
   }
   return null
 }
@@ -286,7 +286,7 @@ function AgentRunFileReviewBlocks({
           <svg viewBox="0 0 24 24"><path d="M4 4h10l6 6v10H4Z" /><path d="M14 4v6h6M8 14h8" /></svg>
         </span>
         <strong><UiText zh={"没有可审查的差异内容"} /></strong>
-        <p><UiText zh={"这条记录只证明 Runtime 成功操作了该文件；Rovai 不读取当前文件，也不推测修改内容。"} /></p>
+        <p><UiText zh={"这条记录只证明智能体成功操作了该文件；Rovai 不读取当前文件，也不推测修改内容。"} /></p>
       </div>
     )
   }

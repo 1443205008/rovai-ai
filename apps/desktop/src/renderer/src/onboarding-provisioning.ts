@@ -52,7 +52,7 @@ export async function provisionFirstRun(
     throw new Error(uiAttribute('首次引导还没有准备好初始化。'))
   }
   if (!initialSnapshot.runtimeSelection?.model) {
-    throw new Error(uiAttribute('请先完成 Agent 运行时与模型配置。'))
+    throw new Error(uiAttribute('请先完成智能体与模型配置。'))
   }
   const preset = builtinMemberPresetsForLanguage(language).find(
     (candidate) => candidate.role === initialSnapshot.selectedMemberRole
@@ -63,7 +63,7 @@ export async function provisionFirstRun(
   if (initialSnapshot.provisioning) {
     runtimePermissions = initialSnapshot.provisioning.runtimePermissions
     if (runtimePermissions.adapterKind !== initialSnapshot.runtimeSelection.adapterKind) {
-      throw new Error(uiAttribute('已保存的 Agent 运行时与权限配置不匹配。'))
+      throw new Error(uiAttribute('已保存的智能体与权限配置不匹配。'))
     }
   } else {
     const installation = runtimeEditorInstallation(
@@ -71,17 +71,17 @@ export async function provisionFirstRun(
       initialSnapshot.runtimeSelection.adapterKind
     )
     if (!installation?.memberRuntimeDefaults) {
-      throw new Error(uiAttribute('当前 Agent 运行时没有可用的默认权限配置。'))
+      throw new Error(uiAttribute('当前智能体没有可用的默认权限配置。'))
     }
     if (
       installation.memberRuntimeDefaults.adapterKind !== initialSnapshot.runtimeSelection.adapterKind
       || installation.memberRuntimeDefaults.permissions.adapterKind
         !== initialSnapshot.runtimeSelection.adapterKind
     ) {
-      throw new Error(uiAttribute('Agent 运行时与权限配置不匹配。'))
+      throw new Error(uiAttribute('智能体与权限配置不匹配。'))
     }
     if (!runtimeModelSelectionAvailable(installation, initialSnapshot.runtimeSelection.model)) {
-      throw new Error(uiAttribute('已选模型不在当前 Agent 运行时的可用目录中。'))
+      throw new Error(uiAttribute('已选模型不在当前智能体的可用目录中。'))
     }
     runtimePermissions = installation.memberRuntimeDefaults.permissions
   }

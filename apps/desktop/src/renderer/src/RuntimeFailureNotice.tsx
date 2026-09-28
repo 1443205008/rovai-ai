@@ -54,5 +54,5 @@ function publicRuntimeLabel(runtimeKind: RuntimeFailureView['runtimeKind']): str
   return ({
     'claude-code-cli': 'Claude Code',
     'antigravity-app': 'Antigravity'
-  } as Partial<Record<RuntimeFailureView['runtimeKind'], string>>)[runtimeKind] ?? uiAttribute('Agent 运行时')
+  } as Partial<Record<RuntimeFailureView['runtimeKind'], string>>)[runtimeKind] ?? uiAttribute('未知智能体')
 }

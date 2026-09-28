@@ -2575,7 +2575,7 @@ describe('task event projections', () => {
     expect(markup).not.toContain('Arctic Dawn')
     expect(markup).not.toContain('在晨光里')
     expect(markup).toContain('前往队员')
-    expect(markup).toContain('查看运行时')
+    expect(markup).toContain('查看智能体')
     expect(markup).not.toContain('<textarea')
     expect(markup).not.toContain('<form')
   })
@@ -3230,7 +3230,7 @@ describe('task event projections', () => {
     expect(capabilitiesGroup).toContain('<strong>Skills</strong>')
     expect(capabilitiesGroup).toContain('<strong>工具箱</strong>')
     expect(capabilitiesGroup).toContain('<strong>MCP</strong>')
-    expect(capabilitiesGroup).toContain('<strong>运行时</strong>')
+    expect(capabilitiesGroup).toContain('<strong>智能体</strong>')
     expect(capabilitiesGroup).toContain('<strong>远程连接</strong>')
     expect(capabilitiesGroup).toContain('<strong>渠道</strong>')
     expect(capabilitiesGroup).toContain('data-navigation-icon="sparkles"')
@@ -3239,8 +3239,8 @@ describe('task event projections', () => {
     expect(capabilitiesGroup).toContain('data-navigation-icon="radio-tower"')
     expect(capabilitiesGroup.indexOf('<strong>MCP</strong>')).toBeLessThan(capabilitiesGroup.indexOf('<strong>Skills</strong>'))
     expect(capabilitiesGroup.indexOf('<strong>Skills</strong>')).toBeLessThan(capabilitiesGroup.indexOf('<strong>工具箱</strong>'))
-    expect(capabilitiesGroup.indexOf('<strong>工具箱</strong>')).toBeLessThan(capabilitiesGroup.indexOf('<strong>运行时</strong>'))
-    expect(capabilitiesGroup.indexOf('<strong>运行时</strong>')).toBeLessThan(capabilitiesGroup.indexOf('<strong>远程连接</strong>'))
+    expect(capabilitiesGroup.indexOf('<strong>工具箱</strong>')).toBeLessThan(capabilitiesGroup.indexOf('<strong>智能体</strong>'))
+    expect(capabilitiesGroup.indexOf('<strong>智能体</strong>')).toBeLessThan(capabilitiesGroup.indexOf('<strong>远程连接</strong>'))
     expect(capabilitiesGroup.indexOf('<strong>远程连接</strong>')).toBeLessThan(capabilitiesGroup.indexOf('<strong>渠道</strong>'))
     expect(supportGroup).toContain('<strong>诊断与修复</strong>')
     expect(supportGroup).toContain('<strong>运行监控</strong>')
@@ -3275,7 +3275,7 @@ describe('task event projections', () => {
       skills: 'Skills',
       toolbox: '工具箱',
       mcp: 'MCP',
-      runtime: '运行时',
+      runtime: '智能体',
       channels: '渠道',
       appearance: '外观',
       notifications: '提醒',
@@ -3358,14 +3358,14 @@ describe('task event projections', () => {
     }))
     const headerEnd = markup.indexOf('</header>')
     const rescan = markup.indexOf('重新检测')
-    const directory = markup.indexOf('运行时目录')
+    const directory = markup.indexOf('智能体目录')
 
     expect(markup.match(/class="settings-page-heading"/g)).toHaveLength(1)
     expect(rescan).toBeGreaterThan(0)
     expect(rescan).toBeLessThan(headerEnd)
     expect(headerEnd).toBeLessThan(directory)
-    expect(markup).toContain('<h1>运行时</h1>')
-    expect(markup).toContain('管理本机 Agent 运行时，只需安装你准备使用的。')
+    expect(markup).toContain('<h1>智能体</h1>')
+    expect(markup).toContain('管理本机智能体，只需安装你准备使用的。')
     expect(markup).not.toContain('Cursor Agent')
     expect(markup).not.toContain('高级诊断与自定义启动入口')
   })
@@ -3518,7 +3518,7 @@ describe('task event projections', () => {
     expect(markup).toContain('1 位队员')
     expect(markup).not.toContain('负责人 · 洛可')
     expect(markup).not.toContain('1 位队员已在队')
-    expect(markup).toContain('Agent 运行时不可用')
+    expect(markup).toContain('智能体不可用')
     expect(markup).toContain('class="camp-home-runtime"')
     expect(readyMarkup).not.toContain('class="camp-home-runtime"')
     expect(markup).toContain('先了解项目')
@@ -3546,8 +3546,8 @@ describe('task event projections', () => {
     expect(markup).toContain('消息未发送')
     expect(markup).toContain('1 位目标队员暂时不可执行')
     expect(markup).toContain('当前输入已保留')
-    expect(markup).toContain('尚未配置 Agent 运行时')
-    expect(markup).toContain('配置洛可的 Agent 运行时')
+    expect(markup).toContain('尚未配置智能体')
+    expect(markup).toContain('配置洛可的智能体')
     expect(markup.indexOf('class="runtime-recovery-dock"')).toBeLessThan(markup.indexOf('class="composer"'))
     expect(markup).toMatch(
       /<div class="composer-actions"><span class="composer-hint"><span class="sr-only">Enter 发送，Shift\+Enter 换行<\/span><span class="composer-hint-visual" aria-hidden="true"><kbd>↵<\/kbd><span>发送<\/span><span class="composer-hint-separator">·<\/span><kbd>⇧↵<\/kbd><span>换行<\/span><\/span><\/span><button class="composer-primary-action is-send"/
@@ -3584,7 +3584,7 @@ describe('task event projections', () => {
         blockerCode: 'runtime_authentication_required'
       }]
     })
-    expect(commandFailureMessage(result)).toBe('目标队员的 Agent 运行时暂不可用。')
+    expect(commandFailureMessage(result)).toBe('目标队员的智能体暂不可用。')
     expect(runtimeRecoveryFromCommandResult('camp-1', {
       ...result,
       code: 'camp_message.no_addressable_member'
@@ -3626,9 +3626,9 @@ describe('task event projections', () => {
       memberOrder: 1
     }
 
-    expect(emptyCampRuntimeSummary([member], [])).toBe('正在检查 Agent 运行时…')
-    expect(emptyCampRuntimeSummary([member], [ready])).toBe('Agent 运行时可用')
-    expect(emptyCampRuntimeSummary([member, secondMember], [ready, unready])).toBe('1/2 个 Agent 运行时可用')
+    expect(emptyCampRuntimeSummary([member], [])).toBe('正在检查智能体…')
+    expect(emptyCampRuntimeSummary([member], [ready])).toBe('智能体可用')
+    expect(emptyCampRuntimeSummary([member, secondMember], [ready, unready])).toBe('1/2 个智能体可用')
     expect(emptyCampRuntimeSummary([{ ...member, profilePresence: 'away' }], [ready])).toBe('暂无在队的队员')
   })
 
@@ -4680,10 +4680,10 @@ describe('task event projections', () => {
       configuredRuntime('codex-cli'),
       installation
     )).toEqual({
-      model: 'Agent 运行时默认',
+      model: '智能体默认',
       effort: null,
-      strategy: '跟随 Agent 运行时默认',
-      summary: 'Agent 运行时默认'
+      strategy: '跟随智能体默认',
+      summary: '智能体默认'
     })
 
     expect(memberRuntimeConfigurationPresentation({
@@ -4733,7 +4733,7 @@ describe('task event projections', () => {
       actionKind: 'command',
       actionSummary: index === 0 ? '运行 pnpm test' : '写入构建产物',
       canonicalInput: { command: index === 0 ? 'pnpm test' : 'pnpm build' },
-      reason: 'Agent 运行时需要用户确认。',
+      reason: '智能体需要用户确认。',
       agentRunId: `run-${index + 1}`,
       agentId: profile.agentId,
       adapterKind: 'codex-cli',
@@ -6022,7 +6022,7 @@ describe('task event projections', () => {
         progress,
         campId: 'camp-1'
       }))
-      expect(englishMarkup).toContain('The Agent runtime accepted the task, but Rovai AI cannot confirm its final result after restart.')
+      expect(englishMarkup).toContain('The Agent accepted the task, but Rovai AI cannot confirm its final result after restart.')
       expect(englishMarkup).toContain('Execution exception, cleaning up')
       expect(englishMarkup).toContain('The original request will not be sent again automatically.')
       expect(englishMarkup).toContain('仅在详情激活后渲染')
@@ -7654,18 +7654,18 @@ describe('task event projections', () => {
 
     expect(VISIBLE_PRODUCT_RUNTIMES).toEqual(['claude-code-cli', 'codex-cli', 'copilot-cli', 'opencode-cli', 'kiro-cli', 'qoder-cli', 'codebuddy-cli', 'qwen-code', 'trae-cn-cli', 'kimi-code-cli', 'grok-build', 'deepseek-harness', 'zcode-app', 'antigravity-app', 'pi'])
     expect(markup).toContain('member-runtime-picker')
-    expect(markup).toContain('aria-label="Agent 运行时，暂不配置"')
+    expect(markup).toContain('aria-label="智能体类型，暂不配置"')
     expect(markup).toContain('aria-haspopup="menu"')
-    expect(markup).toContain('未配置 Agent 运行时')
+    expect(markup).toContain('未配置智能体')
     expect(markup).not.toContain('已找到')
     expect(markup).not.toContain('尚未检查')
     expect(markup).not.toContain('Claude Code CLI')
     expect(markup).not.toContain('Antigravity App')
     expect(markup).not.toContain('/opt/homebrew/bin/codex')
-    expect(markup).toContain('Agent 运行时</label>')
+    expect(markup).toContain('智能体类型</label>')
     expect(markup).toContain('保存运行配置')
     expect(markup).toContain('放弃更改')
-    expect(markup).not.toContain('清除 Agent 运行时')
+    expect(markup).not.toContain('清除智能体')
     expect(markup).not.toContain('<div class="member-section-heading">')
     expect(markup).not.toContain('选择执行产品，并确认当前安装与可用状态')
   })
@@ -7691,10 +7691,10 @@ describe('task event projections', () => {
 
     expect(markup).toContain('GitHub Copilot')
     expect(markup).toContain('未检测到')
-    expect(markup).toContain('前往 Agent 运行时')
+    expect(markup).toContain('前往智能体')
     expect(markup).toMatch(/<button[^>]*aria-label="保存运行配置"[^>]*disabled=""/)
     expect(markup).toContain('放弃更改')
-    expect(markup).not.toContain('清除 Agent 运行时')
+    expect(markup).not.toContain('清除智能体')
   })
 
   it('disables the Runtime save only while the request is in flight', () => {
@@ -7740,7 +7740,7 @@ describe('task event projections', () => {
     }))
 
     expect(markup).toContain('正在检查…')
-    expect(markup).toContain('Agent 运行时，Kiro')
+    expect(markup).toContain('智能体类型，Kiro')
     expect(markup).not.toContain('Cursor Agent')
     expect(markup).not.toContain('正在检测')
     expect(markup).not.toContain('已找到')
@@ -7763,12 +7763,12 @@ describe('task event projections', () => {
       onOpenRuntimeSettings: () => undefined
     }))
 
-    expect(markup).toContain('Agent 运行时，Kiro')
+    expect(markup).toContain('智能体类型，Kiro')
     expect(markup).toContain('status-available')
     expect(markup).toContain('可用')
     expect(markup).toContain('kiro-cli 1.0.0')
     expect(markup).not.toContain('runtime-blockers')
-    expect(markup).not.toContain('需要探测 Agent 运行时')
+    expect(markup).not.toContain('需要探测智能体')
     expect(markup).not.toContain('runtime-status-refresh')
     expect(markup).not.toContain('重新检查')
   })
@@ -7795,7 +7795,7 @@ describe('task event projections', () => {
     expect(markup).toContain('这不是本机安装、登录或扫描故障')
     expect(markup).toContain('当前平台仅可查看这份配置')
     expect(markup).toMatch(/class="member-runtime-picker" disabled=""/)
-    expect(markup).not.toContain('前往 Agent 运行时')
+    expect(markup).not.toContain('前往智能体')
   })
 
   it('keeps qualified Pi selectable without experimental disclosure', () => {
@@ -7969,7 +7969,7 @@ describe('task event projections', () => {
     expect(markup.match(/Windows 尚未验证/g)).toHaveLength(15)
     expect(markup.match(/不可检查/g)).toHaveLength(15)
     expect(markup).not.toContain('检查状态')
-    expect(markup).toContain('当前平台尚无可检测 Runtime')
+    expect(markup).toContain('当前平台尚无可检测的智能体')
     expect(markup).toContain('这不是本机安装、登录或扫描故障')
     expect(markup).not.toContain('安装指南')
     expect(markup).not.toContain('登录指南')
