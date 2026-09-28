@@ -61,7 +61,12 @@ Main 不再永久运行 750ms/800ms provider interval。每个 Core generation �
 `false`，不保留任何维护定时器。渠道入站、会改变渠道状态的卡片回调、Bot 重连/roster 变化和 Delivery settlement
 都会立即请求一次串行、可合并的 pump。
 
-飞书 provider 已处于 outstanding 状态时，Core event 快路径必须按以下范围处理：
+`delivery_batch.claimed` 的 navigation invalidation，以及 `agent_run.started` 和 `agent_run.terminal`，
+即使在 Host 已休眠时也要触发一次探测。渠道入站 Request 可以先完成，
+其 Agent 随后发出 A2A 消息，使另一名队员开始新的 Run；新 Run 的执行卡和正文投递不能依赖原 Request 保持 active。
+此类探测仍由 Core 按 provider 判断是否有实际工作，没有工作就立即恢复休眠。其余 live event 只在 active 时处理。
+
+飞书与 Lark 的 Core event 快路径按以下范围处理：
 
 - `agent_run.started` 立即唤醒；
 - `agent_run.terminal` 立即唤醒，并再安排一次 1000ms one-shot，跨过执行卡 900ms terminal quiet window；
@@ -69,12 +74,12 @@ Main 不再永久运行 750ms/800ms provider interval。每个 Core generation �
   `opening | active | terminal_pending` 时，才最多每 500ms 合并为一次 live refresh；
 - 其他 `agent_run.*`、非 live Runtime event、未跟踪 Run 和 `terminal_sealed` Run 的事件全部忽略。
 
-该过滤只使用飞书既有的 execution card state，不新增持久字段、映射或集合。普通 Core event 必须继续经过 Pump 的
-active 门禁；已经休眠的 Host 不得被这些事件重新激活。渠道入站、卡片操作、Bot/roster 变化和 settlement 仍可通过
+该过滤只使用飞书/Lark 既有的 execution card state，不新增持久字段、映射或集合。除上述 Delivery claim、
+两种 Run 生命周期事件及自动化通知外，普通 Core event 继续经过 Pump 的 active 门禁。渠道入站、卡片操作、Bot/roster 变化和 settlement 仍可通过
 既有显式 `wake()` 激活。Web 执行台继续直接消费自己的 Core event/SSE 刷新链路，不受该过滤影响。
 
-钉钉继续沿用 v4：provider active 时，`runtime.*` 连续事件最多每 500ms 合并一次，`agent_run.*` 直接唤醒，
-`agent_run.terminal` 保留立即维护和 1000ms one-shot。本版不修改钉钉事件过滤或 roster 机制。
+钉钉的 `agent_run.started/terminal` 同样能唤醒已休眠的 Host；provider active 时，`runtime.*` 连续事件最多每
+500ms 合并一次，其他 `agent_run.*` 直接唤醒。`agent_run.terminal` 保留立即维护和 1000ms one-shot。
 
 飞书 Service 在启动恢复探测前先把历史群 roster sweep deadline 推迟一个正常 sweep 周期。首次 Pump 必须直接完成
 遗留 Request、Delivery 与 Execution Console 的 Core 恢复，不得先遍历全部历史群发起 roster 网络请求。若首次 tick
@@ -98,6 +103,8 @@ Core event 和本地 Notify 只负责提早唤醒，不承担不丢失保证，�
 payload；`attempting` 时只推进 console 的 `latest_sequence/digest`，不得创建第二条 Delivery。原 Delivery 成功 settle
 后，若 `delivered_sequence < latest_sequence`，必须在同一 settlement 事务只创建或合并一次 latest-sequence follow-up。
 该 latest-wins 流控独立于 500ms Main debounce；终态 quiet window 也不得被 live debounce 吞并。
+首次发现时已终态且结束时间早于 quiet window 的 A2A 后续 Run，可以在同一次 Core tick 冻结终态快照并投递卡片；
+仍处于 quiet window 的 Run 保留 `terminal_pending`，等待窗口结束后再封存。
 
 ## 3. 十分钟恢复 watchdog
 

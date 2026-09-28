@@ -319,7 +319,9 @@ Core 只从已提交公开 CampMessage、Managed Attachment authority、AgentRun
 Agent 永久输出使用实际作者 Agent 的已发布 Bot；作者 Bot 不可用时不冒充其他队员，而是生成独立 attention。
 产品不提供 AgentRun 业务重试或 decline 操作面；Run 失败不回滚已完成的入站接收，也不阻塞同一 Binding 的后续 publication。
 
-每个 AgentRun 有一个 Core-owned execution console identity，但飞书 Card 2.0 只承担状态入口。收起态不再把正文、command、
+入站 Request 直接领取的 Run，以及这些 Run 通过公开 A2A 消息触发的后续 Run，沿同一 Camp 的消息来源与 Delivery 链
+归属到该 Request 的渠道会话，并各有一个 Core-owned execution console identity。Request 已完成也不截断这条链；
+Host 由后续 Delivery batch 领取、Run 启动和终态事件唤醒，以投递执行卡及待发正文。飞书 Card 2.0 只承担状态入口。收起态不再把正文、command、
 结果或进度复制进卡片；只保留 Owner callback“显示最近输出”、直接 `open_url`“打开执行台”和 Owner callback
 “停止执行”。终态移除停止入口。最近输出只在 Main 的 per-message 内存状态中展开最后 30 个公开正文/安全 command；
 正文直接显示，每条 command 使用默认收起的 Card 2.0 原生面板，标题为状态符号与 `$` 安全 command。command 标题按约
@@ -360,7 +362,8 @@ Core 既有 `terminal_pending / terminal_sealed` 与不可变 terminal snapshot 
 Turn 的执行卡，等待在途更新并把 target revoked 当作幂等成功；执行卡不是 CampMessage，也不参与请求业务 settlement。
 
 公开 Agent 正文新建无标题 Card 2.0，不覆盖控制台、queue ack 或其他正文。正文下方的“发送给”行只消费 Core 从公共
-MessageDelivery 提取的有序 A2A 接收对象及 Structured CurrentUserMention；多个原生 @ 用空格分隔。飞书专用正文从
+CampMessage 冻结的 `effective_recipient_ids_json` 提取的有序 A2A 接收对象及 Structured CurrentUserMention；
+旧消息的未发送投递仍可从历史 MessageDelivery 恢复。多个原生 @ 用空格分隔。飞书专用正文从
 Structured Content 排除 CurrentUserMention，不改写源消息、Renderer/Agent Context，不按字面 `@你` 删除文字。
 卡片顶部的回复摘要只沿 CampMessage 的 `reply_to_camp_message_id` 读取同 Camp 的直接父消息，最多 3 行/240 个 Unicode
 字符，不读取 Human body cache 或嵌套 ExternalQuote，也不从 Topic root 推断关系；引用作者与摘要静态转义，不再触发 @。

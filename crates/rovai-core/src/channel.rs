@@ -10006,6 +10006,26 @@ fn project_active_request_deliveries_for_turn(
         let run_states = query_rows(
             transaction,
             r#"
+            WITH RECURSIVE related_run(id) AS (
+                SELECT run.id
+                FROM agent_run AS run
+                WHERE ?1 IS NOT NULL AND run.camp_turn_id = ?1
+                UNION
+                SELECT delivery.claimed_agent_run_id
+                FROM camp_message_delivery AS delivery
+                JOIN json_each(?3) AS requested_delivery
+                  ON requested_delivery.value = delivery.id
+                WHERE delivery.claimed_agent_run_id IS NOT NULL
+                UNION
+                SELECT child.claimed_agent_run_id
+                FROM related_run AS parent
+                JOIN camp_message AS message
+                  ON message.source_agent_run_id = parent.id
+                 AND message.camp_id = ?4
+                 AND message.author_type = 'agent'
+                JOIN camp_message_delivery AS child ON child.message_id = message.id
+                WHERE child.claimed_agent_run_id IS NOT NULL
+            )
             SELECT run.id, conversation.agent_id, run.status, run.version,
                    COALESCE(MAX(evidence.sequence), 0),
                    COALESCE(MAX(output.sequence), 0), bot.app_id
@@ -10019,20 +10039,12 @@ fn project_active_request_deliveries_for_turn(
             LEFT JOIN channel_member_bot_directory AS bot
               ON bot.provider = ?2 AND bot.agent_id = conversation.agent_id
              AND bot.status = 'published'
-            WHERE (
-                    (?1 IS NOT NULL AND run.camp_turn_id = ?1)
-                    OR EXISTS (
-                        SELECT 1
-                        FROM camp_message_delivery AS delivery
-                        JOIN json_each(?3) AS requested_delivery
-                          ON requested_delivery.value = delivery.id
-                        WHERE delivery.claimed_agent_run_id = run.id
-                    )
-                  )
+            WHERE run.id IN (SELECT id FROM related_run)
+              AND run.camp_id = ?4
             GROUP BY run.id, conversation.agent_id, run.status, run.version, bot.app_id
             ORDER BY run.created_at, run.id
             "#,
-            params![camp_turn_id, provider, delivery_ids_json],
+            params![camp_turn_id, provider, delivery_ids_json, camp_id],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -10214,23 +10226,38 @@ fn feishu_agent_output_projection_with_spec(
         .cloned()
         .collect();
     let body = render_current_plain_text(transaction, &body_content)?;
+    // The CampMessage is frozen before its delivery rows are enqueued. Read its
+    // recipient snapshot here; use old MessageDelivery only for legacy rows.
     let member_recipients = query_rows(
         transaction,
         &format!(
             r#"
-        SELECT delivery.recipient_agent_id,
-               COALESCE(profile.display_name, bot.bot_display_name, delivery.recipient_agent_id),
+        SELECT recipient.recipient_agent_id,
+               COALESCE(profile.display_name, bot.bot_display_name, recipient.recipient_agent_id),
                bot.bot_open_id
-        FROM message_delivery AS delivery
-        LEFT JOIN agent_profile AS profile ON profile.id = delivery.recipient_agent_id
+        FROM (
+            SELECT value AS recipient_agent_id, CAST(key AS INTEGER) AS position
+            FROM camp_message AS message,
+                 json_each(message.effective_recipient_ids_json)
+            WHERE message.id = ?1
+            UNION ALL
+            SELECT delivery.recipient_agent_id, delivery.recipient_canonical_position
+            FROM message_delivery AS delivery
+            WHERE delivery.message_id = ?1 AND delivery.delivery_kind = 'public_a2a'
+              AND NOT EXISTS (
+                  SELECT 1 FROM camp_message AS message
+                  WHERE message.id = ?1
+                    AND json_array_length(message.effective_recipient_ids_json) > 0
+              )
+        ) AS recipient
+        LEFT JOIN agent_profile AS profile ON profile.id = recipient.recipient_agent_id
         LEFT JOIN {member_bot} AS bot
-          ON bot.agent_id = delivery.recipient_agent_id
+          ON bot.agent_id = recipient.recipient_agent_id
          AND bot.status = 'published'
          AND bot.account_id = (
              SELECT account_id FROM {member_bot} WHERE app_id = ?2
          )
-        WHERE delivery.message_id = ?1 AND delivery.delivery_kind = 'public_a2a'
-        ORDER BY delivery.recipient_canonical_position, delivery.id
+        ORDER BY recipient.position, recipient.recipient_agent_id
         "#,
             member_bot = spec.member_bot
         ),
@@ -10601,6 +10628,23 @@ fn materialize_execution_console(
         }
         None => {
             let console_id = format!("rvcec_{}", Uuid::new_v4().simple());
+            // A descendant Run may be discovered only after its parent Request
+            // settled or after a Host restart. Its terminal quiet window can
+            // already have elapsed by the first projection.
+            let terminal_quiet_elapsed = if terminal {
+                transaction
+                    .query_row(
+                        "SELECT ended_at FROM agent_run WHERE id = ?1",
+                        [agent_run_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )?
+                    .as_deref()
+                    .map(|ended_at| execution_console_terminal_quiet_window_elapsed(ended_at, now))
+                    .transpose()?
+                    .unwrap_or(false)
+            } else {
+                false
+            };
             transaction.execute(
                 r#"
                 INSERT INTO channel_execution_console(
@@ -10622,7 +10666,9 @@ fn materialize_execution_console(
                     agent_id,
                     target_app_id,
                     digest,
-                    if terminal {
+                    if terminal_quiet_elapsed {
+                        "terminal_sealed"
+                    } else if terminal {
                         "terminal_pending"
                     } else {
                         live_state
@@ -10630,7 +10676,14 @@ fn materialize_execution_console(
                     now,
                 ],
             )?;
-            (console_id, 1, !terminal)
+            if terminal_quiet_elapsed {
+                let snapshot = capture_execution_console_snapshot(transaction, agent_run_id, 1)?;
+                transaction.execute(
+                    "UPDATE channel_execution_console SET terminal_snapshot_json = ?2 WHERE id = ?1",
+                    params![console_id, serde_json::to_string(&snapshot)?],
+                )?;
+            }
+            (console_id, 1, !terminal || terminal_quiet_elapsed)
         }
     };
     if !queue_upsert {
@@ -15448,6 +15501,16 @@ mod tests {
                     tombstoned_at, camp_id, sequence],
             ).unwrap();
         }
+        connection.execute_batch(
+            r#"
+            ALTER TABLE camp_message ADD COLUMN effective_recipient_ids_json TEXT NOT NULL DEFAULT '[]';
+            UPDATE camp_message
+            SET effective_recipient_ids_json = '["agent_2","agent_3"]'
+            WHERE id = 'message_1';
+            INSERT INTO message_delivery VALUES
+                ('legacy_delivery', 'message_parent', 'agent_4', 0, 'public_a2a');
+            "#,
+        ).unwrap();
         let transaction = connection.transaction().unwrap();
         let projected = feishu_agent_output_projection(
             &transaction,
@@ -15475,6 +15538,19 @@ mod tests {
             json!([
                 {"agentId": "agent_2", "displayName": "响子", "openId": "ou_kyoko"},
                 {"agentId": "agent_3", "displayName": "爱丽丝", "openId": null},
+            ])
+        );
+        let legacy = feishu_agent_output_projection(
+            &transaction,
+            "message_parent",
+            "agent_2",
+            "cli_sender",
+            &content,
+        )
+        .unwrap();
+        assert_eq!(
+            legacy["memberRecipients"],
+            json!([
                 {"agentId": "agent_4", "displayName": "离线队员", "openId": null},
             ])
         );
@@ -21058,6 +21134,120 @@ mod tests {
             )
             .unwrap();
         assert!(!quiescent_tick.has_outstanding_work);
+
+        // The root Request is already complete and its console is sealed.
+        // A message from that Run can still start another Camp member's Run.
+        publish_bot(&service, &mut restarted, "agent_2", "cli_app_2");
+        let camp_id: String = restarted
+            .connection()
+            .query_row(
+                "SELECT camp_id FROM agent_run WHERE id = ?1",
+                [&agent_run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let a2a_at = Utc::now().to_rfc3339();
+        let a2a_content = vec![StructuredCampMessageSegment::Text {
+            text: "请继续处理".to_string(),
+        }];
+        restarted.connection().execute(
+            "INSERT OR IGNORE INTO camp_member(camp_id, agent_id, status, joined_at) VALUES (?1, 'agent_2', 'active', ?2)",
+            params![camp_id, a2a_at],
+        ).unwrap();
+        restarted
+            .connection()
+            .execute(
+                "UPDATE camp SET last_message_sequence = last_message_sequence + 1 WHERE id = ?1",
+                [&camp_id],
+            )
+            .unwrap();
+        let a2a_sequence: i64 = restarted
+            .connection()
+            .query_row(
+                "SELECT last_message_sequence FROM camp WHERE id = ?1",
+                [&camp_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        restarted
+            .connection()
+            .execute(
+                r#"
+            INSERT INTO camp_message(
+                id, camp_id, sequence, author_type, author_id,
+                source_agent_run_id, body, structured_content_json, content_digest,
+                address_mode, addressed_agent_ids_json, reply_to_camp_message_id,
+                camp_turn_id, agent_run_id, tombstoned_at, version,
+                created_at, updated_at, effective_recipient_ids_json,
+                recipient_set_digest, recipient_presentation_json, source_operation_id
+            ) VALUES (
+                'channel-a2a-message', ?1, ?2, 'agent', 'agent_1',
+                ?3, '请继续处理', ?4, ?5,
+                'explicit', '["agent_2"]', NULL,
+                NULL, ?3, NULL, 1,
+                ?6, ?6, '["agent_2"]', NULL, '{}', NULL
+            )
+            "#,
+                params![
+                    camp_id,
+                    a2a_sequence,
+                    agent_run_id,
+                    serde_json::to_string(&a2a_content).unwrap(),
+                    canonical_content_digest(&a2a_content).unwrap(),
+                    a2a_at,
+                ],
+            )
+            .unwrap();
+        {
+            let transaction = restarted.connection_mut().transaction().unwrap();
+            crate::delivery_queue::enqueue_message_deliveries(
+                &transaction,
+                &camp_id,
+                "channel-a2a-message",
+                a2a_sequence,
+                &["agent_2".to_string()],
+                &a2a_at,
+            )
+            .unwrap();
+            transaction.commit().unwrap();
+        }
+        let descendants = claim_waiting_runs(&mut restarted);
+        assert_eq!(descendants.len(), 1);
+        let descendant_run_id = &descendants[0];
+        let descendant_ended_at = (Utc::now() - Duration::seconds(2)).to_rfc3339();
+        restarted.connection().execute(
+            "UPDATE agent_run SET status = 'succeeded', ended_at = ?2, updated_at = ?2 WHERE id = ?1",
+            params![descendant_run_id, descendant_ended_at],
+        ).unwrap();
+        let descendant_tick = service
+            .host_tick(
+                &mut restarted,
+                &ActorRef::System {
+                    component_id: FEISHU_CHANNEL_HOST_COMPONENT.to_string(),
+                },
+                &ChannelHostTickRequest {
+                    worker_id: "a2a-console-worker".to_string(),
+                    inbound_attachment_app_ids: Vec::new(),
+                    limit: 20,
+                },
+            )
+            .unwrap();
+        assert!(descendant_tick.deliveries.iter().any(|delivery| {
+            delivery.delivery_kind == "execution_console_upsert"
+                && delivery.target_app_id == "cli_app_2"
+                && delivery.payload["agentRunId"] == *descendant_run_id
+        }));
+        assert_eq!(
+            restarted
+                .connection()
+                .query_row(
+                    "SELECT request_id FROM channel_execution_console WHERE agent_run_id = ?1 AND state = 'terminal_sealed' AND terminal_snapshot_json IS NOT NULL",
+                    [descendant_run_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            request_id
+        );
     }
 
     #[test]
