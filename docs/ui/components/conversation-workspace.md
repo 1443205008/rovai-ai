@@ -375,6 +375,11 @@ reply、显式 Member Mention、多人 Mention 和 `@所有队员` 都比 contin
 
 ## Camp 内单聊
 
+Camp Header 的任务、队员和单聊入口在英文下分别使用 `Tasks / Team / DMs`；对应浮层标题使用
+`Tasks / Team / Direct messages`，手机更多菜单的单聊项也写全。中文维持“任务 / 队员 / 单聊”，全局导航
+中的队员名称不受这些局部译名影响。入口保留 28px 高度、14px 图标和 11px 文本；标签与计数使用同一字体、
+16px 行高并按基线对齐，计数使用等宽数字与次要字色，不新增徽章容器。
+
 Camp Header 的“当前会话”详情入口包含一个独立“单聊”项；打开后使用锚定在会话区右上方的非模态 panel，
 与既有成员/Task/文件详情互斥，但不改变 Camp route、公共时间线、Composer Draft 或执行台位置。入口显示 active
 Single Chat 数量；任一会话正在回复时复用紧凑运行 spinner，不用未读或通知语义。

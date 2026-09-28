@@ -5,15 +5,10 @@ import { useMobileLayout } from './MobileLayout'
 import { MemberAvatar, type MemberAvatarProps } from './MemberAvatar'
 import { ExecutionIcon } from './ExecutionIcons'
 import { UiText, uiAttribute } from './interface-language'
+import { useCampDetailCopy } from './camp-detail-copy'
 
 export type CampDetailTab = 'execution' | 'tasks' | 'members'
 export type RunningCampMember = Pick<MemberAvatarProps, 'agentId' | 'avatarRef' | 'displayName'>
-
-const labels: Record<CampDetailTab, string> = {
-  execution: '执行',
-  tasks: '任务',
-  members:"队员"
-}
 
 function CampDetailIcon({ tab }: { tab: CampDetailTab }): React.JSX.Element {
   if (tab === 'execution') return <ExecutionIcon />
@@ -145,6 +140,7 @@ export function CampDetailEntries({
   memberCount: number
   onSelect(tab: CampDetailTab, trigger: HTMLButtonElement, keyboard: boolean): void
 }): React.JSX.Element {
+  const copy = useCampDetailCopy()
   const entries: Array<{ tab: CampDetailTab; count: number }> = [
     { tab: 'tasks', count: taskCount },
     { tab: 'members', count: memberCount }
@@ -170,8 +166,10 @@ export function CampDetailEntries({
           onClick={(event) => onSelect(tab, event.currentTarget, event.detail === 0)}
         >
           <CampDetailIcon tab={tab} />
-          <span>{uiAttribute(labels[tab])}</span>
-          <small>{count}</small>
+          <span className="camp-detail-entry-copy">
+            <span>{copy[tab]}</span>
+            <small>{count}</small>
+          </span>
         </button>
       ))}
     </div>
@@ -216,6 +214,7 @@ export function CampDetailPopover({
   children: ReactNode
 }): React.JSX.Element {
   const mobile = useMobileLayout()
+  const copy = useCampDetailCopy()
   const panelId = useId()
   const panelRef = useRef<HTMLElement>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -268,10 +267,10 @@ export function CampDetailPopover({
             triggerRef.current = entryHost?.querySelector<HTMLButtonElement>('.mobile-camp-more') ?? null
             focusPanelRef.current = true
             onOpen(tab)
-          }}><CampDetailIcon tab={tab} /><span>{uiAttribute(labels[tab])}</span></DropdownMenu.Item>)}
+          }}><CampDetailIcon tab={tab} /><span>{copy[tab]}</span></DropdownMenu.Item>)}
           <DropdownMenu.Item onSelect={() => { menuSelected.current = true; onOpenSingleChat() }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6A8.4 8.4 0 0 1 12.5 3h.5a8.5 8.5 0 0 1 8 8v.5Z" /></svg>
-            <span><UiText zh={"单聊"} /></span>
+            <span>{copy.singleChatTitle}</span>
           </DropdownMenu.Item>
           {onOpenMissionActivity && <DropdownMenu.Item onSelect={() => { menuSelected.current = true; onOpenMissionActivity() }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.6 7M3 4v7h7M12 7v5l3 2" /></svg><span><UiText zh={"活动"} /></span>
@@ -327,7 +326,7 @@ export function CampDetailPopover({
     >
       <header className="camp-detail-heading">
         <CampDetailIcon tab={activeTab} />
-        <strong id={`${panelId}-title`}>{uiAttribute(labels[activeTab])}</strong>
+        <strong id={`${panelId}-title`}>{copy[activeTab]}</strong>
         {mobile && activeTab === 'execution' && onToggleMobileExecutionMaximized && <button
           className="mobile-execution-expand"
           type="button"
