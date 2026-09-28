@@ -1606,7 +1606,6 @@ impl AgentRuntimeAdapter for CodexCliAdapterPolicy {
             "executableFingerprint": input.executable_fingerprint,
             "reportedVersion": input.reported_version,
             "runtimeEntrypoint": runtime_entrypoint_compatibility(&input)?,
-            "nativeSessionCompatibilityKey": input.native_session_compatibility_key,
             "authScope": input.auth_scope,
             "protocolVersion": protocol_version,
             "permissionSchemaVersion": input.permissions.schema_version,
@@ -3653,9 +3652,9 @@ mod tests {
             resolved.binding_compatibility_digest, changed_session_key.binding_compatibility_digest,
             "the Adapter session key is persisted and evaluated independently"
         );
-        assert_ne!(
+        assert_eq!(
             resolved.host_config_digest, changed_session_key.host_config_digest,
-            "the native session key must fence a Runtime Host"
+            "the native session key does not change Codex Host startup"
         );
         let current_contract_digest = canonical_json_digest(&json!({
             "adapterKind": AdapterKind::CodexCli,

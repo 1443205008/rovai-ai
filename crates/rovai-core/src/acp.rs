@@ -1237,7 +1237,6 @@ pub(crate) struct AcpHost {
     startup_diagnostics: Mutex<String>,
     private_config_root: Option<PathBuf>,
     remove_private_config_root_on_shutdown: bool,
-    session_permission_mode: Option<String>,
     detector_config_root: Option<PathBuf>,
     ephemeral_config: Mutex<Option<EphemeralMcpConfigFile>>,
     executable_path: PathBuf,
@@ -1268,19 +1267,6 @@ impl AcpHost {
         let private_config =
             prepare_private_host_config(private_runtime_dir, frozen_runtime.adapter_kind)?;
         let private_config_root = private_config.as_ref().map(|config| config.root.as_path());
-        let session_permission_mode = if frozen_runtime.adapter_kind == AdapterKind::KimiCodeCli {
-            Some(
-                frozen_runtime
-                    .permissions
-                    .values
-                    .get("permission_mode")
-                    .and_then(Value::as_str)
-                    .context("Kimi Code Runtime requires permission_mode")?
-                    .to_string(),
-            )
-        } else {
-            None
-        };
         let host_instance_id = uuid::Uuid::new_v4().to_string();
         let grok_byok_configured =
             frozen_runtime.adapter_kind == AdapterKind::GrokBuild && grok_native_byok_configured()?;
@@ -1432,7 +1418,6 @@ impl AcpHost {
             remove_private_config_root_on_shutdown: private_config
                 .as_ref()
                 .is_some_and(|config| config.remove_on_shutdown),
-            session_permission_mode,
             detector_config_root,
             ephemeral_config: Mutex::new(ephemeral_config),
             executable_path: PathBuf::from(&frozen_runtime.executable_path),
@@ -3300,6 +3285,7 @@ pub struct AcpRuntime {
     execution_root: PathBuf,
     attachment_access_root: Option<PathBuf>,
     workspace_access: String,
+    session_permission_mode: Option<String>,
     active_observation: Mutex<Option<AcpPromptObservation>>,
 }
 
@@ -3442,6 +3428,7 @@ impl AcpRuntime {
         execution_root: PathBuf,
         attachment_access_root: Option<PathBuf>,
         workspace_access: String,
+        session_permission_mode: Option<String>,
     ) -> Arc<Self> {
         Arc::new(Self {
             owner,
@@ -3453,6 +3440,7 @@ impl AcpRuntime {
             execution_root,
             attachment_access_root,
             workspace_access,
+            session_permission_mode,
             active_observation: Mutex::new(None),
         })
     }
@@ -3718,7 +3706,6 @@ impl AcpRuntime {
         }
         if self.host.adapter_kind == AdapterKind::KimiCodeCli {
             let configured = self
-                .host
                 .session_permission_mode
                 .as_deref()
                 .context("Kimi Code Runtime has no frozen Session mode")?;
@@ -4291,6 +4278,20 @@ impl AcpCliRuntimeAdapter {
         if frozen_runtime.adapter_kind != self.kind {
             bail!("ACP Runtime received an AgentRun for another Adapter");
         }
+        let session_permission_mode = if self.kind == AdapterKind::KimiCodeCli {
+            let mode = frozen_runtime
+                .permissions
+                .values
+                .get("permission_mode")
+                .and_then(Value::as_str)
+                .context("Kimi Code Runtime requires permission_mode")?;
+            if !matches!(mode, "default" | "plan" | "auto" | "yolo") {
+                bail!("Kimi Code permission_mode is invalid");
+            }
+            Some(mode.to_string())
+        } else {
+            None
+        };
         let existing = { self.runtimes.lock().await.get(agent_run_id).cloned() };
         if let Some(existing) = existing {
             if existing.execution_epoch() == execution_epoch
@@ -4378,6 +4379,7 @@ impl AcpCliRuntimeAdapter {
             } else {
                 "runtime_managed".to_string()
             },
+            session_permission_mode,
         );
         self.runtimes
             .lock()
@@ -4506,8 +4508,29 @@ pub(crate) fn runtime_compatibility_digest(
     workspace: &AgentRunWorkspace,
     permission_semantics: PermissionSemantics,
     external_mcp_servers: &BTreeMap<String, McpServerDefinition>,
-    mcp_projection_digest: &str,
     attachment_authorization: &CampOutputDirectory,
+) -> Result<String> {
+    let kimi_provider_environment_digest = (frozen_runtime.adapter_kind
+        == AdapterKind::KimiCodeCli)
+        .then(kimi_model_environment_compatibility_digest)
+        .transpose()?;
+    runtime_compatibility_digest_with_provider_environment(
+        frozen_runtime,
+        workspace,
+        permission_semantics,
+        external_mcp_servers,
+        attachment_authorization,
+        kimi_provider_environment_digest.as_deref(),
+    )
+}
+
+fn runtime_compatibility_digest_with_provider_environment(
+    frozen_runtime: &FrozenAgentRuntimeConfig,
+    workspace: &AgentRunWorkspace,
+    permission_semantics: PermissionSemantics,
+    external_mcp_servers: &BTreeMap<String, McpServerDefinition>,
+    attachment_authorization: &CampOutputDirectory,
+    kimi_provider_environment_digest: Option<&str>,
 ) -> Result<String> {
     let execution_root = PathBuf::from(&workspace.execution_root)
         .canonicalize()
@@ -4517,42 +4540,24 @@ pub(crate) fn runtime_compatibility_digest(
                 workspace.execution_root
             )
         })?;
-    // TRAE's first real AgentRun upgrades an installed-unverified snapshot to
-    // Ready and therefore changes the full frozen config digest. Kimi and Grok MCP
-    // projection digests are also Run-local because their evidence includes the
-    // AgentRun identity. Those values are not Host launch inputs. The concrete
-    // resolved MCP server set below remains compatibility-authoritative. ZCode
-    // sets models on each exact Session; only its host projection (including mode) and
-    // official configuration, not member Session preferences, fence the process.
-    let excludes_runtime_config_digest = matches!(
-        frozen_runtime.adapter_kind,
-        AdapterKind::TraeCnCli | AdapterKind::ZcodeApp | AdapterKind::DeepseekHarness
-    );
-    let excludes_mcp_projection_digest = matches!(
-        frozen_runtime.adapter_kind,
-        AdapterKind::TraeCnCli
-            | AdapterKind::KimiCodeCli
-            | AdapterKind::GrokBuild
-            | AdapterKind::ZcodeApp
-            | AdapterKind::DeepseekHarness
-    );
-    let runtime_config_digest =
-        (!excludes_runtime_config_digest).then_some(frozen_runtime.config_digest.as_str());
-    let mcp_projection_compatibility_digest =
-        (!excludes_mcp_projection_digest).then_some(mcp_projection_digest);
+    // Full frozen config and MCP projection digests carry Run-local audit
+    // fields. Resolved servers and Host-scoped settings below are the process
+    // inputs. CodeBuddy's explicit model is the one model launch flag.
+    let codebuddy_launch_model = (frozen_runtime.adapter_kind == AdapterKind::CodebuddyCli
+        && frozen_runtime.model.source != "runtime_default")
+        .then_some(frozen_runtime.model.model_id.as_str());
     let is_grok = frozen_runtime.adapter_kind == AdapterKind::GrokBuild;
     let mut compatibility = json!({
-        "schemaVersion": if is_grok { 5 } else { 3 },
+        "schemaVersion": if is_grok { 6 } else { 4 },
         "adapterKind": frozen_runtime.adapter_kind,
-        "runtimeConfigDigest": runtime_config_digest,
         "hostConfigDigest": frozen_runtime.host_config_digest,
+        "codebuddyLaunchModel": codebuddy_launch_model,
         "executionRoot": execution_root,
         "workspace": workspace,
         "permissionSemantics": permission_semantics,
         "builtinToolContractVersion": BUILTIN_TOOL_CONTRACT_VERSION,
         "builtinToolCatalogDigest": builtin_tool_catalog_digest()?,
         "externalMcpServers": external_mcp_servers,
-        "mcpProjectionDigest": mcp_projection_compatibility_digest,
         "attachmentOutputRoot": attachment_authorization.output_root,
     });
     if is_grok {
@@ -4566,6 +4571,11 @@ pub(crate) fn runtime_compatibility_digest(
         compatibility.insert(
             "grokNativeRulesRevision".to_string(),
             json!(GROK_NATIVE_RULES_REVISION),
+        );
+    }
+    if frozen_runtime.adapter_kind == AdapterKind::KimiCodeCli {
+        compatibility["kimiProviderEnvironmentDigest"] = json!(
+            kimi_provider_environment_digest.context("Kimi provider environment digest missing")?
         );
     }
     if frozen_runtime.adapter_kind == AdapterKind::DeepseekHarness {
@@ -5027,6 +5037,28 @@ pub(crate) fn configure_kimi_model_environment(command: &mut Command) -> Result<
 }
 
 fn configure_kimi_model_environment_from_path(command: &mut Command, path: &Path) -> Result<()> {
+    for (key, value) in load_kimi_model_environment_from_path(path)? {
+        command.env(key, value);
+    }
+    Ok(())
+}
+
+fn kimi_model_environment_compatibility_digest() -> Result<String> {
+    kimi_model_environment_compatibility_digest_from_path(&kimi_model_environment_path()?)
+}
+
+fn kimi_model_environment_compatibility_digest_from_path(path: &Path) -> Result<String> {
+    let values = path
+        .exists()
+        .then(|| load_kimi_model_environment_from_path(path))
+        .transpose()?;
+    canonical_json_digest(&json!({
+        "schemaVersion": 1,
+        "effectiveProviderEnvironment": values,
+    }))
+}
+
+fn load_kimi_model_environment_from_path(path: &Path) -> Result<BTreeMap<String, String>> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -5094,10 +5126,7 @@ fn configure_kimi_model_environment_from_path(command: &mut Command, path: &Path
             );
         }
     }
-    for (key, value) in values {
-        command.env(key, value);
-    }
-    Ok(())
+    Ok(values)
 }
 
 const GROK_ENVIRONMENT_FILE_NAME: &str = ".env";
@@ -7379,6 +7408,7 @@ while IFS= read -r ignored; do :; done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "read_only".to_string(),
+            None,
         );
         let target = outside.join("runtime-owned.txt");
         let first_write = runtime
@@ -7519,6 +7549,7 @@ while IFS= read -r ignored; do :; done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
+            Some("yolo".to_string()),
         );
         runtime
             .start_or_resume_session(
@@ -7541,6 +7572,14 @@ while IFS= read -r ignored; do :; done
         receive_through_prompt_completion(&mut receiver).await;
 
         let protocol = std::fs::read_to_string(&protocol_log).unwrap();
+        assert!(protocol.lines().any(|line| {
+            let Ok(message) = serde_json::from_str::<Value>(line) else {
+                return false;
+            };
+            message.get("method") == Some(&json!("session/set_config_option"))
+                && message.pointer("/params/configId") == Some(&json!("mode"))
+                && message.pointer("/params/value") == Some(&json!("yolo"))
+        }));
         let response = |id| {
             protocol
                 .lines()
@@ -8081,6 +8120,7 @@ done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
+            Some("default".to_string()),
         );
         runtime
             .start_or_resume_session(
@@ -8206,6 +8246,29 @@ done
             "https://api.minimaxi.com/v1"
         );
         assert_eq!(environment["KIMI_MODEL_API_KEY"], "test-plan-key");
+
+        let original_digest = kimi_model_environment_compatibility_digest_from_path(&path).unwrap();
+        let original = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("# display-only comment\n{original}")).unwrap();
+        assert_eq!(
+            kimi_model_environment_compatibility_digest_from_path(&path).unwrap(),
+            original_digest,
+            "comments do not change the child process environment"
+        );
+        std::fs::write(
+            &path,
+            original.replace("test-plan-key", "replacement-plan-key"),
+        )
+        .unwrap();
+        assert_ne!(
+            kimi_model_environment_compatibility_digest_from_path(&path).unwrap(),
+            original_digest,
+            "provider credentials injected at Host startup must fence reuse"
+        );
+        assert_ne!(
+            kimi_model_environment_compatibility_digest_from_path(&root.join("missing")).unwrap(),
+            original_digest
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -8590,6 +8653,7 @@ while IFS= read -r ignored; do :; done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
+            None,
         );
         let session_id = runtime
             .start_or_resume_session(
@@ -8783,6 +8847,7 @@ while IFS= read -r ignored; do :; done
                 root.clone(),
                 Some(exact_attachment_root(&root)),
                 "runtime_managed".to_string(),
+                None,
             );
             runtime
                 .start_or_resume_session(
@@ -8895,6 +8960,7 @@ while IFS= read -r ignored; do :; done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
+            None,
         );
         let session_id = runtime
             .start_or_resume_session(
@@ -8983,6 +9049,7 @@ while IFS= read -r ignored; do :; done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
+            None,
         );
 
         let session_id = runtime
@@ -9077,6 +9144,7 @@ while IFS= read -r ignored; do :; done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
+            None,
         );
 
         let error = runtime
@@ -9166,6 +9234,7 @@ while IFS= read -r ignored; do :; done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
+            None,
         );
         let session_id = runtime
             .start_or_resume_session(
@@ -9292,6 +9361,7 @@ while IFS= read -r ignored; do :; done
                 root.clone(),
                 Some(exact_attachment_root(&root)),
                 "runtime_managed".to_string(),
+                None,
             );
             let error = runtime
                 .start_or_resume_session(
@@ -9906,6 +9976,7 @@ while IFS= read -r ignored; do :; done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
+            Some("default".to_string()),
         );
         let session_id = runtime
             .start_or_resume_session(
@@ -10073,6 +10144,7 @@ while IFS= read -r ignored; do :; done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
+            None,
         );
         let prompt_id = "prompt-final-assistant-suffix";
         *runtime.active_observation.lock().await = Some(AcpPromptObservation::new(
@@ -10783,7 +10855,7 @@ while IFS= read -r ignored; do :; done
     }
 
     #[test]
-    fn warm_compatibility_ignores_run_local_projection_but_not_host_inputs() {
+    fn warm_compatibility_matches_process_inputs_across_acp_adapters() {
         let root =
             std::env::temp_dir().join(format!("rovai-trae-compatibility-{}", uuid::Uuid::new_v4()));
         let attachments = root.join("attachments");
@@ -10796,58 +10868,46 @@ while IFS= read -r ignored; do :; done
         make_executable(&executable, "#!/bin/sh\nexit 0\n");
         let workspace = AgentRunWorkspace::runtime_managed_path(root.to_string_lossy().to_string());
         let frozen = frozen_trae_runtime(&executable);
-        let first = runtime_compatibility_digest(
+        let first = runtime_compatibility_digest_with_provider_environment(
             &frozen,
             &workspace,
             PermissionSemantics::RuntimeManagedV2,
             &BTreeMap::new(),
-            "sha256:mcp",
             &attachment_authorization,
+            Some("sha256:fixture-provider-environment"),
         )
         .unwrap();
-        let legacy_digest = canonical_json_digest(&json!({
-            "schemaVersion": 3,
+        let process_input_digest = canonical_json_digest(&json!({
+            "schemaVersion": 4,
             "adapterKind": frozen.adapter_kind,
-            "runtimeConfigDigest": None::<&str>,
             "hostConfigDigest": frozen.host_config_digest,
+            "codebuddyLaunchModel": None::<&str>,
             "executionRoot": root.canonicalize().unwrap(),
             "workspace": workspace,
             "permissionSemantics": PermissionSemantics::RuntimeManagedV2,
             "builtinToolContractVersion": BUILTIN_TOOL_CONTRACT_VERSION,
             "builtinToolCatalogDigest": builtin_tool_catalog_digest().unwrap(),
             "externalMcpServers": BTreeMap::<String, McpServerDefinition>::new(),
-            "mcpProjectionDigest": None::<&str>,
             "attachmentOutputRoot": attachment_authorization.output_root,
         }))
         .unwrap();
-        assert_eq!(first, legacy_digest);
+        assert_eq!(first, process_input_digest);
 
         let mut upgraded = frozen.clone();
         upgraded.reported_version = Some("0.120.52".to_string());
         upgraded.capabilities = vec!["session.load".to_string(), "session.new".to_string()];
         upgraded.model.model_id = "GLM-5.2".to_string();
         upgraded.config_digest = "sha256:ready-snapshot".to_string();
-        let ready = runtime_compatibility_digest(
+        let ready = runtime_compatibility_digest_with_provider_environment(
             &upgraded,
             &workspace,
             PermissionSemantics::RuntimeManagedV2,
             &BTreeMap::new(),
-            "sha256:mcp",
             &attachment_authorization,
+            Some("sha256:fixture-provider-environment"),
         )
         .unwrap();
         assert_eq!(ready, first);
-
-        let run_local_mcp_projection = runtime_compatibility_digest(
-            &upgraded,
-            &workspace,
-            PermissionSemantics::RuntimeManagedV2,
-            &BTreeMap::new(),
-            "sha256:another-run-local-mcp-projection",
-            &attachment_authorization,
-        )
-        .unwrap();
-        assert_eq!(run_local_mcp_projection, first);
 
         let mut changed_servers = BTreeMap::new();
         changed_servers.insert(
@@ -10859,69 +10919,107 @@ while IFS= read -r ignored; do :; done
         );
 
         let kimi = frozen_kimi_runtime(&executable);
-        let kimi_first = runtime_compatibility_digest(
+        let kimi_first = runtime_compatibility_digest_with_provider_environment(
             &kimi,
             &workspace,
             PermissionSemantics::RuntimeManagedV2,
             &BTreeMap::new(),
-            "sha256:kimi-run-one-projection",
             &attachment_authorization,
+            Some("sha256:fixture-provider-environment"),
         )
         .unwrap();
-        let kimi_next_run_projection = runtime_compatibility_digest(
-            &kimi,
-            &workspace,
-            PermissionSemantics::RuntimeManagedV2,
-            &BTreeMap::new(),
-            "sha256:kimi-run-two-projection",
-            &attachment_authorization,
-        )
-        .unwrap();
-        assert_eq!(kimi_next_run_projection, kimi_first);
-
-        let kimi_changed_mcp = runtime_compatibility_digest(
+        let kimi_changed_mcp = runtime_compatibility_digest_with_provider_environment(
             &kimi,
             &workspace,
             PermissionSemantics::RuntimeManagedV2,
             &changed_servers,
-            "sha256:kimi-run-three-projection",
             &attachment_authorization,
+            Some("sha256:fixture-provider-environment"),
         )
         .unwrap();
         assert_ne!(kimi_changed_mcp, kimi_first);
 
         let mut kimi_changed_config = kimi.clone();
         kimi_changed_config.config_digest = "sha256:kimi-changed-config".to_string();
-        let kimi_changed_config = runtime_compatibility_digest(
+        let kimi_changed_config = runtime_compatibility_digest_with_provider_environment(
             &kimi_changed_config,
             &workspace,
             PermissionSemantics::RuntimeManagedV2,
             &BTreeMap::new(),
-            "sha256:kimi-run-four-projection",
             &attachment_authorization,
+            Some("sha256:fixture-provider-environment"),
         )
         .unwrap();
-        assert_ne!(kimi_changed_config, kimi_first);
+        assert_eq!(kimi_changed_config, kimi_first);
 
-        let changed_mcp = runtime_compatibility_digest(
+        let mut kimi_changed_session_mode = kimi.clone();
+        kimi_changed_session_mode.permissions.values = json!({"permission_mode": "plan"});
+        let kimi_changed_session_mode = runtime_compatibility_digest_with_provider_environment(
+            &kimi_changed_session_mode,
+            &workspace,
+            PermissionSemantics::RuntimeManagedV2,
+            &BTreeMap::new(),
+            &attachment_authorization,
+            Some("sha256:fixture-provider-environment"),
+        )
+        .unwrap();
+        assert_eq!(kimi_changed_session_mode, kimi_first);
+
+        let mut codebuddy = frozen_kiro_runtime();
+        codebuddy.adapter_kind = AdapterKind::CodebuddyCli;
+        codebuddy.model.source = "runtime_default".to_string();
+        let codebuddy_default = runtime_compatibility_digest_with_provider_environment(
+            &codebuddy,
+            &workspace,
+            PermissionSemantics::RuntimeManagedV2,
+            &BTreeMap::new(),
+            &attachment_authorization,
+            Some("sha256:fixture-provider-environment"),
+        )
+        .unwrap();
+        codebuddy.model.source = "explicit".to_string();
+        codebuddy.model.model_id = "provider:explicit-model".to_string();
+        let codebuddy_explicit = runtime_compatibility_digest_with_provider_environment(
+            &codebuddy,
+            &workspace,
+            PermissionSemantics::RuntimeManagedV2,
+            &BTreeMap::new(),
+            &attachment_authorization,
+            Some("sha256:fixture-provider-environment"),
+        )
+        .unwrap();
+        assert_ne!(codebuddy_explicit, codebuddy_default);
+        codebuddy.model.options = json!({"temperature": "0.5"});
+        let codebuddy_turn_option = runtime_compatibility_digest_with_provider_environment(
+            &codebuddy,
+            &workspace,
+            PermissionSemantics::RuntimeManagedV2,
+            &BTreeMap::new(),
+            &attachment_authorization,
+            Some("sha256:fixture-provider-environment"),
+        )
+        .unwrap();
+        assert_eq!(codebuddy_turn_option, codebuddy_explicit);
+
+        let changed_mcp = runtime_compatibility_digest_with_provider_environment(
             &upgraded,
             &workspace,
             PermissionSemantics::RuntimeManagedV2,
             &changed_servers,
-            "sha256:another-run-local-mcp-projection",
             &attachment_authorization,
+            Some("sha256:fixture-provider-environment"),
         )
         .unwrap();
         assert_ne!(changed_mcp, first);
 
         upgraded.host_config_digest = "sha256:changed-host-input".to_string();
-        let changed_host = runtime_compatibility_digest(
+        let changed_host = runtime_compatibility_digest_with_provider_environment(
             &upgraded,
             &workspace,
             PermissionSemantics::RuntimeManagedV2,
             &BTreeMap::new(),
-            "sha256:mcp",
             &attachment_authorization,
+            Some("sha256:fixture-provider-environment"),
         )
         .unwrap();
         assert_ne!(changed_host, first);

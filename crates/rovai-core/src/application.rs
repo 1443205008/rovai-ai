@@ -15767,7 +15767,6 @@ impl Core {
             &execution.workspace,
             execution.permission_semantics,
             &mcp_projection.servers,
-            &mcp_projection.projection_digest,
             attachment_authorization,
         )?;
         self.persist_runtime_compatibility_digest(execution, &runtime_compatibility_digest)
@@ -15904,7 +15903,6 @@ impl Core {
                     &execution.workspace,
                     execution.permission_semantics,
                     &mcp_projection.servers,
-                    &mcp_projection.projection_digest,
                     attachment_authorization,
                 )?;
                 self.persist_runtime_compatibility_digest(execution, &runtime_compatibility_digest)
