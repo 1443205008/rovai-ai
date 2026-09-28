@@ -4921,7 +4921,8 @@ impl ChannelService {
                 ));
             };
             let target_agent_ids = resolve_observation_targets(transaction, &envelope.payload)?;
-            let structured_content = build_external_content(&envelope.payload, &target_agent_ids)?;
+            let structured_content =
+                build_observed_external_content(transaction, &envelope.payload, &target_agent_ids)?;
             validate_content(&structured_content)?;
             let dingtalk_group_aggregate = envelope.payload.provider == DINGTALK_PROVIDER
                 && envelope.payload.conversation_kind == "group";
@@ -5131,8 +5132,11 @@ impl ChannelService {
                             frozen.target_agent_ids.push(target_agent_id.clone());
                         }
                     }
-                    frozen.structured_content =
-                        build_external_content(&envelope.payload, &frozen.target_agent_ids)?;
+                    frozen.structured_content = build_observed_external_content(
+                        transaction,
+                        &envelope.payload,
+                        &frozen.target_agent_ids,
+                    )?;
                     frozen_payload_json = serde_json::to_string(&frozen)?;
                 }
                 transaction.execute(
@@ -11800,6 +11804,54 @@ fn build_external_content(
     validate_content(&content)?;
     let _ = canonical_content_digest(&content)?;
     Ok(content)
+}
+
+fn build_observed_external_content(
+    transaction: &Transaction<'_>,
+    command: &ObserveChannelInboundCommand,
+    target_agent_ids: &[String],
+) -> Result<StructuredCampMessageContent> {
+    if command.provider != DINGTALK_PROVIDER || command.conversation_kind != "group" {
+        return build_external_content(command, target_agent_ids);
+    }
+    let mut bot_names = BTreeSet::new();
+    for agent_id in target_agent_ids {
+        let name = transaction
+            .query_row(
+                "SELECT bot_display_name FROM dingtalk_member_bot WHERE agent_id = ?1 AND status = 'published'",
+                [agent_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if let Some(name) = name {
+            bot_names.insert(name);
+        }
+    }
+    // The normalized transport body stays intact for the cross-Bot payload digest.
+    // Only the published Camp content drops textual copies of its actual
+    // target Bots; structured MemberMentions already address those targets.
+    let mut bot_names = bot_names.into_iter().collect::<Vec<_>>();
+    bot_names.sort_by(|left, right| right.chars().count().cmp(&left.chars().count()));
+    let mut canonical = command.clone();
+    canonical.body = remove_dingtalk_target_mentions(&command.body, &bot_names);
+    build_external_content(&canonical, target_agent_ids)
+}
+
+fn remove_dingtalk_target_mentions(body: &str, bot_names: &[String]) -> String {
+    let mut body = body.to_string();
+    for name in bot_names {
+        let token = format!("@{name}");
+        let mention = body.match_indices(&token).find(|(start, _)| {
+            let before = body[..*start].chars().next_back();
+            let after = body[start + token.len()..].chars().next();
+            !before.is_some_and(|character| character.is_alphanumeric() || character == '_')
+                && !after.is_some_and(|character| character.is_alphanumeric() || character == '_')
+        });
+        if let Some((start, _)) = mention {
+            body.replace_range(start..start + token.len(), "");
+        }
+    }
+    body.trim().to_string()
 }
 
 fn assemble_external_content(
@@ -18972,6 +19024,7 @@ mod tests {
     }
 
     fn assert_dingtalk_multi_bot_callback_admission(with_attachments: bool) {
+        let body = "@agent_2 @agent_1 请 @同事 一起检查多 Bot 聚合";
         let observe = |app_id: &str,
                        message: &str,
                        chat: &str,
@@ -19025,7 +19078,7 @@ mod tests {
                         "ding-multi-message",
                         "ding-multi-group",
                         "group",
-                        "一起检查多 Bot 聚合",
+                        body,
                         &[("agent_2", "ding-app-agent_2")],
                         false,
                     ),
@@ -19046,7 +19099,7 @@ mod tests {
                         "ding-multi-message",
                         "ding-multi-group",
                         "group",
-                        "一起检查多 Bot 聚合",
+                        body,
                         &[("agent_1", "ding-app-agent_1")],
                         false,
                     ),
@@ -19067,7 +19120,7 @@ mod tests {
                         "ding-multi-message",
                         "ding-multi-group",
                         "group",
-                        "一起检查多 Bot 聚合",
+                        body,
                         &[
                             ("agent_2", "ding-app-agent_2"),
                             ("agent_1", "ding-app-agent_1"),
@@ -19098,6 +19151,15 @@ mod tests {
             member_mention_ids(&frozen.structured_content),
             ["agent_2", "agent_1"]
         );
+        let plain_text = frozen
+            .structured_content
+            .iter()
+            .filter_map(|segment| match segment {
+                StructuredCampMessageSegment::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(plain_text.trim(), "请 @同事 一起检查多 Bot 聚合");
         assert_eq!(frozen.acknowledgement_app_id, "ding-app-agent_2");
 
         let multi_quick_chat_path = quick_chat_path(&database);
@@ -19246,7 +19308,7 @@ mod tests {
                         "ding-multi-message",
                         "ding-multi-group",
                         "group",
-                        "一起检查多 Bot 聚合",
+                        body,
                         &[("agent_1", "ding-app-agent_1")],
                         false,
                     ),

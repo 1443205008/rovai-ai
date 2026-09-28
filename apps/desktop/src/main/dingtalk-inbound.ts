@@ -120,6 +120,8 @@ function normalizeQuote(value: Record<string, unknown>): DingTalkInboundMessage[
   const attachmentSummaries = messageAttachmentSummaries(quote)
   const body = quoteBodyReadable(rawBody)
     ? rawBody
+    : attachmentSummaries.length > 0
+      ? attachmentSummaries.map((item) => `[附件：${item.name}]`).join('\n')
     : '[引用的钉钉消息不可读取]'
   return {
     senderDisplayName: first(quote, 'senderNick', 'senderName') ?? '引用消息',
@@ -140,19 +142,24 @@ function quoteBodyReadable(value: string): boolean {
 function messageText(value: Record<string, unknown>): string | null {
   const text = objectOrEmpty(value.text)
   const content = objectOrEmpty(value.content)
+  // Rich-text picture nodes are delivered as resources. Read the text nodes
+  // directly so a provider-supplied summary cannot duplicate those images.
+  if (Array.isArray(content.richText)) {
+    const body = richTextBody(content.richText)
+    return body || (messageResources(value).length > 0 ? '' : null)
+  }
   return first(text, 'content', 'text')
     ?? first(content, 'text', 'content')
     ?? first(value, 'content')
-    ?? richTextBody(content)
 }
 
-function richTextBody(content: Record<string, unknown>): string | null {
-  if (!Array.isArray(content.richText)) return null
-  const parts = content.richText.map(item => {
+function richTextBody(segments: unknown[]): string {
+  const parts = segments.map(item => {
     const segment = objectOrEmpty(item)
-    return first(segment, 'text') ?? (resourceKind(segment.type) === 'image' ? '[图片]' : '')
+    if (resourceKind(segment.type)) return ''
+    return first(segment, 'text') ?? ''
   }).filter(Boolean)
-  return parts.length > 0 ? parts.join('\n') : null
+  return parts.join('\n')
 }
 
 function resourceKind(value: unknown): string | null {
@@ -184,8 +191,7 @@ function messageResources(value: Record<string, unknown>): InboundResource[] {
 function summarizeMessage(value: Record<string, unknown>): string {
   const msgType = first(value, 'msgtype', 'msgType', 'messageType')?.toLowerCase()
   if (!msgType || msgType === 'text') return ''
-  const summaries = messageAttachmentSummaries(value)
-  if (summaries.length > 0) return summaries.map((item) => `[附件：${item.name}]`).join('\n')
+  if (messageResources(value).length > 0) return ''
   return `[钉钉消息：${msgType}]`
 }
 
