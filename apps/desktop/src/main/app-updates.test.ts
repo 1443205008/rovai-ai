@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { parseUpdateInfo } from 'electron-updater/out/providers/Provider'
 import { describe, expect, it, vi } from 'vitest'
 import {
   AppUpdatesService,
@@ -165,6 +166,46 @@ describe('AppUpdatesService', () => {
     })
     expect(updater.downloadUpdate).not.toHaveBeenCalled()
   })
+
+  it.each([
+    '2026-09-28T17:42:42.751Z',
+    "'2026-09-28T17:42:42.751Z'"
+  ])('preserves the candidate date parsed from a manifest: %s', async (yamlDate) => {
+    const updater = new FakeUpdater()
+    const installedDate = '2026-08-24T08:00:00.000Z'
+    const updates = service(updater, {
+      bundledReleaseMetadata: { version: '0.0.2', releaseDate: installedDate }
+    })
+    const info = parseUpdateInfo(
+      `version: 0.4.1\nreleaseDate: ${yamlDate}\n`,
+      'latest-mac.yml',
+      new URL('https://example.invalid/latest-mac.yml')
+    )
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('update-available', info)
+      return {}
+    })
+
+    await expect(updates.check()).resolves.toMatchObject({
+      status: 'available',
+      currentRelease: { releaseDate: installedDate },
+      availableRelease: { version: '0.4.1', releaseDate: '2026-09-28T17:42:42.751Z' }
+    })
+  })
+
+  it.each([new Date(NaN), 'invalid date', null, undefined, 123, { releaseDate: NOW }])(
+    'keeps invalid candidate dates unavailable: %s',
+    (releaseDate) => {
+      const updater = new FakeUpdater()
+      const updates = service(updater)
+      emitAvailable(updater, { releaseDate })
+
+      expect(updates.get()).toMatchObject({
+        status: 'available',
+        availableRelease: { version: '0.0.3', releaseDate: null }
+      })
+    }
+  )
 
   it('starts once after the first window load, then reschedules from completion', async () => {
     const updater = new FakeUpdater()

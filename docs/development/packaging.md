@@ -1,7 +1,7 @@
 ---
 document_type: development-guide
 authority: macos-build-and-packaging
-last_updated: 2026-09-28
+last_updated: 2026-09-29
 ---
 
 # macOS 构建、签名与打包
@@ -128,6 +128,9 @@ latest-mac.yml
 组合清单，不能任选一个架构构建出的单架构 `latest-mac.yml`。少任一 ZIP 或清单时，另一架构可能
 拿到错误更新包，因此发布必须 fail closed。每个架构的 `scripts/verify-macos-release.mjs` 还必须验证
 清单日志与源 Markdown 完全相同；合并器拒绝两个架构之间任何稳定 Release 元数据差异。
+合并输出必须保持 YAML 1.1 字符串兼容性，尤其不能省略 `releaseDate` 的引号；否则
+`electron-updater` 会将时间戳解析为 `Date` 对象，旧客户端会丢弃候选版本的日期。
+`scripts/lib/macos-update-info.test.mjs` 使用更新器自身的解析器验证合并前后字段和值类型一致。
 
 已发布的 v0.0.1 没有 ZIP/`latest-mac.yml`，旧 App 也没有自动安装能力，所以
 `v0.0.1 → v0.0.2` 是一次性手动迁移。后来到 v0.4.0 的公共 macOS 包使用仓库原有的临时自签名

@@ -459,6 +459,10 @@ function boundedText(value: unknown, maximumLength: number): string | null {
 }
 
 function safeReleaseDate(value: unknown): string | null {
+  // electron-updater's YAML parser can return Date for an unquoted timestamp.
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.toISOString() : null
+  }
   const text = boundedText(value, 100)
   if (!text) return null
   const timestamp = Date.parse(text)
