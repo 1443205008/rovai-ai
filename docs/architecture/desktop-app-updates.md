@@ -2,7 +2,7 @@
 document_type: architecture
 authority: desktop-application-update-component-boundary
 status: accepted
-last_updated: 2026-09-28
+last_updated: 2026-09-29
 ---
 
 # Desktop App Updates
@@ -57,6 +57,11 @@ The GitHub provider may still use the Releases Atom feed to discover a tag. Mani
 the provider's Atom-content fallback, so Rovai does not add a second GitHub REST request or a Renderer network path for
 release notes. Provider output remains remote untrusted input after publication; Main and Renderer keep their existing
 normalization and safe-rendering boundaries.
+
+The provider's YAML parser may return an unquoted `releaseDate` timestamp as a JavaScript `Date`. Main accepts both
+valid date objects and date strings, normalizes them to UTC ISO strings, and keeps invalid values null before crossing
+the bridge. The macOS manifest merge emits YAML 1.1-compatible strings so older clients also retain the date; its
+regression test parses the merged YAML with the actual `electron-updater` provider parser.
 
 About displays the installed release when no candidate exists. With a candidate, it defaults to the candidate and
 offers a local version switch; neither switch performs a request or changes updater actions. A missing candidate note

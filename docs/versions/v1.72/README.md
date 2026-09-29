@@ -6,7 +6,7 @@ authority: version-scope-and-status
 design_status: confirmed
 implementation_status: in_progress
 model_context_change: false
-last_updated: 2026-09-28
+last_updated: 2026-09-29
 ---
 
 # Rovai-ai v1.72：Lark 独立渠道
@@ -94,6 +94,9 @@ Snapshot 与 SSE，不增加私有 Evidence、文件差异、写操作或新数�
 发布时间写入；Desktop 与 Desktop 托管的 Web 页面均可离线展示。版本提升时，元数据与更新日志必须一起更新，
 桌面构建在打包前拒绝旧版本号或无效日期。元数据缺失或与运行版本不符时仍明确显示日期未知，不借用构建时间或
 新版候选日期。当前字段合同见 [App Update v6](../../contracts/app-update-v6.md)，验证见[实施计划](implementation-plan.md#2026-09-28-当前版本发布日期)。
+
+v0.4.1 发布后补齐候选版本的日期兼容：macOS 合并清单保留日期字符串，Main 同时归一化更新器可能返回的
+日期对象；真实 Provider 解析器覆盖生成端和消费端的回归。见[补充验证](implementation-plan.md#2026-09-29-候选版本发布日期兼容)。
 
 ## 跨版本文档影响
 

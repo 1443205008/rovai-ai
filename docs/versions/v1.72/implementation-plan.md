@@ -3,7 +3,7 @@ document_type: implementation-plan
 version: v1.72
 authority: version-implementation-and-acceptance
 status: in_progress
-last_updated: 2026-09-28
+last_updated: 2026-09-29
 ---
 
 # v1.72 实施与验收
@@ -372,3 +372,23 @@ v0.4.0 的 `build/release-metadata.json` 使用[正式 GitHub Release](https://g
 | `pnpm docs:test`、`pnpm docs:check`、`DOCS_BASE_REF=<本次 origin/main 基线> pnpm docs:check:ci` | 通用文档治理、版本与 PR 差异门禁通过 |
 
 正式签名发布和跨版本升级不在这次本地验收范围；本次打包只验证版本绑定的离线日期投影。
+
+## 2026-09-29 候选版本发布日期兼容
+
+对[正式 v0.4.1](https://github.com/murray17/rovai-ai/releases/tag/v0.4.1) 清单的复现确认：合并后的
+`latest-mac.yml` 将 `releaseDate` 输出为无引号时间戳，`electron-updater` 自身的 YAML 解析器返回
+`Date` 对象；Main 原先仅接受字符串，导致候选日期变成 `null`。同版本 Windows 清单仍保留字符串，
+不触发该缺陷。此前随包日期修复覆盖的是已安装版本，未覆盖这一生成端与消费端的类型差异。
+
+macOS 清单序列化启用 YAML 1.1 字符串兼容，保留旧客户端所需的字符串类型；Main 接受有限时间戳的
+`Date` 对象并转换成 UTC ISO 字符串，无效日期仍为 `null`。App Update v6 的公开字段与版本来源不变。
+
+| 验证 | 结果与边界 |
+| --- | --- |
+| 生成端与 Main 回归 | 两项新增回归在修改前分别复现日期类型变化及候选日期丢失；修复后 macOS 清单 6 项、Main/Renderer 36 项通过，覆盖实际 Provider 解析、已安装日期独立保留及无效日期 |
+| `pnpm typecheck`、`pnpm test`、`pnpm build:desktop` | 通过；Main 与发布清单生成链路可编译，完整 TypeScript/Node 回归通过 |
+| `pnpm test:rust:pr` | 本机基线失败：Core lib 391 通过、1 失败、1 忽略，后续 workspace target 未执行。`read_probe_tolerates_only_a_new_empty_wal_not_authority_changes` 假定新文件没有 `com.apple.provenance`，实际已存在；单独重跑同样失败。`Cargo.toml`、`Cargo.lock`、`crates/` 与 `.cargo/` 对主线基线 `ab6f67fb` 无差异 |
+| 文档门禁 | `pnpm docs:test` 与带真实基线 SHA 的 `docs:check:ci` 通过 |
+| 已发布清单的修补预演 | 对 v0.4.1 清单重新序列化，仅增加日期引号；解析后的字段值、文件地址与安装包哈希一致，配套 checksum 仅更新清单一行。该预演不表示已替换远端 Release 资产 |
+
+此项未重新打包、签名或安装 App；本地生成物与现有公开发布资产分别记录。
