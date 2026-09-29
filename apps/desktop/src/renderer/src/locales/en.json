@@ -3327,6 +3327,10 @@
   "当前原生会话上下文": "Current native session context",
   "部分或未知": "Partial or unknown",
   "比例未知": "Ratio unknown",
-  "根据公开正文增量估算的当前速度": "Current speed estimated from visible text updates",
+  "根据当前执行收到的公开正文增量估算": "Estimated from visible text updates received during this run",
+  "根据当前执行收到的可观测思考增量估算": "Estimated from observable reasoning updates received during this run",
+  "根据当前执行收到的思考摘要增量估算": "Estimated from reasoning summary updates received during this run",
+  "根据当前执行收到的公开正文与可观测思考增量估算": "Estimated from visible text and observable reasoning updates received during this run",
+  "根据当前执行收到的公开正文与思考摘要增量估算": "Estimated from visible text and reasoning summary updates received during this run",
   "当前估算输出速度：{0}": "Current estimated output speed: {0}"
 }

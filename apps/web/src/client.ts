@@ -129,6 +129,7 @@ export const WEB_OPERATIONS = [
   'runtime.subsystems.get',
   'monitoring.snapshot',
   'monitoring.execution',
+  'monitoring.observableOutput',
   'health.check',
   'skills.list',
   'skills.get',

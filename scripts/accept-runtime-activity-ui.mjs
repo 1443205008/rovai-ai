@@ -1320,6 +1320,25 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
     `document.querySelector(${JSON.stringify(stageSelector)})?.classList.contains('status-running')`, 20_000)
   await waitForExpression(app.cdp,
     `document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 10_000)
+  const liveRun = (await request('camps.snapshot', { campId: streamCampId }))
+    .agentRuns.find((candidate) => candidate.id === runId)
+  assert(Number.isSafeInteger(liveRun?.executionEpoch), 'Controlled Run has no execution epoch')
+  const numericSample = await request('monitoring.observableOutput', {
+    campId: streamCampId, agentRunId: runId, executionEpoch: liveRun.executionEpoch
+  })
+  assert(numericSample?.algorithmVersion === 'observable-output-heuristic-v3'
+    && numericSample.publicTextUnits > 0 && numericSample.reasoningUnits > 0
+    && numericSample.reasoningUnits < 10_000
+    && numericSample.reasoningSource === 'stream_text'
+    && !JSON.stringify(numericSample).includes('V3_PRIVATE_REASONING_FIXTURE'),
+  `Core did not combine content-free public and thought counters: ${JSON.stringify(numericSample)}`)
+  const leakedEvidence = await runSql(databasePath, `SELECT COUNT(*) FROM agent_run_execution_evidence
+    WHERE agent_run_id = ${sqlLiteral(runId)}
+      AND payload_preview_json LIKE '%V3_PRIVATE_REASONING_FIXTURE%';`)
+  const leakedRenderer = await evaluate(app.cdp,
+    `document.body.textContent.includes('V3_PRIVATE_REASONING_FIXTURE')`)
+  assert(leakedEvidence.trim() === '0' && !leakedRenderer,
+    'The controlled private thought marker escaped into Evidence or Renderer')
   const steadyCapture = join(capturesRoot, 'execution-metrics-stream-steady.png')
   await capture(app.cdp, steadyCapture)
 
@@ -1445,8 +1464,13 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
   `Late terminal Usage did not reach the four buckets and duration: ${JSON.stringify(usageRows)}`)
   const terminalCapture = join(capturesRoot, 'execution-metrics-stream-late-usage.png')
   await capture(app.cdp, terminalCapture)
+  const leakedFiles = await filesContainingMarker(dataDir, 'V3_PRIVATE_REASONING_FIXTURE')
+  assert(leakedFiles.length === 0,
+    `The controlled private thought marker escaped into isolated Core files: ${JSON.stringify(leakedFiles)}`)
   return {
-    verified: { streamCampId, runId, setupRunId, reopened, switched, speedChanges, usageRows },
+    verified: { streamCampId, runId, setupRunId, numericSample,
+      leakedEvidence: Number(leakedEvidence.trim()), leakedRenderer, leakedFiles,
+      reopened, switched, speedChanges, usageRows },
     captures: { steady: steadyCapture, idle: idleCapture, resumed: resumedCapture, terminal: terminalCapture }
   }
 }
@@ -5681,6 +5705,19 @@ function normalizeClipboardArchive(archive) {
 
 function runSql(path, sql) {
   return runProcess('/usr/bin/sqlite3', [path, sql])
+}
+
+async function filesContainingMarker(rootPath, marker) {
+  const matches = []
+  const visit = async (directory) => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) await visit(path)
+      else if (entry.isFile() && (await readFile(path)).includes(marker)) matches.push(path)
+    }
+  }
+  await visit(rootPath)
+  return matches
 }
 
 function runProcess(command, args, { input } = {}) {

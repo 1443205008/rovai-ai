@@ -1107,6 +1107,7 @@ struct ClaudeCodeStreamState {
     message_text_completed: bool,
     text_delta_emitted: bool,
     stream_text_items: HashMap<u64, String>,
+    stream_thinking_items: HashMap<u64, (String, usize)>,
     pending_text_items: VecDeque<String>,
     completed_text_packets: HashMap<String, Vec<String>>,
     tool_names: HashMap<String, String>,
@@ -1265,6 +1266,7 @@ fn claude_text_item_id(state: &ClaudeCodeStreamState, index: u64) -> String {
 impl ClaudeCodeStreamState {
     fn reset_text_items(&mut self) {
         self.stream_text_items.clear();
+        self.stream_thinking_items.clear();
         self.pending_text_items.clear();
         self.message_text_completed = false;
     }
@@ -1414,6 +1416,30 @@ fn normalize_claude_runtime_events(
                 }
                 return Ok(normalized);
             }
+            if block_type == Some("thinking") {
+                validate_claude_stream_session(event, expected_session_id)?;
+                if event
+                    .get("parent_tool_use_id")
+                    .is_some_and(|value| !value.is_null())
+                {
+                    return Ok(normalized);
+                }
+                // The native message ID must survive reconnect/replay. A local
+                // ordinal cannot establish an item identity for private text.
+                let Some(native) = state
+                    .native_message_id
+                    .as_deref()
+                    .filter(|id| !id.is_empty())
+                else {
+                    return Ok(normalized);
+                };
+                if let Some(index) = event.pointer("/event/index").and_then(Value::as_u64) {
+                    state
+                        .stream_thinking_items
+                        .insert(index, (format!("claude-thinking:{native}:{index}"), 0));
+                }
+                return Ok(normalized);
+            }
             if block_type != Some("tool_use") {
                 return Ok(normalized);
             }
@@ -1452,6 +1478,39 @@ fn normalize_claude_runtime_events(
             let Some(delta) = event.pointer("/event/delta") else {
                 return Ok(normalized);
             };
+            if delta.get("type").and_then(Value::as_str) == Some("thinking_delta") {
+                validate_claude_stream_session(event, expected_session_id)?;
+                if event
+                    .get("parent_tool_use_id")
+                    .is_some_and(|value| !value.is_null())
+                {
+                    return Ok(normalized);
+                }
+                let Some(index) = event.pointer("/event/index").and_then(Value::as_u64) else {
+                    return Ok(normalized);
+                };
+                let Some(text) = delta
+                    .get("thinking")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                else {
+                    return Ok(normalized);
+                };
+                let Some((item_id, offset)) = state.stream_thinking_items.get_mut(&index) else {
+                    return Ok(normalized);
+                };
+                let start = *offset;
+                *offset = offset.saturating_add(text.encode_utf16().count());
+                normalized.push(ClaudeCodeRuntimeEvent {
+                    event_type: "agent.thought.delta",
+                    payload: serde_json::json!({
+                        "itemId": item_id,
+                        "textOffset": start,
+                        "delta": text,
+                    }),
+                });
+                return Ok(normalized);
+            }
             if delta.get("type").and_then(Value::as_str) != Some("text_delta") {
                 return Ok(normalized);
             }
@@ -3284,6 +3343,84 @@ mod tests {
             .unwrap()
             .is_empty()
         );
+    }
+
+    #[test]
+    fn streamed_root_thinking_provides_offsets_without_exposing_completed_blocks() {
+        let session_id = "0bdd2166-d420-40c6-94be-70b93eb290c5";
+        let mut state = ClaudeCodeStreamState::default();
+        let emit = |state: &mut ClaudeCodeStreamState, event: Value| {
+            normalize_claude_runtime_events(&event, session_id, state).unwrap()
+        };
+        assert!(
+            emit(
+                &mut state,
+                json!({"type":"stream_event","session_id":session_id,
+            "event":{"type":"message_start","message":{"id":"native-message"}}})
+            )
+            .is_empty()
+        );
+        assert!(
+            emit(
+                &mut state,
+                json!({"type":"stream_event","session_id":session_id,
+            "event":{"type":"content_block_start","index":0,
+                "content_block":{"type":"thinking","thinking":""}}})
+            )
+            .is_empty()
+        );
+        let first = emit(
+            &mut state,
+            json!({"type":"stream_event","session_id":session_id,
+            "event":{"type":"content_block_delta","index":0,
+                "delta":{"type":"thinking_delta","thinking":"🙂"}}}),
+        );
+        let second = emit(
+            &mut state,
+            json!({"type":"stream_event","session_id":session_id,
+            "event":{"type":"content_block_delta","index":0,
+                "delta":{"type":"thinking_delta","thinking":"继续"}}}),
+        );
+        assert_eq!(first[0].event_type, "agent.thought.delta");
+        assert_eq!(first[0].payload["textOffset"], 0);
+        assert_eq!(second[0].payload["textOffset"], 2);
+        assert_eq!(
+            second[0].payload["itemId"],
+            "claude-thinking:native-message:0"
+        );
+        let completed = emit(
+            &mut state,
+            json!({"type":"assistant","session_id":session_id,
+            "uuid":"thought-complete", "message":{"id":"native-message",
+            "content":[{"type":"thinking","thinking":"PRIVATE_FINAL"}]}}),
+        );
+        assert!(
+            completed
+                .iter()
+                .all(|event| event.event_type != "agent.thought.delta")
+        );
+        assert!(
+            emit(
+                &mut state,
+                json!({"type":"stream_event","session_id":session_id,
+            "parent_tool_use_id":"child-tool", "event":{"type":"content_block_delta",
+                "index":0,"delta":{"type":"thinking_delta","thinking":"CHILD"}}})
+            )
+            .is_empty()
+        );
+        let mut no_native_id = ClaudeCodeStreamState::default();
+        for frame in [
+            json!({"type":"stream_event","session_id":session_id,
+                "event":{"type":"message_start","message":{}}}),
+            json!({"type":"stream_event","session_id":session_id,
+                "event":{"type":"content_block_start","index":0,
+                    "content_block":{"type":"thinking","thinking":""}}}),
+            json!({"type":"stream_event","session_id":session_id,
+                "event":{"type":"content_block_delta","index":0,
+                    "delta":{"type":"thinking_delta","thinking":"UNBOUND"}}}),
+        ] {
+            assert!(emit(&mut no_native_id, frame).is_empty());
+        }
     }
 
     #[test]

@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { configureProductRuntime } from './configure-product-runtime.mjs'
-import { createConfiguredCampAndSend } from './lib/create-configured-camp.mjs'
+import { composerDocumentForAddress, createConfiguredCampAndSend } from './lib/create-configured-camp.mjs'
 import {
   coreDataDirectoryArguments,
   removeEphemeralRuntimeCampFilesRoot
@@ -314,10 +314,16 @@ try {
     purpose: 'Verify Claude Code cancellation and descendant cleanup.'
   })
   const cancellationCampId = cancellationRequest.payload?.campId
-  const cancellationRunId = cancellationRequest.payload?.agentRunIds?.[0]
-  if (cancellationRequest.status !== 'accepted' || !cancellationCampId || !cancellationRunId) {
+  const cancellationMessageId = cancellationRequest.payload?.campMessageId
+  if (cancellationRequest.status !== 'accepted' || !cancellationCampId || !cancellationMessageId) {
     throw new Error(`Claude Code cancellation intake failed: ${JSON.stringify(cancellationRequest)}`)
   }
+  const cancellationRunId = await waitFor(async () => {
+    const snapshot = await core.request('camps.snapshot', { campId: cancellationCampId })
+    return snapshot.agentRuns.find((run) =>
+      run.inputMessageIds?.includes(cancellationMessageId)
+        || run.anchorMessageId === cancellationMessageId)?.id ?? null
+  }, 'Claude Code cancellation AgentRun')
   const cancellationStarted = await waitFor(async () => {
     const event = core.events.find((candidate) =>
       candidate.method === 'runtime.action'
@@ -501,18 +507,29 @@ function runtimeNarration(events, agentRunId) {
 }
 
 async function sendCampMessage(request, campId, body, execution) {
-  const draft = await request('camp.composerDraft.get', { campId })
-  const saved = await request('camp.composerDraft.save', {
-    campId,
-    expectedRevision: draft.revision,
-    content: [{ kind: 'text', text: body }]
-  })
-  return request('camp.messages.send', {
+  const sent = await request('camp.messages.send', {
     commandId: crypto.randomUUID(),
     campId,
-    draftRevision: saved.revision,
+    content: composerDocumentForAddress({ mode: 'default' }, body),
+    sourceAttachments: [],
+    quotes: [],
+    replyToCampMessageId: null,
     execution
   })
+  const messageId = sent.commandResult?.payload?.campMessageId
+  if (sent.commandResult?.status !== 'accepted' || !messageId) return sent
+  const runId = await waitFor(async () => {
+    const camp = await request('camps.snapshot', { campId })
+    return camp.agentRuns.find((run) =>
+      run.inputMessageIds?.includes(messageId) || run.anchorMessageId === messageId)?.id ?? null
+  }, `AgentRun for Camp message ${messageId}`)
+  return {
+    ...sent,
+    commandResult: {
+      ...sent.commandResult,
+      payload: { ...sent.commandResult.payload, agentRunIds: [runId] }
+    }
+  }
 }
 
 async function run(command, args, cwd) {

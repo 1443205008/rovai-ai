@@ -230,6 +230,7 @@ use rovai_core::{
         ClearNotificationEpisodeCommand, MarkAllNotificationEpisodesReadCommand,
         NotificationEpisodeFilter, NotificationEpisodeService, UpdateNotificationPreferenceCommand,
     },
+    observable_output::{Fragment as ObservableFragment, ObservableOutputCounters, OutputKind},
     planned_shutdown::{
         ActiveExecutionKey, ActiveExecutionSnapshot, ExecutionLaunchPermit,
         PlannedShutdownCoordinator, RuntimeRouteBinding, RuntimeTerminalAdmission,
@@ -802,6 +803,7 @@ fn request_runs_outside_main_queue(method: &str) -> bool {
             | "diagnostics.export"
             | "monitoring.snapshot"
             | "monitoring.execution"
+            | "monitoring.observableOutput"
             | "runtime.installations.refresh"
             | "runtime.discovery.rescan"
             | "runtime.product.ensure"
@@ -1318,6 +1320,14 @@ struct CampCreationMember {
 #[serde(rename_all = "camelCase")]
 struct CampIdParams {
     camp_id: CampId,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ObservableOutputParams {
+    camp_id: CampId,
+    agent_run_id: String,
+    execution_epoch: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2321,6 +2331,7 @@ struct Core {
     delivery_batch_scheduler_notify: Notify,
     agent_run_cleanup_inflight: Mutex<HashSet<ActiveExecutionKey>>,
     runtime_phases: Mutex<HashMap<String, (i64, String)>>,
+    observable_output: Mutex<ObservableOutputCounters>,
     network_recovery: Mutex<NetworkRecoveryQueue>,
     network_recovery_notify: Notify,
     pending_execution_recovery: Mutex<()>,
@@ -10448,6 +10459,32 @@ impl Core {
                 let database = self.database.lock().await;
                 MonitoringService::execution_snapshot(&database, &params)
             }
+            "monitoring.observableOutput" => {
+                let params: ObservableOutputParams =
+                    serde_json::from_value(request.params.clone())?;
+                anyhow::ensure!(
+                    !params.agent_run_id.is_empty() && params.agent_run_id.len() <= 200,
+                    "invalid AgentRun ID"
+                );
+                let admitted = {
+                    let database = self.database.lock().await;
+                    database.connection().query_row(
+                        "SELECT EXISTS(SELECT 1 FROM agent_run ar JOIN conversation c ON c.id=ar.conversation_id WHERE c.camp_id=?1 AND ar.id=?2 AND ar.execution_epoch=?3 AND ar.status='running' AND ar.cancel_requested_at IS NULL)",
+                        rusqlite::params![params.camp_id.as_str(), &params.agent_run_id, params.execution_epoch],
+                        |row| row.get::<_, bool>(0),
+                    )?
+                };
+                if !admitted {
+                    Ok(Value::Null)
+                } else {
+                    Ok(serde_json::to_value(
+                        self.observable_output
+                            .lock()
+                            .await
+                            .sample(&params.agent_run_id, params.execution_epoch),
+                    )?)
+                }
+            }
             "diagnostics.export" => {
                 let report = self.diagnostics_report().await;
                 let database = self.database.lock().await;
@@ -16403,6 +16440,10 @@ impl Core {
             phases.remove(agent_run_id);
         }
         drop(phases);
+        self.observable_output
+            .lock()
+            .await
+            .remove(agent_run_id, execution_epoch);
         let projection = {
             let mut database = self.database.lock().await;
             AgentRunFileChangeProjector.project_terminal_run(
@@ -17232,6 +17273,7 @@ async fn run_core(
         delivery_batch_scheduler_notify: Notify::new(),
         agent_run_cleanup_inflight: Mutex::new(HashSet::new()),
         runtime_phases: Mutex::new(HashMap::new()),
+        observable_output: Mutex::new(ObservableOutputCounters::default()),
         network_recovery: Mutex::new(NetworkRecoveryQueue::default()),
         network_recovery_notify: Notify::new(),
         pending_execution_recovery: Mutex::new(()),
@@ -18689,6 +18731,9 @@ async fn process_agent_run_pi_message(
                 core,
                 agent_run_id,
                 execution_epoch,
+                Some(AdapterKind::Pi),
+                None,
+                None,
                 runtime
                     .builtin_tool_process_config()
                     .map(BuiltinToolProcessConfig::run_tmp),
@@ -20066,6 +20111,9 @@ async fn process_agent_run_acp_message(
         core,
         agent_run_id,
         execution_epoch,
+        Some(adapter_kind),
+        Some(sequence),
+        Some(native_prompt_id),
         runtime
             .builtin_tool_process_config()
             .map(BuiltinToolProcessConfig::run_tmp),
@@ -20587,6 +20635,9 @@ async fn process_runtime_event(
         core,
         scope.agent_run_id,
         scope.execution_epoch,
+        Some(scope.adapter_kind),
+        None,
+        None,
         scope.managed_output_root,
         event_type,
         payload,
@@ -20655,6 +20706,9 @@ async fn persist_runtime_evidence(
     core: &Core,
     agent_run_id: &str,
     execution_epoch: i64,
+    adapter_kind: Option<AdapterKind>,
+    source_sequence: Option<u64>,
+    fallback_item_id: Option<&str>,
     managed_output_root: Option<&Path>,
     event_type: &str,
     payload: &Value,
@@ -20693,6 +20747,20 @@ async fn persist_runtime_evidence(
         ).unwrap_or(false);
     let evidence = recorded.map(RecordedExecutionEvidence::into_evidence);
     drop(database);
+    if phase_admitted {
+        observe_runtime_output(
+            core,
+            agent_run_id,
+            execution_epoch,
+            adapter_kind,
+            source_sequence,
+            fallback_item_id,
+            event_type,
+            payload,
+            evidence.as_ref(),
+        )
+        .await;
+    }
     if phase_admitted && let Some(phase) = runtime_phase {
         let mut phases = core.runtime_phases.lock().await;
         let changed = phases
@@ -20722,6 +20790,91 @@ async fn persist_runtime_evidence(
             .await;
     }
     Ok(evidence)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn observe_runtime_output(
+    core: &Core,
+    agent_run_id: &str,
+    execution_epoch: i64,
+    adapter_kind: Option<AdapterKind>,
+    source_sequence: Option<u64>,
+    _fallback_item_id: Option<&str>,
+    event_type: &str,
+    payload: &Value,
+    evidence: Option<&AgentRunExecutionEvidence>,
+) {
+    let (kind, item_id, offset, sequence, text) = match event_type {
+        "agent.text.delta"
+            if evidence.is_some()
+                && payload.get("itemId").and_then(Value::as_str) != Some("claude-final") =>
+        {
+            let public = &evidence.expect("checked public delta").payload;
+            (
+                OutputKind::PublicText,
+                public.get("blockId").and_then(Value::as_str),
+                public.get("textOffset").and_then(Value::as_u64),
+                None,
+                public.get("delta").and_then(Value::as_str),
+            )
+        }
+        "agent.thought.delta" if adapter_kind == Some(AdapterKind::ClaudeCodeCli) => (
+            OutputKind::ReasoningText,
+            payload.get("itemId").and_then(Value::as_str),
+            payload.get("textOffset").and_then(Value::as_u64),
+            None,
+            payload.get("delta").and_then(Value::as_str),
+        ),
+        "agent.thought.delta"
+            if source_sequence.is_some()
+                && payload.get("textOffset").and_then(Value::as_u64).is_some()
+                && ![
+                    "agentId",
+                    "sourceAgentId",
+                    "subagentId",
+                    "parentAgentId",
+                    "parentSessionId",
+                ]
+                .iter()
+                .any(|field| payload.get(*field).is_some_and(|value| !value.is_null())) =>
+        {
+            (
+                OutputKind::ReasoningText,
+                // ACP's route sequence is assigned locally on receipt; a replay
+                // receives a new one. Only native text offsets can dedupe it.
+                payload.get("messageId").and_then(Value::as_str),
+                payload.get("textOffset").and_then(Value::as_u64),
+                None,
+                payload.pointer("/content/text").and_then(Value::as_str),
+            )
+        }
+        // Codex only qualifies when the native dialect actually supplies a
+        // stable offset. `summaryIndex` is an item index, never a text offset.
+        "agent.reasoning.summary.delta" if adapter_kind == Some(AdapterKind::CodexCli) => (
+            OutputKind::ReasoningSummary,
+            payload.get("itemId").and_then(Value::as_str),
+            payload.get("textOffset").and_then(Value::as_u64),
+            None,
+            payload.get("delta").and_then(Value::as_str),
+        ),
+        _ => return,
+    };
+    let (Some(item_id), Some(text)) = (item_id, text) else {
+        return;
+    };
+    let offset_utf16 = offset.and_then(|offset| usize::try_from(offset).ok());
+    core.observable_output
+        .lock()
+        .await
+        .observe(ObservableFragment {
+            run_id: agent_run_id,
+            execution_epoch,
+            kind,
+            item_id,
+            offset_utf16,
+            source_sequence: sequence,
+            text,
+        });
 }
 
 fn runtime_phase_transition(event_type: &str, payload: &Value) -> Option<&'static str> {
@@ -20790,6 +20943,9 @@ async fn persist_runtime_compaction_display(
         core,
         agent_run_id,
         execution_epoch,
+        None,
+        None,
+        None,
         managed_output_root,
         RUNTIME_COMPACTION_DISPLAY_EVENT,
         &payload,
@@ -22232,6 +22388,9 @@ async fn process_agent_run_codex_message(
         core,
         agent_run_id,
         execution_epoch,
+        Some(AdapterKind::CodexCli),
+        None,
+        None,
         runtime
             .builtin_tool_process_config()
             .map(BuiltinToolProcessConfig::run_tmp),
@@ -25189,6 +25348,7 @@ mod tests {
             delivery_batch_scheduler_notify: Notify::new(),
             agent_run_cleanup_inflight: Mutex::new(HashSet::new()),
             runtime_phases: Mutex::new(HashMap::new()),
+            observable_output: Mutex::new(ObservableOutputCounters::default()),
             network_recovery: Mutex::new(NetworkRecoveryQueue::default()),
             network_recovery_notify: Notify::new(),
             pending_execution_recovery: Mutex::new(()),

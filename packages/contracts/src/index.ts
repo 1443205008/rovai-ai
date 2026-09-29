@@ -672,6 +672,22 @@ export interface RuntimeExecutionMetricsSnapshot {
   }>
 }
 
+/** Live display estimate. The transport contains counters only, never output content. */
+export interface ObservableOutputSample {
+  agentRunId: string
+  executionEpoch: number
+  counterGeneration: string
+  sequence: number
+  algorithmVersion: 'observable-output-heuristic-v3'
+  unicodeDataVersion: string
+  sampledAtMs: number
+  lastOutputAtMs: number | null
+  publicTextUnits: number
+  reasoningUnits: number
+  reasoningSource: 'none' | 'stream_text' | 'stream_summary'
+  streamConfirmed: boolean
+}
+
 export type StartPreflightBlockerCode =
   | 'runtime_not_configured'
   | 'runtime_probe_required'
@@ -3836,6 +3852,7 @@ export type CoreMethod =
   | 'diagnostics.check'
   | 'monitoring.snapshot'
   | 'monitoring.execution'
+  | 'monitoring.observableOutput'
   | 'runtime.discovery.rescan'
   | 'runtime.networkRecovery.wake'
   | 'runtime.subsystems.get'

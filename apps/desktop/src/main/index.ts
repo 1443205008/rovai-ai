@@ -185,6 +185,7 @@ const allowedMethods = new Set<CoreMethod>([
   'diagnostics.check',
   'monitoring.snapshot',
   'monitoring.execution',
+  'monitoring.observableOutput',
   ...RUNTIME_RENDERER_CORE_METHODS,
   'members.list',
   'members.get',

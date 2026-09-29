@@ -30,7 +30,7 @@ Projection/Rollup、Read Side 和 Renderer 如何组合。
 Execution Evidence、Canonical Activity、AgentRun、Approval、Delivery、Recovery、Context 和 Runtime health
 继续由各自 Core domain 拥有。Monitoring 不复制、不删除也不重建这些事实。
 
-执行台增加一条窄读取路径：现有 Run summary 提供每 Run 四项用量，当前原生 Session 上下文单独保存在 `runtime_session_context_latest`。后者由 Session gauge 写入，并由 `Conversation` 的当前 Binding ID、代次和原生 Session ID 在读取时栅栏；Migration 178 从 v1.72/schema 127 建立空表并提升到 schema 128，不回填旧 Run 或旧 Session。Renderer 的 `LiveTokenSpeed` 只消费公开正文增量，不进入 Usage buffer、checkpoint 或 hourly rollup。
+执行台增加一条窄读取路径：现有 Run summary 提供每 Run 四项用量，当前原生 Session 上下文单独保存在 `runtime_session_context_latest`。后者由 Session gauge 写入，并由 `Conversation` 的当前 Binding ID、代次和原生 Session ID 在读取时栅栏；Migration 178 从 v1.72/schema 127 建立空表并提升到 schema 128，不回填旧 Run 或旧 Session。当前速度由 Core 的有界临时计数和按 Camp／Run／代次授权的 `monitoring.observableOutput` 数值读取提供；Renderer 只消费数字并平滑，不接收思考内容，计数不进入 Usage buffer、checkpoint 或 hourly rollup。
 
 ## Write path
 

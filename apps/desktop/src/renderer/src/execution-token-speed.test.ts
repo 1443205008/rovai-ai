@@ -1,140 +1,85 @@
 import { expect, it } from 'vitest'
-import { LiveTokenSpeed, LiveTokenSpeedDisplay, estimatedVisibleTokens } from './execution-token-speed'
-import type { LiveRuntimeEvent } from './ui-model'
+import type { ObservableOutputSample } from '@contracts'
+import { LiveTokenSpeedDisplay } from './execution-token-speed'
 
-function delta(runId: string, epoch: number, blockId: string, text: string, eventType = 'agent.text.delta', offset = 0): LiveRuntimeEvent {
+function sample(sequence: number, sampledAtMs: number, publicTextUnits: number,
+  reasoningUnits = 0, options: Partial<ObservableOutputSample> = {}): ObservableOutputSample {
   return {
-    id: `${blockId}:${text.length}`,
-    agentRunId: runId,
-    executionEpoch: epoch,
-    eventType,
-    payload: { blockId, textOffset: offset, delta: text },
-    createdAt: '2026-09-28T00:00:00Z'
+    agentRunId: 'run', executionEpoch: 2, counterGeneration: 'core-1', sequence,
+    algorithmVersion: 'observable-output-heuristic-v3', unicodeDataVersion: 'icu4x-2.2.0',
+    sampledAtMs, lastOutputAtMs: publicTextUnits + reasoningUnits ? sampledAtMs : null,
+    publicTextUnits, reasoningUnits, reasoningSource: reasoningUnits ? 'stream_text' : 'none',
+    streamConfirmed: true, ...options
   }
 }
 
-it('measures only growth after the current run and block baseline', () => {
-  const speed = new LiveTokenSpeed(0)
-  const first = delta('run', 2, 'body', 'existing text')
-  speed.observe([first], 'run', 2, 0)
-  expect(speed.sample(500)).toBeNull()
-  speed.observe([first, delta('other', 2, 'other', 'ignore'), delta('run', 1, 'old', 'ignore'),
-    delta('run', 2, 'tool', 'ignore', 'runtime.action')], 'run', 2, 600)
-  expect(speed.sample(1000)).toBeNull()
-
-  const grown = delta('run', 2, 'body', 'existing text and fresh text')
-  speed.observe([grown], 'run', 2, 1100)
-  expect(speed.sample(1500)).toBeNull()
-  const measured = speed.sample(2100)
-  expect(measured).not.toBeNull()
-  expect(measured!).toBeGreaterThan(0)
-  speed.observe([grown], 'run', 2, 2200)
-  expect(speed.sample(2600)).toBeLessThan(measured!)
-  expect(speed.sample(6200)).toBeNull()
-})
-
-it('does not invent a speed for a single final block or a replayed snapshot', () => {
-  const speed = new LiveTokenSpeed(0)
-  speed.observe([delta('run', 1, 'a', 'entire final answer')], 'run', 1, 100)
-  expect(speed.sample(500)).toBeNull()
-  speed.observe([delta('run', 1, 'b', 'another complete answer')], 'run', 1, 600)
-  expect(speed.sample(1000)).toBeNull()
-})
-
-it('uses a versioned character heuristic for visible text only', () => {
-  expect(estimatedVisibleTokens('中文')).toBeCloseTo(1.2)
-  expect(estimatedVisibleTokens('abc')).toBeCloseTo(0.75)
-  expect(estimatedVisibleTokens('🙂')).toBe(1)
-  expect(estimatedVisibleTokens('𠀀')).toBeCloseTo(0.6)
-  expect(estimatedVisibleTokens('abc 123!')).toBe(2)
-  expect(estimatedVisibleTokens('かな 한글')).toBe(4.25)
-})
-
-it.each([
-  ['English', 'The quick brown fox jumps.'],
-  ['Chinese', '今天天气真好，我们继续。'],
-  ['mixed', 'Run 42 已完成 🙂'],
-  ['code', 'const count = (items: string[]) => items.length;'],
-  ['JSON', '{"ok":true,"count":42}'],
-  ['Markdown', '## Heading\n- **bold** link'],
-  ['whitespace', ' \t\n   '],
-  ['emoji', '🙂🧑‍💻𠀀']
-])('%s estimate is invariant to event partitions, overlap and repeated snapshots', (_kind, text) => {
-  const unsplit = new LiveTokenSpeed(0)
-  const partitioned = new LiveTokenSpeed(0)
-  const baseline = delta('run', 1, 'body', 'B')
-  unsplit.observe([baseline], 'run', 1, 0)
-  partitioned.observe([baseline], 'run', 1, 0)
-  unsplit.observe([delta('run', 1, 'body', text, 'agent.text.delta', 1)], 'run', 1, 100)
-  const spans: LiveRuntimeEvent[] = []
-  for (let index = 0; index < text.length; index++) {
-    spans.push(delta('run', 1, 'body', text.slice(index, index + 1), 'agent.text.delta', index + 1))
-  }
-  // Duplicate and overlapping offsets are common after a reconnect.
-  spans.push(...spans)
-  if (text.length > 1) spans.push(delta('run', 1, 'body', text.slice(0, 2), 'agent.text.delta', 1))
-  partitioned.observe(spans, 'run', 1, 100)
-  expect(unsplit.sample(600)).toBeNull()
-  expect(partitioned.sample(600)).toBeNull()
-  expect(partitioned.sample(1100)).toBeCloseTo(unsplit.sample(1100)!, 8)
-})
-
-it('joins an emoji split between consecutive UTF-16 delta notifications', () => {
-  const complete = new LiveTokenSpeed(0)
-  const split = new LiveTokenSpeed(0)
-  const baseline = delta('run', 1, 'body', 'B')
-  complete.observe([baseline], 'run', 1, 0)
-  split.observe([baseline], 'run', 1, 0)
-  complete.observe([delta('run', 1, 'body', '🙂', 'agent.text.delta', 1)], 'run', 1, 100)
-  const high = '🙂'.slice(0, 1)
-  const low = '🙂'.slice(1)
-  split.observe([delta('run', 1, 'body', high, 'agent.text.delta', 1)], 'run', 1, 100)
-  split.observe([delta('run', 1, 'body', low, 'agent.text.delta', 2)], 'run', 1, 100)
-  expect(complete.sample(600)).toBeNull()
-  expect(split.sample(600)).toBeNull()
-  expect(split.sample(1100)).toBeCloseTo(complete.sample(1100)!, 8)
-})
-
-it('starts timing from fresh text after a long baseline wait and resets after idle', () => {
-  const speed = new LiveTokenSpeed(0)
-  speed.observe([delta('run', 1, 'body', 'historical answer')], 'run', 1, 0)
-  expect(speed.sample(10_000)).toBeNull()
-  speed.observe([delta('run', 1, 'body', 'fresh words', 'agent.text.delta', 17)], 'run', 1, 10_100)
-  expect(speed.sample(10_600)).toBeNull()
-  expect(speed.sample(11_100)).toBeGreaterThan(0)
-  expect(speed.sample(15_100)).toBeNull()
-  speed.observe([delta('run', 1, 'body', 'again', 'agent.text.delta', 28)], 'run', 1, 15_200)
-  expect(speed.sample(15_700)).toBeNull()
-  expect(speed.sample(16_200)).toBeGreaterThan(0)
-})
-
-it('publishes at most 1 Hz through stable output, a tool pause and resumed output', () => {
+it('combines public and reasoning growth in the same Core interval and publishes at 1 Hz', () => {
   const display = new LiveTokenSpeedDisplay(0)
-  display.observe([delta('run', 1, 'body', 'B')], 'run', 1, 0)
-  let offset = 1
-  const publications: { at: number; speed: number | null }[] = []
+  display.observe(sample(1, 0, 0), 0)
+  const published: Array<{ at: number; speed: number | null; scope?: string }> = []
   for (let at = 500; at <= 30_000; at += 500) {
-    const text = 'abcd'.repeat(20)
-    display.observe([delta('run', 1, 'body', text, 'agent.text.delta', offset)], 'run', 1, at)
-    offset += text.length
-    const speed = display.sample(at)
-    if (speed !== undefined) publications.push({ at, speed })
+    display.observe(sample(1 + at / 500, at, at * 2, at,
+      { reasoningSource: 'stream_text' }), at)
+    const value = display.sample(at)
+    if (value !== undefined) published.push({ at, speed: value?.speed ?? null, scope: value?.scope })
   }
-  expect(publications).toHaveLength(30)
-  expect(publications.every(({ at }) => at % 1000 === 0)).toBe(true)
-  expect(publications[0].speed).toBeNull()
-  expect(publications.at(-1)!.speed).toBeGreaterThan(0)
+  expect(published).toHaveLength(30)
+  expect(published.every(({ at }) => at % 1000 === 0)).toBe(true)
+  expect(published[0].speed).toBeNull()
+  expect(published[1]).toMatchObject({ at: 2000, scope: 'mixed_text' })
+  expect(published.at(-1)!.speed).toBeCloseTo(30, 1)
+})
 
-  // A tool phase has no public text and must expire the old rate.
-  for (let at = 30_500; at <= 35_000; at += 500) {
-    const speed = display.sample(at)
-    if (speed !== undefined) publications.push({ at, speed })
+it('keeps the mixed source description while the smoothing window includes thought', () => {
+  const display = new LiveTokenSpeedDisplay(0)
+  display.observe(sample(1, 0, 0), 0)
+  display.observe(sample(2, 500, 100), 500)
+  display.observe(sample(3, 1000, 100, 100), 1000)
+  display.observe(sample(4, 1500, 200, 100), 1500)
+  expect(display.sample(1500)?.scope).toBe('mixed_text')
+})
+
+it('does not turn a single final block or a mid-run baseline into speed', () => {
+  const display = new LiveTokenSpeedDisplay(0)
+  display.observe(sample(9, 4000, 5000, 0, { streamConfirmed: false }), 0)
+  expect(display.sample(1000)).toBeNull()
+  display.observe(sample(10, 4500, 5000, 0, { streamConfirmed: false }), 1500)
+  expect(display.sample(2000)).toBeNull()
+  display.observe(sample(11, 5000, 5100, 0, { streamConfirmed: true }), 2500)
+  expect(display.sample(3000)).toBeNull()
+  display.observe(sample(12, 5500, 5200, 0, { streamConfirmed: true }), 3500)
+  expect(display.sample(4000)?.speed).toBeGreaterThan(0)
+})
+
+it('handles reasoning-only output, idle expiry, and a newly warmed output window', () => {
+  const display = new LiveTokenSpeedDisplay(0)
+  display.observe(sample(1, 0, 0), 0)
+  display.observe(sample(2, 500, 0, 100, { reasoningSource: 'stream_summary' }), 500)
+  display.observe(sample(3, 1000, 0, 200, { reasoningSource: 'stream_summary' }), 1000)
+  expect(display.sample(1500)?.scope).toBe('reasoning_summary')
+  for (let at = 2000; at <= 5500; at += 500) {
+    display.observe(sample(3 + at / 500, at, 0, 200, { reasoningSource: 'stream_summary' }), at)
+    display.sample(at)
   }
-  expect(publications.at(-1)).toEqual({ at: 35_000, speed: null })
+  expect(display.sample(6500)).toBeNull()
+  display.observe(sample(15, 7000, 0, 300, { reasoningSource: 'stream_summary' }), 7000)
+  expect(display.sample(7500)).toBeNull()
+  display.observe(sample(16, 7500, 0, 400, { reasoningSource: 'stream_summary' }), 7500)
+  expect(display.sample(8500)?.scope).toBe('reasoning_summary')
+})
 
-  display.observe([delta('run', 1, 'body', 'abcd'.repeat(20), 'agent.text.delta', offset)], 'run', 1, 35_500)
-  expect(display.sample(35_500)).toBeUndefined()
-  expect(display.sample(36_000)).toBeNull()
-  expect(display.sample(36_500)).toBeUndefined()
-  expect(display.sample(37_000)).toBeGreaterThan(0)
+it('drops stale, reset, and reconnect batches before measuring again', () => {
+  const display = new LiveTokenSpeedDisplay(0)
+  display.observe(sample(1, 0, 0), 0)
+  display.observe(sample(2, 500, 100), 500)
+  display.observe(sample(2, 500, 100), 600) // duplicate
+  display.observe(sample(3, 1000, 200), 1000)
+  expect(display.sample(1500)?.speed).toBeGreaterThan(0)
+  display.observe(sample(4, 1500, 200, 0, { counterGeneration: 'core-2' }), 2000)
+  expect(display.sample(2500)).toBeNull()
+  display.observe(sample(5, 2000, 300, 0, { counterGeneration: 'core-2' }), 2500)
+  display.observe(sample(6, 2500, 400, 0, { counterGeneration: 'core-2' }), 3000)
+  expect(display.sample(3500)?.speed).toBeGreaterThan(0)
+  display.observe(sample(7, 8000, 9999, 0, { counterGeneration: 'core-2' }), 8000)
+  expect(display.sample(8500)).toBeNull()
 })

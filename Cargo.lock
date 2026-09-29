@@ -1494,6 +1494,7 @@ dependencies = [
  "dirs",
  "dunce",
  "getrandom 0.3.4",
+ "icu_properties",
  "image",
  "json5",
  "libc",

@@ -35,7 +35,7 @@ import {
 import { executionInitialFeedback, executionRunSummary } from './execution-run-summary'
 import { ComposerPrimaryAction } from './ComposerPrimaryAction'
 import { CampMemberFastToggle } from './CampMemberFastToggle'
-import { DISPLAY_DECIMALS, LiveTokenSpeedDisplay, SAMPLE_INTERVAL_MS } from './execution-token-speed'
+import { DISPLAY_DECIMALS, LiveTokenSpeedDisplay, SAMPLE_INTERVAL_MS, type OutputScope, type SpeedValue } from './execution-token-speed'
 import { useCampMemberFast, type CampMemberFastControls } from './useCampMemberFast'
 import type {
   ActionApprovalView,
@@ -47,6 +47,7 @@ import type {
   AgentRunExecutionEvidenceView,
   AgentRunView,
   RuntimeExecutionMetricsSnapshot,
+  ObservableOutputSample,
   BuiltinMemberAvatarRole,
   CampComposerDraftView,
   ComposerDocument,
@@ -6550,38 +6551,67 @@ function ExecutionContextPopover({ context }: { context: SessionContext | null }
   </Popover.Root>
 }
 
-function ExecutionLiveSpeed({ run, liveTextEvents }: {
+function executionSpeedExplanation(scope: OutputScope): string {
+  switch (scope) {
+    case 'reasoning_text': return uiAttribute('根据当前执行收到的可观测思考增量估算')
+    case 'reasoning_summary': return uiAttribute('根据当前执行收到的思考摘要增量估算')
+    case 'mixed_text': return uiAttribute('根据当前执行收到的公开正文与可观测思考增量估算')
+    case 'mixed_summary': return uiAttribute('根据当前执行收到的公开正文与思考摘要增量估算')
+    default: return uiAttribute('根据当前执行收到的公开正文增量估算')
+  }
+}
+
+function ExecutionLiveSpeed({ run, campId, client }: {
   run: AgentRunView
-  liveTextEvents: readonly LiveRuntimeEvent[]
+  campId: string
+  client: CampClient
 }): JSX.Element | null {
   const liveKey = `${run.id}:${run.executionEpoch}`
-  const [display, setDisplay] = useState<{ key: string; speed: number | null }>({ key: liveKey, speed: null })
+  const [display, setDisplay] = useState<{ key: string; value: SpeedValue | null }>({ key: liveKey, value: null })
   const meter = useRef<LiveTokenSpeedDisplay | null>(null)
   useEffect(() => {
     const now = window.performance.now()
     meter.current = new LiveTokenSpeedDisplay(now)
-    meter.current.observe(liveTextEvents, run.id, run.executionEpoch, now)
+    let disposed = false
+    let inFlight = false
+    const poll = async (): Promise<void> => {
+      if (inFlight) return
+      inFlight = true
+      try {
+        const sample = await client.request<ObservableOutputSample | null>('monitoring.observableOutput', {
+          campId, agentRunId: run.id, executionEpoch: run.executionEpoch
+        })
+        if (!disposed) meter.current?.observe(sample, window.performance.now())
+      } catch {
+        if (!disposed) meter.current?.observe(null, window.performance.now())
+      } finally {
+        inFlight = false
+      }
+    }
+    void poll()
     const timer = window.setInterval(() => {
       const sampledAt = window.performance.now()
-      const speed = meter.current?.sample(sampledAt)
-      if (speed === undefined) return
-      setDisplay(previous => previous.key === liveKey && previous.speed === speed
-        ? previous : { key: liveKey, speed })
+      const value = meter.current?.sample(sampledAt)
+      if (value !== undefined) {
+        setDisplay(previous => previous.key === liveKey
+          && previous.value?.speed === value?.speed && previous.value?.scope === value?.scope
+          ? previous : { key: liveKey, value: value ?? null })
+      }
+      void poll()
     }, SAMPLE_INTERVAL_MS)
     return () => {
+      disposed = true
       window.clearInterval(timer)
       meter.current = null
     }
-  }, [liveKey, run.id, run.executionEpoch])
-  useEffect(() => {
-    meter.current?.observe(liveTextEvents, run.id, run.executionEpoch, window.performance.now())
-  }, [liveTextEvents, run.id, run.executionEpoch])
-  const speed = display.key === liveKey ? display.speed : null
-  if (speed === null) return null
+  }, [liveKey, run.id, run.executionEpoch, campId, client])
+  const value = display.key === liveKey ? display.value : null
+  if (value === null) return null
+  const explanation = executionSpeedExplanation(value.scope)
   return <span className="execution-current-speed" role="img"
-    title={uiAttribute('根据公开正文增量估算的当前速度')}
-    aria-label={uiAttribute('当前估算输出速度：{0}', `${speed.toFixed(DISPLAY_DECIMALS)} tok/s`)}>
-    <span>{speed.toFixed(DISPLAY_DECIMALS)}</span><span> tok/s</span>
+    title={explanation}
+    aria-label={`${uiAttribute('当前估算输出速度：{0}', `${value.speed.toFixed(DISPLAY_DECIMALS)} tok/s`)} — ${explanation}`}>
+    <span>{value.speed.toFixed(DISPLAY_DECIMALS)}</span><span> tok/s</span>
   </span>
 }
 
@@ -6868,16 +6898,6 @@ function ExecutionDrawer({
     }
   }, [client, campId, runIdsKey, runStateKey])
   const usageByRunId = useMemo(() => new Map(metrics?.runs.map((run) => [run.agentRunId, run]) ?? []), [metrics])
-  const liveTextEventsByRunId = useMemo(() => {
-    const grouped = new Map<string, LiveRuntimeEvent[]>()
-    for (const event of liveRuntimeEvents) {
-      if (event.eventType !== 'agent.text.delta') continue
-      const events = grouped.get(event.agentRunId) ?? []
-      events.push(event)
-      grouped.set(event.agentRunId, events)
-    }
-    return grouped
-  }, [liveRuntimeEvents])
   const currentConversationId = newestFirstRuns[0]?.conversationId ?? null
   const sessionContext = overview || !currentConversationId ? null
     : metrics?.sessions.find((session) => session.conversationId === currentConversationId
@@ -7519,7 +7539,7 @@ function ExecutionDrawer({
           </div>
           {!overview && <span className="execution-header-metrics">
             {speedRun && <ExecutionLiveSpeed key={`${speedRun.id}:${speedRun.executionEpoch}`}
-              run={speedRun} liveTextEvents={liveTextEventsByRunId.get(speedRun.id) ?? []} />}
+              run={speedRun} campId={campId} client={client} />}
             <ExecutionContextPopover context={sessionContext} />
           </span>}
         </header>

@@ -13,6 +13,7 @@ const send = (value) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0',
 const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 const update = (value) => send({ method: 'session/update', params: { sessionId, update: value } })
 const text = 'steady visible output '.repeat(4)
+const thought = 'V3_PRIVATE_REASONING_FIXTURE_かな🙂'
 let busy = false
 
 for await (const line of createInterface({ input: process.stdin })) {
@@ -44,8 +45,18 @@ for await (const line of createInterface({ input: process.stdin })) {
       busy = false
       continue
     }
+    let thoughtOffset = 0
     for (let index = 0; index < 14; index++) {
       update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } })
+      if (index === 0) {
+        update({ sessionUpdate: 'agent_thought_chunk', messageId: 'fixture-root-thought',
+          content: { type: 'text', text: 'Q'.repeat(1000) } })
+      }
+      if (index % 2 === 0) {
+        update({ sessionUpdate: 'agent_thought_chunk', messageId: 'fixture-root-thought',
+          textOffset: thoughtOffset, content: { type: 'text', text: thought } })
+        thoughtOffset += thought.length // ACP offsets use UTF-16 code units.
+      }
       await pause(500)
     }
     update({ sessionUpdate: 'tool_call', toolCallId: 'fixture-tool', title: 'Controlled tool pause',
