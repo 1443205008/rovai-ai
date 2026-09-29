@@ -6,6 +6,8 @@ import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { createServer } from 'node:net'
 import { seedCompletedOnboardingForAcceptance } from './lib/dev-desktop.mjs'
+import { configureProductRuntime } from './configure-product-runtime.mjs'
+import { composerDocumentForAddress, createConfiguredCampAndSend } from './lib/create-configured-camp.mjs'
 import {
   coreDataDirectoryArguments,
   runtimeCampFilesRootForDataDirectory
@@ -35,6 +37,7 @@ const toolDetailsOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_TOOL_DETAILS_O
 const completeToolOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_COMPLETE_TOOL_ONLY === '1'
 const executionAutoFollowOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_AUTO_FOLLOW_ONLY === '1'
 const executionMetricsOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_ONLY === '1'
+const executionMetricsStreamOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_STREAM_ONLY === '1'
 const placementRestartOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_PLACEMENT_RESTART_ONLY === '1'
 const withdrawalOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_WITHDRAWAL_ONLY === '1'
 const databasePath = join(dataDir, 'rovai.sqlite')
@@ -153,6 +156,11 @@ const runtimes = [
 ]
 
 await mkdir(dataDir, { recursive: true })
+if (executionMetricsStreamOnly) {
+  const runtime = join(root, 'scripts', 'fixtures', 'streaming-acp-runtime.mjs')
+  await chmod(runtime, 0o755)
+  process.env.ROVAI_QWEN_BIN = runtime
+}
 seedCompletedOnboardingForAcceptance(dataDir)
 await writeFile(join(dataDir, 'general-preferences.json'), `${JSON.stringify({
   schemaVersion: 4,
@@ -217,7 +225,17 @@ try {
     await waitForExpression(app.cdp,
       `document.querySelector('.run-pulse-chip.is-selected')?.dataset.agentId === ${JSON.stringify(activeAgentId)}`)
   }
-  if (executionMetricsOnly) {
+  if (executionMetricsStreamOnly) {
+    const report = await verifyStreamingExecutionMetricsRenderer(app, outputDir)
+    console.log(JSON.stringify({
+      ok: true,
+      mode: 'controlled-execution-metrics-live-renderer',
+      fixtureRoot,
+      outputDir,
+      verified: report.verified,
+      captures: report.captures
+    }, null, 2))
+  } else if (executionMetricsOnly) {
     const report = await verifyExecutionMetricsRenderer(app, outputDir, (restarted) => { app = restarted })
     app = report.app
     console.log(JSON.stringify({
@@ -1252,6 +1270,190 @@ async function verifyExecutionMetricsRenderer(app, capturesRoot, onRestart) {
     verified: { running, terminal, usageRows },
     captures: { running: runningCapture, terminal: terminalCapture }
   }
+}
+
+async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
+  const request = (method, params = {}) => evaluate(app.cdp,
+    `window.rovai.request(${JSON.stringify(method)}, ${JSON.stringify(params)})`, true)
+  const agentId = runtimes.find((entry) => entry.key === 'qwen')?.agentId
+  assert(agentId, 'The streaming fixture has no Qwen member')
+  await configureProductRuntime(request, 'qwen-code', [agentId])
+  const workspace = await request('workspaces.inspect', { path: fixtureExecutionRoot })
+  const setup = await createConfiguredCampAndSend(request, {
+    commandId: crypto.randomUUID(),
+    name: '执行指标固定流验收',
+    workspace,
+    memberAgentIds: [agentId],
+    defaultLeadAgentId: agentId,
+    address: { mode: 'explicit', agentIds: [agentId] },
+    body: 'ROVAI_STREAM_FAST_SETUP',
+    purpose: 'Seed one completed Run for switching cards'
+  })
+  assert(setup.status === 'accepted' && setup.payload?.campId && setup.payload?.campMessageId,
+    `Could not create the controlled streaming Camp: ${JSON.stringify(setup)}`)
+  const streamCampId = setup.payload.campId
+  const setupRunId = await waitForControlledMessageRun(request, streamCampId, setup.payload.campMessageId)
+  await waitForControlledRunStatus(request, streamCampId, setupRunId, 'succeeded')
+  await openCamp(app.cdp, campId)
+  await openCamp(app.cdp, streamCampId)
+  await selectCampConversationView(app.cdp, 'conversation')
+  await waitForExpression(app.cdp,
+    `document.body.innerText.includes('ROVAI_STREAM_FAST_READY')`, 20_000)
+
+  const sent = await request('camp.messages.send', {
+    commandId: crypto.randomUUID(),
+    campId: streamCampId,
+    content: composerDocumentForAddress({ mode: 'explicit', agentIds: [agentId] },
+      'Emit the controlled streaming fixture.'),
+    sourceAttachments: [], quotes: [], replyToCampMessageId: null,
+    execution: { taskId: null, purpose: 'Verify live Renderer metrics', completionRole: 'required' }
+  })
+  const accepted = sent.commandResult ?? sent
+  assert(accepted.status === 'accepted' && accepted.payload?.campMessageId,
+    `The controlled streaming Run was not accepted: ${JSON.stringify(sent)}`)
+  const runId = await waitForControlledMessageRun(request, streamCampId, accepted.payload.campMessageId)
+  const stageSelector = `.execution-process-stage[data-agent-run-id="${runId}"]`
+  await evaluate(app.cdp,
+    `document.querySelector('.camp-detail-entry[data-detail="execution"]')?.click()`)
+  await waitForExpression(app.cdp,
+    `Boolean(document.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)}))`, 10_000)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})?.click()`)
+  await waitForExpression(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.classList.contains('status-running')`, 20_000)
+  await waitForExpression(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 10_000)
+  const steadyCapture = join(capturesRoot, 'execution-metrics-stream-steady.png')
+  await capture(app.cdp, steadyCapture)
+
+  // Leave and re-enter during the same stream. Earlier text becomes the new baseline.
+  await openCamp(app.cdp, campId)
+  await openCamp(app.cdp, streamCampId)
+  await waitForExpression(app.cdp,
+    `Boolean(document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live'))`, 10_000)
+  const reopened = await evaluate(app.cdp, `(() => {
+    const stage = document.querySelector(${JSON.stringify(stageSelector)})
+    return { speed: stage?.querySelector('.execution-run-metric.is-live')?.textContent?.trim() ?? null,
+      duration: stage?.querySelector('.execution-run-metric-group .execution-run-metric:not(.is-live)')?.textContent?.trim() ?? null }
+  })()`)
+  assert(reopened.speed === '— tok/s' && reopened.duration,
+    `Midstream entry did not establish a fresh display baseline: ${JSON.stringify(reopened)}`)
+  await evaluate(app.cdp, `(() => {
+    const stage = document.querySelector(${JSON.stringify(stageSelector)})
+    const probe = { changes: [], last: null }
+    const record = () => {
+      const speed = stage?.querySelector('.execution-run-metric.is-live')?.textContent?.trim() ?? null
+      if (speed !== probe.last) {
+        probe.last = speed
+        probe.changes.push({ at: performance.now(), speed })
+      }
+    }
+    record()
+    probe.observer = new MutationObserver(record)
+    probe.observer.observe(stage, { subtree: true, childList: true, characterData: true })
+    window.__streamMetricsProbe = probe
+    return true
+  })()`)
+  await waitForExpression(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 10_000)
+  await evaluate(app.cdp, `document.querySelector('.execution-history-toggle')?.click()`)
+  const switched = await evaluate(app.cdp, `(() => {
+    const active = document.querySelector(${JSON.stringify(stageSelector)})
+    const history = document.querySelector(${JSON.stringify(`.execution-process-stage[data-agent-run-id="${setupRunId}"]`)})
+    const parts = [...(active?.querySelectorAll('.execution-run-metric-group .execution-run-metric') ?? [])]
+    return { activeSpeed: parts[0]?.textContent?.trim() ?? null,
+      activeDuration: parts[1]?.textContent?.trim() ?? null,
+      sameLine: parts.length === 2 && Math.abs(parts[0].getBoundingClientRect().top - parts[1].getBoundingClientRect().top) < 1,
+      historyHasSpeed: Boolean(history?.querySelector('.execution-run-metric.is-live')),
+      historyVisible: Boolean(history?.getClientRects().length) }
+  })()`)
+  assert(switched.historyVisible && !switched.historyHasSpeed && switched.activeSpeed
+    && switched.activeDuration && switched.sameLine,
+  `Switching current and historical Run cards mixed metrics: ${JSON.stringify(switched)}`)
+
+  await waitForExpression(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live')?.textContent?.trim() === '— tok/s'`, 11_000)
+  const idleCapture = join(capturesRoot, 'execution-metrics-stream-tool-idle.png')
+  await capture(app.cdp, idleCapture)
+  await waitForExpression(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 8_000)
+  const resumedCapture = join(capturesRoot, 'execution-metrics-stream-resumed.png')
+  await capture(app.cdp, resumedCapture)
+  await waitForExpression(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.classList.contains('status-succeeded')`, 12_000)
+  const speedChanges = await evaluate(app.cdp, `(() => {
+    const probe = window.__streamMetricsProbe
+    probe.observer.disconnect()
+    return probe.changes
+  })()`)
+  const numericChanges = speedChanges.filter((change) => /^\d+\.\d tok\/s$/.test(change.speed ?? ''))
+  const terminalHasSpeed = await evaluate(app.cdp,
+    `Boolean(document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live'))`)
+  assert(numericChanges.length >= 2
+    && speedChanges.some((change) => change.speed === '— tok/s')
+    && !terminalHasSpeed
+    && numericChanges.every((change, index) => index === 0
+      || change.at - numericChanges[index - 1].at >= 850),
+  `Live Renderer did not respect warmup, idle, 1 Hz and terminal transition: ${JSON.stringify(speedChanges)}`)
+  const terminalBeforeUsage = await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-usage-trigger')?.textContent?.trim() ?? null`)
+  assert(terminalBeforeUsage !== '2k',
+    `The terminal race fixture already had Usage: ${terminalBeforeUsage}`)
+  const observedAt = new Date().toISOString()
+  await runSql(databasePath, `
+    PRAGMA busy_timeout = 5000;
+    UPDATE runtime_usage_run_summary SET
+      parser_version = 4, eligible_mask = 127,
+      input_semantics = 'cache_inclusive_total',
+      finalized_at = ${sqlLiteral(observedAt)}, last_observed_at = ${sqlLiteral(observedAt)},
+      prompt_input_total_tokens = 1500, output_tokens = 500,
+      cache_read_tokens = 250, cache_write_tokens = 0
+    WHERE agent_run_id = ${sqlLiteral(runId)};
+  `)
+  await waitForExpression(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-usage-trigger')?.textContent?.trim() === '2k'`, 16_000)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-usage-trigger')?.click()`)
+  await waitForExpression(app.cdp, `document.querySelectorAll('.execution-metric-popover dl > div').length === 4`)
+  const usageRows = await evaluate(app.cdp, `[...document.querySelectorAll(
+    '.execution-metric-popover dl > div'
+  )].map(row => [row.querySelector('dt')?.textContent, row.querySelector('dd')?.textContent])`)
+  assert(JSON.stringify(usageRows) === JSON.stringify([
+    ['Input Token', '1.5k'], ['Output Token', '0.5k'],
+    ['Cache Read', '0.3k'], ['Cache Write', '0k']
+  ]), `Late terminal Usage did not reach the four-row Renderer bubble: ${JSON.stringify(usageRows)}`)
+  const terminalCapture = join(capturesRoot, 'execution-metrics-stream-late-usage.png')
+  await capture(app.cdp, terminalCapture)
+  return {
+    verified: { streamCampId, runId, setupRunId, reopened, switched, speedChanges, usageRows },
+    captures: { steady: steadyCapture, idle: idleCapture, resumed: resumedCapture, terminal: terminalCapture }
+  }
+}
+
+async function waitForControlledMessageRun(request, campId, messageId) {
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    const snapshot = await request('camps.snapshot', { campId })
+    const run = snapshot.agentRuns.find((candidate) =>
+      candidate.inputMessageIds?.includes(messageId) || candidate.anchorMessageId === messageId)
+    if (run) return run.id
+    await wait(250)
+  }
+  throw new Error(`Controlled Camp message ${messageId} did not dispatch an AgentRun`)
+}
+
+async function waitForControlledRunStatus(request, campId, runId, status) {
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    const snapshot = await request('camps.snapshot', { campId })
+    const run = snapshot.agentRuns.find((candidate) => candidate.id === runId)
+    if (run?.status === status) return
+    if (run?.status === 'failed' || run?.status === 'cancelled') {
+      throw new Error(`Controlled Run ${runId} entered ${run.status}`)
+    }
+    await wait(250)
+  }
+  throw new Error(`Controlled Run ${runId} did not enter ${status}`)
 }
 
 async function seedFixture() {

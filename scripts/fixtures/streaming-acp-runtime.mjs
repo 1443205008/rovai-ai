@@ -1,0 +1,65 @@
+#!/usr/bin/env node
+// Controlled ACP text stream for the isolated packaged-App metrics acceptance.
+// This impersonates a Qwen ACP executable only when the test sets ROVAI_QWEN_BIN.
+import { createInterface } from 'node:readline'
+
+if (process.argv.includes('--version')) {
+  process.stdout.write('0.24.5\n')
+  process.exit(0)
+}
+
+const sessionId = `fixture-stream-${process.pid}`
+const send = (value) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...value })}\n`)
+const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+const update = (value) => send({ method: 'session/update', params: { sessionId, update: value } })
+const text = 'steady visible output '.repeat(4)
+let busy = false
+
+for await (const line of createInterface({ input: process.stdin })) {
+  let message
+  try { message = JSON.parse(line) } catch { continue }
+  if (message.method === 'initialize') {
+    send({ id: message.id, result: {
+      protocolVersion: 1,
+      agentCapabilities: { sessionCapabilities: { resume: {} } }
+    } })
+  } else if (message.method === 'session/new' || message.method === 'session/resume') {
+    send({ id: message.id, result: {
+      sessionId,
+      models: {
+        currentModelId: 'fixture-model',
+        availableModels: [{ modelId: 'fixture-model', name: 'Fixture model' }]
+      },
+      configOptions: []
+    } })
+  } else if (message.method === 'session/prompt') {
+    if (busy) {
+      send({ id: message.id, error: { code: -32001, message: 'busy' } })
+      continue
+    }
+    busy = true
+    if (JSON.stringify(message.params).includes('ROVAI_STREAM_FAST_SETUP')) {
+      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'ROVAI_STREAM_FAST_READY' } })
+      send({ id: message.id, result: { stopReason: 'end_turn' } })
+      busy = false
+      continue
+    }
+    for (let index = 0; index < 14; index++) {
+      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } })
+      await pause(500)
+    }
+    update({ sessionUpdate: 'tool_call', toolCallId: 'fixture-tool', title: 'Controlled tool pause',
+      kind: 'other', status: 'in_progress' })
+    await pause(6_000)
+    update({ sessionUpdate: 'tool_call_update', toolCallId: 'fixture-tool', status: 'completed' })
+    for (let index = 0; index < 10; index++) {
+      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } })
+      await pause(500)
+    }
+    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'ROVAI_QWEN_ACP_OK' } })
+    send({ id: message.id, result: { stopReason: 'end_turn' } })
+    busy = false
+  } else if (message.id != null) {
+    send({ id: message.id, result: {} })
+  }
+}

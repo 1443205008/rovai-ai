@@ -38,13 +38,15 @@ target_version: "v1.72"
 
 `visible-text-heuristic-v2` 用 ASCII 0.25、Han 0.60、其他 Unicode 标量 1.00；这是显示策略，不是通用 tokenizer。英文四字符一 token 是 [OpenAI 粗估](https://help.openai.com/en/articles/4936856-understanding-and-counting-tokens)与 [Google 文档](https://ai.google.dev/gemini-api/docs/tokens)共有的经验基线；中文 0.60 来自 [DeepSeek 用量说明](https://api-docs.deepseek.com/quick_start/token_usage/)。代码、标点、空白与其他 Unicode 权重是工程兜底，未按模型校准。测试覆盖英语、中文、混合、代码、JSON、Markdown、空白、emoji、Han 扩展字符、重复和重叠 offset、UTF-16 代理对跨事件、重连基线、长时间等待与 idle 后再输出。样本按相同可见正文对比，未拿含隐藏推理的原生 Output 校准速度。
 
-内部 500 ms 采样、2.5 s 平滑、有效输出后预热 1 s、最多每秒更新一次、5 s idle 归未知。Running 卡片并列速度与耗时；结束立即切为耗时和用量。`execution-token-speed.test.ts` 使用 30 秒固定事件回放，断言恰好 30 次发布、工具静默清空与恢复后重新预热。`ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_ONLY=1 pnpm accept:runtime-activity-ui` 在隔离打包版 App 上通过：运行中未知速度与 `1分 24秒` 同一行且未溢出 156 px 尾部槽；终态显示 `1分 29秒` 和 `2k`，气泡恰为四桶 `1.5k / 0.5k / 0.3k / 0k`。验收脚本生成运行中与终态截图。**动态正文注入、途中打开、切 Run 与终态后迟到 Usage 在真实 Renderer 中仍待固定事件回放**；当前算法回放、真实静态布局和 Core 持久化不能代替这组跨边界场景。
+内部 500 ms 采样、2.5 s 平滑、有效输出后预热 1 s、最多每秒更新一次、5 s idle 归未知。Running 卡片并列速度与耗时；结束立即切为耗时和用量。`execution-token-speed.test.ts` 使用 30 秒固定事件回放，断言恰好 30 次发布、工具静默清空与恢复后重新预热。`ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_ONLY=1 pnpm accept:runtime-activity-ui` 在隔离打包版 App 上通过：运行中未知速度与 `1分 24秒` 同一行且未溢出 156 px 尾部槽；终态显示 `1分 29秒` 和 `2k`，气泡恰为四桶 `1.5k / 0.5k / 0.3k / 0k`。
+
+第二组 `ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_STREAM_ONLY=1 pnpm accept:runtime-activity-ui` 使用[受控 ACP 流夹具](../../../scripts/fixtures/streaming-acp-runtime.mjs)，经隔离 Core 的真实 Run 送入打包 App；该夹具临时冒充 Qwen 可执行文件，**不是 Qwen Provider 能力证明**。运行记录见[Renderer 动态验收 fixture](fixtures/round2-stream-renderer-acceptance.json)：持续正文显示当前速度和耗时，切到另一 Camp 再中途打开时以已有正文建立 `— tok/s` 基线，新增正文后显示速度；展开同 Agent 的历史 Run 卡时，历史卡无速度而当前卡仍有速度；工具停顿后速度过期，恢复输出后重新显示；终态移除速度。实际速度文本变化最短间隔为约 1000 ms。终态先到、随后在隔离数据库写入用量的竞争场景里，App 未重启，终态轮询把入口刷新成 `2k`，气泡只含四项。脚本生成持续、停顿、恢复、迟到用量四张截图。迟到用量采用受控数据库更新验证读回与 Renderer 轮询，**不代表已取得该 Runtime 的迟到原生 Usage 回包**。
 
 ## 未决事项
 
 1. **模型与账户**：Qoder 需要[官方 `/model` Custom 交互配置](https://docs.qoder.com/cli/custom-models)与相应账户资格；Copilot 按本轮指令忽略。CodeBuddy ACP 未发用量，需核对该版本 ACP 方言或切换到保留会话能力的官方结构化入口，不能从非 ACP JSON 结果冒充 ACP 数据。
 2. **Session**：Codex 已实测同一原生 Session 两 Run 的 used 更新，仍缺真实压缩、模型切换、Core 重启后的同会话 Context 连续性。Kimi、Qwen 需真实压缩／恢复／重放和子 Agent 排除；Claude 需当前模型的 `modelUsage.contextWindow` 与最近调用对照；Pi、OpenCode、ZCode 与 Grok 需实际占用帧。
 3. **Usage 边界**：Grok 需多工具、多模型调用、重复终态与正值缓存；DSH 需 Provider 明确完整的互斥输入分类与有效窗口证明。失败、取消、超时、恢复基线、计数重置、并发和会话换代已由现有通用测试覆盖部分路径，尚缺逐 Runtime 的原生回包。
-4. **Renderer 与迟到结算**：真实 App 的单行布局、终态按钮与四桶气泡已过隔离验收；1 Hz 固定回放已在 Renderer 使用的测速发布器上通过。下一步仍需把固定增量注入真实 App，覆盖工具停顿、途中打开、切 Run、终态转场与晚到 Usage。当前 drawer 在终态后每 10 秒继续刷新，避免终态先到而 Usage 稍后落盘时永久显示未知。
+4. **Renderer 与迟到结算**：隔离打包 App 已通过受控 ACP 固定流的持续输出、工具停顿、恢复、中途打开、历史 Run 卡和终态，以及终态后数据库补写 Usage 的 10 秒轮询；仍需真实 Runtime 的迟到原生 Usage 帧，验证它能按各自方言进入数据库，而不是仅验证已经落盘后的读取。
 
 实现合同：[Runtime Execution Metrics v1](../../contracts/runtime-execution-metrics-v1.md)。

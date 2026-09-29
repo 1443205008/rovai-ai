@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-09-29",
+  "mode": "controlled-execution-metrics-live-renderer",
+  "app": "isolated packaged macOS App with its own Core and data directory",
+  "runtimeFixture": "scripts/fixtures/streaming-acp-runtime.mjs",
+  "runtimeFixtureScope": "Controlled ACP frames through a temporary ROVAI_QWEN_BIN override; not evidence of Qwen Provider Usage or Context support",
+  "run": {
+    "adapterKind": "qwen-code",
+    "reportedVersion": "0.24.5",
+    "visibleTextDeltaCount": 25,
+    "streamPattern": "14 text increments at 500 ms, tool call and 6000 ms silence, 10 text increments at 500 ms, terminal marker",
+    "terminalStatus": "succeeded"
+  },
+  "expectation": {
+    "midstreamOpen": "Prior text establishes a baseline; only new text can produce speed after warmup",
+    "liveDisplay": "Speed and duration occupy one line; speed text updates at most once per second",
+    "toolPause": "Speed expires to unknown after five seconds with no new public text",
+    "resume": "Speed restarts from new public text",
+    "history": "Historical Run card has no current speed while the active Run card keeps its own speed",
+    "terminal": "The current speed disappears immediately when the Run becomes terminal",
+    "lateUsage": "A summary written after terminal becomes visible through continued polling without restarting the App"
+  },
+  "observed": {
+    "midstreamBaseline": { "speed": "— tok/s", "duration": "0分 04秒" },
+    "historySwitch": { "activeSpeed": "52.7 tok/s", "activeDuration": "0分 06秒", "sameLine": true, "historyHasSpeed": false },
+    "speedChanges": [
+      { "elapsedMs": 0, "speed": "— tok/s" },
+      { "elapsedMs": 1976, "speed": "52.7 tok/s" },
+      { "elapsedMs": 2977, "speed": "37.1 tok/s" },
+      { "elapsedMs": 4477, "speed": "17.0 tok/s" },
+      { "elapsedMs": 5977, "speed": "8.5 tok/s" },
+      { "elapsedMs": 7476, "speed": "— tok/s" },
+      { "elapsedMs": 10974, "speed": "54.8 tok/s" },
+      { "elapsedMs": 11975, "speed": "49.1 tok/s" },
+      { "elapsedMs": 12977, "speed": "46.8 tok/s" }
+    ],
+    "terminalHasSpeed": false,
+    "lateUsageEntry": "2k",
+    "usageRows": [
+      ["Input Token", "1.5k"],
+      ["Output Token", "0.5k"],
+      ["Cache Read", "0.3k"],
+      ["Cache Write", "0k"]
+    ]
+  },
+  "lateUsageMethod": "After the real controlled Run reached succeeded, the acceptance script updated its existing empty runtime_usage_run_summary row. The App stayed open and its monitoring.execution terminal poll read the row. This tests the read and Renderer race, not native Qwen Usage emission.",
+  "command": "ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_STREAM_ONLY=1 pnpm accept:runtime-activity-ui"
+}
