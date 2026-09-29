@@ -1748,15 +1748,18 @@ mod tests {
         {
             use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
-            assert!(
-                !nonempty_wal
-                    .main
-                    .as_ref()
-                    .unwrap()
-                    .macos_provenance
-                    .unwrap()
-                    .present
-            );
+            // Some macOS hosts tag newly created temporary files automatically.
+            // Keep the untagged observation explicit so this test still owns the
+            // false-to-true provenance transition on both kinds of host.
+            let mut untagged_wal = nonempty_wal.clone();
+            untagged_wal
+                .main
+                .as_mut()
+                .unwrap()
+                .macos_provenance
+                .as_mut()
+                .unwrap()
+                .present = false;
             let path = CString::new(main.as_os_str().as_bytes()).unwrap();
             let value = [1_u8, 2_u8];
             assert_eq!(
@@ -1775,13 +1778,13 @@ mod tests {
             let tagged = observe_namespace(&lease, AuthorityNamespace::Rovai)
                 .ok()
                 .unwrap();
-            assert!(!nonempty_wal.authority_unchanged(&tagged));
-            assert!(nonempty_wal.macos_provenance_only_change(&tagged));
+            assert!(!untagged_wal.authority_unchanged(&tagged));
+            assert!(untagged_wal.macos_provenance_only_change(&tagged));
             std::fs::write(&main, b"changed authority").unwrap();
             let changed = observe_namespace(&lease, AuthorityNamespace::Rovai)
                 .ok()
                 .unwrap();
-            assert!(!nonempty_wal.macos_provenance_only_change(&changed));
+            assert!(!untagged_wal.macos_provenance_only_change(&changed));
         }
     }
 
