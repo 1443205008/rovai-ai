@@ -6538,6 +6538,7 @@ function ExecutionContextPopover({ context }: { context: SessionContext | null }
           {percent !== null && <circle className="execution-context-fill" cx="12" cy="12" r="8"
             strokeDasharray={`${percent * 0.50265} 50.265`} />}
         </svg>
+        <span className="execution-context-value" aria-hidden="true">{percent === null ? '—' : `${Math.round(percent)}%`}</span>
       </button>
     </Popover.Trigger>
     <Popover.Portal>

@@ -2352,9 +2352,10 @@ button.file-preview-html-feedback:hover,
 .execution-duration-trigger { display: inline-grid; width: 26px; height: 28px; flex: 0 0 26px; place-items: center; padding: 5px; border: 0; border-radius: 4px; color: var(--muted); background: transparent; cursor: pointer; }
 .execution-duration-trigger:is(:hover, [data-state="open"]) { color: var(--ink); background: var(--surface-hover); }
 .execution-duration-trigger svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.execution-context-trigger { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; padding: 2px; border: 0; border-radius: 50%; color: var(--muted); background: transparent; cursor: pointer; }
+.execution-context-trigger { display: inline-flex; height: 28px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 2px 3px; border: 0; border-radius: 4px; color: var(--muted); background: transparent; cursor: pointer; }
 .execution-context-trigger:is(:hover, [data-state="open"]) { color: var(--ink); background: var(--surface-muted); }
-.execution-context-trigger svg { width: 22px; height: 22px; fill: none; transform: rotate(-90deg); }
+.execution-context-trigger svg { width: 22px; height: 22px; flex: 0 0 auto; fill: none; transform: rotate(-90deg); }
+.execution-context-value { font: 400 10.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .execution-context-track { stroke: var(--line-strong); stroke-width: 2.5; }
 .execution-context-fill { stroke: var(--info); stroke-width: 2.5; stroke-linecap: round; }
 .execution-metric-popover { z-index: 401; min-width: 172px; max-width: calc(100vw - 24px); padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: var(--surface-raised); box-shadow: var(--shadow-float); font-size: 11px; }
