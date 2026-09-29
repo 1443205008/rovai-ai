@@ -6490,14 +6490,33 @@ function ExecutionUsagePopover({ run, usage }: { run: AgentRunView; usage: RunUs
   return <Popover.Root>
     <Popover.Trigger asChild>
       <button className="execution-usage-trigger" type="button"
-        aria-label={uiAttribute('查看本次执行用量；{0}', complete ? metricK(total) : uiAttribute('部分或未知'))}
-        title={uiAttribute('查看本次执行用量')}>
+        aria-label={uiAttribute('查看本次执行用量与耗时；{0}', complete ? metricK(total) : uiAttribute('部分或未知'))}
+        title={uiAttribute('查看本次执行用量与耗时')}>
         {metricK(total)}
       </button>
     </Popover.Trigger>
     <Popover.Portal>
       <Popover.Content className="execution-metric-popover" sideOffset={6} align="end">
-        <dl>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{metricK(value)}</dd></div>)}</dl>
+        <dl>
+          {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{metricK(value)}</dd></div>)}
+          <div className="execution-usage-duration"><dt>{uiAttribute('执行耗时')}</dt><dd>{executionRunDurationLabel(run, Date.now())}</dd></div>
+        </dl>
+      </Popover.Content>
+    </Popover.Portal>
+  </Popover.Root>
+}
+
+function ExecutionDurationPopover({ run }: { run: AgentRunView }): JSX.Element {
+  return <Popover.Root>
+    <Popover.Trigger asChild>
+      <button className="execution-duration-trigger" type="button"
+        aria-label={uiAttribute('查看本次执行耗时')} title={uiAttribute('查看本次执行耗时')}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" /><path d="M8 4.75V8l2.25 1.5" /></svg>
+      </button>
+    </Popover.Trigger>
+    <Popover.Portal>
+      <Popover.Content className="execution-metric-popover execution-duration-popover" sideOffset={6} align="end">
+        <div className="execution-duration-reading">{executionRunDurationLabel(run, Date.now())}</div>
       </Popover.Content>
     </Popover.Portal>
   </Popover.Root>
@@ -6530,22 +6549,14 @@ function ExecutionContextPopover({ context }: { context: SessionContext | null }
   </Popover.Root>
 }
 
-function ExecutionRunMetric({ run, liveTextEvents, usage }: {
+function ExecutionLiveSpeed({ run, liveTextEvents }: {
   run: AgentRunView
   liveTextEvents: readonly LiveRuntimeEvent[]
-  usage: RunUsage | null
-}): JSX.Element {
-  const live = NON_TERMINAL_RUNS.has(run.status) && run.status !== 'queued'
+}): JSX.Element | null {
   const liveKey = `${run.id}:${run.executionEpoch}`
-  const [display, setDisplay] = useState<{ key: string; speed: number | null; duration: string }>(() => ({
-    key: liveKey, speed: null, duration: executionRunDurationLabel(run, Date.now())
-  }))
+  const [display, setDisplay] = useState<{ key: string; speed: number | null }>({ key: liveKey, speed: null })
   const meter = useRef<LiveTokenSpeedDisplay | null>(null)
   useEffect(() => {
-    if (!live) {
-      meter.current = null
-      return undefined
-    }
     const now = window.performance.now()
     meter.current = new LiveTokenSpeedDisplay(now)
     meter.current.observe(liveTextEvents, run.id, run.executionEpoch, now)
@@ -6553,31 +6564,46 @@ function ExecutionRunMetric({ run, liveTextEvents, usage }: {
       const sampledAt = window.performance.now()
       const speed = meter.current?.sample(sampledAt)
       if (speed === undefined) return
-      const duration = executionRunDurationLabel(run, Date.now())
       setDisplay(previous => previous.key === liveKey && previous.speed === speed
-        && previous.duration === duration ? previous : { key: liveKey, speed, duration })
+        ? previous : { key: liveKey, speed })
     }, SAMPLE_INTERVAL_MS)
-    return () => window.clearInterval(timer)
-  }, [live, liveKey, run.id, run.executionEpoch, run.startedAt, run.createdAt])
+    return () => {
+      window.clearInterval(timer)
+      meter.current = null
+    }
+  }, [liveKey, run.id, run.executionEpoch])
   useEffect(() => {
-    if (live) meter.current?.observe(liveTextEvents, run.id, run.executionEpoch, window.performance.now())
-  }, [live, liveTextEvents, run.id, run.executionEpoch])
+    meter.current?.observe(liveTextEvents, run.id, run.executionEpoch, window.performance.now())
+  }, [liveTextEvents, run.id, run.executionEpoch])
+  const speed = display.key === liveKey ? display.speed : null
+  if (speed === null) return null
+  return <span className="execution-current-speed" role="img"
+    title={uiAttribute('根据公开正文增量估算的当前速度')}
+    aria-label={uiAttribute('当前估算输出速度：{0}', `${speed.toFixed(DISPLAY_DECIMALS)} tok/s`)}>
+    <span>{speed.toFixed(DISPLAY_DECIMALS)}</span><span> tok/s</span>
+  </span>
+}
+
+function ExecutionRunMetric({ run, usage }: {
+  run: AgentRunView
+  usage: RunUsage | null
+}): JSX.Element {
+  const live = NON_TERMINAL_RUNS.has(run.status) && run.status !== 'queued'
+  const [duration, setDuration] = useState(() => executionRunDurationLabel(run, Date.now()))
+  useEffect(() => {
+    if (!live) return undefined
+    const timer = window.setInterval(() => {
+      const next = executionRunDurationLabel(run, Date.now())
+      setDuration(previous => previous === next ? previous : next)
+    }, 1_000)
+    return () => window.clearInterval(timer)
+  }, [live, run.id, run.executionEpoch, run.startedAt, run.createdAt])
   if (run.status === 'queued') return <span className="execution-run-metric is-queued">{uiAttribute('排队中')}</span>
-  if (live) {
-    const speed = display.key === liveKey ? display.speed : null
-    const duration = display.key === liveKey ? display.duration : executionRunDurationLabel(run, Date.now())
-    return <span className="execution-run-metric-group">
-      <span className="execution-run-metric is-live"
-        title={uiAttribute('根据公开正文增量估算的当前速度')}
-        aria-label={uiAttribute('当前估算输出速度：{0}', speed === null ? uiAttribute('未知') : `${speed.toFixed(DISPLAY_DECIMALS)} tok/s`)}>
-        {speed === null ? '— tok/s' : `${speed.toFixed(DISPLAY_DECIMALS)} tok/s`}
-      </span>
-      <span className="execution-run-metric">{duration}</span>
-    </span>
-  }
+  if (live) return <span className="execution-run-metric">{duration}</span>
+  const hasUsage = usage !== null && [usage.promptInputTotalTokens, usage.outputTokens,
+    usage.cacheReadTokens, usage.cacheWriteTokens].some(value => value !== null)
   return <span className="execution-run-metric-group">
-    <span className="execution-run-metric">{executionRunDurationLabel(run, Date.now())}</span>
-    <ExecutionUsagePopover run={run} usage={usage} />
+    {hasUsage ? <ExecutionUsagePopover run={run} usage={usage} /> : <ExecutionDurationPopover run={run} />}
   </span>
 }
 
@@ -6858,6 +6884,8 @@ function ExecutionDrawer({
   const currentRuns = newestFirstRuns.filter((run) =>
     NON_TERMINAL_RUNS.has(run.status) && run.status !== 'queued'
   )
+  const speedRun = overview ? null : currentRuns.find((run) =>
+    run.status === 'running' && run.conversationId === currentConversationId) ?? null
   const queueBatches = executionQueueBatches(newestFirstRuns)
   const deliveryQueueBatches = executionDeliveryQueueBatches(process.waitingDeliveries)
   const historyRuns = newestFirstRuns.filter((run) => !NON_TERMINAL_RUNS.has(run.status))
@@ -7238,9 +7266,7 @@ function ExecutionDrawer({
               subject={uiAttribute("本次执行")}
             />
             <span className="execution-run-trailing">
-              <ExecutionRunMetric run={run}
-                liveTextEvents={liveTextEventsByRunId.get(run.id) ?? []}
-                usage={usageByRunId.get(run.id) ?? null} />
+              <ExecutionRunMetric run={run} usage={usageByRunId.get(run.id) ?? null} />
               <span className="execution-run-operations">
                 <button type="button" aria-label={expanded ? uiAttribute("收起卡片") : uiAttribute("展开卡片")} aria-expanded={expanded}
                   aria-controls={contentId} onClick={() => toggleRun(run.id)}>
@@ -7490,7 +7516,11 @@ function ExecutionDrawer({
               </div>
             </div>
           </div>
-          {!overview && <ExecutionContextPopover context={sessionContext} />}
+          {!overview && <span className="execution-header-metrics">
+            {speedRun && <ExecutionLiveSpeed key={`${speedRun.id}:${speedRun.executionEpoch}`}
+              run={speedRun} liveTextEvents={liveTextEventsByRunId.get(speedRun.id) ?? []} />}
+            <ExecutionContextPopover context={sessionContext} />
+          </span>}
         </header>
         <div
           ref={drawerBodyRef}

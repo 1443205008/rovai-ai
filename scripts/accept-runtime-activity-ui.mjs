@@ -1185,29 +1185,25 @@ async function activateControlledRun() {
 
 async function verifyExecutionMetricsRenderer(app, capturesRoot, onRestart) {
   await waitForExpression(app.cdp, `Boolean(document.querySelector(
-    '.execution-process-stage.is-focused .execution-run-metric-group .execution-run-metric.is-live'
+    '.execution-process-stage.is-focused .execution-run-metric'
   ))`)
   const running = await evaluate(app.cdp, `(() => {
     const stage = document.querySelector('.execution-process-stage.is-focused')
-    const group = stage?.querySelector('.execution-run-metric-group')
-    const parts = [...(group?.querySelectorAll('.execution-run-metric') ?? [])]
+    const duration = stage?.querySelector('.execution-run-metric')
     const slot = stage?.querySelector('.execution-run-trailing')
-    const bounds = parts.map(part => part.getBoundingClientRect())
     return {
       runId: stage?.dataset.agentRunId ?? null,
-      speed: parts[0]?.textContent?.trim() ?? null,
-      duration: parts[1]?.textContent?.trim() ?? null,
-      estimatedName: parts[0]?.getAttribute('aria-label') ?? null,
-      oneLine: bounds.length === 2 && Math.abs(bounds[0].top - bounds[1].top) < 1,
-      fitsSlot: bounds.length === 2 && bounds[1].right <= slot.getBoundingClientRect().right + 1,
+      speed: document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim() ?? null,
+      duration: duration?.textContent?.trim() ?? null,
+      cardHasSpeed: Boolean(stage?.querySelector('.execution-current-speed')),
+      fitsSlot: duration.getBoundingClientRect().right <= slot.getBoundingClientRect().right + 1,
       slotWidth: slot?.getBoundingClientRect().width ?? null
     }
   })()`)
-  assert(running.runId === activeRunId && running.speed === '— tok/s'
+  assert(running.runId === activeRunId && running.speed === null && !running.cardHasSpeed
     && /^1分 \d{2}秒$/.test(running.duration)
-    && running.estimatedName?.includes('估算')
-    && running.oneLine && running.fitsSlot && running.slotWidth >= 155,
-  `Running metrics did not keep speed and duration on one line: ${JSON.stringify(running)}`)
+    && running.fitsSlot && running.slotWidth >= 76,
+  `Running card did not keep duration while an unsampled speed stayed hidden: ${JSON.stringify(running)}`)
   const runningCapture = join(capturesRoot, 'execution-metrics-running.png')
   await capture(app.cdp, runningCapture)
 
@@ -1244,25 +1240,26 @@ async function verifyExecutionMetricsRenderer(app, capturesRoot, onRestart) {
     const group = stage?.querySelector('.execution-run-metric-group')
     return {
       runId: stage?.dataset.agentRunId ?? null,
-      duration: group?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
+      durationInCard: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
       usage: group?.querySelector('.execution-usage-trigger')?.textContent?.trim() ?? null,
-      liveSpeedCount: group?.querySelectorAll('.execution-run-metric.is-live').length ?? null
+      liveSpeedCount: document.querySelectorAll('.execution-drawer-header .execution-current-speed').length
     }
   })()`)
   assert(terminal.runId === activeRunId && terminal.usage === '2k'
-    && terminal.duration?.includes('分') && terminal.liveSpeedCount === 0,
-  `Terminal metrics did not keep duration and native Usage distinct: ${JSON.stringify(terminal)}`)
+    && terminal.durationInCard === null && terminal.liveSpeedCount === 0,
+  `Terminal card did not show only the Usage entry: ${JSON.stringify(terminal)}`)
   await evaluate(restarted.cdp, `document.querySelector(
     '.execution-process-stage.is-focused .execution-usage-trigger'
   )?.click()`)
-  await waitForExpression(restarted.cdp, `document.querySelectorAll('.execution-metric-popover dl > div').length === 4`)
+  await waitForExpression(restarted.cdp, `document.querySelectorAll('.execution-metric-popover dl > div').length === 5`)
   const usageRows = await evaluate(restarted.cdp, `[...document.querySelectorAll(
     '.execution-metric-popover dl > div'
   )].map(row => [row.querySelector('dt')?.textContent, row.querySelector('dd')?.textContent])`)
-  assert(JSON.stringify(usageRows) === JSON.stringify([
+  assert(JSON.stringify(usageRows.slice(0, 4)) === JSON.stringify([
     ['Input Token', '1.5k'], ['Output Token', '0.5k'],
     ['Cache Read', '0.3k'], ['Cache Write', '0k']
-  ]), `Terminal Usage popover did not show the four canonical buckets: ${JSON.stringify(usageRows)}`)
+  ]) && usageRows[4]?.[0] === '执行耗时' && /^1分 \d{2}秒$/.test(usageRows[4]?.[1]),
+  `Terminal Usage popover did not show four buckets and duration: ${JSON.stringify(usageRows)}`)
   const terminalCapture = join(capturesRoot, 'execution-metrics-terminal.png')
   await capture(restarted.cdp, terminalCapture)
   return {
@@ -1322,27 +1319,30 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
   await waitForExpression(app.cdp,
     `document.querySelector(${JSON.stringify(stageSelector)})?.classList.contains('status-running')`, 20_000)
   await waitForExpression(app.cdp,
-    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 10_000)
+    `document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 10_000)
   const steadyCapture = join(capturesRoot, 'execution-metrics-stream-steady.png')
   await capture(app.cdp, steadyCapture)
 
   // Leave and re-enter during the same stream. Earlier text becomes the new baseline.
   await openCamp(app.cdp, campId)
   await openCamp(app.cdp, streamCampId)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})?.click()`)
   await waitForExpression(app.cdp,
-    `Boolean(document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live'))`, 10_000)
+    `Boolean(document.querySelector('.execution-drawer-header:not(.is-overview)')
+      && document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric'))`, 10_000)
   const reopened = await evaluate(app.cdp, `(() => {
     const stage = document.querySelector(${JSON.stringify(stageSelector)})
-    return { speed: stage?.querySelector('.execution-run-metric.is-live')?.textContent?.trim() ?? null,
-      duration: stage?.querySelector('.execution-run-metric-group .execution-run-metric:not(.is-live)')?.textContent?.trim() ?? null }
+    return { speed: document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim() ?? null,
+      duration: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null }
   })()`)
-  assert(reopened.speed === '— tok/s' && reopened.duration,
+  assert(reopened.speed === null && reopened.duration,
     `Midstream entry did not establish a fresh display baseline: ${JSON.stringify(reopened)}`)
   await evaluate(app.cdp, `(() => {
-    const stage = document.querySelector(${JSON.stringify(stageSelector)})
+    const header = document.querySelector('.execution-drawer-header')
     const probe = { changes: [], last: null }
     const record = () => {
-      const speed = stage?.querySelector('.execution-run-metric.is-live')?.textContent?.trim() ?? null
+      const speed = header?.querySelector('.execution-current-speed')?.textContent?.trim() ?? null
       if (speed !== probe.last) {
         probe.last = speed
         probe.changes.push({ at: performance.now(), speed })
@@ -1350,12 +1350,12 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
     }
     record()
     probe.observer = new MutationObserver(record)
-    probe.observer.observe(stage, { subtree: true, childList: true, characterData: true })
+    probe.observer.observe(header, { subtree: true, childList: true, characterData: true })
     window.__streamMetricsProbe = probe
     return true
   })()`)
   await waitForExpression(app.cdp,
-    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 10_000)
+    `document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 10_000)
   await evaluate(app.cdp, `document.querySelector('.execution-history-toggle')?.click()`)
   const historySelector = `.execution-process-stage[data-agent-run-id="${setupRunId}"]`
   await evaluate(app.cdp,
@@ -1365,13 +1365,14 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
   const switched = await evaluate(app.cdp, `(() => {
     const active = document.querySelector(${JSON.stringify(stageSelector)})
     const history = document.querySelector(${JSON.stringify(historySelector)})
-    const parts = [...(active?.querySelectorAll('.execution-run-metric-group .execution-run-metric') ?? [])]
-    return { activeSpeed: parts[0]?.textContent?.trim() ?? null,
-      activeDuration: parts[1]?.textContent?.trim() ?? null,
-      sameLine: parts.length === 2 && Math.abs(parts[0].getBoundingClientRect().top - parts[1].getBoundingClientRect().top) < 1,
+    const speed = document.querySelector('.execution-drawer-header .execution-current-speed')
+    const context = document.querySelector('.execution-drawer-header .execution-context-trigger')
+    return { activeSpeed: speed?.textContent?.trim() ?? null,
+      activeDuration: active?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
+      sameLine: Boolean(speed && context && Math.abs(speed.getBoundingClientRect().top - context.getBoundingClientRect().top) < 12),
       activeExpanded: active?.querySelector('.execution-run-toggle')?.getAttribute('aria-expanded') === 'true',
       historyExpanded: history?.querySelector('.execution-run-toggle')?.getAttribute('aria-expanded') === 'true',
-      historyHasSpeed: Boolean(history?.querySelector('.execution-run-metric.is-live')),
+      historyHasSpeed: Boolean(history?.querySelector('.execution-current-speed')),
       historyVisible: Boolean(history?.getClientRects().length) }
   })()`)
   assert(switched.historyVisible && switched.historyExpanded && !switched.activeExpanded
@@ -1382,11 +1383,11 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
     `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-toggle')?.click()`)
 
   await waitForExpression(app.cdp,
-    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live')?.textContent?.trim() === '— tok/s'`, 11_000)
+    `!document.querySelector('.execution-drawer-header .execution-current-speed')`, 11_000)
   const idleCapture = join(capturesRoot, 'execution-metrics-stream-tool-idle.png')
   await capture(app.cdp, idleCapture)
   await waitForExpression(app.cdp,
-    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 8_000)
+    `document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 8_000)
   const resumedCapture = join(capturesRoot, 'execution-metrics-stream-resumed.png')
   await capture(app.cdp, resumedCapture)
   await waitForExpression(app.cdp,
@@ -1398,17 +1399,26 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
   })()`)
   const numericChanges = speedChanges.filter((change) => /^\d+\.\d tok\/s$/.test(change.speed ?? ''))
   const terminalHasSpeed = await evaluate(app.cdp,
-    `Boolean(document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live'))`)
+    `Boolean(document.querySelector('.execution-drawer-header .execution-current-speed'))`)
   assert(numericChanges.length >= 2
-    && speedChanges.some((change) => change.speed === '— tok/s')
+    && speedChanges.some((change) => change.speed === null)
     && !terminalHasSpeed
     && numericChanges.every((change, index) => index === 0
       || change.at - numericChanges[index - 1].at >= 850),
   `Live Renderer did not respect warmup, idle, 1 Hz and terminal transition: ${JSON.stringify(speedChanges)}`)
   const terminalBeforeUsage = await evaluate(app.cdp,
-    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-usage-trigger')?.textContent?.trim() ?? null`)
-  assert(terminalBeforeUsage !== '2k',
-    `The terminal race fixture already had Usage: ${terminalBeforeUsage}`)
+    `({ usage: document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-usage-trigger')?.textContent?.trim() ?? null,
+      clock: Boolean(document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-duration-trigger')),
+      durationInCard: document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null })`)
+  assert(terminalBeforeUsage.usage === null && terminalBeforeUsage.clock
+    && terminalBeforeUsage.durationInCard === null,
+    `The terminal card did not fall back to a duration clock before Usage: ${JSON.stringify(terminalBeforeUsage)}`)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-duration-trigger')?.click()`)
+  await waitForExpression(app.cdp,
+    `/分 \\d{2}秒$/.test(document.querySelector('.execution-duration-reading')?.textContent?.trim() ?? '')`)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-duration-trigger')?.click()`)
   const observedAt = new Date().toISOString()
   await runSql(databasePath, `
     PRAGMA busy_timeout = 5000;
@@ -1424,14 +1434,15 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
     `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-usage-trigger')?.textContent?.trim() === '2k'`, 16_000)
   await evaluate(app.cdp,
     `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-usage-trigger')?.click()`)
-  await waitForExpression(app.cdp, `document.querySelectorAll('.execution-metric-popover dl > div').length === 4`)
+  await waitForExpression(app.cdp, `document.querySelectorAll('.execution-metric-popover dl > div').length === 5`)
   const usageRows = await evaluate(app.cdp, `[...document.querySelectorAll(
     '.execution-metric-popover dl > div'
   )].map(row => [row.querySelector('dt')?.textContent, row.querySelector('dd')?.textContent])`)
-  assert(JSON.stringify(usageRows) === JSON.stringify([
+  assert(JSON.stringify(usageRows.slice(0, 4)) === JSON.stringify([
     ['Input Token', '1.5k'], ['Output Token', '0.5k'],
     ['Cache Read', '0.3k'], ['Cache Write', '0k']
-  ]), `Late terminal Usage did not reach the four-row Renderer bubble: ${JSON.stringify(usageRows)}`)
+  ]) && usageRows[4]?.[0] === '执行耗时' && /分 \d{2}秒$/.test(usageRows[4]?.[1]),
+  `Late terminal Usage did not reach the four buckets and duration: ${JSON.stringify(usageRows)}`)
   const terminalCapture = join(capturesRoot, 'execution-metrics-stream-late-usage.png')
   await capture(app.cdp, terminalCapture)
   return {

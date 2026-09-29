@@ -13,36 +13,101 @@
     "terminalStatus": "succeeded"
   },
   "expectation": {
-    "midstreamOpen": "Prior text establishes a baseline; only new text can produce speed after warmup",
-    "liveDisplay": "Speed and duration occupy one line; speed text updates at most once per second",
-    "toolPause": "Speed expires to unknown after five seconds with no new public text",
+    "midstreamOpen": "Prior text establishes a hidden baseline; only new text can produce speed after warmup",
+    "liveDisplay": "Speed appears in the member header beside the context ring; the running card keeps duration; speed updates at most once per second",
+    "toolPause": "Speed disappears after five seconds with no new public text",
     "resume": "Speed restarts from new public text",
-    "history": "Historical Run card has no current speed while the active Run card keeps its own speed",
-    "terminal": "The current speed disappears immediately when the Run becomes terminal",
-    "lateUsage": "A summary written after terminal becomes visible through continued polling without restarting the App"
+    "history": "Opening a historical Run card does not change the active Run speed in the member header",
+    "terminal": "The current speed disappears immediately; a terminal card with no Usage shows a duration clock",
+    "lateUsage": "A summary written after terminal replaces the clock with a token entry, whose popover shows four Usage buckets and duration"
   },
   "observed": {
-    "midstreamBaseline": { "speed": "— tok/s", "duration": "0分 03秒" },
-    "historySwitch": { "activeSpeed": "55.3 tok/s", "activeDuration": "0分 05秒", "sameLine": true, "activeExpanded": false, "historyExpanded": true, "historyHasSpeed": false },
+    "midstreamBaseline": {
+      "speed": null,
+      "duration": "0分 03秒"
+    },
+    "historySwitch": {
+      "activeSpeed": "49.3 tok/s",
+      "activeDuration": "0分 05秒",
+      "sameHeaderRowAsContext": true,
+      "activeExpanded": false,
+      "historyExpanded": true,
+      "historyHasSpeed": false
+    },
     "speedChanges": [
-      { "elapsedMs": 0, "speed": "— tok/s" },
-      { "elapsedMs": 1967, "speed": "55.3 tok/s" },
-      { "elapsedMs": 3467, "speed": "37.9 tok/s" },
-      { "elapsedMs": 4966, "speed": "18.1 tok/s" },
-      { "elapsedMs": 5967, "speed": "11.5 tok/s" },
-      { "elapsedMs": 7467, "speed": "6.0 tok/s" },
-      { "elapsedMs": 8965, "speed": "— tok/s" },
-      { "elapsedMs": 11465, "speed": "52.7 tok/s" },
-      { "elapsedMs": 12466, "speed": "48.2 tok/s" },
-      { "elapsedMs": 13467, "speed": "46.4 tok/s" }
+      {
+        "elapsedMs": 0,
+        "speed": "49.3 tok/s"
+      },
+      {
+        "elapsedMs": 1500,
+        "speed": "35.7 tok/s"
+      },
+      {
+        "elapsedMs": 3000,
+        "speed": "17.2 tok/s"
+      },
+      {
+        "elapsedMs": 4000,
+        "speed": "11.0 tok/s"
+      },
+      {
+        "elapsedMs": 5000,
+        "speed": "7.1 tok/s"
+      },
+      {
+        "elapsedMs": 6499,
+        "speed": null
+      },
+      {
+        "elapsedMs": 8998,
+        "speed": "49.6 tok/s"
+      },
+      {
+        "elapsedMs": 10001,
+        "speed": "46.5 tok/s"
+      },
+      {
+        "elapsedMs": 11001,
+        "speed": "45.4 tok/s"
+      },
+      {
+        "elapsedMs": 12000,
+        "speed": "44.8 tok/s"
+      },
+      {
+        "elapsedMs": 12194,
+        "speed": null
+      }
     ],
     "terminalHasSpeed": false,
+    "terminalBeforeUsage": {
+      "usage": null,
+      "clock": true,
+      "durationInCard": null
+    },
     "lateUsageEntry": "2k",
     "usageRows": [
-      ["Input Token", "1.5k"],
-      ["Output Token", "0.5k"],
-      ["Cache Read", "0.3k"],
-      ["Cache Write", "0k"]
+      [
+        "Input Token",
+        "1.5k"
+      ],
+      [
+        "Output Token",
+        "0.5k"
+      ],
+      [
+        "Cache Read",
+        "0.3k"
+      ],
+      [
+        "Cache Write",
+        "0k"
+      ],
+      [
+        "执行耗时",
+        "0分 18秒"
+      ]
     ]
   },
   "lateUsageMethod": "After the real controlled Run reached succeeded, the acceptance script updated its existing empty runtime_usage_run_summary row. The App stayed open and its monitoring.execution terminal poll read the row. This tests the read and Renderer race, not native Qwen Usage emission.",
