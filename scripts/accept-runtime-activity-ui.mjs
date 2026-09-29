@@ -1357,19 +1357,29 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
   await waitForExpression(app.cdp,
     `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 10_000)
   await evaluate(app.cdp, `document.querySelector('.execution-history-toggle')?.click()`)
+  const historySelector = `.execution-process-stage[data-agent-run-id="${setupRunId}"]`
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(historySelector)})?.querySelector('.execution-run-toggle')?.click()`)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-toggle')?.click()`)
   const switched = await evaluate(app.cdp, `(() => {
     const active = document.querySelector(${JSON.stringify(stageSelector)})
-    const history = document.querySelector(${JSON.stringify(`.execution-process-stage[data-agent-run-id="${setupRunId}"]`)})
+    const history = document.querySelector(${JSON.stringify(historySelector)})
     const parts = [...(active?.querySelectorAll('.execution-run-metric-group .execution-run-metric') ?? [])]
     return { activeSpeed: parts[0]?.textContent?.trim() ?? null,
       activeDuration: parts[1]?.textContent?.trim() ?? null,
       sameLine: parts.length === 2 && Math.abs(parts[0].getBoundingClientRect().top - parts[1].getBoundingClientRect().top) < 1,
+      activeExpanded: active?.querySelector('.execution-run-toggle')?.getAttribute('aria-expanded') === 'true',
+      historyExpanded: history?.querySelector('.execution-run-toggle')?.getAttribute('aria-expanded') === 'true',
       historyHasSpeed: Boolean(history?.querySelector('.execution-run-metric.is-live')),
       historyVisible: Boolean(history?.getClientRects().length) }
   })()`)
-  assert(switched.historyVisible && !switched.historyHasSpeed && switched.activeSpeed
+  assert(switched.historyVisible && switched.historyExpanded && !switched.activeExpanded
+    && !switched.historyHasSpeed && switched.activeSpeed
     && switched.activeDuration && switched.sameLine,
   `Switching current and historical Run cards mixed metrics: ${JSON.stringify(switched)}`)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-toggle')?.click()`)
 
   await waitForExpression(app.cdp,
     `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric.is-live')?.textContent?.trim() === '— tok/s'`, 11_000)

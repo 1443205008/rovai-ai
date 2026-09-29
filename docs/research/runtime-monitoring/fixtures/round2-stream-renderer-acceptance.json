@@ -22,18 +22,19 @@
     "lateUsage": "A summary written after terminal becomes visible through continued polling without restarting the App"
   },
   "observed": {
-    "midstreamBaseline": { "speed": "— tok/s", "duration": "0分 04秒" },
-    "historySwitch": { "activeSpeed": "52.7 tok/s", "activeDuration": "0分 06秒", "sameLine": true, "historyHasSpeed": false },
+    "midstreamBaseline": { "speed": "— tok/s", "duration": "0分 03秒" },
+    "historySwitch": { "activeSpeed": "55.3 tok/s", "activeDuration": "0分 05秒", "sameLine": true, "activeExpanded": false, "historyExpanded": true, "historyHasSpeed": false },
     "speedChanges": [
       { "elapsedMs": 0, "speed": "— tok/s" },
-      { "elapsedMs": 1976, "speed": "52.7 tok/s" },
-      { "elapsedMs": 2977, "speed": "37.1 tok/s" },
-      { "elapsedMs": 4477, "speed": "17.0 tok/s" },
-      { "elapsedMs": 5977, "speed": "8.5 tok/s" },
-      { "elapsedMs": 7476, "speed": "— tok/s" },
-      { "elapsedMs": 10974, "speed": "54.8 tok/s" },
-      { "elapsedMs": 11975, "speed": "49.1 tok/s" },
-      { "elapsedMs": 12977, "speed": "46.8 tok/s" }
+      { "elapsedMs": 1967, "speed": "55.3 tok/s" },
+      { "elapsedMs": 3467, "speed": "37.9 tok/s" },
+      { "elapsedMs": 4966, "speed": "18.1 tok/s" },
+      { "elapsedMs": 5967, "speed": "11.5 tok/s" },
+      { "elapsedMs": 7467, "speed": "6.0 tok/s" },
+      { "elapsedMs": 8965, "speed": "— tok/s" },
+      { "elapsedMs": 11465, "speed": "52.7 tok/s" },
+      { "elapsedMs": 12466, "speed": "48.2 tok/s" },
+      { "elapsedMs": 13467, "speed": "46.4 tok/s" }
     ],
     "terminalHasSpeed": false,
     "lateUsageEntry": "2k",
