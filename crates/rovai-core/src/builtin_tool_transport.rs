@@ -342,6 +342,25 @@ pub struct BuiltinToolIpcRequest {
     pub body: BuiltinToolIpcRequestBody,
 }
 
+/// Private Claude Code PermissionRequest hook transport. This is not a
+/// Built-in Tool invocation and never enters the Agent-facing CLI catalog.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudePermissionHookIpcRequest {
+    pub kind: String,
+    pub ipc_protocol_version: u32,
+    #[serde(flatten)]
+    pub auth: BuiltinToolAuth,
+    pub request_id: String,
+    pub hook: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudePermissionHookIpcResponse {
+    pub decision: Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BuiltinToolIpcResponse {

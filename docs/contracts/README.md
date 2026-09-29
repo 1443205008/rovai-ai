@@ -90,7 +90,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Camp Open Projection v10（历史）](camp-open-projection-v10.md) | main Snapshot 34/Open 6；Open 不读取 event_log，移除 timeline/coverage.timeline，保留 high-water 与业务卡片 |
 | [Camp Open Projection v10（渠道分支历史）](camp-open-projection-channel-v10.md) | v9 保留；Camp/Navigation 增加可选 channelSource，原始 title 不变；合并时保留原文以区分同号合同 |
 | [Camp Open Projection v9（历史）](camp-open-projection-v9.md) | v8 保留；Snapshot 34/Open 5 增加可选 member.fast，仅查询安全缓存 |
-| [Runtime Launch and Verification v44（当前）](runtime-launch-and-verification-v44.md) | 继承 v43；官方 ZCode 新版 Provider Registry 的资源、握手、选模、Probe 和账号边界 |
+| [Runtime Launch and Verification v45（当前）](runtime-launch-and-verification-v45.md) | 继承 v44；Claude Code `--print` 权限 Hook 接入现有 Action/Approval 与 Run fence |
+| [Runtime Launch and Verification v44（历史）](runtime-launch-and-verification-v44.md) | 继承 v43；官方 ZCode 新版 Provider Registry 的资源、握手、选模、Probe 和账号边界 |
 | [Runtime Launch and Verification v43（历史）](runtime-launch-and-verification-v43.md) | 继承 v42；Claude Code 同进程多结果流逐条校验，EOF 后只用最后结果结算和生成最终正文 fallback |
 | [Runtime Launch and Verification v42（历史）](runtime-launch-and-verification-v42.md) | 继承 v41；通用 ACP Host 白名单提取并安全清洗字符串 `error.data.error`，统一 quota detail 分类 |
 | [Runtime Launch and Verification v41（历史）](runtime-launch-and-verification-v41.md) | 主动检查读取最新查找环境、私有草稿预览与检查代数/程序身份一致性；继承 v40 启动设置边界 |

@@ -3,10 +3,37 @@ document_type: version-decisions
 version: v1.72
 authority: decision-rationale
 lifecycle: current
-last_updated: 2026-09-28
+last_updated: 2026-09-29
 ---
 
 # v1.72 版本决定
+
+<a id="v1-72-d06"></a>
+## V1.72-D06：Claude Code 打印模式使用权限 Hook 接入 Rovai 审批
+
+- 状态：accepted
+- 日期：2026-09-29
+- 当前权威：[Runtime Launch and Verification v45](../../contracts/runtime-launch-and-verification-v45.md) 与 [Built-in Tool Runtime](../../architecture/builtin-tool-runtime.md#claude-code-权限审批回调)
+
+### 背景
+
+Claude Code 的 `--print` 没有交互式审批宿主时，会拒绝 `acceptEdits` 未覆盖且没有允许规则的 Shell
+调用；Rovai 因此不会收到可展示的审批请求。直接删除 `-p` 会改变一次性输入、流式结果、取消和终态
+协议，而只给 `rovai send` 增加原生 allow 规则会跳过用户对实际 Shell 命令的确认。
+
+### 选择
+
+保留打印模式，在单次运行的私有设置中注册官方 `PermissionRequest` command hook。内部 `rovai`
+CLI 命令用当前 Run lease 认证，将请求转换为现有 Action/Approval，由用户决策后将原始工具输入
+允许一次或拒绝。Claude Hook 不携带 Tool ID，因此必须与流式 `assistant.tool_use` 的工具名、完整
+输入唯一关联；关联失败时拒绝。工具执行结果仍由同一 Tool ID 结算。
+
+### 后果与替代方案
+
+这增加私有 Hook IPC 和进程内关联状态，但不增加 Agent 业务操作或 MCP Bridge，也不要求重写 Claude
+stdin/stream-json 适配。原生 deny 规则保持有效。未采用 MCP `--permission-prompt-tool` 宿主：它也能
+承接权限，但需要新增仅用于审批的 MCP stdio 服务及其配置、生命周期和协议版本；本次官方 Hook
+已提供所需的非交互审批决定。未采用非打印模式：它会扩大 Session 与输出解析改造范围。
 
 <a id="v1-72-d01"></a>
 ## V1.72-D01：Lark 作为独立 provider，克隆表族并参数化飞书实现

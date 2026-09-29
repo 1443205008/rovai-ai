@@ -186,10 +186,10 @@ try {
       completionRole: 'required'
     }
   )
-  const commandRunId = commandRequest.commandResult?.payload?.agentRunIds?.[0]
-  if (commandRequest.commandResult?.status !== 'accepted' || !commandRunId) {
+  if (commandRequest.commandResult?.status !== 'accepted') {
     throw new Error(`Claude Code command-output intake failed: ${JSON.stringify(commandRequest)}`)
   }
+  const commandRunId = await waitForAgentRunId(core, campId, [firstRun.id, secondRun.id])
   camp = await waitFor(async () => {
     const value = await core.request('camps.snapshot', { campId })
     const commandRun = value.agentRuns.find((agentRun) => agentRun.id === commandRunId)
@@ -242,10 +242,12 @@ try {
       completionRole: 'required'
     }
   )
-  const editRunId = editRequest.commandResult?.payload?.agentRunIds?.[0]
-  if (editRequest.commandResult?.status !== 'accepted' || !editRunId) {
+  if (editRequest.commandResult?.status !== 'accepted') {
     throw new Error(`Claude Code Edit intake failed: ${JSON.stringify(editRequest)}`)
   }
+  const editRunId = await waitForAgentRunId(core, campId, [
+    firstRun.id, secondRun.id, commandRunId
+  ])
   camp = await waitFor(async () => {
     const value = await core.request('camps.snapshot', { campId })
     const editRun = value.agentRuns.find((agentRun) => agentRun.id === editRunId)
@@ -314,10 +316,10 @@ try {
     purpose: 'Verify Claude Code cancellation and descendant cleanup.'
   })
   const cancellationCampId = cancellationRequest.payload?.campId
-  const cancellationRunId = cancellationRequest.payload?.agentRunIds?.[0]
-  if (cancellationRequest.status !== 'accepted' || !cancellationCampId || !cancellationRunId) {
+  if (cancellationRequest.status !== 'accepted' || !cancellationCampId) {
     throw new Error(`Claude Code cancellation intake failed: ${JSON.stringify(cancellationRequest)}`)
   }
+  const cancellationRunId = await waitForAgentRunId(core, cancellationCampId)
   const cancellationStarted = await waitFor(async () => {
     const event = core.events.find((candidate) =>
       candidate.method === 'runtime.action'
@@ -381,6 +383,32 @@ try {
     throw new Error('Claude Code cancelled Bash descendant still created its delayed file')
   }
 
+  let approvalSmoke = null
+  if (process.env.ROVAI_CLAUDE_APPROVAL_SMOKE === '1') {
+    profile = await core.request('members.get', { agentId: 'agent_1' })
+    const interactivePermissions = await core.request('members.runtime.set', {
+      commandId: crypto.randomUUID(),
+      command: {
+        agentId: profile.agentId,
+        expectedVersion: profile.version,
+        adapterKind: 'claude-code-cli',
+        model: profile.runtimeConfiguration.model,
+        permissions: {
+          adapterKind: 'claude-code-cli',
+          schemaVersion: 1,
+          values: { permission_mode: 'acceptEdits' }
+        }
+      }
+    })
+    if (interactivePermissions.status !== 'applied') {
+      throw new Error(`Claude Code interactive permissions were rejected: ${JSON.stringify(interactivePermissions)}`)
+    }
+    const allowed = await runClaudeApprovalScenario(core, workspace, 'allow_once')
+    const denied = await runClaudeApprovalScenario(core, workspace, 'deny')
+    const cancelled = await runClaudeApprovalScenario(core, workspace, 'cancel')
+    approvalSmoke = { allowed, denied, cancelled }
+  }
+
   console.log(JSON.stringify({
     ok: true,
     runtime: snapshot.reportedVersion,
@@ -411,6 +439,7 @@ try {
       actionStarted: true,
       delayedFileCreated: false
     },
+    approvalSmoke,
     teamToolAdvertised: true
   }, null, 2))
 } finally {
@@ -419,10 +448,89 @@ try {
   await rm(fixtureRoot, { recursive: true, force: true })
 }
 
+async function runClaudeApprovalScenario(core, workspace, decision) {
+  const marker = `ROVAI_CLAUDE_APPROVAL_${decision}_${crypto.randomUUID()}`
+  const intake = await createConfiguredCampAndSend(core.request, {
+    commandId: crypto.randomUUID(),
+    workspace,
+    memberAgentIds: ['agent_1'],
+    defaultLeadAgentId: 'agent_1',
+    body: `Use the Bash tool exactly once to run this exact command: rovai send --public-only --body "${marker}". If permission is denied, do not retry. Then report the result.`,
+    purpose: `Verify Claude Code ${decision} permission callback.`
+  })
+  const campId = intake.payload?.campId
+  if (intake.status !== 'accepted' || !campId) {
+    throw new Error(`Claude approval intake failed: ${JSON.stringify(intake)}`)
+  }
+  const runId = await waitForAgentRunId(core, campId)
+  let resolvedApprovalId = null
+  const result = await waitFor(async () => {
+    const snapshot = await core.request('camps.snapshot', { campId })
+    const action = snapshot.actions.find((candidate) => candidate.agentRunId === runId)
+    const approval = snapshot.approvals.find((candidate) =>
+      candidate.actionId === action?.id && candidate.status === 'pending'
+    )
+    if (approval && !resolvedApprovalId) {
+      const run = snapshot.agentRuns.find((candidate) => candidate.id === runId)
+      if (approval.permissionSemantics !== 'runtime_managed_v2') {
+        throw new Error(`Claude approval has no expected native option: ${JSON.stringify(approval)}`)
+      }
+      if (decision === 'cancel') {
+        const cancellation = await core.request('agentRuns.cancel', {
+          commandId: crypto.randomUUID(),
+          command: { campId, agentRunId: runId, expectedVersion: run.version }
+        })
+        if (cancellation.status === 'rejected') {
+          throw new Error(`Claude pending approval cancellation was rejected: ${JSON.stringify(cancellation)}`)
+        }
+      } else {
+        const option = approval.options.find((candidate) => candidate.kind === decision)
+        if (!option) {
+          throw new Error(`Claude approval has no ${decision} option: ${JSON.stringify(approval)}`)
+        }
+        const resolution = await core.request('action.approvals.resolve', {
+          commandId: crypto.randomUUID(),
+          campId,
+          approvalId: approval.id,
+          expectedVersion: approval.version,
+          optionId: option.optionId,
+          reason: 'Isolated Claude permission callback smoke'
+        })
+        if (resolution.status === 'rejected') {
+          throw new Error(`Claude approval resolution was rejected: ${JSON.stringify(resolution)}`)
+        }
+      }
+      resolvedApprovalId = approval.id
+    }
+    const run = snapshot.agentRuns.find((candidate) => candidate.id === runId)
+    if (run && ['succeeded', 'failed', 'cancelled'].includes(run.status)) {
+      return { snapshot, run, action }
+    }
+    return null
+  }, `Claude ${decision} Approval`)
+  const finalSnapshot = await core.request('camps.snapshot', { campId })
+  const action = finalSnapshot.actions.find((candidate) => candidate.agentRunId === runId)
+  const published = finalSnapshot.messages.some((message) => message.body === marker)
+  if (!resolvedApprovalId
+      || (decision === 'allow_once' && (result.run.status !== 'succeeded' || action?.status !== 'succeeded' || !published))
+      || (decision === 'deny' && (action?.status !== 'not_executed' || published))
+      || (decision === 'cancel' && (result.run.status !== 'cancelled' || action?.status !== 'not_executed' || published))) {
+    throw new Error(`Claude ${decision} approval did not settle safely: ${JSON.stringify({
+      run: result.run,
+      action,
+      published,
+      approval: finalSnapshot.approvals.find((candidate) => candidate.id === resolvedApprovalId),
+      events: core.events.filter((event) => event.params?.agentRunId === runId).slice(-30)
+    })}`)
+  }
+  return { runStatus: result.run.status, actionStatus: action?.status, published }
+}
+
 function startCore(dataDirectory) {
   const child = spawn(join(root, 'target', 'debug', 'rovai-core'), [
     ...coreDataDirectoryArguments(dataDirectory),
-    '--skill-library-root', join(dataDirectory, 'managed-skill-library')
+    '--skill-library-root', join(dataDirectory, 'managed-skill-library'),
+    '--mcp-config-path', join(dataDirectory, 'mcp.json')
   ], {
     cwd: root,
     stdio: ['pipe', 'pipe', 'pipe']
@@ -475,6 +583,13 @@ async function waitFor(probe, label) {
   throw new Error(`Timed out waiting for ${label}`)
 }
 
+async function waitForAgentRunId(core, campId, excludedIds = []) {
+  return waitFor(async () => {
+    const snapshot = await core.request('camps.snapshot', { campId })
+    return snapshot.agentRuns.find((run) => !excludedIds.includes(run.id))?.id ?? null
+  }, `AgentRun in Camp ${campId}`)
+}
+
 function isUuid(value) {
   return typeof value === 'string'
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
@@ -501,16 +616,13 @@ function runtimeNarration(events, agentRunId) {
 }
 
 async function sendCampMessage(request, campId, body, execution) {
-  const draft = await request('camp.composerDraft.get', { campId })
-  const saved = await request('camp.composerDraft.save', {
-    campId,
-    expectedRevision: draft.revision,
-    content: [{ kind: 'text', text: body }]
-  })
   return request('camp.messages.send', {
     commandId: crypto.randomUUID(),
     campId,
-    draftRevision: saved.revision,
+    content: { version: 2, segments: [{ kind: 'text', text: body }] },
+    sourceAttachments: [],
+    quotes: [],
+    replyToCampMessageId: null,
     execution
   })
 }

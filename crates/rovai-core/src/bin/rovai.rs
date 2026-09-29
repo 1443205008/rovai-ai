@@ -18,14 +18,18 @@ use rovai_core::builtin_tool_transport::{
     BuiltinToolCliContext, BuiltinToolCliIdentity, BuiltinToolDescription, BuiltinToolIpcRequest,
     BuiltinToolIpcRequestBody, BuiltinToolIpcResponse, COMPACTION_HOOK_IPC_PROTOCOL_VERSION,
     COMPACTION_OBSERVATION_IPC_KIND, COMPACTION_OBSERVATION_OUTBOX_SCHEMA_VERSION,
-    CompactionHookIpcRequest, CompactionHookIpcResponse, CompactionObservationOutboxRecord,
-    LocalIpcEndpoint, ROVAI_CLI_CONTEXT_ENV, ROVAI_RUN_TMP_ENV, builtin_tool_description,
+    ClaudePermissionHookIpcRequest, ClaudePermissionHookIpcResponse, CompactionHookIpcRequest,
+    CompactionHookIpcResponse, CompactionObservationOutboxRecord, LocalIpcEndpoint,
+    ROVAI_CLI_CONTEXT_ENV, ROVAI_RUN_TMP_ENV, builtin_tool_description,
     builtin_tool_identity_by_command,
 };
 use rovai_core::camp_message_send_teaching::{
     CAMP_MESSAGE_SEND_BODY_HELP, CAMP_MESSAGE_SEND_FILE_HELP, CAMP_MESSAGE_SEND_HELP_EXAMPLES,
     CAMP_MESSAGE_SEND_PUBLIC_ONLY_HELP, CAMP_MESSAGE_SEND_TO_HELP,
     CAMP_MESSAGE_SEND_TO_PRINCIPAL_HELP,
+};
+use rovai_core::claude_permission::{
+    CLAUDE_PERMISSION_HOOK_IPC_KIND, CLAUDE_PERMISSION_HOOK_IPC_VERSION, deny_decision, hook_output,
 };
 use rovai_core::command::canonical_json_digest;
 use rovai_core::platform::local_ipc::LocalIpcClientStream;
@@ -100,6 +104,15 @@ async fn run() -> Result<u8> {
         // Core, and uncertain acknowledgements must never block compaction or
         // the AgentRun that triggered it.
         let _ = run_compaction_hook(&args[1..]).await;
+        return Ok(0);
+    }
+    if args.as_slice() == ["__claude-permission-hook"] {
+        // A hook must always return an explicit decision. If Core, its Run
+        // lease, or the response is unavailable, Claude receives a denial.
+        let decision = run_claude_permission_hook()
+            .await
+            .unwrap_or_else(|_| deny_decision("Rovai 审批通道不可用，操作已拒绝"));
+        println!("{}", serde_json::to_string(&hook_output(decision))?);
         return Ok(0);
     }
     if args.as_slice() == ["--version"] || args.as_slice() == ["version"] {
@@ -212,6 +225,50 @@ async fn run() -> Result<u8> {
             Ok(2)
         }
     }
+}
+
+async fn run_claude_permission_hook() -> Result<Value> {
+    const MAX_HOOK_BYTES: u64 = 1024 * 1024;
+    let mut input = Vec::new();
+    std::io::stdin()
+        .take(MAX_HOOK_BYTES + 1)
+        .read_to_end(&mut input)?;
+    if input.len() as u64 > MAX_HOOK_BYTES {
+        bail!("Claude permission hook input exceeds the private transport limit");
+    }
+    let hook: Value = serde_json::from_slice(&input)?;
+    if !hook.is_object() {
+        bail!("Claude permission hook input must be an object");
+    }
+    let context = load_context()?;
+    let request = ClaudePermissionHookIpcRequest {
+        kind: CLAUDE_PERMISSION_HOOK_IPC_KIND.into(),
+        ipc_protocol_version: CLAUDE_PERMISSION_HOOK_IPC_VERSION,
+        auth: context.auth()?,
+        request_id: Uuid::new_v4().to_string(),
+        hook,
+    };
+    let mut stream = tokio::time::timeout(
+        CORE_TIMEOUT,
+        LocalIpcClientStream::connect(&context.core_endpoint),
+    )
+    .await??;
+    stream.write_all(&serde_json::to_vec(&request)?).await?;
+    stream.write_all(b"\n").await?;
+    stream.flush().await?;
+    let frame =
+        tokio::time::timeout(Duration::from_secs(3500), read_response_frame(stream)).await??;
+    let response: ClaudePermissionHookIpcResponse = serde_json::from_str(&frame)?;
+    let behavior = response.decision.get("behavior").and_then(Value::as_str);
+    if !matches!(behavior, Some("allow" | "deny")) {
+        bail!("Claude permission response has no supported decision");
+    }
+    if behavior == Some("allow")
+        && response.decision.get("updatedInput") != request.hook.get("tool_input")
+    {
+        bail!("Claude permission response changed the reviewed tool input");
+    }
+    Ok(response.decision)
 }
 
 async fn run_compaction_hook(args: &[String]) -> Result<()> {

@@ -242,6 +242,16 @@ Electron 回归使用生产 adapter、CampWorkspace 与 CSS，验证空事件下
 
 ### Claude Code 无 Prompt 目录验证
 
+`claude_permission::tests::permission_hook_binds_session_and_preserves_exact_tool_input` 是 Claude
+`PermissionRequest` 输入准入与原样回填的最低成本 owner：修复前 `acceptEdits` 下的 `rovai send`
+没有可回填的审批请求；既有流解析测试不覆盖 Hook 的 Session 与选项语义。最小命令为
+`cargo test -p rovai-core --lib claude_permission::tests::`。
+`application::tests::claude_permission_host_requires_unique_native_tool_and_delivery_ack`
+单独拥有 Hook/流式 Tool ID 的进程内关联及 flush ACK 边界；纯 parser 无法证明重复工具不会
+被错配或响应发送前即被视为交付。最小命令为
+`cargo test -p rovai-core --features extended-tests --lib claude_permission_host_requires_unique_native_tool_and_delivery_ack`。
+真实允许、拒绝和取消仍需隔离 Claude Runtime Smoke 验证，不归入普通 Rust 测试。
+
 目录协议与进程生命周期由共享 Core library 的 `health::claude_catalog_tests` owner 验证，正常门禁使用临时
 可执行夹具，不启动真实模型。安装版手工验证使用显式 ignored 测试：
 
@@ -484,7 +494,7 @@ Windows x64 job 验证。改动还涉及完整桌面挂载和恢复时，在遵�
 | --- | --- | --- |
 | `pnpm smoke:intake` | Codex | 创建 Git fixture；验证 Camp 消息、连续 Conversation、重启和删除 |
 | `pnpm smoke:acp-runtime` | 已完成接入的 ACP Runtime（含 TRAE、Kimi、Grok） | `ROVAI_ACP_SMOKE_ADAPTER` 可选择单一 Runtime；命令矩阵断言公开 command output 进入 `runtime.action.payload.output`。TRAE 覆盖 warm Host/Session 与 exact `session/load` HistoryRestore；Grok `>= 1.0.0` 覆盖 warm Host/Session 与标准 ACP `session/resume`；Kimi/Grok 的普通 ACP agent text（包括 provider `<think>`）原样进入执行台与 final。Grok 正式 Host 使用官方 `$GROK_HOME/config.toml` 和 mode-0600 `.env`；隔离 Probe/Smoke 使用同一官方布局 |
-| `pnpm smoke:claude-runtime` | Claude Code | 验证原生权限、连续性和 Resume；两次无工具回复必须投影公开 narration；随后强制 `Bash` 固定 `printf`，断言公开 output、原生 tool-use ID 与同 Session/Conversation 关联 |
+| `pnpm smoke:claude-runtime` | Claude Code | 验证原生权限、连续性和 Resume；两次无工具回复必须投影公开 narration；随后强制 `Bash` 固定 `printf`，断言公开 output、原生 tool-use ID 与同 Session/Conversation 关联。`ROVAI_CLAUDE_APPROVAL_SMOKE=1` 追加 `acceptEdits` 下真实 `rovai send` 允许一次、拒绝及待审批取消，核对 Action、Run 和消息效果 |
 | `pnpm smoke:antigravity-runtime` | Antigravity + Codex | 要求 `output.stream_json`，强制原生 `run_command` 固定 `printf` 并断言公开 output/step ID；另覆盖同 Session 续接、私有日志清理和 Antigravity 到 Codex 换绑 |
 | `pnpm smoke:pi-runtime` | Pi 0.84.4+ | 复制官方 Pi auth/settings/models 到临时 0700 `PI_CODING_AGENT_DIR`，隔离 Probe/Native Session/data/workspace；验证 exact cold resume、warm LRU、managed receipt、allow/deny、cancel 无副作用、Action output、locator 隐私与结构化 Usage。自动设置只在 debug Core 有效的 Pi qualification override；结果不是正式平台资格 |
 | `pnpm smoke:action-approval` | Codex | 验证越界动作的 Approval 与唯一副作用 |

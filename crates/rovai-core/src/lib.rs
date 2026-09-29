@@ -38,6 +38,7 @@ pub mod camp_message_send_teaching;
 pub mod camp_open;
 pub mod canonical_activity;
 pub mod channel;
+pub mod claude_permission;
 pub mod collaboration;
 pub mod command;
 pub mod compaction;

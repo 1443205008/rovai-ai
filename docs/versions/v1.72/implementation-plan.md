@@ -392,3 +392,23 @@ macOS 清单序列化启用 YAML 1.1 字符串兼容，保留旧客户端所需�
 | 已发布清单的修补预演 | 对 v0.4.1 清单重新序列化，仅增加日期引号；解析后的字段值、文件地址与安装包哈希一致，配套 checksum 仅更新清单一行。该预演不表示已替换远端 Release 资产 |
 
 此项未重新打包、签名或安装 App；本地生成物与现有公开发布资产分别记录。
+
+## 2026-09-29 Claude Code 权限审批
+
+保留 `--print` 与原有流式输入/终态，在私有运行设置里注册 Claude Code `PermissionRequest`
+Hook。Hook 使用当前 Run lease 进入 Core，经 Native Session、Run/epoch 和完整工具输入与原生 Tool ID
+唯一关联，复用 Action/Approval Dock 的允许一次或拒绝；已批准的原始输入回填给 Claude，工具结果再
+结算 Action。内部 Hook 命令不进入 Agent Built-in 业务目录。合同与理由分别见
+[Runtime Launch v45](../../contracts/runtime-launch-and-verification-v45.md)和[V1.72-D06](decisions.md#v1-72-d06)。
+
+| 验证 | 结果与边界 |
+| --- | --- |
+| `cargo check -p rovai-core --bins --lib`、两项定向 Rust 测试 | 编译通过；Hook 原样输入与 Session fence、唯一 Tool ID 领取、响应 flush ACK 和 Run 清理通过 |
+| `ROVAI_CLAUDE_APPROVAL_SMOKE=1 node scripts/smoke-claude-runtime.mjs` | 本机 Claude Code CLI 2.1.274 的隔离 Core/Git fixture 通过：`acceptEdits` 中允许一次使 `rovai send` 发布且 Action succeeded；拒绝与待审批取消均无消息副作用、Action not_executed；原有 Resume、命令输出、Edit 差异和执行中取消也通过 |
+| `pnpm test:approval-dock` | 隔离 Electron `userData` 的既有审批 Dock 交互测试通过，覆盖原生选项身份、焦点和桌面/手机布局；未启动 Core 或 Runtime |
+| 兼容性证据绑定 | 新 Smoke 记录改变了 `docs/runtime-compatibility.md` 的 SHA-256；同步更新 `MACOS_RUNTIME_COMPATIBILITY_EVIDENCE_REVISION`，定向 `platform_evidence_revisions_bind_their_frozen_source_bytes` 测试通过，平台准入集合不变 |
+| `pnpm test:rust:pr` | 本机 393 通过、1 失败、1 忽略；唯一失败为未改动的 `database_admission::tests::read_probe_tolerates_only_a_new_empty_wal_not_authority_changes` 对 macOS `com.apple.provenance` 不存在的假设，与本节改动无关，同一基线问题已在上节记录 |
+| `cargo test --workspace -- --skip read_probe_tolerates_only_a_new_empty_wal_not_authority_changes` | 跳过上述单项已知环境失败后，workspace 其余 Rust 目标全部通过；不把该跳过视为原门禁全绿 |
+| `pnpm docs:test`、`pnpm docs:check`、带真实基线 SHA 的 `pnpm docs:check:ci` | 均通过；版本、决定、合同与导航门禁通过 |
+
+本次真实验收使用 Core 和 Claude CLI，没有启动或安装日常 Desktop；审批 Dock 复用现有通用渲染与选项提交路径。

@@ -506,6 +506,22 @@ impl ClaudeCodeCliRuntimeAdapter {
         };
         let mut inline_settings = serde_json::json!({});
         rovai_core::camp_fast::merge_claude_inline_settings(&mut inline_settings, fast_override)?;
+        if request.builtin_tools.is_some()
+            && !legacy_read_only
+            && !matches!(permission_mode, "bypassPermissions" | "dontAsk")
+        {
+            // Claude's documented PermissionRequest hook also runs in print
+            // mode. The private CLI command returns a decision only after
+            // Rovai's existing Approval has been resolved and fenced to this
+            // Run; native deny rules still take precedence over its allow.
+            inline_settings["hooks"]["PermissionRequest"] = serde_json::json!([{
+                "hooks": [{
+                    "type": "command",
+                    "command": "rovai __claude-permission-hook",
+                    "timeout": 3600,
+                }],
+            }]);
+        }
         let mut command = Command::new(executable);
         rovai_core::runtime_discovery::configure_runtime_command(
             rovai_core::agent_profile::AdapterKind::ClaudeCodeCli,
@@ -1544,6 +1560,16 @@ fn normalize_claude_runtime_events(
                 state
                     .tool_names
                     .insert(tool_use_id.clone(), tool_name.clone());
+                if let Some(input) = block.get("input").filter(|input| input.is_object()) {
+                    normalized.push(ClaudeCodeRuntimeEvent {
+                        event_type: "claude.permission_tool_started",
+                        payload: serde_json::json!({
+                            "toolCallId": tool_use_id,
+                            "toolName": tool_name,
+                            "toolInput": input,
+                        }),
+                    });
+                }
                 if let Some(input) = public_claude_tool_input(&tool_name, block.get("input")) {
                     state.tool_inputs.insert(tool_use_id.clone(), input);
                 }

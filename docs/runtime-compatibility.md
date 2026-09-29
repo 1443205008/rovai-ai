@@ -1,7 +1,7 @@
 ---
 document_type: runtime-compatibility-register
 authority: runtime-validation-evidence
-last_updated: 2026-09-24
+last_updated: 2026-09-29
 ---
 
 # Agent Runtime 兼容性清单
@@ -881,6 +881,16 @@ message/thought、plan、tool、permission request 与 usage/mode/catalog update
 属于当前 Prompt。只有匹配 request ID 的成功 prompt response 确认 accepted，匹配 error response
 结算为 `not_accepted`。这项共享实现不改写上表各 Runtime 的实测版本；上游若改变
 ACP prompt response shape，须重新执行对应真实 Runtime smoke。
+
+### Claude Code `--print` 权限 Hook（2026-09-29）
+
+本机 Claude Code CLI `2.1.274` 在临时 Core 数据目录、独立 Skill Library、MCP 配置与 Git 工作区运行
+`ROVAI_CLAUDE_APPROVAL_SMOKE=1 node scripts/smoke-claude-runtime.mjs`。`acceptEdits` 下的 `Bash`
+调用实际启动 `rovai __claude-permission-hook` 并生成现有 Action/Approval：允许一次后 `rovai send`
+消息发布、Run 与 Action 均 succeeded；拒绝后无消息副作用，Action 为 not_executed；待审批时取消
+Run 后 Run 为 cancelled、Action 为 not_executed、无消息副作用。原有同 Native Session 续接、命令输出、
+Edit 精确差异和执行中取消也通过。模型 ID 由本机 Runtime 报告为 `gpt-6-sol`；此结果只证明本机
+Claude CLI 与当前配置的真实调用，不扩大其他平台或 Provider 的资格，也未对打包 Desktop 作手工点击验收。
 
 ## Antigravity one-shot 输入确认
 
