@@ -146,13 +146,15 @@ describe('execution console layout', () => {
       .toMatch(/min-height:\s*32px/)
   })
 
-  it('swaps live elapsed time only on title hover or visible keyboard focus in a fixed slot', () => {
-    expect(styleBlock('.execution-process-stage.status-running .execution-run-trailing')).toMatch(/width:\s*91px/)
+  it('keeps live speed and elapsed time in one fixed slot with title actions on hover or focus', () => {
+    expect(styleBlock('.execution-process-stage.status-running .execution-run-trailing')).toMatch(/width:\s*156px/)
     expect(styleBlock('.execution-process-stage.status-running .execution-run-operations')).toMatch(/opacity:\s*0/)
     expect(styleBlock('.execution-process-stage.status-running .execution-run-operations')).toMatch(/right:\s*9px/)
     const activeTitle = '.execution-process-stage.status-running .execution-run-card-header:is(:hover, :has(:focus-visible))'
     expect(styleBlock(`${activeTitle} .execution-run-operations`)).toMatch(/opacity:\s*1/)
-    expect(styleBlock(`${activeTitle} .execution-run-metric`)).toMatch(/opacity:\s*0/)
+    expect(styleBlock(`${activeTitle} .execution-run-metric-group`)).toMatch(/opacity:\s*0/)
+    expect(workspaceSource).toMatch(/<span className="execution-run-metric-group">\s*<span className="execution-run-metric is-live"/)
+    expect(workspaceSource).toMatch(/<span className="execution-run-metric">\{duration\}<\/span>/)
     expect(styles).not.toMatch(/(?:^|\n)\s*\.execution-run-metric\.is-live\s*\{[^}]*display:\s*none/)
     expect(styleBlock('.execution-process-stage.status-waiting .execution-run-metric.is-live')).toMatch(/display:\s*none/)
     expect(styles).not.toMatch(/\.execution-process-card:(?:hover|focus-within)[^{]*\.execution-run-operations/)

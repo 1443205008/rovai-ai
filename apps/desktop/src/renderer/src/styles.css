@@ -2365,14 +2365,14 @@ button.file-preview-html-feedback:hover,
 .execution-run-operations button.is-danger:is(:hover, :focus-visible) { background: color-mix(in srgb, var(--danger) 12%, var(--danger-soft)); }
 .execution-run-operations button:focus-visible { outline: 2px solid var(--conversation-focus); outline-offset: 2px; }
 .execution-run-operations button:disabled { cursor: wait; opacity: .65; }
-.execution-process-stage.status-running .execution-run-trailing { position: relative; width: 91px; }
+.execution-process-stage.status-running .execution-run-trailing { position: relative; width: 156px; }
 .execution-process-stage.status-running .execution-run-operations { position: absolute; right: 9px; opacity: 0; pointer-events: none; }
-.execution-process-stage.status-running .execution-run-card-header:is(:hover, :has(:focus-visible)) .execution-run-metric { opacity: 0; }
+.execution-process-stage.status-running .execution-run-card-header:is(:hover, :has(:focus-visible)) .execution-run-metric-group { opacity: 0; }
 .execution-process-stage.status-running .execution-run-card-header:is(:hover, :has(:focus-visible)) .execution-run-operations { opacity: 1; pointer-events: auto; }
 @media (hover: none), (pointer: coarse) {
   .execution-process-stage.status-running .execution-run-trailing { width: auto; }
   .execution-process-stage.status-running .execution-run-operations { position: static; opacity: 1; pointer-events: auto; }
-  .execution-process-stage.status-running .execution-run-card-header:is(:hover, :has(:focus-visible)) .execution-run-metric { opacity: 1; }
+  .execution-process-stage.status-running .execution-run-card-header:is(:hover, :has(:focus-visible)) .execution-run-metric-group { opacity: 1; }
 }
 .execution-run-operations svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.45; }
 .execution-process-card > [id^="execution-run-content-"] { padding: 12px 10px 10px; }

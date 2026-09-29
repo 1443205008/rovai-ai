@@ -24,7 +24,7 @@ use rovai_core::{
     agent_profile::{AdapterKind, FrozenAgentRuntimeConfig},
     agent_run_image::{AcpImageAccumulator, RuntimeImageObservation},
     agent_runtime_adapter::{
-        AcpClientTerminalMode, AgentRuntimeAdapterRegistry, acp_model_catalog_from_session,
+        AcpClientTerminalMode, AgentRuntimeAdapterRegistry, acp_model_catalog_for_adapter,
         acp_runtime_model_id_from_session, write_kiro_additive_agent_config,
     },
     builtin_tool_transport::{BUILTIN_TOOL_CONTRACT_VERSION, builtin_tool_catalog_digest},
@@ -104,6 +104,13 @@ pub enum AcpIncoming {
         native_prompt_id: String,
         delivery_id: String,
         sequence: u64,
+        message: Value,
+    },
+    LateSessionContext {
+        adapter_kind: AdapterKind,
+        agent_run_id: String,
+        execution_epoch: i64,
+        native_session_id: String,
         message: Value,
     },
     HostDiagnostic {
@@ -211,6 +218,21 @@ impl AcpRuntimeOwner {
             execution_epoch: self.execution_epoch,
         }
     }
+
+    fn late_session_context(
+        &self,
+        adapter_kind: AdapterKind,
+        native_session_id: &str,
+        message: Value,
+    ) -> AcpIncoming {
+        AcpIncoming::LateSessionContext {
+            adapter_kind,
+            agent_run_id: self.agent_run_id.clone(),
+            execution_epoch: self.execution_epoch,
+            native_session_id: native_session_id.to_string(),
+            message,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -293,6 +315,9 @@ enum AcpSessionMessageRoute {
         active_prompt: AcpActivePrompt,
         sequence: u64,
     },
+    LateSessionContext {
+        owner: AcpRuntimeOwner,
+    },
     SessionMetadata,
     ReplayQuarantined,
     Quarantined(String),
@@ -344,7 +369,8 @@ fn is_known_session_lifecycle_extension(adapter_kind: AdapterKind, message: &Val
     }
     let method = message.get("method").and_then(Value::as_str);
     (adapter_kind == AdapterKind::GrokBuild
-        && method.is_some_and(|method| method.starts_with("_x.ai/")))
+        && method.is_some_and(|method| method.starts_with("_x.ai/"))
+        && !is_grok_turn_usage_frame(message))
         || matches!(
             (adapter_kind, message.get("method").and_then(Value::as_str)),
             (AdapterKind::KiroCli, Some("_kiro.dev/compaction/status"))
@@ -360,6 +386,19 @@ fn is_known_session_lifecycle_extension(adapter_kind: AdapterKind, message: &Val
                     Some("_zcode/compaction" | "_zcode/inputAccepted")
                 )
         )
+}
+
+fn is_grok_turn_usage_frame(message: &Value) -> bool {
+    message.get("id").is_none()
+        && message.get("method").and_then(Value::as_str) == Some("_x.ai/session_notification")
+        && message
+            .pointer("/params/update/sessionUpdate")
+            .and_then(Value::as_str)
+            == Some("turn_completed")
+        && message
+            .pointer("/params/update/prompt_id")
+            .and_then(Value::as_str)
+            .is_some()
 }
 
 fn is_kimi_compaction_completed_frame(message: &Value) -> bool {
@@ -514,6 +553,7 @@ fn is_en_us_unsigned_integer(value: &str) -> bool {
 fn is_idle_session_metadata(adapter_kind: AdapterKind, message: &Value) -> bool {
     is_session_catalog_update(message)
         || is_known_session_lifecycle_extension(adapter_kind, message)
+        || (adapter_kind == AdapterKind::GrokBuild && is_grok_turn_usage_frame(message))
         || (adapter_kind == AdapterKind::KimiCodeCli && is_kimi_compaction_completed_frame(message))
         || (message.get("id").is_none()
             && message.get("method").and_then(Value::as_str) == Some("session/update")
@@ -521,6 +561,18 @@ fn is_idle_session_metadata(adapter_kind: AdapterKind, message: &Value) -> bool 
                 .pointer("/params/update/sessionUpdate")
                 .and_then(Value::as_str)
                 == Some("usage_update"))
+}
+
+fn is_late_session_context_gauge(message: &Value) -> bool {
+    message.get("id").is_none()
+        && message.get("method").and_then(Value::as_str) == Some("session/update")
+        && message
+            .pointer("/params/update/sessionUpdate")
+            .and_then(Value::as_str)
+            == Some("usage_update")
+        && ["/params/update/used", "/params/update/size"]
+            .iter()
+            .any(|path| message.pointer(path).and_then(Value::as_u64).is_some())
 }
 
 const ACP_HISTORY_RESTORE_MAX_EVENTS: u64 = 4_096;
@@ -1223,6 +1275,7 @@ pub(crate) struct AcpHost {
     next_compaction_observation_sequence: AtomicU64,
     grok_acceptance_auto_compact_armed: AtomicBool,
     routes: RwLock<HashMap<String, AcpSessionRoute>>,
+    late_context_owners: RwLock<HashMap<String, (AcpRuntimeOwner, Instant)>>,
     ingress_fence: Mutex<()>,
     compaction_observers: RwLock<HashMap<String, AcpCompactionObserverRoute>>,
     known_sessions: RwLock<HashSet<String>>,
@@ -1402,6 +1455,7 @@ impl AcpHost {
             next_compaction_observation_sequence: AtomicU64::new(1),
             grok_acceptance_auto_compact_armed: AtomicBool::new(false),
             routes: RwLock::new(HashMap::new()),
+            late_context_owners: RwLock::new(HashMap::new()),
             ingress_fence: Mutex::new(()),
             compaction_observers: RwLock::new(HashMap::new()),
             known_sessions: RwLock::new(HashSet::new()),
@@ -1714,6 +1768,16 @@ impl AcpHost {
                                     display_owner,
                                 )
                                 .await;
+                            }
+                            AcpSessionMessageRoute::LateSessionContext { owner } => {
+                                let session_id = session_id
+                                    .as_deref()
+                                    .expect("late ACP Context route has Session ID");
+                                let _ = host.incoming.send(owner.late_session_context(
+                                    host.adapter_kind,
+                                    session_id,
+                                    message,
+                                ));
                             }
                             AcpSessionMessageRoute::ReplayQuarantined => {
                                 if message.get("id").is_some() {
@@ -2080,6 +2144,7 @@ impl AcpHost {
         {
             bail!("ACP Native Session is already bound to another logical runtime");
         }
+        self.late_context_owners.write().await.remove(session_id);
         routes.insert(
             session_id.to_string(),
             AcpSessionRoute {
@@ -2242,6 +2307,17 @@ impl AcpHost {
         let mut routes = self.routes.write().await;
         let Some(route) = routes.get_mut(session_id) else {
             drop(routes);
+            if is_late_session_context_gauge(message)
+                && let Some((owner, detached_at)) = self
+                    .late_context_owners
+                    .read()
+                    .await
+                    .get(session_id)
+                    .cloned()
+                && detached_at.elapsed() < Duration::from_secs(60)
+            {
+                return AcpSessionMessageRoute::LateSessionContext { owner };
+            }
             if ((self.adapter_kind == AdapterKind::KimiCodeCli
                 && is_kimi_compaction_completed_frame(message))
                 || (self.adapter_kind == AdapterKind::GrokBuild
@@ -2358,6 +2434,11 @@ impl AcpHost {
                     )
                 {
                     return AcpSessionMessageRoute::SessionMetadata;
+                }
+                if is_late_session_context_gauge(message) {
+                    return AcpSessionMessageRoute::LateSessionContext {
+                        owner: route.owner.clone(),
+                    };
                 }
                 if is_idle_session_metadata(self.adapter_kind, message) {
                     return AcpSessionMessageRoute::SessionMetadata;
@@ -2566,13 +2647,23 @@ impl AcpHost {
         let mut routes = self.routes.write().await;
         if routes.get(session_id).map(|route| &route.owner) == Some(owner)
             && let Some(route) = routes.remove(session_id)
-            && self.adapter_kind == AdapterKind::ZcodeApp
-            && matches!(route.phase, AcpSessionPhase::PromptActive(_))
         {
-            self.zcode_detached_prompts
-                .write()
-                .await
-                .insert(session_id.to_string(), route);
+            if matches!(route.phase, AcpSessionPhase::PromptCompleted(_)) {
+                let mut late = self.late_context_owners.write().await;
+                late.retain(|_, (_, detached_at)| detached_at.elapsed() < Duration::from_secs(60));
+                late.insert(
+                    session_id.to_string(),
+                    (route.owner.clone(), Instant::now()),
+                );
+            }
+            if self.adapter_kind == AdapterKind::ZcodeApp
+                && matches!(route.phase, AcpSessionPhase::PromptActive(_))
+            {
+                self.zcode_detached_prompts
+                    .write()
+                    .await
+                    .insert(session_id.to_string(), route);
+            }
         }
         drop(routes);
         // Session terminal cleanup is idempotent and must still run when a
@@ -2593,13 +2684,25 @@ impl AcpHost {
                 let mut routes = self.routes.write().await;
                 if routes.get(session_id).map(|route| &route.owner) == Some(owner)
                     && let Some(route) = routes.remove(session_id)
-                    && self.adapter_kind == AdapterKind::ZcodeApp
-                    && matches!(route.phase, AcpSessionPhase::PromptActive(_))
                 {
-                    self.zcode_detached_prompts
-                        .write()
-                        .await
-                        .insert(session_id.to_string(), route);
+                    if matches!(route.phase, AcpSessionPhase::PromptCompleted(_)) {
+                        let mut late = self.late_context_owners.write().await;
+                        late.retain(|_, (_, detached_at)| {
+                            detached_at.elapsed() < Duration::from_secs(60)
+                        });
+                        late.insert(
+                            session_id.to_string(),
+                            (route.owner.clone(), Instant::now()),
+                        );
+                    }
+                    if self.adapter_kind == AdapterKind::ZcodeApp
+                        && matches!(route.phase, AcpSessionPhase::PromptActive(_))
+                    {
+                        self.zcode_detached_prompts
+                            .write()
+                            .await
+                            .insert(session_id.to_string(), route);
+                    }
                 }
             }
             let (completion, flushed) = oneshot::channel();
@@ -3650,13 +3753,14 @@ impl AcpRuntime {
                     detail: "the real ACP Session did not expose its catalog".to_string(),
                 })
             })?;
-            let models = acp_model_catalog_from_session(session_result).map_err(|error| {
-                anyhow::Error::new(AcpLiveModelValidationError {
-                    code: "runtime_model_catalog_unavailable",
-                    model_id: model.to_string(),
-                    detail: error.to_string(),
-                })
-            })?;
+            let models = acp_model_catalog_for_adapter(self.host.adapter_kind, session_result)
+                .map_err(|error| {
+                    anyhow::Error::new(AcpLiveModelValidationError {
+                        code: "runtime_model_catalog_unavailable",
+                        model_id: model.to_string(),
+                        detail: error.to_string(),
+                    })
+                })?;
             if !models.iter().any(|candidate| {
                 candidate.id == model && !candidate.hidden && !candidate.deprecated
             }) {
@@ -3666,7 +3770,13 @@ impl AcpRuntime {
                     detail: "the real ACP Session did not advertise the saved model".to_string(),
                 }));
             }
-            if matches!(
+            if self.host.adapter_kind == AdapterKind::CodebuddyCli
+                && model.starts_with("custom-local:")
+                && acp_runtime_model_id_from_session(session_result).as_deref() == Some(model)
+            {
+                // This custom model was selected by the host's --model argument.
+                // CodeBuddy omits it from set_config_option's built-in choices.
+            } else if matches!(
                 self.host.adapter_kind,
                 AdapterKind::KiroCli | AdapterKind::GrokBuild
             ) {
@@ -6973,6 +7083,55 @@ mod route_policy_tests {
             AdapterKind::CodebuddyCli,
             &request
         ));
+    }
+
+    #[test]
+    fn grok_turn_usage_reaches_active_prompt_without_poisoning_late_idle_route() {
+        let usage = json!({
+            "method": "_x.ai/session_notification",
+            "params": {
+                "sessionId": "session-grok",
+                "update": {
+                    "sessionUpdate": "turn_completed",
+                    "prompt_id": "prompt-grok",
+                    "usage": {"inputTokens": 25, "outputTokens": 2}
+                }
+            }
+        });
+        assert!(is_grok_turn_usage_frame(&usage));
+        assert!(!is_known_session_lifecycle_extension(
+            AdapterKind::GrokBuild,
+            &usage
+        ));
+        assert!(is_idle_session_metadata(AdapterKind::GrokBuild, &usage));
+        let mut unbound = usage;
+        unbound["params"]["update"]
+            .as_object_mut()
+            .unwrap()
+            .remove("prompt_id");
+        assert!(!is_grok_turn_usage_frame(&unbound));
+        assert!(is_known_session_lifecycle_extension(
+            AdapterKind::GrokBuild,
+            &unbound
+        ));
+    }
+
+    #[test]
+    fn only_native_session_usage_gauge_qualifies_for_late_context() {
+        let gauge = json!({
+            "method": "session/update",
+            "params": {
+                "sessionId": "session-kimi",
+                "update": {"sessionUpdate": "usage_update", "used": 18913, "size": 262144}
+            }
+        });
+        assert!(is_late_session_context_gauge(&gauge));
+        let mut cumulative = gauge.clone();
+        cumulative["params"]["update"]["sessionUpdate"] = json!("agent_message_chunk");
+        assert!(!is_late_session_context_gauge(&cumulative));
+        let mut request = gauge;
+        request["id"] = json!(1);
+        assert!(!is_late_session_context_gauge(&request));
     }
 
     #[test]

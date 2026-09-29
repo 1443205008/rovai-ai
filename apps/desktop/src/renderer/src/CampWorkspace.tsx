@@ -35,7 +35,7 @@ import {
 import { executionInitialFeedback, executionRunSummary } from './execution-run-summary'
 import { ComposerPrimaryAction } from './ComposerPrimaryAction'
 import { CampMemberFastToggle } from './CampMemberFastToggle'
-import { LiveTokenSpeed } from './execution-token-speed'
+import { DISPLAY_DECIMALS, LiveTokenSpeedDisplay, SAMPLE_INTERVAL_MS } from './execution-token-speed'
 import { useCampMemberFast, type CampMemberFastControls } from './useCampMemberFast'
 import type {
   ActionApprovalView,
@@ -6536,29 +6536,45 @@ function ExecutionRunMetric({ run, liveTextEvents, usage }: {
   usage: RunUsage | null
 }): JSX.Element {
   const live = NON_TERMINAL_RUNS.has(run.status) && run.status !== 'queued'
-  const [speed, setSpeed] = useState<number | null>(null)
-  const meter = useRef<LiveTokenSpeed | null>(null)
+  const liveKey = `${run.id}:${run.executionEpoch}`
+  const [display, setDisplay] = useState<{ key: string; speed: number | null; duration: string }>(() => ({
+    key: liveKey, speed: null, duration: executionRunDurationLabel(run, Date.now())
+  }))
+  const meter = useRef<LiveTokenSpeedDisplay | null>(null)
   useEffect(() => {
     if (!live) {
       meter.current = null
-      setSpeed(null)
       return undefined
     }
     const now = window.performance.now()
-    meter.current = new LiveTokenSpeed(now)
+    meter.current = new LiveTokenSpeedDisplay(now)
     meter.current.observe(liveTextEvents, run.id, run.executionEpoch, now)
-    const timer = window.setInterval(() => setSpeed(meter.current?.sample(window.performance.now()) ?? null), 500)
+    const timer = window.setInterval(() => {
+      const sampledAt = window.performance.now()
+      const speed = meter.current?.sample(sampledAt)
+      if (speed === undefined) return
+      const duration = executionRunDurationLabel(run, Date.now())
+      setDisplay(previous => previous.key === liveKey && previous.speed === speed
+        && previous.duration === duration ? previous : { key: liveKey, speed, duration })
+    }, SAMPLE_INTERVAL_MS)
     return () => window.clearInterval(timer)
-  }, [live, run.id, run.executionEpoch])
+  }, [live, liveKey, run.id, run.executionEpoch, run.startedAt, run.createdAt])
   useEffect(() => {
     if (live) meter.current?.observe(liveTextEvents, run.id, run.executionEpoch, window.performance.now())
   }, [live, liveTextEvents, run.id, run.executionEpoch])
   if (run.status === 'queued') return <span className="execution-run-metric is-queued">{uiAttribute('排队中')}</span>
-  if (live) return <span className="execution-run-metric is-live"
-    title={uiAttribute('根据公开正文增量估算的当前速度')}
-    aria-label={uiAttribute('当前估算输出速度：{0}', speed === null ? uiAttribute('未知') : `${speed.toFixed(1)} tok/s`)}>
-    {speed === null ? '— tok/s' : `${speed.toFixed(1)} tok/s`}
-  </span>
+  if (live) {
+    const speed = display.key === liveKey ? display.speed : null
+    const duration = display.key === liveKey ? display.duration : executionRunDurationLabel(run, Date.now())
+    return <span className="execution-run-metric-group">
+      <span className="execution-run-metric is-live"
+        title={uiAttribute('根据公开正文增量估算的当前速度')}
+        aria-label={uiAttribute('当前估算输出速度：{0}', speed === null ? uiAttribute('未知') : `${speed.toFixed(DISPLAY_DECIMALS)} tok/s`)}>
+        {speed === null ? '— tok/s' : `${speed.toFixed(DISPLAY_DECIMALS)} tok/s`}
+      </span>
+      <span className="execution-run-metric">{duration}</span>
+    </span>
+  }
   return <span className="execution-run-metric-group">
     <span className="execution-run-metric">{executionRunDurationLabel(run, Date.now())}</span>
     <ExecutionUsagePopover run={run} usage={usage} />
@@ -6800,7 +6816,6 @@ function ExecutionDrawer({
   useEffect(() => {
     let disposed = false
     let inFlight = false
-    setMetrics(null)
     const refresh = async (): Promise<void> => {
       if (inFlight) return
       inFlight = true
@@ -6818,10 +6833,11 @@ function ExecutionDrawer({
     }
     void refresh()
     const active = newestFirstRuns.some((run) => NON_TERMINAL_RUNS.has(run.status) && run.status !== 'queued')
-    const timer = active ? window.setInterval(() => { void refresh() }, 4_000) : null
+    // Continue reading after terminal: the final Usage flush can land after the Run status.
+    const timer = window.setInterval(() => { void refresh() }, active ? 4_000 : 10_000)
     return () => {
       disposed = true
-      if (timer !== null) window.clearInterval(timer)
+      window.clearInterval(timer)
     }
   }, [client, campId, runIdsKey, runStateKey])
   const usageByRunId = useMemo(() => new Map(metrics?.runs.map((run) => [run.agentRunId, run]) ?? []), [metrics])

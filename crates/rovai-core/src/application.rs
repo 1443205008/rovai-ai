@@ -217,8 +217,9 @@ use rovai_core::{
     monitoring::{
         MonitoringExecutionParams, MonitoringFilter, MonitoringService, ParsedRuntimeUsage,
         RuntimeUsageBuffer, RuntimeUsageFlushTarget, acp_usage_source_identity,
-        codex_usage_source_identity, parse_acp_usage_message, parse_claude_result_usage,
-        parse_codex_usage_message, parse_pi_usage_message, pi_usage_source_identity,
+        codex_context_source_identity, codex_usage_source_identity, parse_acp_usage_message,
+        parse_claude_result_usage, parse_codex_usage_message, parse_pi_usage_message,
+        pi_usage_source_identity,
     },
     network_recovery::{
         NetworkFailureCategory, NetworkRecoveryAttempt, NetworkRecoveryQueue,
@@ -19341,6 +19342,52 @@ async fn process_acp_events(
                 )
                 .await;
             }
+            AcpIncoming::LateSessionContext {
+                adapter_kind,
+                agent_run_id,
+                execution_epoch,
+                native_session_id,
+                message,
+            } => {
+                let params = &message["params"];
+                if params["sessionId"].as_str() != Some(native_session_id.as_str()) {
+                    continue;
+                }
+                let method = message["method"].as_str().unwrap_or("");
+                let Ok(identity) = canonical_json_digest(&message) else {
+                    continue;
+                };
+                for mut usage in parse_acp_usage_message(adapter_kind, None, method, params) {
+                    if usage.scope != "session"
+                        || usage.native_session_id.as_deref() != Some(native_session_id.as_str())
+                    {
+                        continue;
+                    }
+                    usage.occurred_at = Some(chrono::Utc::now().to_rfc3339());
+                    let result = {
+                        let mut database = core.database.lock().await;
+                        MonitoringService::record_late_session_context(
+                            &mut database,
+                            &agent_run_id,
+                            execution_epoch,
+                            adapter_kind,
+                            &identity,
+                            &usage,
+                        )
+                    };
+                    match result {
+                        Ok(true) => emit(
+                            &output,
+                            "monitoring.changed",
+                            json!({"reason": "late_session_context"}),
+                        ),
+                        Ok(false) => {}
+                        Err(error) => eprintln!(
+                            "failed to persist late ACP Context for AgentRun {agent_run_id}: {error:#}"
+                        ),
+                    }
+                }
+            }
             AcpIncoming::ZcodeBackground {
                 agent_run_id,
                 execution_epoch,
@@ -22143,19 +22190,25 @@ async fn process_agent_run_codex_message(
         }
     }
     let usage = parse_codex_usage_message(&method, &params);
-    if !usage.is_empty()
-        && let Err(error) = buffer_runtime_usage(
+    for observation in &usage {
+        let source_identity = if observation.scope == "session" {
+            codex_context_source_identity(&params)
+        } else {
+            codex_usage_source_identity(&params)
+        }
+        .or_else(|_| canonical_json_digest(&message))
+        .unwrap_or_else(|_| format!("codex:{method}:{agent_run_id}:{execution_epoch}"));
+        if let Err(error) = buffer_runtime_usage(
             core,
             agent_run_id,
             execution_epoch,
-            &codex_usage_source_identity(&params)
-                .or_else(|_| canonical_json_digest(&message))
-                .unwrap_or_else(|_| format!("codex:{method}:{agent_run_id}:{execution_epoch}")),
-            &usage,
+            &source_identity,
+            std::slice::from_ref(observation),
         )
         .await
-    {
-        eprintln!("failed to persist Codex Usage for AgentRun {agent_run_id}: {error:#}");
+        {
+            eprintln!("failed to persist Codex Usage for AgentRun {agent_run_id}: {error:#}");
+        }
     }
     if method == "thread/tokenUsage/updated" {
         return;

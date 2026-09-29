@@ -34,6 +34,7 @@ const webSearchAfterResponsiveOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_W
 const toolDetailsOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_TOOL_DETAILS_ONLY === '1'
 const completeToolOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_COMPLETE_TOOL_ONLY === '1'
 const executionAutoFollowOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_AUTO_FOLLOW_ONLY === '1'
+const executionMetricsOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_ONLY === '1'
 const placementRestartOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_PLACEMENT_RESTART_ONLY === '1'
 const withdrawalOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_WITHDRAWAL_ONLY === '1'
 const databasePath = join(dataDir, 'rovai.sqlite')
@@ -76,9 +77,9 @@ const fixtureExecutionRoot = join(fixtureRoot, 'workspace')
 const codexExpectedCommand = 'rovai camp read --limit 20'
 const claudeExpectedCommand = "printf '%s\\n' 'ROVAI_CLAUDE_EMPTY_OUTPUT_OK'"
 const webSearchQueries = ['password=公开验收词 token=保持原样', '第二项公开查询']
-const fixtureContextManifestVersion = 29
+const fixtureContextManifestVersion = 31
 const fixtureContextDeliveryProfile = {
-  profileVersion: 9,
+  profileVersion: 10,
   maxSelfActiveTasks: 8
 }
 
@@ -216,7 +217,18 @@ try {
     await waitForExpression(app.cdp,
       `document.querySelector('.run-pulse-chip.is-selected')?.dataset.agentId === ${JSON.stringify(activeAgentId)}`)
   }
-  if (placementRestartOnly) {
+  if (executionMetricsOnly) {
+    const report = await verifyExecutionMetricsRenderer(app, outputDir, (restarted) => { app = restarted })
+    app = report.app
+    console.log(JSON.stringify({
+      ok: true,
+      mode: 'controlled-execution-metrics-renderer-fixture',
+      fixtureRoot,
+      outputDir,
+      verified: report.verified,
+      captures: report.captures
+    }, null, 2))
+  } else if (placementRestartOnly) {
     const restart = await verifyExecutionPlacementAcrossRestart(app)
     app = restart.app
     console.log(JSON.stringify({
@@ -1135,11 +1147,14 @@ async function initializeDatabase() {
 }
 
 async function activateControlledRun() {
+  const startedAt = executionMetricsOnly
+    ? new Date(Date.now() - 84_000).toISOString()
+    : '2026-08-05T12:00:01Z'
   const status = await runSql(databasePath, `
     PRAGMA busy_timeout = 5000;
     UPDATE agent_run
     SET status = 'running',
-        started_at = '2026-08-05T12:00:01Z',
+        started_at = ${sqlLiteral(startedAt)},
         ended_at = NULL,
         updated_at = '2026-08-05T12:00:01Z',
         version = version + 1
@@ -1148,6 +1163,95 @@ async function activateControlledRun() {
   `)
   assert(status.trim().split(/\s+/).at(-1) === 'running',
     `Controlled AgentRun did not enter running state: ${status}`)
+}
+
+async function verifyExecutionMetricsRenderer(app, capturesRoot, onRestart) {
+  await waitForExpression(app.cdp, `Boolean(document.querySelector(
+    '.execution-process-stage.is-focused .execution-run-metric-group .execution-run-metric.is-live'
+  ))`)
+  const running = await evaluate(app.cdp, `(() => {
+    const stage = document.querySelector('.execution-process-stage.is-focused')
+    const group = stage?.querySelector('.execution-run-metric-group')
+    const parts = [...(group?.querySelectorAll('.execution-run-metric') ?? [])]
+    const slot = stage?.querySelector('.execution-run-trailing')
+    const bounds = parts.map(part => part.getBoundingClientRect())
+    return {
+      runId: stage?.dataset.agentRunId ?? null,
+      speed: parts[0]?.textContent?.trim() ?? null,
+      duration: parts[1]?.textContent?.trim() ?? null,
+      estimatedName: parts[0]?.getAttribute('aria-label') ?? null,
+      oneLine: bounds.length === 2 && Math.abs(bounds[0].top - bounds[1].top) < 1,
+      fitsSlot: bounds.length === 2 && bounds[1].right <= slot.getBoundingClientRect().right + 1,
+      slotWidth: slot?.getBoundingClientRect().width ?? null
+    }
+  })()`)
+  assert(running.runId === activeRunId && running.speed === '— tok/s'
+    && /^1分 \d{2}秒$/.test(running.duration)
+    && running.estimatedName?.includes('估算')
+    && running.oneLine && running.fitsSlot && running.slotWidth >= 155,
+  `Running metrics did not keep speed and duration on one line: ${JSON.stringify(running)}`)
+  const runningCapture = join(capturesRoot, 'execution-metrics-running.png')
+  await capture(app.cdp, runningCapture)
+
+  await closeApp(app)
+  const endedAt = new Date().toISOString()
+  await runSql(databasePath, `
+    UPDATE agent_run SET status = 'succeeded', ended_at = ${sqlLiteral(endedAt)},
+      updated_at = ${sqlLiteral(endedAt)}, version = version + 1,
+      terminal_reason_code = NULL, terminal_resolution_source = NULL,
+      cancel_requested_at = NULL, cancel_reason_code = NULL
+    WHERE id = ${sqlLiteral(activeRunId)} AND status IN ('running', 'cancelled');
+    INSERT INTO runtime_usage_run_summary(
+      collection_epoch, agent_run_id, runtime_kind, parser_version,
+      eligible_mask, input_semantics, enrolled_at, finalized_at, last_observed_at,
+      prompt_input_total_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+    ) SELECT collection_epoch, ${sqlLiteral(activeRunId)}, 'codex-cli', 4,
+      127, 'cache_inclusive_total', ${sqlLiteral(endedAt)}, ${sqlLiteral(endedAt)},
+      ${sqlLiteral(endedAt)}, 1500, 500, 250, 0
+    FROM runtime_usage_collection_state WHERE singleton_id = 1;
+  `)
+
+  const restarted = await launchApp(app.port, 1440, 920)
+  onRestart(restarted)
+  await setTheme(restarted.cdp, 'day')
+  await openCamp(restarted.cdp, campId)
+  await evaluate(restarted.cdp, `document.querySelector(
+    ${JSON.stringify(`.run-pulse-chip[data-agent-id="${activeAgentId}"]`)}
+  )?.click()`)
+  await waitForExpression(restarted.cdp, `document.querySelector(
+    '.execution-process-stage.is-focused .execution-usage-trigger'
+  )?.textContent?.trim() === '2k'`, 20_000)
+  const terminal = await evaluate(restarted.cdp, `(() => {
+    const stage = document.querySelector('.execution-process-stage.is-focused')
+    const group = stage?.querySelector('.execution-run-metric-group')
+    return {
+      runId: stage?.dataset.agentRunId ?? null,
+      duration: group?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
+      usage: group?.querySelector('.execution-usage-trigger')?.textContent?.trim() ?? null,
+      liveSpeedCount: group?.querySelectorAll('.execution-run-metric.is-live').length ?? null
+    }
+  })()`)
+  assert(terminal.runId === activeRunId && terminal.usage === '2k'
+    && terminal.duration?.includes('分') && terminal.liveSpeedCount === 0,
+  `Terminal metrics did not keep duration and native Usage distinct: ${JSON.stringify(terminal)}`)
+  await evaluate(restarted.cdp, `document.querySelector(
+    '.execution-process-stage.is-focused .execution-usage-trigger'
+  )?.click()`)
+  await waitForExpression(restarted.cdp, `document.querySelectorAll('.execution-metric-popover dl > div').length === 4`)
+  const usageRows = await evaluate(restarted.cdp, `[...document.querySelectorAll(
+    '.execution-metric-popover dl > div'
+  )].map(row => [row.querySelector('dt')?.textContent, row.querySelector('dd')?.textContent])`)
+  assert(JSON.stringify(usageRows) === JSON.stringify([
+    ['Input Token', '1.5k'], ['Output Token', '0.5k'],
+    ['Cache Read', '0.3k'], ['Cache Write', '0k']
+  ]), `Terminal Usage popover did not show the four canonical buckets: ${JSON.stringify(usageRows)}`)
+  const terminalCapture = join(capturesRoot, 'execution-metrics-terminal.png')
+  await capture(restarted.cdp, terminalCapture)
+  return {
+    app: restarted,
+    verified: { running, terminal, usageRows },
+    captures: { running: runningCapture, terminal: terminalCapture }
+  }
 }
 
 async function seedFixture() {
@@ -1455,7 +1559,9 @@ async function seedFixture() {
     ) VALUES ${runRows};
     UPDATE agent_run
     SET status = 'waiting', wait_reason = 'recovery_blocked', runtime_recovery_required = 0,
-        last_error_code = 'accepted_input_outcome_unknown'
+        last_error_code = 'accepted_input_outcome_unknown',
+        claim_previous_public_boundary_sequence = 0,
+        claim_has_additional_public_messages = 1
     WHERE id = ${sqlLiteral(recoveryBlockedRunId)};
     INSERT INTO camp_message(
       id, camp_id, sequence, author_type, author_id, source_agent_run_id,
@@ -1491,7 +1597,7 @@ async function seedFixture() {
       delivery_mode, created_at
     ) VALUES (
       'fixture-copilot-bootstrap', 'conversation-copilot', 'fixture-copilot-binding', 1,
-      'native_session_bootstrap_v4', 4,
+      'native_session_bootstrap_v5', 5,
       ${sqlLiteral(recoveryBlob.id)}, ${sqlLiteral(recoveryBlob.digest)},
       ${sqlLiteral(recoveryBlob.id)}, ${sqlLiteral(recoveryBlob.digest)},
       '[]', 'fixture-authorization-basis', 'native_append', ${sqlLiteral(now)}
@@ -1544,7 +1650,7 @@ async function seedFixture() {
       '[]', '[]', '[]', 'fixture-shared-message-evidence', ${sqlLiteral(JSON.stringify(fixtureRunFacts))},
       'agent_v1', '{"schemaVersion":1,"included":false}',
       '8f0abde6b1c7b1bf405e1efa2a2cfe82a1bd329a64003a93c3e20c84a8c26d92',
-      ${fixtureContextManifestVersion}, 7, 2,
+      ${fixtureContextManifestVersion}, 8, 2,
       ${sqlLiteral(JSON.stringify(campAttachmentViewReceipt))},
       ${sqlLiteral(campAttachmentViewReceiptDigest)}
     );

@@ -519,10 +519,10 @@ waiting Delivery，队员入口优先显示“排队中”；已有 non-terminal
 展开时标题和原有操作只在本卡范围内吸顶，滚过本卡后退出，不复制全局标题或脱离所属 Run 的停止按钮。
 Desktop 与宽屏 Web 的展开正文首尾、主要过程项间距及相邻 Run 间距统一使用 8px，运行中切到终态时不得改变
 这组密度；Mobile 继续由独立 mobile stylesheet 拥有其触控行高与紧凑过程间距，不继承该桌面调整。
-运行中卡片默认显示 live 耗时，窄详情同样保留；仅标题行 hover 或标题内 `:focus-visible` 时，
-在固定尾部槽内切换为折叠／展开与红色终止按钮。正文 hover 不触发，鼠标移出标题恢复耗时，不挤动标题。
+运行中卡片默认在一行显示当前正文速度与 live 耗时，窄详情同样保留；仅标题行 hover 或标题内 `:focus-visible` 时，
+在固定尾部槽内切换为折叠／展开与红色终止按钮。正文 hover 不触发，鼠标移出标题恢复速度和耗时，不挤动标题。
 折叠／展开保留 1px 边框、抬升面底色和 5px 圆角；终止始终使用 danger/danger-soft，禁用时仍保留危险色。
-粗指针或无 hover 环境同时展示耗时与操作。非运行状态保留原有静态操作，不套用 hover 切换。
+粗指针或无 hover 环境同时展示速度、耗时与操作。非运行状态保留原有静态操作，不套用 hover 切换。
 滚动容器为键盘焦点留出标题安全区，不改变跟随最新、折叠、输入清单或 exact Run 停止语义。
 总览中的队员头像固定为 20×20px，不随 flex 收缩拉伸。左侧状态节点与卡头首行垂直居中并跟随本卡标题，
 展开与停止操作距卡片右边保留 9px。字段与验收边界见
@@ -572,7 +572,7 @@ Renderer 以公开消息和 Delivery ID 跟踪刚提交输入；Scheduler claim 
 Runtime 的 private thought/reasoning 文本不进入 Renderer state、搜索、缓存或 disclosure；仅消费不含正文的
 `thinking | executing` phase 来切换上述等待反馈，并把 phase edge 作为匿名公开正文的分段边界。
 Camp 执行卡片的普通等待提示与正文共用字号、行高和文字起点，加载图标放在提示文字后；底部、桌面浮层和手机端切入首行正文时不改变卡片位置或单行高度。
-执行中 Run 卡片尾部以纯文字显示当前 `tok/s`；它是公开正文持续增长的显示估算，悬停提示与可访问名称须明确“估算”，不能点击、保存为 Usage 或替代原生 Token。没有可验证的流式增长时显示未知，不在终态显示均速。终态耗时旁用 `xxk` 作为用量气泡入口，气泡仅四行 Input Token、Output Token、Cache Read、Cache Write；缺失字段显示未知，不加合计行、Run 编号或摘要。仅成功且 Input/Output 完整结算时计算入口值 `Input + Output`，Cache 不再叠加。执行台标题右侧的弱化圆环读取当前队员 Camp Conversation 的原生 Session 上下文；切换同一会话的 Run 卡片不改变圆环归属。气泡只显示 `used / window` 和比例，单有窗口不显示 `0%`。来源、栅栏和字段语义见 [Runtime Execution Metrics v1](../../contracts/runtime-execution-metrics-v1.md)。
+执行中 Run 卡片尾部以纯文字并列显示当前 `tok/s` 和原有耗时；速度是公开正文持续增长的显示估算，悬停提示与可访问名称须明确“估算”，不能点击、保存为 Usage 或替代原生 Token。没有可验证的流式增长时速度显示未知，不在终态显示均速。终态耗时旁用 `xxk` 作为用量气泡入口，气泡仅四行 Input Token、Output Token、Cache Read、Cache Write；缺失字段显示未知，不加合计行、Run 编号或摘要。仅成功且 Input/Output 完整结算时计算入口值 `Input + Output`，Cache 不再叠加。执行台标题右侧的弱化圆环读取当前队员 Camp Conversation 的原生 Session 上下文；切换同一会话的 Run 卡片不改变圆环归属。气泡只显示 `used / window` 和比例，单有窗口不显示 `0%`。来源、栅栏和字段语义见 [Runtime Execution Metrics v1](../../contracts/runtime-execution-metrics-v1.md)。
 需要审批、网络恢复、重试或停止时继续显示明确状态。非终态过程不显示耗时总结，非聚焦执行摘要在已有输出时显示“执行中”。成功后才显示“工作了 {时长}”
 并自动折叠过程；失败保留明确失败摘要及可操作错误，取消保持停止语义。正文或工具首次到达、单条工具返回、步骤组
 收口都不能触发整轮耗时总结。关闭 Run 后卸载详情；再次打开读取最新窗口。组跨页按稳定操作身份保留展开意图。
