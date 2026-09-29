@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
-import type { AgentRunExecutionEvidenceView, AgentRunView } from '@contracts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { AgentRunExecutionEvidenceView, AgentRunView, GeneralPreferencesApi, InterfaceLanguage } from '@contracts'
 import {
   CompactionEventRow,
   ExecutionToolGroupStateContext,
@@ -12,6 +12,8 @@ import {
 import type { ToolProgressItem } from './execution-tool-grouping'
 import type { ActivityIconKind } from './ui-model'
 import { openAgentRunActivityFilePreview } from './agent-run-file-preview'
+import { changeInterfaceLanguage } from './interface-language'
+import { DEFAULT_GENERAL_PREFERENCES } from '../../shared/general-preferences-model'
 
 const tool = (id: string, iconKind: ActivityIconKind, status: ToolProgressItem['step']['status']): ToolProgressItem => ({
   kind: 'tool', key: `tool:${id}`, step: {
@@ -28,6 +30,53 @@ const renderGroup = (items: ToolProgressItem[], expanded = false, liveTail = fal
       cancelling={cancelling} completeEvidence={{ byToolId: new Map() }} onFileOpenError={() => {}} />
   </ExecutionToolGroupStateContext.Provider>
 )
+
+describe('localized completed step summaries', () => {
+  const preferences = {
+    setInterfaceLanguage: async (interfaceLanguage: InterfaceLanguage) => ({
+      ...DEFAULT_GENERAL_PREFERENCES, interfaceLanguage
+    })
+  } as GeneralPreferencesApi
+
+  afterEach(async () => { await changeInterfaceLanguage(preferences, 'zh-CN') })
+
+  it.each([1, 2, 128])('translates the visible and accessible summary with count %i', async count => {
+    await changeInterfaceLanguage(preferences, 'en')
+    const items = Array.from({ length: count }, (_, index) => tool(String(index), 'terminal', 'completed'))
+    const label = `Completed ${count} ${count === 1 ? 'step' : 'steps'}`
+    const english = renderGroup(items)
+    expect(english).toContain(`<strong>${label}</strong>`)
+    expect(english).toContain(`aria-label="${label}"`)
+    expect(english).not.toContain('已完成')
+
+    await changeInterfaceLanguage(preferences, 'zh-CN')
+    const chinese = renderGroup(items)
+    expect(chinese).toContain(`<strong>已完成 ${count} 个步骤</strong>`)
+    expect(chinese).toContain(`aria-label="已完成 ${count} 个步骤"`)
+  })
+
+  it('keeps counting all settled operations, including failed and stopped steps', async () => {
+    await changeInterfaceLanguage(preferences, 'en')
+    const markup = renderGroup([
+      tool('done', 'terminal', 'completed'),
+      tool('failed', 'terminal', 'failed'),
+      tool('stopped', 'terminal', 'stopped')
+    ], false, false, 'cancelled')
+    expect(markup).toContain('<strong>Completed 3 steps</strong>')
+    expect(markup).toContain('aria-label="Completed 3 steps"')
+  })
+
+  it('keeps active and live-tail commands instead of showing a completed count', async () => {
+    await changeInterfaceLanguage(preferences, 'en')
+    for (const status of ['running', 'waiting', 'completed'] as const) {
+      const item = tool('current', 'terminal', status)
+      item.step.title = '等待审批'
+      const markup = renderGroup([item], false, true)
+      expect(markup).toMatch(/<span>[^<]*等待审批<\/span>/)
+      expect(markup).not.toContain('Completed 1 step')
+    }
+  })
+})
 
 describe('command disclosure presentation', () => {
   it('states permanent Tool output loss without offering a full-result recovery path', () => {
