@@ -528,6 +528,7 @@ function RuntimeModelPicker({
   const models = activeLiveCatalog
     ? selectableModels(activeLiveCatalog.models)
     : initialModels
+  const canFilterOptions = modelCatalogCanValidateOptions(initialCache, liveCatalog)
   const explicit = draft.model.mode === 'explicit' ? draft.model : null
   const selectedModel = explicit
     ? models.find((model) => model.id === explicit.modelId) ?? null
@@ -575,12 +576,13 @@ function RuntimeModelPicker({
   }
 
   const selectModel = (value: string): void => {
+    if (value === selectedValue) return
     if (value === 'runtime_default') {
       onChange({ ...draft, model: { mode: 'runtime_default' } })
       return
     }
     const model = models.find((candidate) => candidate.id === value)
-    if (model) onChange({ ...draft, model: explicitSelection(model) })
+    if (model) onChange({ ...draft, model: explicitSelection(model, draft.model, canFilterOptions) })
   }
 
   const statusCopy = modelCatalogStatusCopy(cache, {
@@ -661,6 +663,19 @@ export function liveCatalogIsAtLeastAsRecent(
   return Date.parse(liveObservedAt) >= Date.parse(initialObservedAt)
 }
 
+export function modelCatalogCanValidateOptions(
+  installationCache: RuntimeModelCatalogCache,
+  liveCatalog: RuntimeModelCatalogView | null
+): boolean {
+  const activeLiveCatalog = liveCatalogIsAtLeastAsRecent(liveCatalog, installationCache)
+    ? liveCatalog
+    : null
+  const cache = activeLiveCatalog?.cache ?? installationCache
+  // A local response for the same observation cannot undo Core's later expiry.
+  return modelCatalogIsServiceable(cache)
+    && (cache.observedAt !== installationCache.observedAt || modelCatalogIsServiceable(installationCache))
+}
+
 function latestCatalogRefreshFailed(installation: AdapterInstallation, cache: RuntimeModelCatalogCache): boolean {
   const attempt = installation.lastProbeAttempt
   if (attempt?.status !== 'failed') return false
@@ -708,11 +723,26 @@ export function modelCatalogStatusCopy(
   return ''
 }
 
-function explicitSelection(model: ModelDescriptor): ModelSelection {
+export function explicitSelection(
+  model: ModelDescriptor,
+  previous: ModelSelection,
+  canFilterOptions: boolean
+): ModelSelection {
+  const previousOptions = previous.mode === 'explicit' ? previous.options : {}
+  // Expired history can form a draft, but cannot prove that an override is unsupported.
+  const options = canFilterOptions
+    ? Object.fromEntries(Object.entries(previousOptions).filter(([key, value]) => (
+        typeof value === 'string'
+        && model.options.some((option) => (
+          option.key === key
+          && option.values.some((choice) => choice.value === value)
+        ))
+      )))
+    : { ...previousOptions }
   return {
     mode: 'explicit',
     modelId: model.id,
-    options: {}
+    options
   }
 }
 
