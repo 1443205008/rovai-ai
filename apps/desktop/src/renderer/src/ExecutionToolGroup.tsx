@@ -26,7 +26,7 @@ import {
   toolActivityGroupPresentation,
   type ToolProgressItem
 } from './execution-tool-grouping'
-import { UiText, uiAttribute } from './interface-language'
+import { UiText, uiAttribute, useUiText } from './interface-language'
 
 /** Keep group disclosure choices when paging changes the first item of a group. */
 export const ExecutionToolGroupStateContext = createContext<{
@@ -733,6 +733,7 @@ export function ToolActivityGroup({
   }
   onFileOpenError(message: string): void
 }): JSX.Element {
+  const t = useUiText()
   const [localExpanded, setLocalExpanded] = useState(false)
   const groupState = useContext(ExecutionToolGroupStateContext)
   const retained = useContext(ExecutionContentContext)
@@ -743,7 +744,10 @@ export function ToolActivityGroup({
     if (groupState) groupState.change(groupKeys, value)
     else setLocalExpanded(value)
   }
-  const settledPresentation = toolActivityGroupPresentation(items, runStatus, liveTail)
+  const settledPresentation = toolActivityGroupPresentation(
+    items, runStatus, liveTail,
+    count => count === 1 ? t('已完成 1 个步骤') : t('已完成 {0} 个步骤', count)
+  )
   // Cancellation intent is retained in history; an authoritative terminal Run wins.
   const nonTerminal = runStatus === 'queued' || runStatus === 'running' || runStatus === 'waiting'
   const presentation = cancelling && nonTerminal
