@@ -1272,7 +1272,7 @@ async function verifyExecutionMetricsRenderer(app, capturesRoot, onRestart) {
 }
 
 async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
-  if (observableRealRuntime) return verifyRealCodexObservableOutput(app, capturesRoot)
+  if (observableRealRuntime) return verifyRealRuntimeObservableOutput(app, capturesRoot)
   const request = (method, params = {}) => evaluate(app.cdp,
     `window.rovai.request(${JSON.stringify(method)}, ${JSON.stringify(params)})`, true)
   const agentId = runtimes.find((entry) => entry.key === 'qwen')?.agentId
@@ -1478,28 +1478,33 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
   }
 }
 
-async function verifyRealCodexObservableOutput(app, capturesRoot) {
+async function verifyRealRuntimeObservableOutput(app, capturesRoot) {
   const request = (method, params = {}) => evaluate(app.cdp,
     `window.rovai.request(${JSON.stringify(method)}, ${JSON.stringify(params)})`, true)
+  const runtimeKind = process.env.ROVAI_OBSERVABLE_RUNTIME ?? 'codex-cli'
   const agentId = runtimes.find((entry) => entry.key === 'codex').agentId
-  const installation = await configureProductRuntime(request, 'codex-cli', [agentId])
-  const profile = await request('members.get', { agentId })
-  const selection = await request('members.runtime.set', { commandId: crypto.randomUUID(), command: {
-    agentId, expectedVersion: profile.version, adapterKind: 'codex-cli',
-    permissions: profile.runtimeConfiguration.permissions,
-    model: { mode: 'explicit', modelId: process.env.ROVAI_OBSERVABLE_MODEL ?? 'gpt-6.1-sol',
-      options: { reasoning_effort: 'high' } }
-  } })
-  assert(selection.status === 'applied', 'Real Codex acceptance model was not applied')
+  const installation = await configureProductRuntime(request, runtimeKind, [agentId])
+  const modelId = process.env.ROVAI_OBSERVABLE_MODEL ?? (runtimeKind === 'codex-cli' ? 'gpt-6.1-sol' : null)
+  if (modelId) {
+    const profile = await request('members.get', { agentId })
+    const selection = await request('members.runtime.set', { commandId: crypto.randomUUID(), command: {
+      agentId, expectedVersion: profile.version, adapterKind: runtimeKind,
+      permissions: profile.runtimeConfiguration.permissions,
+      model: { mode: 'explicit', modelId,
+        options: process.env.ROVAI_OBSERVABLE_MODEL_OPTIONS ? JSON.parse(process.env.ROVAI_OBSERVABLE_MODEL_OPTIONS)
+          : runtimeKind === 'codex-cli' ? { reasoning_effort: 'high' } : {} }
+    } })
+    assert(selection.status === 'applied', 'Real Runtime acceptance model was not applied')
+  }
   const workspace = await request('workspaces.inspect', { path: fixtureExecutionRoot })
   const setup = await createConfiguredCampAndSend(request, {
-    commandId: crypto.randomUUID(), name: '可观测输出真实 Codex 验收', workspace,
+    commandId: crypto.randomUUID(), name: `可观测输出真实 ${runtimeKind} 验收`, workspace,
     memberAgentIds: [agentId], defaultLeadAgentId: agentId,
     body: await readFile(process.env.ROVAI_OBSERVABLE_PROMPT_FILE
       ?? join(root, 'scripts', 'fixtures', 'observable-output-reasoning-task.txt'), 'utf8'),
-    purpose: 'Long Codex observable output through packaged Renderer'
+    purpose: 'Long native observable output through packaged Renderer'
   })
-  assert(setup.status === 'accepted', 'Real Codex acceptance was not accepted')
+  assert(setup.status === 'accepted', 'Real Runtime acceptance was not accepted')
   const liveCampId = setup.payload.campId
   const runId = await waitForControlledMessageRun(request, liveCampId, setup.payload.campMessageId)
   await openCamp(app.cdp, liveCampId)
@@ -1521,18 +1526,30 @@ async function verifyRealCodexObservableOutput(app, capturesRoot) {
       .some(chip => chip.getClientRects().length)
     && [...document.querySelectorAll('.execution-drawer-header:not(.is-overview)')]
       .some(header => header.getClientRects().length))`, 15_000)
+  const stageSelector = `.execution-process-stage[data-agent-run-id="${runId}"]`
+  await waitForExpression(app.cdp, `Boolean(document.querySelector(${JSON.stringify(stageSelector)}))`, 15_000)
   await evaluate(app.cdp, `(() => {
+    const stage = document.querySelector(${JSON.stringify(stageSelector)})
+    const dock = stage?.closest('.execution-sidecar-panel') ?? stage?.closest('.camp-workspace')
+    const chip = dock?.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})
+    if (!chip) throw new Error('Native Run panel has no member selector')
+    if (chip.getAttribute('aria-pressed') !== 'true') chip.click()
+  })()`)
+  await waitForExpression(app.cdp, `document.querySelector(${JSON.stringify(stageSelector)})?.closest('.execution-drawer')?.querySelector('.execution-drawer-header')?.classList.contains('is-overview') === false`, 15_000)
+  const drawerExpression = `document.querySelector(${JSON.stringify(stageSelector)})?.closest('.execution-drawer')`
+  await evaluate(app.cdp, `(() => {
+    const drawer = ${drawerExpression}
     const probe = { changes: [], last: null }
     const record = () => {
-      const speed = document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim() ?? null
+      const speed = drawer?.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim() ?? null
       if (speed !== probe.last) { probe.last = speed; probe.changes.push({ at: performance.now(), speed }) }
     }
     probe.observer = new MutationObserver(record)
-    probe.observer.observe(document.querySelector('.execution-drawer-header'),
+    probe.observer.observe(drawer.querySelector('.execution-drawer-header'),
       { subtree: true, childList: true, characterData: true })
     window.__streamMetricsProbe = probe
   })()`)
-  const samples = [], started = Date.now(), capturePath = join(capturesRoot, 'observable-real-codex.png')
+  const samples = [], started = Date.now(), capturePath = join(capturesRoot, `observable-real-${runtimeKind}.png`)
   let captured = false, status = null, nextProgress = started + 30_000
   while (Date.now() - started < 480_000) {
     const state = await request('camps.snapshot', { campId: liveCampId })
@@ -1542,13 +1559,14 @@ async function verifyRealCodexObservableOutput(app, capturesRoot) {
       campId: liveCampId, agentRunId: runId, executionEpoch: run.executionEpoch
     })
     const ui = await evaluate(app.cdp, `(() => {
-      const speed = document.querySelector('.execution-drawer-header .execution-current-speed')
+      const drawer = ${drawerExpression}
+      const speed = drawer?.querySelector('.execution-drawer-header .execution-current-speed')
       const stage = document.querySelector(${JSON.stringify(`.execution-process-stage[data-agent-run-id="${runId}"]`)})
-      const context = document.querySelector('.execution-drawer-header .execution-context-trigger')
+      const context = drawer?.querySelector('.execution-drawer-header .execution-context-trigger')
       return { speed: speed?.textContent?.trim() ?? null, scope: speed?.getAttribute('aria-label'),
-        selectedAgentId: [...document.querySelectorAll('.run-pulse-chip.is-selected')]
+        selectedAgentId: [...((drawer?.closest('.execution-sidecar-panel') ?? drawer?.closest('.camp-workspace'))?.querySelectorAll('.run-pulse-chip.is-selected') ?? [])]
           .find(chip => chip.getClientRects().length)?.dataset.agentId ?? null,
-        overview: document.querySelector('.execution-drawer-header')?.classList.contains('is-overview') ?? null,
+        overview: drawer?.querySelector('.execution-drawer-header')?.classList.contains('is-overview') ?? null,
         duration: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
         speedInCard: Boolean(stage?.querySelector('.execution-current-speed')),
         sameLine: Boolean(speed && context && Math.abs(speed.getBoundingClientRect().top - context.getBoundingClientRect().top) < 12) }
@@ -1557,7 +1575,7 @@ async function verifyRealCodexObservableOutput(app, capturesRoot) {
     if (ui.speed && !captured) { await capture(app.cdp, capturePath); captured = true }
     if (['succeeded', 'failed', 'cancelled'].includes(status)) break
     if (Date.now() >= nextProgress) {
-      console.log(JSON.stringify({ stage: 'real-codex-live', status,
+      console.log(JSON.stringify({ stage: 'real-runtime-live', runtimeKind, status,
         publicUnits: value?.publicTextUnits, reasoningUnits: value?.reasoningUnits, speed: ui.speed }))
       nextProgress = Date.now() + 30_000
     }
@@ -1568,14 +1586,64 @@ async function verifyRealCodexObservableOutput(app, capturesRoot) {
     return window.__streamMetricsProbe.changes
   })()`)
   const numericChanges = changes.filter((change) => /^\d+\.\d tok\/s$/.test(change.speed ?? ''))
-  const report = { version: installation.snapshot?.reportedVersion, campId: liveCampId, runId, status,
+  await writeFile(join(capturesRoot, `observable-diagnostic-${runtimeKind}.json`), JSON.stringify({runtimeKind,status,samples,changes},null,2))
+  const projection = await request('monitoring.execution', { campId: liveCampId, agentRunIds: [runId] })
+  const usage = projection.runs.find(run => run.agentRunId === runId)
+  await writeFile(join(capturesRoot, `observable-diagnostic-${runtimeKind}.json`),
+    JSON.stringify({ runtimeKind, status, samples, changes, projection }, null, 2))
+  assert(['succeeded', 'failed', 'cancelled'].includes(status),
+    `Real Runtime did not reach a terminal within the 480s acceptance window; partial observations are retained`)
+  if (process.env.ROVAI_OBSERVABLE_VERIFY_USAGE === '1') {
+    assert(usage?.finalizedAt && usage.promptInputTotalTokens > 0 && usage.outputTokens > 0,
+      'Real Runtime did not persist native Usage')
+    await evaluate(app.cdp, `(() => {
+      const history = ${drawerExpression}?.querySelector('.execution-history-toggle')
+      if (history?.getAttribute('aria-expanded') === 'false') history.click()
+    })()`)
+    await waitForExpression(app.cdp, `Boolean(document.querySelector(
+      ${JSON.stringify(`.execution-process-stage[data-agent-run-id="${runId}"] .execution-usage-trigger`)}
+    )?.getClientRects().length)`, 15_000)
+    await evaluate(app.cdp, `document.querySelector(
+      ${JSON.stringify(`.execution-process-stage[data-agent-run-id="${runId}"] .execution-usage-trigger`)}).click()`)
+    await waitForExpression(app.cdp, `document.querySelectorAll('.execution-metric-popover dl > div').length === 5`)
+    await waitForExpression(app.cdp, `(() => {
+      const popover = document.querySelector('.execution-metric-popover')?.getBoundingClientRect()
+      const anchor = document.querySelector(${JSON.stringify(`.execution-process-stage[data-agent-run-id="${runId}"] .execution-usage-trigger`)})?.getBoundingClientRect()
+      return popover && anchor && anchor.width > 0 && Math.abs(popover.right - anchor.right) < 300
+    })()`)
+  }
+  const usageRows = await evaluate(app.cdp, `[...document.querySelectorAll('.execution-metric-popover dl > div')]
+    .map(row => [row.querySelector('dt')?.textContent, row.querySelector('dd')?.textContent])`)
+  const metricK = value => value == null ? '—' : `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  if (process.env.ROVAI_OBSERVABLE_VERIFY_USAGE === '1') {
+    assert(JSON.stringify(usageRows.slice(0, 4)) === JSON.stringify([
+      ['Input Token', metricK(usage.promptInputTotalTokens)], ['Output Token', metricK(usage.outputTokens)],
+      ['Cache Read', metricK(usage.cacheReadTokens)], ['Cache Write', metricK(usage.cacheWriteTokens)]
+    ]), 'Renderer Usage differs from native projection')
+    await capture(app.cdp, join(capturesRoot, `native-usage-${runtimeKind}.png`))
+    await app.cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape' })
+  }
+  const contextLabel = await evaluate(app.cdp,
+    `${drawerExpression}?.querySelector('.execution-drawer-header .execution-context-trigger')?.getAttribute('aria-label') ?? null`)
+  if (process.env.ROVAI_OBSERVABLE_VERIFY_CONTEXT === '1') {
+    const context = projection.sessions[0]
+    assert(context?.usedTokens > 0 && context.windowTokens > 0 && contextLabel?.includes(metricK(context.usedTokens))
+      && contextLabel?.includes(metricK(context.windowTokens)), 'Renderer Context differs from native projection')
+    await evaluate(app.cdp, `${drawerExpression}?.querySelector('.execution-drawer-header .execution-context-trigger').click()`)
+    await waitForExpression(app.cdp, `Boolean(document.querySelector('.execution-context-popover'))`)
+    await capture(app.cdp, join(capturesRoot, `native-context-${runtimeKind}.png`))
+  }
+  const report = { runtimeKind, version: installation.snapshot?.reportedVersion, campId: liveCampId, runId, status,
     publicUnits: Math.max(0, ...samples.map((sample) => sample.value?.publicTextUnits ?? 0)),
     reasoningUnits: Math.max(0, ...samples.map((sample) => sample.value?.reasoningUnits ?? 0)),
-    rendererPublications: numericChanges.length, samples, changes }
-  const reportPath = join(capturesRoot, 'observable-real-codex.json')
+    rendererPublications: numericChanges.length, projection, usageRows, contextLabel, samples, changes }
+  const reportPath = join(capturesRoot, `observable-real-${runtimeKind}.json`)
   await writeFile(reportPath, JSON.stringify(report, null, 2))
-  assert(status === 'succeeded' && report.publicUnits > 0 && report.reasoningUnits > 0
-    && samples.some((sample) => sample.value?.reasoningSource === 'stream_summary')
+  const requireReasoning = process.env.ROVAI_OBSERVABLE_REQUIRE_REASONING !== '0'
+  assert(status === 'succeeded' && report.publicUnits > 0
+    && (!requireReasoning || (report.reasoningUnits > 0
+      && samples.some((sample) => sample.value?.reasoningSource === (runtimeKind === 'codex-cli' ? 'stream_summary' : 'stream_text')
+        && sample.ui.speed && (sample.ui.scope?.includes('思考') || sample.ui.scope?.includes('摘要')))))
     && numericChanges.length > 10 && captured
     && numericChanges.every((change, index) => index === 0 || change.at - numericChanges[index - 1].at >= 850)
     && samples.filter((sample) => sample.status === 'running').every((sample) =>
@@ -1583,7 +1651,7 @@ async function verifyRealCodexObservableOutput(app, capturesRoot) {
     && samples.filter((sample) => sample.ui.speed).every((sample) =>
       sample.ui.duration && sample.ui.sameLine && !sample.ui.speedInCard)
     && samples.at(-1).ui.speed === null,
-  `Real Codex output acceptance failed; numeric evidence is in ${reportPath}`)
+  `Real Runtime output acceptance failed; numeric evidence is in ${reportPath}`)
   return { verified: { status, version: report.version, publicUnits: report.publicUnits,
     reasoningUnits: report.reasoningUnits, rendererPublications: report.rendererPublications },
   captures: { speed: capturePath, report: reportPath } }

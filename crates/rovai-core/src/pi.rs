@@ -22,7 +22,7 @@ pub(crate) use host::{
 pub use host::{PiAgentRunRuntimeRequest, PiRpcRuntimeAdapter, PiRuntime};
 
 pub(crate) const PI_PROTOCOL_VERSION: &str = "pi-jsonl-rpc-v1";
-pub(crate) const PI_HOST_EXTENSION_VERSION: &str = "rovai-pi-host-v7";
+pub(crate) const PI_HOST_EXTENSION_VERSION: &str = "rovai-pi-host-v8";
 pub(super) const PI_MAX_JSONL_RECORD_BYTES: usize = 4 * 1024 * 1024;
 pub(super) const PI_COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
 
@@ -522,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_extension_only_reports_session_and_injects_bootstrap() {
+    fn managed_extension_reports_numeric_session_state_and_injects_bootstrap() {
         let source = include_str!("pi/managed-host.ts");
         assert!(!source.contains("PI_CODING_AGENT_DIR"));
         assert!(!source.contains("ANTHROPIC_AUTH_TOKEN"));
@@ -548,7 +548,9 @@ mod tests {
         assert!(!source.contains("Rovai partial approval"));
         assert!(!source.contains("Rovai managed input receipt"));
         assert!(!source.contains("approvedBindingDigest"));
-        assert_eq!(source.matches("pi.on(").count(), 2);
+        assert_eq!(source.matches("pi.on(").count(), 4);
+        assert!(source.contains("ctx.getContextUsage()"));
+        assert!(source.contains("rovai-managed-context-usage"));
         assert!(source.contains("pi.on(\"session_start\""));
         assert!(source.contains("pi.on(\"before_agent_start\""));
         assert!(source.contains("const current = loadBinding()"));

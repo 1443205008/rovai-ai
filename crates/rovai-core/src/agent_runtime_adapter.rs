@@ -2565,11 +2565,10 @@ pub fn acp_model_catalog_for_adapter(
     let mut models = acp_model_catalog_from_session(session_result)?;
     if adapter_kind == AdapterKind::CodebuddyCli
         && let Some(current) = acp_runtime_model_id_from_session(session_result)
-        && current.starts_with("custom-local:")
         && !models.iter().any(|model| model.id == current)
     {
-        // CodeBuddy 2.133.1 can run a selected custom-local model while its
-        // ACP options list still contains only built-in model IDs.
+        // CodeBuddy's selected custom-local or API-environment model can be
+        // absent from an ACP options list containing only built-in IDs.
         models.push(ModelDescriptor {
             description: None,
             runtime_metadata: None,
@@ -3056,7 +3055,7 @@ fn resolve_pi_runtime(
         "runtimeEntrypoint": runtime_entrypoint_compatibility(&input)?,
         "authScope": input.auth_scope,
         "protocolVersion": protocol_version,
-        "managedExtension": "rovai-pi-host-v7",
+        "managedExtension": "rovai-pi-host-v8",
     }))?;
     Ok(AdapterRuntimeProjection {
         protocol_version,
@@ -3471,6 +3470,12 @@ mod tests {
         let configured =
             acp_model_catalog_for_adapter(AdapterKind::CodebuddyCli, &codebuddy).unwrap();
         assert_eq!(configured[0].id, "custom-local:gpt-6-sol");
+        assert!(configured[0].is_default);
+        let mut api_environment = codebuddy.clone();
+        api_environment["configOptions"][0]["currentValue"] = json!("gpt-6.1-sol");
+        let configured =
+            acp_model_catalog_for_adapter(AdapterKind::CodebuddyCli, &api_environment).unwrap();
+        assert_eq!(configured[0].id, "gpt-6.1-sol");
         assert!(configured[0].is_default);
         assert!(
             !acp_model_catalog_for_adapter(AdapterKind::QoderCli, &codebuddy)

@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import { startQualificationCore } from './lib/qualification-core.mjs'
 import { configureProductRuntime } from './configure-product-runtime.mjs'
-import { createConfiguredCampAndSend } from './lib/create-configured-camp.mjs'
+import { createConfiguredCampAndSend, composerDocumentForAddress } from './lib/create-configured-camp.mjs'
 import { LiveTokenSpeedDisplay } from '../apps/desktop/src/renderer/src/execution-token-speed.ts'
 import { querySqliteRows } from './lib/sqlite.mjs'
 
@@ -31,7 +31,7 @@ const commands = {
   'antigravity-app': null
 }
 if (!Object.hasOwn(commands, kind)) throw new Error('Select an in-scope Runtime')
-const fixture = await realpath(await mkdtemp(join(tmpdir(), `rovai-observable-${kind}-`)))
+const fixture = await realpath(process.env.ROVAI_OBSERVABLE_FIXTURE_ROOT ?? await mkdtemp(join(tmpdir(), `rovai-observable-${kind}-`)))
 const data = join(fixture, 'user-data'), workspacePath = join(fixture, 'workspace')
 const rawPath = join(fixture, 'native-shapes.jsonl')
 const coreSource = process.env.ROVAI_OBSERVABLE_CORE ?? join(repository, 'resources/bin/macos-arm64/rovai-core')
@@ -42,6 +42,7 @@ await chmod(join(fixture, 'rovai'), 0o700)
 const coreDigest = createHash('sha256').update(await readFile(fixtureCore)).digest('hex')
 await mkdir(data); await mkdir(workspacePath)
 await mkdir(join(data, 'managed-skill-library')); await writeFile(join(data, 'mcp.json'), '{}')
+console.log(JSON.stringify({ kind, fixture, coreDigest, channel: 'automatic_acceptance', data, skillLibrary: join(data, 'managed-skill-library'), mcp: join(data, 'mcp.json') }))
 if (kind === 'pi') {
   const piHome = join(fixture, 'pi-agent')
   await mkdir(piHome, { mode: 0o700 })
@@ -150,6 +151,16 @@ threading.Thread(target=forward_input,daemon=True).start()
 def discard_diagnostics():
     for line in child.stderr: pass
 threading.Thread(target=discard_diagnostics,daemon=True).start()
+numeric_keys={'input_tokens','output_tokens','prompt_tokens','completion_tokens','total_tokens','cached_tokens','cache_read_input_tokens','cache_creation_input_tokens','cache_write_input_tokens','reasoning_tokens','thinking_tokens','used','size','contextWindow','context_window','modelContextWindow','inputTokens','outputTokens','totalTokens','cachedInputTokens','cacheWriteInputTokens','input','output','cacheRead','cacheWrite'}
+def numeric(v,path='',depth=0):
+    if depth>6 or not isinstance(v,dict): return {}
+    result={}
+    for key,value in v.items():
+        if key in {'content','delta','text','thinking','summary','arguments','output','input','systemPrompt'} and isinstance(value,(dict,list,str)): continue
+        p=path+'/'+key
+        if key in numeric_keys and isinstance(value,(int,float)) and not isinstance(value,bool): result[p]=value
+        elif isinstance(value,dict): result.update(numeric(value,p,depth+1))
+    return result
 identities={}
 def identity(v):
     if not isinstance(v,(str,int)): return None
@@ -158,6 +169,12 @@ def identity(v):
         if len(identities)>=512: return 'capacity-exceeded'
         identities[k]='identity-'+str(len(identities)+1)
     return identities[k]
+def managed_context(v):
+    if v.get('type')!='extension_ui_request' or v.get('method')!='setStatus' or v.get('statusKey')!='rovai-managed-context-usage': return None
+    try:
+        status=json.loads(v.get('statusText',''))
+        return {k:status[k] for k in ['usedTokens','windowTokens','provider','modelId'] if k in status}
+    except (ValueError,TypeError): return None
 with open(${JSON.stringify(rawPath)},'a',buffering=1) as out:
     for line in child.stdout:
         try:
@@ -167,14 +184,14 @@ with open(${JSON.stringify(rawPath)},'a',buffering=1) as out:
             if isinstance(e,dict) and isinstance(e.get('delta'),dict): text=e['delta'].get('thinking') or e['delta'].get('text') or text
             if not isinstance(text,str): text=''
             item=p.get('item') or {}
-            out.write(json.dumps({'atMs':round(time.monotonic()*1000),'method':v.get('method'),'type':v.get('type'),'sessionUpdate':u.get('sessionUpdate'),'deltaType':a.get('type') or d.get('type') or (e.get('delta') or {}).get('type'),'keys':sorted(v.keys()),'paramsKeys':sorted(p.keys()),'updateKeys':sorted(u.keys()),'contentKeys':sorted((u.get('content') or {}).keys()),'eventKeys':sorted(e.keys()),'itemId':identity(p.get('itemId') or item.get('id') or u.get('messageId')),'turnId':identity(p.get('turnId')),'summaryIndex':p.get('summaryIndex'),'contentIndex':p.get('contentIndex',a.get('contentIndex')),'textOffset':p.get('textOffset',u.get('textOffset')),'parentPresent':any(u.get(k)!=None for k in ['agentId','sourceAgentId','subagentId','parentAgentId','parentSessionId']) or v.get('parent_tool_use_id')!=None,'bytes':len(text.encode('utf-8')),'scalars':len(text)})+'\\n')
+            out.write(json.dumps({'atMs':round(time.monotonic()*1000),'method':v.get('method'),'type':v.get('type'),'sessionUpdate':u.get('sessionUpdate'),'deltaType':a.get('type') or d.get('type') or (e.get('delta') or {}).get('type'),'keys':sorted(v.keys()),'paramsKeys':sorted(p.keys()),'updateKeys':sorted(u.keys()),'contentKeys':sorted((u.get('content') or {}).keys()),'eventKeys':sorted(e.keys()),'itemId':identity(p.get('itemId') or item.get('id') or u.get('messageId') or (e.get('message') or {}).get('id')),'turnId':identity(p.get('turnId')),'summaryIndex':p.get('summaryIndex'),'contentIndex':p.get('contentIndex',a.get('contentIndex')),'textOffset':p.get('textOffset',u.get('textOffset')),'parentPresent':any(u.get(k)!=None for k in ['agentId','sourceAgentId','subagentId','parentAgentId','parentSessionId']) or v.get('parent_tool_use_id')!=None,'usageFields':numeric(v),'managedContext':managed_context(v),'bytes':len(text.encode('utf-8')),'scalars':len(text)})+'\\n')
         except Exception: pass
         sys.stdout.buffer.write(line);sys.stdout.buffer.flush()
 sys.exit(child.wait())
 `, { mode: 0o700 })
   process.env[override] = wrapper
 }
-const events = [], samples = [], displays = []
+const events = [], samples = [], displays = [], metrics = [], runs = []
 const started = performance.now()
 const core = startQualificationCore({
   coreExecutable: fixtureCore,
@@ -185,8 +202,8 @@ const core = startQualificationCore({
     }
   }
 })
-console.log(JSON.stringify({ kind, fixture, coreDigest, channel: 'automatic_acceptance', data, skillLibrary: join(data, 'managed-skill-library'), mcp: join(data, 'mcp.json') }))
 let run = null, campId = null, installation = null, failure = null
+let failureDetail = null
 try {
   await core.request('health.check')
   let configurationDeadline
@@ -216,7 +233,7 @@ try {
   let meter = null, nextProgress = performance.now() + 30000
   while (performance.now() < deadline) {
     const snapshot = await core.request('camps.snapshot', { campId }, 15000)
-    run = snapshot.agentRuns[0]
+    run = snapshot.agentRuns.find(candidate => !runs.some(old => old.id === candidate.id))
     if (run) {
       const now = performance.now()
       meter ??= new LiveTokenSpeedDisplay(now)
@@ -225,7 +242,22 @@ try {
       const display = meter.sample(now)
       samples.push({ atMs: Math.round(now - started), status: run.status, value })
       if (display !== undefined) displays.push({ atMs: Math.round(now - started), value: display })
-      if (['succeeded', 'failed', 'cancelled'].includes(run.status)) break
+      const projection = await core.request('monitoring.execution', { campId, agentRunIds: [run.id] }, 15000)
+      if (JSON.stringify(projection) !== JSON.stringify(metrics.at(-1)?.projection)) {
+        metrics.push({ atMs: Math.round(now - started), status: run.status, projection })
+      }
+      if (['succeeded', 'failed', 'cancelled'].includes(run.status)) {
+        runs.push({ id: run.id, executionEpoch: run.executionEpoch, status: run.status, projection })
+        if (process.env.ROVAI_OBSERVABLE_RESUME === '1' && runs.length === 1 && run.status === 'succeeded') {
+          await core.request('camp.messages.send', { commandId: crypto.randomUUID(), campId,
+            content: composerDocumentForAddress({ mode: 'default' }, 'Continue in this same native session for a second isolated metrics acceptance. Explain retry ownership in about 250 words, run sleep 3 once, then briefly describe recovery. Do not delegate or change files. Send a short completion with rovai send --public-only and finish normally.'),
+            sourceAttachments: [], quotes: [], replyToCampMessageId: null,
+            execution: { taskId: null, purpose: 'Same Session successor Usage baseline', completionRole: 'required' } })
+          meter = null
+          continue
+        }
+        break
+      }
       if (now >= nextProgress) {
         console.log(JSON.stringify({ kind, stage: 'live', status: run.status, publicUnits: value?.publicTextUnits, reasoningUnits: value?.reasoningUnits }))
         nextProgress = now + 30000
@@ -237,6 +269,11 @@ try {
 } catch (error) {
   // Do not include arbitrary provider error payloads, paths or credentials.
   failure = error.message.startsWith('timed out') ? error.message : error.message.split(':')[0].slice(0, 160)
+  failureDetail = error.message.replace(/https?:\/\/\S+/g, '<endpoint>')
+    .replace(/(?:\/[\w.@ -]+){2,}/g, '<path>')
+    .replace(/[A-Za-z0-9_+\/=.-]{16,}/g, '<identifier>')
+    .replace(/(?:api[_ -]?key|token|bearer|secret|password)\s*[:=]?\s*\S+/gi, '<credential>')
+    .slice(0, 1200)
   events.push({ method: 'probe.failure', categories: ['model', 'auth', 'quota', 'permission', 'protocol', 'version', 'executable', 'unsupported', 'config'].filter(word => error.message.toLowerCase().includes(word)) })
 } finally {
   const stopped = await core.stop()
@@ -269,6 +306,9 @@ try {
     streamConfirmed: samples.some(s => s.value?.streamConfirmed),
     meterDisplayCount: displays.filter(s => s.value !== null).length,
     rendererVerified: false, stopped: stopped.code === 0 }
+  report.runs = runs
+  report.metrics = metrics
+  report.failureDetail = failureDetail
   await writeFile(join(fixture, 'evidence.json'), JSON.stringify({ report, samples, displays, events }, null, 2))
-  console.log(JSON.stringify(report))
+  console.log(JSON.stringify({ ...report, metrics: undefined }))
 }

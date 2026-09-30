@@ -19,6 +19,19 @@ last_updated: 2026-09-30
 
 只接受同一原生 Session 观测的明确 `used` 或正数 `window`；只有窗口上限时 `used` 仍为空。Codex 当前已核验的通知把 `tokenUsage.last.totalTokens` 作为最近单次模型调用的 Context used 候选，与同一通知的 `modelContextWindow` 配对；它不是实时窗口同步值。`tokenUsage.total.totalTokens`、`last.inputTokens`、Run 累计与正文估算都不能代替 used。Context 的来源身份独立于 Run Usage 的累计来源身份：消耗总量未变但 `last` 或窗口变化时仍接收新观测。ACP 原生 Gauge 在提示结束后到达时，可在短暂的原 Session owner 保留期内按原 Run／代次落盘；新 owner 绑定后不沿用旧 owner。`used > window` 的无效观测不进入当前上下文。当前绑定发生已确认压缩后，旧 gauge 在新 gauge 到达前不再显示。
 
+## 原生上下文来源
+
+Claude 已核验的 Context used 取最近根模型调用的 `input_tokens + cache_read_input_tokens +
+cache_creation_input_tokens`；三项必须齐全，window 只取同一 result 中与该调用原生模型严格匹配的
+`modelUsage.<model>.contextWindow`。输出、其他模型以及整轮 `result.usage` 不能拼接到该观测。
+尚未收到该调用有效 `message_delta` 时，不使用 `message_start` 的暂定零值建立占用。
+
+Pi managed host v8 使用原生 `ctx.getContextUsage()` 的 tokens／contextWindow，来源标为
+`pi-native-context-estimate-v1`，它包含 Pi 自己对最新调用之后本地条目的估计，不能描述为精确实时窗口。
+Host 数值 status 必须匹配当前 Host instance、Run epoch、原生 Session、Binding generation 和实际
+provider/model；拒绝额外内容字段。压缩后原生 tokens 未知时只保留窗口，不沿用旧比例。
+`get_session_stats` 的全会话累计不参与 Context。以上是各 Runtime 的已验证专用来源，不是通用 Usage→Context 公式。
+
 ## 显示
 
 - 当前 `tok/s` 在队员名称行右侧、上下文圆环左侧显示为不可点击的纯文字，不随所展开的历史 Run 卡片切换；没有有效流式采样时隐藏。运行中的 Run 卡片保留原有执行耗时。`observable-output-heuristic-v3` 在 Core 内估算当前根 Agent 的公开正文增量，以及经方言和身份验证的明文思考增量或流式思考摘要。思考全文、加密推理、工具和子 Agent 输出不参与；正文与思考不传入同一个 Renderer 文本测速器。它是显示粗估，不等于原生 Usage。页面每 500 ms 读取当前 Run 的累计数值快照，以同一 Core 单调时钟间隔求一次合并速度，并用 2.5 秒时间常数平滑；首次有效输出后至少 1 秒才显示，屏幕最多每 1 秒发布一次，5 秒无新增输出后隐藏，重新输出重新预热；终态立即停止采样。该值不进入原生 Usage、费用、Context 或持久化。
@@ -44,4 +57,4 @@ last_updated: 2026-09-30
 
 字段资格由 Runtime、版本及实际 wire 方言决定。Parser 命中、安装版本、端到端 Run、持久化和 UI 是不同证据阶段；未经过当前安装版本与真实调用核验的字段保持“未验证”。原生输入为缓存包含总量时直接使用原生总量；互斥桶只有齐全才合成 Input。Reasoning 已包含在 Output 时不重加。重复模型调用与终态统计按来源身份去重，恢复累计量由 checkpoint 建立基线；失败、取消和超时保留部分观测。
 
-逐 Runtime 原生 Usage 证据见[第二轮执行指标核验记录](../research/runtime-monitoring/execution-metrics-verification-2026-09-29.md)；当前 v3 思考来源资格、长回合和 Renderer 证据见[思考流接通与验收](../research/runtime-monitoring/observable-output-v3-verification-2026-09-30.md)。[首轮 v3 核验](../research/runtime-monitoring/observable-output-v3-verification-2026-09-29.md)保留当时的 offset 限制与验证状态，不作为最新支持结论。
+逐 Runtime 最新原生 Usage、Context、思考和打包 App 证据见[原生来源补接与核验](../research/runtime-monitoring/native-usage-context-verification-2026-09-30.md)；[第二轮执行指标核验记录](../research/runtime-monitoring/execution-metrics-verification-2026-09-29.md)与[v3 思考流接通](../research/runtime-monitoring/observable-output-v3-verification-2026-09-30.md)保留各自当时的支持范围。[首轮 v3 核验](../research/runtime-monitoring/observable-output-v3-verification-2026-09-29.md)保留当时的 offset 限制与验证状态，不作为最新支持结论。

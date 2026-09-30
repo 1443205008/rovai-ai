@@ -57,6 +57,7 @@ use tokio::{
 use crate::{
     builtin_tool_runtime::BuiltinToolProcessConfig,
     health,
+    native_usage::{NativeUsageObservation, NativeUsageReader},
     runtime_fleet::{
         AgentRuntimeFleetManager, FleetAcquireRequest, FleetReleaseDisposition,
         RuntimeCompatibilityKey, RuntimeProcessHost,
@@ -3390,6 +3391,7 @@ pub struct AcpRuntime {
     workspace_access: String,
     session_permission_mode: Option<String>,
     active_observation: Mutex<Option<AcpPromptObservation>>,
+    native_usage: Mutex<Option<Arc<std::sync::Mutex<NativeUsageReader>>>>,
 }
 
 #[derive(Debug)]
@@ -3545,6 +3547,7 @@ impl AcpRuntime {
             workspace_access,
             session_permission_mode,
             active_observation: Mutex::new(None),
+            native_usage: Mutex::new(None),
         })
     }
 
@@ -3904,6 +3907,17 @@ impl AcpRuntime {
             .host
             .prepare_prompt(&session_id, &self.owner, delivery_id)
             .await?;
+        let kind = self.adapter_kind();
+        let version = self.reported_version().map(str::to_string);
+        let workspace = self.execution_root.clone();
+        let native_session = session_id.clone();
+        *self.native_usage.lock().await = tokio::task::spawn_blocking(move || {
+            NativeUsageReader::for_prompt(kind, version.as_deref(), &workspace, &native_session)
+                .map(|reader| Arc::new(std::sync::Mutex::new(reader)))
+        })
+        .await
+        .ok()
+        .flatten();
         *self.active_observation.lock().await = Some(AcpPromptObservation::new(
             prepared.prompt_id.clone(),
             delivery_id.to_string(),
@@ -4260,6 +4274,30 @@ impl AcpRuntime {
         self.owner.execution_epoch
     }
 
+    pub(crate) async fn native_usage_selected(&self) -> bool {
+        self.native_usage.lock().await.is_some()
+    }
+
+    pub(crate) async fn poll_native_usage(&self, prompt_end: bool) -> Vec<NativeUsageObservation> {
+        let Some(reader) = self.native_usage.lock().await.clone() else {
+            return Vec::new();
+        };
+        tokio::task::spawn_blocking(move || {
+            reader
+                .lock()
+                .map(|mut reader| {
+                    if prompt_end {
+                        reader.poll_prompt_end()
+                    } else {
+                        reader.poll()
+                    }
+                })
+                .unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default()
+    }
+
     pub async fn read_text_file(&self, params: &Value) -> Result<Value> {
         let path = params
             .get("path")
@@ -4509,6 +4547,21 @@ impl AcpCliRuntimeAdapter {
             .get(agent_run_id)
             .filter(|runtime| runtime.execution_epoch() == execution_epoch)
             .cloned()
+    }
+
+    pub(crate) async fn native_usage_runs(&self) -> Vec<(String, i64, Arc<AcpRuntime>)> {
+        if !matches!(
+            self.kind,
+            AdapterKind::CodebuddyCli | AdapterKind::KimiCodeCli | AdapterKind::OpencodeCli
+        ) {
+            return Vec::new();
+        }
+        self.runtimes
+            .lock()
+            .await
+            .iter()
+            .map(|(id, runtime)| (id.clone(), runtime.execution_epoch(), runtime.clone()))
+            .collect()
     }
 
     pub async fn get_agent_run_on_host(

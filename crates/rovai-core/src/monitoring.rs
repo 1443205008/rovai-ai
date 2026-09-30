@@ -1043,7 +1043,19 @@ fn persist_usage_record(
             let delta = existing
                 .as_ref()
                 .map(|checkpoint| subtract_counters(&normalized, &checkpoint.baseline))
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    // This verified dialect identifies a root message started
+                    // inside this Run. Its first cumulative call observation
+                    // starts at zero; session/run counters still need history.
+                    if run.runtime_kind == AdapterKind::ClaudeCodeCli
+                        && record.usage.scope == "model_call"
+                        && record.usage.dialect_id == "claude-stream-call-usage-v1"
+                    {
+                        normalized.clone()
+                    } else {
+                        UsageCounters::default()
+                    }
+                });
             let cost_delta = match (record.usage.cost.as_ref(), existing.as_ref()) {
                 (Some(current), Some(checkpoint))
                     if checkpoint.cost_currency.as_deref() == Some(current.currency.as_str()) =>
@@ -1981,6 +1993,14 @@ fn eligible_mask(runtime: AdapterKind, runtime_version: Option<&str>) -> i64 {
             } else {
                 0
             }
+        }
+        AdapterKind::KimiCodeCli if runtime_version == Some("2.1.1") => {
+            ELIGIBLE_PROMPT_INPUT_TOTAL
+                | ELIGIBLE_UNCACHED_INPUT
+                | ELIGIBLE_OUTPUT
+                | ELIGIBLE_CACHE_READ
+                | ELIGIBLE_CACHE_WRITE
+                | ELIGIBLE_REQUEST_CACHE_HIT
         }
         AdapterKind::AntigravityApp | AdapterKind::CursorAgent | AdapterKind::KimiCodeCli => 0,
     }
@@ -3309,6 +3329,12 @@ pub fn parse_acp_usage_message(
     if method != "rovai/acp_prompt_completed" {
         return Vec::new();
     }
+    if adapter_kind == AdapterKind::OpencodeCli && runtime_version == Some("1.18.30") {
+        // Installed 1.18.30 returns only the last assistant's Usage here.
+        // Per-call native metadata is the Run source; unavailable metadata
+        // stays unknown instead of presenting this tail as a complete Run.
+        return Vec::new();
+    }
     let usage = params.pointer("/result/usage").unwrap_or(&Value::Null);
     let (dialect_id, input_semantics, fields) = match adapter_kind {
         AdapterKind::CopilotCli => (
@@ -3486,6 +3512,25 @@ pub fn parse_pi_usage_message(
     native_session_id: &str,
     native_prompt_id: &str,
 ) -> Vec<ParsedRuntimeUsage> {
+    if event.get("type").and_then(Value::as_str) == Some("rovai.context_usage") {
+        return vec![ParsedRuntimeUsage {
+            identity_suffix: "context".to_string(),
+            dialect_id: "pi-native-context-estimate-v1".to_string(),
+            source: "runtime_private_extension".to_string(),
+            scope: "session".to_string(),
+            counter_mode: RuntimeUsageCounterMode::Gauge,
+            input_semantics: RuntimeInputSemantics::Unknown,
+            native_session_id: Some(native_session_id.to_string()),
+            native_turn_id: None,
+            fields: RuntimeUsageFields {
+                context_used_tokens: integer_at_any(event, &["/usedTokens"]),
+                context_size_tokens: integer_at_any(event, &["/windowTokens"]),
+                ..Default::default()
+            },
+            cost: None,
+            occurred_at: None,
+        }];
+    }
     if event.get("type").and_then(Value::as_str) != Some("message_end") {
         return Vec::new();
     }
@@ -3563,7 +3608,7 @@ pub fn pi_usage_source_identity(
 
 pub fn parse_claude_result_usage(result: &Value) -> Vec<ParsedRuntimeUsage> {
     let usage = result.get("usage").unwrap_or(&Value::Null);
-    let fields = RuntimeUsageFields {
+    let mut fields = RuntimeUsageFields {
         input_tokens: integer_at_any(usage, &["/input_tokens"]),
         uncached_input_tokens: None,
         output_tokens: integer_at_any(usage, &["/output_tokens"]),
@@ -3585,6 +3630,9 @@ pub fn parse_claude_result_usage(result: &Value) -> Vec<ParsedRuntimeUsage> {
         "runtime_estimate",
         "run",
     );
+    if result.get("model_calls_observed").and_then(Value::as_bool) == Some(true) {
+        fields = RuntimeUsageFields::default();
+    }
     if fields.is_empty() && cost.is_none() {
         return Vec::new();
     }
@@ -3599,6 +3647,74 @@ pub fn parse_claude_result_usage(result: &Value) -> Vec<ParsedRuntimeUsage> {
         native_turn_id: string_at_any(result, &["/turn_id"]),
         fields,
         cost,
+        occurred_at: None,
+    }]
+}
+
+pub fn parse_claude_observed_usage(event_type: &str, payload: &Value) -> Vec<ParsedRuntimeUsage> {
+    let Some(session) = string_at_any(payload, &["/sessionId"]) else {
+        return Vec::new();
+    };
+    let Some(message) = string_at_any(payload, &["/messageId"]) else {
+        return Vec::new();
+    };
+    let (suffix, dialect, mode, semantics, fields) = match event_type {
+        "runtime.usage.observed" => (
+            format!("message:{message}"),
+            "claude-stream-call-usage-v1",
+            RuntimeUsageCounterMode::Cumulative,
+            RuntimeInputSemantics::ExclusiveBuckets,
+            RuntimeUsageFields {
+                input_tokens: integer_at_any(payload, &["/usage/input_tokens"]),
+                output_tokens: integer_at_any(payload, &["/usage/output_tokens"]),
+                cache_read_input_tokens: integer_at_any(
+                    payload,
+                    &["/usage/cache_read_input_tokens"],
+                ),
+                cache_write_input_tokens: integer_at_any(
+                    payload,
+                    &["/usage/cache_creation_input_tokens"],
+                ),
+                ..Default::default()
+            },
+        ),
+        "runtime.context.observed" => (
+            "context".to_string(),
+            "claude-last-call-context-input-v1",
+            RuntimeUsageCounterMode::Gauge,
+            RuntimeInputSemantics::Unknown,
+            RuntimeUsageFields {
+                context_used_tokens: integer_at_any(payload, &["/usedTokens"]),
+                context_size_tokens: integer_at_any(payload, &["/windowTokens"]),
+                ..Default::default()
+            },
+        ),
+        _ => return Vec::new(),
+    };
+    if fields.is_empty() {
+        return Vec::new();
+    }
+    vec![ParsedRuntimeUsage {
+        identity_suffix: suffix,
+        dialect_id: dialect.to_string(),
+        source: if mode == RuntimeUsageCounterMode::Gauge {
+            "runtime_private_extension"
+        } else {
+            "runtime_event"
+        }
+        .to_string(),
+        scope: if mode == RuntimeUsageCounterMode::Gauge {
+            "session"
+        } else {
+            "model_call"
+        }
+        .to_string(),
+        counter_mode: mode,
+        input_semantics: semantics,
+        native_session_id: Some(session),
+        native_turn_id: None,
+        fields,
+        cost: None,
         occurred_at: None,
     }]
 }
@@ -3743,6 +3859,23 @@ mod tests {
             0
         );
         assert_eq!(eligible_mask(AdapterKind::Pi, Some("0.84.3")), 0);
+        let gauge = parse_pi_usage_message(
+            &json!({"type":"rovai.context_usage","usedTokens":32,"windowTokens":100}),
+            "session-pi",
+            "prompt-pi",
+        );
+        assert_eq!(gauge[0].counter_mode, RuntimeUsageCounterMode::Gauge);
+        assert_eq!(gauge[0].fields.context_used_tokens, Some(32));
+        assert!(
+            !normalize_usage(&gauge[0]).unwrap().any_observed(),
+            "native context estimate never enters billing"
+        );
+        let unknown = parse_pi_usage_message(
+            &json!({"type":"rovai.context_usage","usedTokens":null,"windowTokens":100}),
+            "session-pi",
+            "prompt-pi",
+        );
+        assert_eq!(unknown[0].fields.context_used_tokens, None);
     }
 
     #[test]
@@ -4077,6 +4210,38 @@ mod tests {
             )
             .unwrap();
         assert_eq!(retained, (Some(90), Some(30), Some(17), true));
+        database.connection().execute("INSERT INTO runtime_usage_run_summary(collection_epoch,agent_run_id,runtime_kind,parser_version,eligible_mask,input_semantics,enrolled_at) VALUES(?1,'claude-run','claude-code-cli',2,127,'unknown',?2)", params![epoch, started_at]).unwrap();
+        let mut claude_run = run.clone();
+        claude_run.key.agent_run_id = "claude-run".into();
+        claude_run.runtime_kind = AdapterKind::ClaudeCodeCli;
+        for (message, input, output, read) in [
+            ("call-1", 10, 3, 4),
+            ("call-1", 10, 3, 4),
+            ("call-1", 10, 6, 4),
+            ("call-2", 2, 1, 0),
+        ] {
+            let parsed = parse_claude_observed_usage("runtime.usage.observed", &json!({"sessionId":"session-1","messageId":message,
+                "usage":{"input_tokens":input,"output_tokens":output,"cache_read_input_tokens":read,"cache_creation_input_tokens":0}})).remove(0);
+            MonitoringService::record_usage_batches(
+                &mut database,
+                &[RuntimeUsageFlushBatch {
+                    run: claude_run.clone(),
+                    records: vec![BufferedUsageRecord {
+                        key: BufferedUsageKey::new(&claude_run.key, &parsed),
+                        usage: parsed,
+                        source_identities: vec![format!("{message}:{output}")],
+                    }],
+                    pending_since: Instant::now(),
+                }],
+            )
+            .unwrap();
+        }
+        let calls:(i64,i64,i64,i64) = database.connection().query_row("SELECT prompt_input_total_tokens,output_tokens,cache_read_tokens,cache_write_tokens FROM runtime_usage_run_summary WHERE agent_run_id='claude-run'", [], |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
+        assert_eq!(
+            calls,
+            (16, 7, 4, 0),
+            "new call starts at zero; repeated cumulative fields add only their difference"
+        );
         drop(database);
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -4265,6 +4430,30 @@ mod tests {
         let claude_usage = parse_claude_result_usage(&claude);
         assert_eq!(claude_usage[0].fields.cache_read_input_tokens, Some(25));
         assert_eq!(claude_usage[0].cost.as_ref().unwrap().amount, "0.0042");
+        let mut observed_claude = claude.clone();
+        observed_claude["model_calls_observed"] = json!(true);
+        let result = parse_claude_result_usage(&observed_claude);
+        assert!(
+            result[0].fields.is_empty(),
+            "terminal aggregate must not recount streamed calls"
+        );
+        assert_eq!(result[0].cost.as_ref().unwrap().amount, "0.0042");
+        let call = parse_claude_observed_usage(
+            "runtime.usage.observed",
+            &json!({"sessionId":"session","messageId":"call",
+            "usage":{"input_tokens":10,"output_tokens":3,"cache_read_input_tokens":4,"cache_creation_input_tokens":0}}),
+        );
+        assert_eq!(call[0].counter_mode, RuntimeUsageCounterMode::Cumulative);
+        assert_eq!(call[0].scope, "model_call");
+        assert_eq!(
+            normalize_usage(&call[0]).unwrap().prompt_input_total_tokens,
+            Some(14)
+        );
+        let context = parse_claude_observed_usage(
+            "runtime.context.observed",
+            &json!({"sessionId":"session","messageId":"call","usedTokens":14,"windowTokens":100}),
+        );
+        assert!(!normalize_usage(&context[0]).unwrap().any_observed());
 
         for (runtime, fixture) in [
             (
@@ -4364,6 +4553,15 @@ mod tests {
         ))
         .unwrap();
         let opencode_terminal = &opencode["messages"][1];
+        assert!(
+            parse_acp_usage_message(
+                AdapterKind::OpencodeCli,
+                Some("1.18.30"),
+                opencode_terminal["method"].as_str().unwrap(),
+                &opencode_terminal["params"]
+            )
+            .is_empty()
+        );
         let omitted_zero_usage = parse_acp_usage_message(
             AdapterKind::OpencodeCli,
             opencode["runtimeVersion"].as_str(),
@@ -4527,6 +4725,18 @@ mod tests {
         assert_eq!(qwen_usage[0].fields.cache_write_input_tokens, None);
 
         for (runtime, version, expected, absent, unversioned) in [
+            (
+                AdapterKind::KimiCodeCli,
+                "2.1.1",
+                ELIGIBLE_PROMPT_INPUT_TOTAL
+                    | ELIGIBLE_UNCACHED_INPUT
+                    | ELIGIBLE_OUTPUT
+                    | ELIGIBLE_CACHE_READ
+                    | ELIGIBLE_CACHE_WRITE
+                    | ELIGIBLE_REQUEST_CACHE_HIT,
+                ELIGIBLE_COST | ELIGIBLE_REASONING_OUTPUT,
+                0,
+            ),
             (
                 AdapterKind::OpencodeCli,
                 opencode["runtimeVersion"].as_str().unwrap(),

@@ -778,7 +778,7 @@ Windows 平台实测独立记录，不能由此 macOS 浏览器结果推断。
 
 `node --experimental-strip-types scripts/probe-observable-output.mjs <runtime-kind>` 创建独立 Core、bundled CLI、data-dir、Skill Library、MCP 和工作区，默认发送三段约 800 字的公开正文及工具停顿，最长观察 8 分钟。仅 relay 原始 Native 流，保留字段形态、匿名身份、字符数量、计时和 Core 数值快照；不保存思考正文、内容哈希或诊断原文。它调用生产显示状态机，但 `rendererVerified` 固定为 false，不能作为实际界面验收。
 
-可选环境变量：`ROVAI_OBSERVABLE_CORE` 指定 Core 来源；`ROVAI_OBSERVABLE_MODEL`／`ROVAI_OBSERVABLE_MODEL_OPTIONS` 冻结显式模型；`ROVAI_OBSERVABLE_PROMPT_FILE` 指定公开任务；`ROVAI_OBSERVABLE_THINKING_LEVEL` 调整隔离 Pi 默认思考级别，或声明隔离 DSH 自定义 route 的该项 effort；`ROVAI_OBSERVABLE_NATIVE_HOME` 只复制 Grok／DSH 的必要配置到私有夹具；Kimi 的 `ROVAI_OBSERVABLE_SUB2API=1` 使用 Claude 已授权 Provider 配置，写入隔离的 0600 provider file，并用 `ROVAI_KIMI_CONFIG` 避免日常配置覆盖。探针不修改日常 Native 配置。证据导出只选 `evidence.json` 和 `native-shapes.jsonl`，不能打包整个含凭据的 fixture。
+可选环境变量：`ROVAI_OBSERVABLE_CORE` 指定 Core 来源；`ROVAI_OBSERVABLE_MODEL`／`ROVAI_OBSERVABLE_MODEL_OPTIONS` 冻结显式模型；`ROVAI_OBSERVABLE_PROMPT_FILE` 指定公开任务；`ROVAI_OBSERVABLE_THINKING_LEVEL` 调整隔离 Pi 默认思考级别，或声明隔离 DSH 自定义 route 的该项 effort；`ROVAI_OBSERVABLE_NATIVE_HOME` 只复制 Grok／DSH 的必要配置到私有夹具；Kimi 的 `ROVAI_OBSERVABLE_SUB2API=1` 使用 Claude 已授权 Provider 配置，写入隔离的 0600 provider file，并用 `ROVAI_KIMI_CONFIG` 避免日常配置覆盖。`ROVAI_OBSERVABLE_RESUME=1` 在健康首 Run 后复用同一 Camp／Native Session 再执行一轮，分别保存两个 Run 的 Usage／Context 读回。探针不修改日常 Native 配置。证据导出只选 `evidence.json` 和 `native-shapes.jsonl`，不能打包整个含凭据的 fixture；数字 witness 可以保留原生 Token／Gauge 字段，不保留正文、参数、签名或 Provider 端点。
 
 打包 App 的可重复入口：
 
@@ -788,3 +788,36 @@ ROVAI_RUNTIME_ACTIVITY_ACCEPT_OBSERVABLE_REAL=1 node scripts/accept-runtime-acti
 ```
 
 第一项用合成 ACP 流证明去重、正文与思考合并、途中打开、切历史 Run、工具停顿、恢复、终态、迟到 Usage 和私有标记不扩散；第二项默认使用仓库的 `scripts/fixtures/observable-output-reasoning-task.txt` 图依赖推理长任务，也可用 `ROVAI_OBSERVABLE_PROMPT_FILE` 覆盖，验证当前模型的 summary 数值和实际 DOM 更新。后者幂等选择可见队员并逐帧确认不是总览；真实 Provider 未发摘要时不能把严格正样本断言失败归为漏计，需独立 Native 形态证据区分。两者均隔离 App/Core 数据，CDP 请求有 30 秒超时；不结束日常 App。字符权重与 500ms／1Hz／2.5s／1s／5s 参数由既有最低层 owner 验证，不为真实网络调用新增 Rust 单元测试。
+
+真实 App 入口可用 `ROVAI_OBSERVABLE_RUNTIME=<adapter-kind>` 替换默认 Codex；
+`ROVAI_OBSERVABLE_VERIFY_USAGE=1` 核对落盘四项与真实气泡，
+`ROVAI_OBSERVABLE_VERIFY_CONTEXT=1` 核对已证实的 Session 数值与圆环／气泡。
+`ROVAI_OBSERVABLE_REQUIRE_REASONING=0` 只验收正文；不能据此宣布思考通过。测速必须选择本次
+Native Run 所属的执行面板，不能取另一个隐藏 Camp 的总览；用量点击前展开历史并确认按钮可见。
+重启验收只启动已有隔离 App fixture，重新打开该 Camp、展开完成卡片，比较
+`monitoring.execution` 的四项／Session modelKey／代次与重启前记录，不重新调用模型或修改数据库。
+当前数字与实际截图证据见[原生 Usage 与 Context 核验](../research/runtime-monitoring/native-usage-context-verification-2026-09-30.md)。
+
+### 原生 Usage／Context 测试准入（2026-09-30）
+
+新增 owner 均不调用真实模型；没有删除、合并或停用现有 Rust 测试。
+
+| Owner | 修复前失败输入、单一职责与层级 |
+| --- | --- |
+| `native_usage::tests::native_dialects_select_root_calls_preserve_missing_and_ignore_restated_content` | CodeBuddy／Kimi 的私有 envelope 不被 ACP parser 读取；该纯 DTO owner 拥有根身份、互斥桶、缺失／零、重述排除和真实脱敏帧回放，不能扩展 ACP wire owner 来证明不同来源 |
+| `native_usage::tests::native_cursor_excludes_history_replays_partial_lines_and_file_resets` | 历史行、重复调用、半行、截断／替换或终态之后 75ms 的新 step 可能被错认或漏读；文件 cursor seam 需要最小临时文件与尾写线程，归入 `extended-tests`，纯 DTO 无法证明读取顺序 |
+| `native_usage::tests::opencode_metadata_excludes_old_pending_child_and_repeated_calls` | ACP 终态只有最后调用，历史 pending 完成和子 Session 也不能归属本 Run；使用最小三字段 Session／四字段 Message SQLite fixture，归入 `extended-tests`，不创建完整 Core 数据库；回放实际数字并检查重复 poll |
+| `claude::tests::root_call_usage_is_numeric_and_context_pairs_latest_call_with_its_model` | 起始暂定零或整轮 result 会代替最新调用，且多模型可能拼错窗口；纯 stream state owner 不建立进程，已有公开正文／思考 owner 不拥有私有数值事件；沿用该模块的 `extended-tests` 路由 |
+| `pi::host::tests::numeric_context_rejects_content_and_stale_run_host_session_or_binding` | 旧 Host／Run／Session／绑定或额外内容字段可能穿过私有 status；纯封闭 DTO 与 fence owner，现有 session locator owner 不拥有这个新 status 通道；沿用该模块的 `extended-tests` 路由 |
+
+既有 `monitoring` checkpoint／parser owner 扩展 Claude 首调用累计计入、终态不重加、Pi Gauge 与 Kimi
+版本准入；既有 `grouped_acp_models` owner 扩展 CodeBuddy 原生已选 API 模型别名。它们沿用原 fixture。
+本地最低命令：
+
+```bash
+cargo test -p rovai-core --features extended-tests --lib native_usage::tests::
+cargo test -p rovai-core --features extended-tests --lib monitoring::tests::
+cargo test -p rovai-core --features extended-tests --lib root_call_usage_is_numeric_and_context_pairs_latest_call_with_its_model
+cargo test -p rovai-core --features extended-tests --lib numeric_context_rejects_content_and_stale_run_host_session_or_binding
+cargo test -p rovai-core --features extended-tests --lib grouped_acp_models
+```

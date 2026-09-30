@@ -3,7 +3,7 @@ document_type: architecture
 architecture: runtime-monitoring
 authority: runtime-usage-metering-and-read-boundaries
 status: accepted
-last_updated: 2026-08-17
+last_updated: 2026-09-30
 ---
 
 # Runtime Monitoring 架构
@@ -18,6 +18,7 @@ Projection/Rollup、Read Side 和 Renderer 如何组合。
 | Component | Responsibility |
 | --- | --- |
 | Runtime adapter parser | 从已证明的 Runtime/version wire path 提取稀疏 Token/Cache/Cost；不估算缺失值 |
+| Native Usage reader | 在 prompt 发送前冻结当前根 Session cursor，按已验证版本只读本地数值元数据；不保存正文或历史回填 |
 | Usage buffer | 以内存 source identity 去重，合并兼容 update，保持 cumulative/gauge baseline |
 | Usage flush service | 周期最多每 4 秒一次；一个短事务更新 checkpoint、Run summary 与 hourly rollup |
 | Pricing catalog | 按 model key、service tier 与 effective date 提供版本化公开费率；不访问网络 |
@@ -47,18 +48,39 @@ Runtime event/result
        optional Codex price_estimated projection
 ```
 
-`delta` 可直接进入 additive projection；`cumulative` 与 `gauge` 的首值只建立 baseline，之后只投影正差。
+`delta` 可直接进入 additive projection；Session／Run 的 `cumulative` 与 `gauge` 首值只建立 baseline，之后只投影正差。
+Claude 已核验的 `claude-stream-call-usage-v1 / model_call` 身份在当前 Run 内新建，首次累计值从零计入。
 counter reset 只重建 baseline。Run summary 以 logical `agent_run_id` 为粒度，Recovery execution epoch 只隔离
 checkpoint，避免重复 Run 和 Coverage。Runtime 事件处理不写 raw/normalized observation row，也不追加
 Execution Evidence。
 
-OpenCode `>= 1.18.15` 的官方 dialect 把可选 thought/cache bucket 的省略定义为零；parser 只在完整成功
-terminal Usage 上应用该版本感知规则。OpenCode ACP `usage_update.cost` 是累计 Session gauge，不进入 Run
+旧 OpenCode `>= 1.18.15` 的已验证终态 dialect 把可选 thought/cache bucket 的省略定义为零；1.18.30
+的 prompt result 只包含最后一次调用，已单独排除 Token 终态汇总，改用下面的逐调用来源。
+OpenCode ACP `usage_update.cost` 是累计 Session gauge，不进入 Run
 summary。Codex `>= 0.145.0` 的四个完整 Token bucket 可在同一 Flush 事务中命中静态价格目录，覆盖当前
 Run 的 API public-price equivalent；不新增长期事件表，也不在页面读取时计算。
 
 周期 Flush 不发出立即 Snapshot 事件。普通事件受全局最短间隔约束；terminal 事件可在 Debounce 后立即
 刷新。所有请求仍 single-flight，从而不让 Dashboard 反向阻塞单一 SQLite Database Mutex 上的运行结算。
+
+### 本地原生数值来源与 Context
+
+CodeBuddy 2.133.1 和 Kimi Code 2.1.1 使用当前 workspace／Session 下的 JSONL cursor；OpenCode 1.18.30
+使用只读 SQLite 中的根 Session assistant 元数据。prompt 发送前建立历史 offset 与身份 baseline；之后
+最多每 4 秒在既有 Flush 锁内读取、buffer、落盘，terminal 强制 Flush 保持同一 Run cursor，增加 400ms
+尾读后才允许后继 prompt 建立 baseline。整个过程在 blocking pool 读取，不持有 Core Database Mutex
+等待原生磁盘。部分行等待完整换行；文件换代、缺口、超限停止采集且不重扫历史。
+
+这些 reader 只保留有界调用身份、offset、文件身份和必要数值。JSONL 的非 Usage 字段由封闭 DTO 跳过，
+SQLite 不读取 part／正文；原始行只在本次解析缓冲中存在，不进入 Evidence、Blob、日志或 Renderer。
+选定本地 Token 来源后不再混加 ACP Token；Gauge 和 Cost 独立处理。最新版本与字段语义由
+[Usage v4](../contracts/runtime-usage-monitoring-v4.md#原生逐调用来源)拥有。
+
+Claude 的 Core 私有路径保留最新根调用的数值 Usage 和原生模型身份，在同一 result 的该模型
+`modelUsage.contextWindow` 到达时发出 Session Gauge；不使用整轮 Usage。Pi managed host v8
+调用原生 `ctx.getContextUsage()` 并只发送封闭数值 status，Core 验证 Host、Run、Session、绑定代次和
+实际 provider/model 后消费；正文或全会话统计不进入此路径。只有窗口上限时 used 仍未知，压缩后
+原生 tokens 尚未重新有效时清空旧 used。两条私有路径均在公开 Evidence 分发前截断。
 
 ## Read path
 

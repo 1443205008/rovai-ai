@@ -217,10 +217,10 @@ use rovai_core::{
     },
     monitoring::{
         MonitoringExecutionParams, MonitoringFilter, MonitoringService, ParsedRuntimeUsage,
-        RuntimeUsageBuffer, RuntimeUsageFlushTarget, acp_usage_source_identity,
-        codex_context_source_identity, codex_usage_source_identity, parse_acp_usage_message,
-        parse_claude_result_usage, parse_codex_usage_message, parse_pi_usage_message,
-        pi_usage_source_identity,
+        RuntimeUsageBuffer, RuntimeUsageCounterMode, RuntimeUsageFields, RuntimeUsageFlushTarget,
+        acp_usage_source_identity, codex_context_source_identity, codex_usage_source_identity,
+        parse_acp_usage_message, parse_claude_observed_usage, parse_claude_result_usage,
+        parse_codex_usage_message, parse_pi_usage_message, pi_usage_source_identity,
     },
     network_recovery::{
         NetworkFailureCategory, NetworkRecoveryAttempt, NetworkRecoveryQueue,
@@ -15360,6 +15360,22 @@ impl Core {
         managed_output_root: &Path,
         event: &claude::ClaudeCodeRuntimeEvent,
     ) -> Result<()> {
+        if matches!(
+            event.event_type,
+            "runtime.usage.observed" | "runtime.context.observed"
+        ) {
+            let observations = parse_claude_observed_usage(event.event_type, &event.payload);
+            let identity = canonical_json_digest(&event.payload)?;
+            buffer_runtime_usage(
+                self,
+                &execution.agent_run_id,
+                execution.execution_epoch,
+                &identity,
+                &observations,
+            )
+            .await?;
+            return Ok(());
+        }
         if event.event_type == "claude.permission_request" {
             if let Err(error) = self
                 .prepare_claude_permission_action(execution, &event.payload)
@@ -18918,7 +18934,14 @@ async fn process_agent_run_pi_message(
         .to_string();
     let usage = parse_pi_usage_message(&message, native_session_id, native_prompt_id);
     if !usage.is_empty() {
-        match pi_usage_source_identity(&message, native_session_id, native_prompt_id) {
+        let source = if message_type == "rovai.context_usage" {
+            Ok(Some(format!(
+                "pi-context:{host_instance_id}:{native_prompt_id}:{sequence}"
+            )))
+        } else {
+            pi_usage_source_identity(&message, native_session_id, native_prompt_id)
+        };
+        match source {
             Ok(Some(source_identity)) => {
                 if let Err(error) = buffer_runtime_usage(
                     core,
@@ -18937,6 +18960,9 @@ async fn process_agent_run_pi_message(
                 "dropped Pi Usage without a stable source identity for AgentRun {agent_run_id}: {error:#}"
             ),
         }
+    }
+    if message_type == "rovai.context_usage" {
+        return Ok(());
     }
     let (message, completed_action) = runtime.observe(message).await?;
     if message_type == "extension_ui_request" {
@@ -19009,7 +19035,7 @@ async fn process_agent_run_pi_message(
             &execution.agent_run_id,
             execution.execution_epoch,
             &execution.runtime.model.source,
-            Some(execution.runtime.model.model_id.clone()),
+            runtime.observed_model_id().await,
         )
         .await;
     }
@@ -20335,7 +20361,22 @@ async fn process_agent_run_acp_message(
         return;
     }
 
-    let usage = parse_acp_usage_message(adapter_kind, runtime.reported_version(), &method, &params);
+    let mut usage =
+        parse_acp_usage_message(adapter_kind, runtime.reported_version(), &method, &params);
+    if runtime.native_usage_selected().await {
+        // A prompt selects one billing source before dispatch. Restated ACP
+        // totals cannot also claim the native journal's model calls.
+        usage.retain_mut(|item| {
+            if item.counter_mode == RuntimeUsageCounterMode::Gauge {
+                return true;
+            }
+            if item.cost.is_some() {
+                item.fields = RuntimeUsageFields::default();
+                return true;
+            }
+            false
+        });
+    }
     if !usage.is_empty()
         && let Err(error) = buffer_runtime_usage(
             core,
@@ -22311,6 +22352,39 @@ async fn flush_runtime_usage(
     // A terminal flush must observe the result of any periodic flush that
     // already drained this Run before deciding that its bookkeeping is idle.
     let _flush_guard = core.runtime_usage_flush.lock().await;
+    // Poll under the same serialization as drain/persist. A terminal cannot
+    // finish this Run between advancing the native cursor and buffering it.
+    for kind in [
+        AdapterKind::CodebuddyCli,
+        AdapterKind::KimiCodeCli,
+        AdapterKind::OpencodeCli,
+    ] {
+        let Some(adapter) = core.acp_adapter(kind) else {
+            continue;
+        };
+        for (agent_run_id, execution_epoch, runtime) in adapter.native_usage_runs().await {
+            if let RuntimeUsageFlushTarget::Run {
+                agent_run_id: target_id,
+                execution_epoch: target_epoch,
+            } = &target
+                && (&agent_run_id != target_id || execution_epoch != *target_epoch)
+            {
+                continue;
+            }
+            let prompt_end =
+                reason == "terminal_flush" && matches!(target, RuntimeUsageFlushTarget::Run { .. });
+            for item in runtime.poll_native_usage(prompt_end).await {
+                buffer_runtime_usage(
+                    core,
+                    &agent_run_id,
+                    execution_epoch,
+                    &item.source_identity,
+                    &[item.usage],
+                )
+                .await?;
+            }
+        }
+    }
     let batches = {
         let mut usage = core.runtime_usage.lock().await;
         let batches = usage.drain(target.clone());

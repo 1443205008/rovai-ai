@@ -9,7 +9,7 @@ baseline_ref: "4b4fe088b15ef785cd76f54f221e5d87c9d639a4"
 
 # Rovai AI 运行监控指标可采集性审计
 
-当前执行台指标的逐 Runtime 实测结果见[第二轮字段级核验（2026-09-29）](execution-metrics-verification-2026-09-29.md)，临时测速的最新思考来源资格与长回合证据见[v3 思考验收](observable-output-v3-verification-2026-09-30.md)，[首轮记录](observable-output-v3-verification-2026-09-29.md)保留当时的限制。本文是历史设计输入，版本与支持判断以当次实测记录为准。
+当前执行台的最新原生 Usage／Context 与实际 App 证据见[原生来源补接（2026-09-30）](native-usage-context-verification-2026-09-30.md)，此前的[第二轮字段级核验](execution-metrics-verification-2026-09-29.md)、[v3 思考验收](observable-output-v3-verification-2026-09-30.md)与[首轮记录](observable-output-v3-verification-2026-09-29.md)保留各自当时的范围。本文是历史设计输入，版本与支持判断以当次实测记录为准。
 
 > 本文审计设置页“运行监控”原型中的数据是否能由 Rovai 当前事实和 Runtime 原生协议可靠提供。
 > 用户提供的 HTML、Research 报告和 Codex Brief 仅作为需求与候选设计输入，不是仓库权威合同；
