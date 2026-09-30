@@ -8518,6 +8518,7 @@ export function ApprovalDock({
   focusApprovalId: string | null
   onFocusPresented?(requestId: number): void
 }): JSX.Element {
+  const t = useUiText()
   const [activeIndex, setActiveIndex] = useState(0)
   const [collapsed, setCollapsed] = useState(false)
   const [expandedReasonIds, setExpandedReasonIds] = useState<Set<string>>(() => new Set())
@@ -8647,19 +8648,22 @@ export function ApprovalDock({
           })} />}
         <pre tabIndex={0} role="region" aria-label={uiAttribute("完整审批请求，可滚动")}>{JSON.stringify(approval.canonicalInput, null, 2)}</pre>
         <div className="approval-dock-actions">
-          {approval.options.map((option) => (
-            <button
-              className={`runtime-option option-${option.kind}`}
-              type="button"
-              key={option.optionId}
-              onClick={() => onResolve(approval, option.optionId)}
-              disabled={busy}
-              title={option.label}
-              aria-label={option.label}
-            >
-              {option.label}
-            </button>
-          ))}
+          {approval.options.map((option) => {
+            const label = approvalOptionLabel(approval, option, t)
+            return (
+              <button
+                className={`runtime-option option-${option.kind}`}
+                type="button"
+                key={option.optionId}
+                onClick={() => onResolve(approval, option.optionId)}
+                disabled={busy}
+                title={label}
+                aria-label={label}
+              >
+                {label}
+              </button>
+            )
+          })}
           {approval.options.length === 0 && (
             <p className="approval-option-error"><UiText zh={"当前智能体未提供可无损回传的原生选项，请求无法提交。"} /></p>
           )}
@@ -8667,6 +8671,20 @@ export function ApprovalDock({
       </div>}
     </section>
   )
+}
+
+function approvalOptionLabel(
+  approval: ActionApprovalView,
+  option: ActionApprovalView['options'][number],
+  t: ReturnType<typeof useUiText>
+): string {
+  const coreLabel = approval.permissionSemantics === 'core_enforced_v1'
+    && ['core.deny', 'core.allow_once'].includes(option.optionId)
+  const claudeLabel = approval.adapterKind === 'claude-code-cli'
+    && approval.nativeMethod === 'claude/permission_request'
+    && ['claude.deny', 'claude.allow_once'].includes(option.optionId)
+  // These labels are created by Rovai; Runtime-supplied option text stays verbatim.
+  return coreLabel || claudeLabel ? t(option.label) : option.label
 }
 
 function normalizedApprovalText(value: string): string {
