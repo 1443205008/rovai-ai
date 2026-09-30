@@ -1,7 +1,7 @@
 ---
 title: "原生 Usage 与 Context 补接及真实验收"
 status: "implementation-evidence"
-reviewed_at: "2026-09-30"
+reviewed_at: "2026-10-01"
 target_version: "v1.72"
 baseline_ref: "0e23f6fc6f7f6943ce93e4e1f083efb68b453f2b"
 ---
@@ -74,6 +74,14 @@ Pi Native 窗口来自实际 provider/model，不从自定义模型名称猜窗�
 下一 prompt 建立 baseline。确定性 owner 在终态读取开始后 75ms 写入新 step；真实同 Session 两 Run
 复测匹配全部七 step。超过 400ms 的任意文件延迟仍未验证；没有用固定等待声称任意场景完整。
 
+### Pi 数值事件交接身份
+
+最终检查发现 Pi 私有 Context 事件在校验后曾重新读取实时 owner；若中间发生 Run 交接，
+旧事件可能被包装成新 Run 身份。修复后数值 packet 沿用已校验的 Run／epoch／Session 与当时
+prompt／delivery 身份，Core 继续按完整绑定拒绝旧事件，不把数值重新归属给后继 Run。
+这是代码审计发现的竞态；已有数值 DTO owner 扩展了交接后的 packet 身份断言，不宣称真实调用
+已稳定复现该时间窗口。
+
 ## 16 类 Runtime 字段矩阵
 
 `可用`对应上述 verified_available；`条件`明确限制；`未上报`只指所列健康通道的 raw_absent；
@@ -110,7 +118,7 @@ Pi Native 窗口来自实际 provider/model，不从自定义模型名称猜窗�
 
 | 实际 App Runtime | 正文／思考数值正样本 | 数字发布次数 | 真实 Usage／Context UI |
 | --- | --- | --- | --- |
-| Pi 0.84.4 | 正文 87675、思考 10525 单位 | 32 | 四项、原生 Context 估计、终态与当前模型对应 |
+| Pi 0.84.4 | 原思考正样本：正文 87675、思考 10525 单位；最终候选正文 89200、本次无思考 | 32；最终候选 31 | 四项、原生 Context 估计、终态与当前模型对应 |
 | Kimi 2.1.1 | 正文 92500；本次无思考 | 38 | 四项、Gauge、终态完成卡片 |
 | CodeBuddy 2.133.1 | 正文 89775；本次无思考 | 37 | 原生 Input／Output／Cache Read，Cache Write 显示未知 |
 | Claude 2.1.280 | 最终候选正文 81490、思考 10710 单位；此前正文样本 82460 | 43；此前 42 | 四项、最新根调用 used＋窗口；思考只在末尾约 2s 到达，App 读取数字但未实际显示思考范围速度 |
@@ -123,11 +131,18 @@ Pi Native 窗口来自实际 provider/model，不从自定义模型名称猜窗�
 耗时只在可见气泡内。Pi 真实 App 思考正样本使用尾读修复前的候选（Pi 路径与尾读无关）；
 Kimi／CodeBuddy／OpenCode 和首个 Claude 样本使用包含 400ms 修复的候选，签名 Core SHA-256 为
 `f0a87df5a7999e5bf72546ffab119d1c480a78166f5ba8ce196885679fa0c6f9`；Pi 实时样本的原签名摘要未独立
-保留，按未知记录。补充 Claude 同次思考使用含起始零／子 Agent 硬化的最终候选，签名 Core SHA-256
+保留，按未知记录。补充 Claude 同次思考使用含起始零／子 Agent 硬化的候选，签名 Core SHA-256
 为 `2d38e5dcaaf070065f0503071253d91780de51bb32428a103c60f7317bff0a9c`。
 五类 App 的隔离 Core 再次启动后，四项、finalizedAt 和已有 Context 的 used／window／实际模型／
 绑定代次均与重启前一致；重新打开完成卡片并等待气泡布局后再取截图，避免隐藏按钮或尚未定位的
 Portal 被误计作交互通过。
+
+Pi 交接身份修复后的最终签名 Core SHA-256 为
+`5f50b291bbd79ff9b60624fdcbff1d156fd38815c6c3cef37821bf9a7ed4416b`。同一签名 App 的新健康 Run
+持续 68s：四项为 34513／851／16768／0，Context 原生估计为 9374／1050000；31 次数字发布，
+最短间隔约 995.6ms、任意 30s 最多 22 次。重启后数值、当前模型／绑定与可见气泡读回一致。
+本次未收到思考，严格思考门槛未满足；保存的轨迹只通过正文、布局、用量／Context 与重启读回断言，
+不写成最新候选已通过同次思考显示。此前 Pi 思考 UI 正样本仍单独保留。
 
 补充 Claude 图论长任务在 480s 验收截止时仍在第三段正文输出：正文最高读到 180245 单位，没有
 思考数值正样本，未取得健康终态。因此记录为部分执行，不把 `finalizedAt` 未到误报成 Usage 未上报。

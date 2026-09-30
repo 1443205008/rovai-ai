@@ -182,6 +182,27 @@ impl PiManagedContextUsage {
                 .used_tokens
                 .is_none_or(|n| n >= 0 && n <= self.window_tokens)
     }
+
+    fn into_incoming(
+        self,
+        host_instance_id: String,
+        owner: PiRuntimeOwner,
+        sequence: u64,
+    ) -> PiIncoming {
+        // Preserve the identity validated before any await. Re-reading the
+        // live owner after validation can relabel an old status during handoff.
+        PiIncoming::Message {
+            host_instance_id,
+            agent_run_id: self.agent_run_id,
+            execution_epoch: self.execution_epoch,
+            native_session_id: self.session_id,
+            native_prompt_id: owner.native_prompt_id,
+            delivery_id: owner.delivery_id,
+            sequence,
+            message: json!({"type":"rovai.context_usage", "usedTokens":self.used_tokens,
+                "windowTokens":self.window_tokens, "provider":self.provider, "modelId":self.model_id}),
+        }
+    }
 }
 
 struct PendingPiCommand {
@@ -742,7 +763,7 @@ impl PiHost {
         });
     }
 
-    async fn route_message(&self, mut message: Value) {
+    async fn route_message(&self, message: Value) {
         if message.get("type").and_then(Value::as_str) == Some("extension_ui_request")
             && message.get("method").and_then(Value::as_str) == Some("setStatus")
             && message.get("statusKey").and_then(Value::as_str)
@@ -783,8 +804,13 @@ impl PiHost {
             {
                 return;
             }
-            message = json!({"type":"rovai.context_usage", "usedTokens":value.used_tokens,
-                "windowTokens":value.window_tokens, "provider":value.provider, "modelId":value.model_id});
+            let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+            let _ = self.incoming.send(value.into_incoming(
+                self.host_instance_id.clone(),
+                owner,
+                sequence,
+            ));
+            return;
         }
         if message.get("type").and_then(Value::as_str) == Some("extension_ui_request")
             && message.get("method").and_then(Value::as_str) == Some("setStatus")
@@ -2582,6 +2608,32 @@ mod tests {
         };
         let parse = |v: Value| serde_json::from_value::<PiManagedContextUsage>(v).unwrap();
         assert!(parse(value.clone()).matches("host", "session", &binding, &owner));
+        let packet = parse(value.clone()).into_incoming("host".into(), owner.clone(), 7);
+        let successor = PiRuntimeOwner {
+            agent_run_id: "next-run".into(),
+            execution_epoch: 4,
+            native_prompt_id: "next-prompt".into(),
+            delivery_id: "next-delivery".into(),
+        };
+        let PiIncoming::Message {
+            agent_run_id,
+            execution_epoch,
+            native_session_id,
+            native_prompt_id,
+            delivery_id,
+            message,
+            ..
+        } = packet
+        else {
+            panic!("expected numeric packet")
+        };
+        assert_eq!(agent_run_id, owner.agent_run_id);
+        assert_eq!(execution_epoch, owner.execution_epoch);
+        assert_eq!(native_session_id, "session");
+        assert_eq!(native_prompt_id, owner.native_prompt_id);
+        assert_eq!(delivery_id, owner.delivery_id);
+        assert_ne!(agent_run_id, successor.agent_run_id);
+        assert_eq!(message["usedTokens"], 32);
         for (key, changed) in [
             ("agentRunId", json!("old-run")),
             ("executionEpoch", json!(2)),

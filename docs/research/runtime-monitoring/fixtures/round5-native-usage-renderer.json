@@ -487,7 +487,7 @@
       "version": "2.1.280 (Claude Code)",
       "status": "succeeded",
       "liveCoreDigest": "2d38e5dcaaf070065f0503071253d91780de51bb32428a103c60f7317bff0a9c",
-      "liveCoreDigestNote": "Final candidate with 400ms tail read and Claude zero placeholder/root-child isolation.",
+      "liveCoreDigestNote": "Claude supplemental candidate with 400ms tail read and zero placeholder/root-child isolation, before later Pi handoff owner fix.",
       "publicUnits": 81490,
       "reasoningUnits": 10710,
       "numericPublications": 43,
@@ -582,12 +582,116 @@
       },
       "thoughtUIVerified": false,
       "thoughtUILimit": "Qualified thought arrived in the last ~2 seconds; Core and App received numbers but no numeric speed publication carried thought scope before terminal."
+    },
+    {
+      "runtime": "pi",
+      "version": "0.84.4",
+      "status": "succeeded",
+      "liveCoreDigest": "5f50b291bbd79ff9b60624fdcbff1d156fd38815c6c3cef37821bf9a7ed4416b",
+      "liveCoreDigestNote": "Final candidate preserves validated Pi private Context packet owner across handoff; fresh live sample and restart use the same signed image.",
+      "publicUnits": 89200,
+      "reasoningUnits": 0,
+      "numericPublications": 31,
+      "maxNumericPublicationsPer30Seconds": 22,
+      "minimumNumericPublicationIntervalMs": 995.6,
+      "readback": {
+        "promptInputTotalTokens": 34513,
+        "outputTokens": 851,
+        "cacheReadTokens": 16768,
+        "cacheWriteTokens": 0,
+        "finalizedAt": "2026-09-30T16:58:59.983896+00:00"
+      },
+      "sessionReadback": [
+        {
+          "agentId": "agent_101",
+          "conversationId": "d4b3401f-7a8b-4b93-9b01-4b3b309c9fe5",
+          "dialectId": "pi-native-context-estimate-v1",
+          "modelKey": "pi://model?provider=sub2api&id=gpt-6.1-sol",
+          "observedAt": "2026-09-30T16:58:59.981101+00:00",
+          "runtimeKind": "pi",
+          "sessionGeneration": 1,
+          "source": "runtime_private_extension",
+          "usedTokens": 9374,
+          "windowTokens": 1050000
+        }
+      ],
+      "usageRows": [
+        [
+          "Input Token",
+          "34.5k"
+        ],
+        [
+          "Output Token",
+          "0.9k"
+        ],
+        [
+          "Cache Read",
+          "16.8k"
+        ],
+        [
+          "Cache Write",
+          "0k"
+        ],
+        [
+          "执行耗时",
+          "1分 08秒"
+        ]
+      ],
+      "contextAccessibleLabel": "当前原生会话上下文：9.4k / 1050k，0.9%",
+      "coreRestartVerified": true,
+      "visibleUsagePopover": {
+        "rows": [
+          [
+            "Input Token",
+            "34.5k"
+          ],
+          [
+            "Output Token",
+            "0.9k"
+          ],
+          [
+            "Cache Read",
+            "16.8k"
+          ],
+          [
+            "Cache Write",
+            "0k"
+          ],
+          [
+            "执行耗时",
+            "1分 08秒"
+          ]
+        ],
+        "popover": {
+          "left": 1189,
+          "top": 313,
+          "width": 172,
+          "height": 133.484375
+        },
+        "anchor": {
+          "left": 1311.8828125,
+          "top": 280.5,
+          "width": 49.1171875,
+          "height": 26
+        },
+        "durationOutsidePopover": false
+      },
+      "captures": {
+        "speed": "pi-owner-final-renderer/observable-real-pi.png",
+        "usage": "pi-owner-final-renderer/native-usage-pi.png",
+        "context": "pi-owner-final-renderer/native-context-pi.png"
+      },
+      "bodyUIVerified": true,
+      "thoughtUIVerified": false,
+      "thoughtScopeSpeedSamples": 0,
+      "strictThoughtGate": "not_met_no_reasoning_observed",
+      "thoughtUILimit": "Healthy final-image sample reported no thought increments; strict thought requirement was not met. Earlier Pi thought UI positive remains separately recorded; this sample only verifies body, Usage, Context and restart."
     }
   ],
   "finalPackagedBinaries": {
-    "rovai-core": "2d38e5dcaaf070065f0503071253d91780de51bb32428a103c60f7317bff0a9c",
-    "rovai-host": "8e8aa3e38e29d8e04ec455751d56596cf88df04d308cf9d9f9f111643452894a",
-    "rovai": "0d15baffd876f3369c46f51e37fd79eca7645cdf8ef026d90525b9dea7cb4a66"
+    "rovai-core": "5f50b291bbd79ff9b60624fdcbff1d156fd38815c6c3cef37821bf9a7ed4416b",
+    "rovai-host": "3e6ea75cea18afab658412b9df9fa9cf10d9557e6054c8a4e5f1e70db53f94b6",
+    "rovai": "9df0efaa8f8e07b07d4171faf0e8f67bee26eb30d6bc537962e90fad8784d21d"
   },
   "partialAttempts": [
     {
@@ -608,5 +712,6 @@
       },
       "result": "Partial execution, no healthy terminal within deadline. Usage present is not marked as complete; current renderer test reports deadline instead of blaming missing Usage."
     }
-  ]
+  ],
+  "rendererVerifiedScope": "Body speed, layout and native Usage/Context as recorded per entry; thought speed qualification is independent and must use thoughtUIVerified."
 }
