@@ -1846,14 +1846,14 @@ fn operation_help_examples(operation: &str) -> &'static [&'static str] {
     match operation {
         "mission.list" => &[
             "rovai mission list",
-            "rovai mission list --query \"附件\"",
+            "rovai mission list --query \"attachments\"",
             "rovai mission list --status needs_you",
         ],
         "mission.get" => &[
             "rovai mission get",
             "rovai mission get --mission-id rvm_example",
         ],
-        "mission.update" => &["rovai mission update --title \"目录导航\""],
+        "mission.update" => &["rovai mission update --title \"Directory navigation\""],
         "mission.status" => &["rovai mission status --status needs_you"],
         "camp.message.send" => &CAMP_MESSAGE_SEND_HELP_EXAMPLES,
         "member.create" => &[
