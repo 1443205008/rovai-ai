@@ -153,4 +153,8 @@ Mission owner 的两处期望随已确认启动正文更新；状态、通知与
 Bootstrap／resume owner 和全部兼容常量未修改。
 
 以上证明文件发布与 Core 兼容路径，不证明英文提示词的模型行为优于原文，也不是实际客户端升级验收。
-真实模型 Gate 仍未运行，保留为合并前未满足项。
+真实模型 Gate 未运行。2026-09-30，Principal 在 Camp 输入
+`8532f5f7-3d78-4dce-a750-3a130ecfcc1f` 中指示本次豁免该项，并在 CI 通过后直接合并。
+此决定仅适用于本次 r5；未改动评测规则或提示词方案，也不将未运行的 Gate 记为通过。
+实施提交 `c34fa2b091ef475b9621c7c99c863a42962fa03a` 的
+[CI / gate](https://github.com/murray17/rovai-ai/actions/runs/36687564910) 已通过。
