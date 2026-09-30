@@ -317,7 +317,7 @@ describe('member runtime parameters', () => {
     }))
 
     expect(markup).toContain(label)
-    expect(markup).toContain(`aria-label="${label}，${value}"`)
+    expect(markup).toContain(`aria-label="${label}，${value}，推荐"`)
   })
 
   it('does not present an approval mode for native Pi tool execution', () => {
