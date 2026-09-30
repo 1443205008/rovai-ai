@@ -1,5 +1,5 @@
 ---
-version: 14
+version: 15
 slug: "member-workspace"
 primary_target: "apps/desktop/src/renderer/src/MemberManagement.tsx"
 related_targets:
@@ -94,6 +94,7 @@ admitted highest value `permission_mode=bypass_permissions`. Kiro exposes the ex
 `trust_all_tools`; label it “自动允许全部工具” and default it on from Core without adding a separate warning card.
 Every boolean Runtime permission switch on this page uses the neutral action family for its on state across
 Desktop, Web and Mobile; it does not fall back to the Steel brand family.
+Use the accepted understated permission guidance from the [member configuration UI contract](../../../../docs/ui/components/member-identity.md#队员配置页): ordinary recommendation text appears only inside an open menu, with one short line below switches. The inline permission switch face and its minimum height are both 36px. Guidance never changes a saved value or draft, and language changes preserve both.
 
 Model rows keep Runtime display names separate from opaque selection IDs and show the Runtime description when
 provided, with the full text available on hover. Claude's initialize catalog uses this same Picker; no family-specific

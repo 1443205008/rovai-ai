@@ -2,7 +2,7 @@
 document_type: ui-component-contract
 authority: renderer-member-identity
 status: accepted
-last_updated: 2026-09-28
+last_updated: 2026-10-01
 ---
 
 # 队员身份与图像
@@ -56,6 +56,14 @@ last_updated: 2026-09-28
 文件系统访问、审批、权限模式等字段继续服从原 Runtime schema、原始选项和默认值；可用性、模型缓存和
 平台冻结状态仍来自 Core。视觉排序不改变初始选择：默认模型不写入显式模型 ID，选择固定模型也不自动填入
 推理强度；选择“跟随模型默认值”删除对应 override。
+
+权限推荐采用展开后呈现：关闭的下拉框只显示当前值，打开后在 Core `memberRuntimeDefaults` 对应的有效原生选项
+旁以无底色、无边框的普通小字显示“推荐”，菜单底部保留“建议使用最高权限，体验更顺畅。”。推荐文字与原有
+选中勾选独立，不调整选项次序或用户配置；默认值不在当前原生目录时不显示推荐。权限开关下方只保留
+“建议开启，体验更顺畅。”，不增加角标或弹窗。Copilot、Kiro、Antigravity 共用的开关外框高度与最小高度均为
+36px，与相邻下拉框对齐。英文对应为 `Recommended`、`For a smoother experience, use full permissions.` 和
+`Enable for a smoother experience.`；开关状态为 `On / Off`，Antigravity 使用 `Auto-approve permission requests`
+以保持窄窗口对齐。英文推荐菜单最小宽度为 360px，仍服从现有视口宽度上限。语言切换保留当前选项和未保存草稿。
 
 同一 Runtime 内从显式模型切换到另一显式模型时，只迁移旧配置中明确设置、且目标模型目录项以相同参数
 `key` 和枚举 `value` 支持的覆盖值；不复制旧模型的默认值，也不把不支持的强度降档。目标模型的可校验
