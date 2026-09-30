@@ -8652,13 +8652,14 @@ export function ApprovalDock({
           })} />}
         <pre tabIndex={0} role="region" aria-label={uiAttribute("完整审批请求，可滚动")}>{JSON.stringify(approval.canonicalInput, null, 2)}</pre>
         <div className="approval-dock-actions">
-          {approval.options.map((option) => {
+          {approval.options.map(option => {
             const label = approvalOptionLabel(approval, option, t)
             return (
               <button
                 className={`runtime-option option-${option.kind}`}
                 type="button"
                 key={option.optionId}
+                data-option-id={option.optionId}
                 onClick={() => onResolve(approval, option.optionId)}
                 disabled={busy}
                 title={label}
@@ -8684,11 +8685,18 @@ function approvalOptionLabel(
 ): string {
   const coreLabel = approval.permissionSemantics === 'core_enforced_v1'
     && ['core.deny', 'core.allow_once'].includes(option.optionId)
-  const claudeLabel = approval.adapterKind === 'claude-code-cli'
-    && approval.nativeMethod === 'claude/permission_request'
-    && ['claude.deny', 'claude.allow_once'].includes(option.optionId)
-  // These labels are created by Rovai; Runtime-supplied option text stays verbatim.
-  return coreLabel || claudeLabel ? t(option.label) : option.label
+  // Historical Claude approvals froze Chinese host labels. Present the verified native
+  // equivalents without changing their option IDs, responses or stored history.
+  if (isClaudePermission(approval)) {
+    if (option.optionId === 'claude.deny' && option.label === '拒绝') return 'No'
+    if (option.optionId === 'claude.allow_once' && option.label === '允许一次') return 'Yes'
+  }
+  // Only Core-owned application text is localized. Runtime choices stay in their native language.
+  return coreLabel ? t(option.label) : option.label
+}
+
+function isClaudePermission(approval: ActionApprovalView): boolean {
+  return approval.adapterKind === 'claude-code-cli' && approval.nativeMethod === 'claude/permission_request'
 }
 
 function normalizedApprovalText(value: string): string {

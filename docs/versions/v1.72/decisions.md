@@ -13,7 +13,7 @@ last_updated: 2026-09-30
 
 - 状态：accepted
 - 日期：2026-09-30
-- 当前权威：[Runtime Launch and Verification v45](../../contracts/runtime-launch-and-verification-v45.md) 与 [Built-in Tool Runtime](../../architecture/builtin-tool-runtime.md#claude-code-权限审批回调)
+- 当前权威：[Runtime Launch and Verification v46](../../contracts/runtime-launch-and-verification-v46.md) 与 [Built-in Tool Runtime](../../architecture/builtin-tool-runtime.md#claude-code-权限审批回调)
 
 ### 背景
 

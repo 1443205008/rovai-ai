@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -45,6 +45,7 @@ try {
   const health = await waitFor(async () => { try { return await request('health.check') } catch { return null } }, 'Desktop Core')
   if (!health.database.path.startsWith(`${userData}/`)) throw new Error('Desktop opened a database outside the isolated userData')
   dataDirectory = dirname(health.database.path)
+  await waitFor(() => evaluate('Boolean(document.getElementById("global-navigation"))'), 'Loaded Desktop navigation')
   const installation = await configureProductRuntime(request, 'claude-code-cli', ['agent_1'])
   const member = await request('members.get', { agentId: 'agent_1' })
   const configured = await request('members.runtime.set', { commandId: crypto.randomUUID(), command: {
@@ -61,7 +62,8 @@ try {
   const campId = intake.payload?.campId
   if (intake.status !== 'accepted' || !campId) throw new Error('Desktop acceptance Camp was not accepted')
   const results = []
-  for (const decision of ['allow_once', 'deny']) {
+  let rememberedRules, rememberedSettings
+  for (const decision of ['allow_once', 'deny', 'allow_remember']) {
     if (results.length) {
       const sent = await request('camp.messages.send', { commandId: crypto.randomUUID(), campId,
         content: { version: 2, segments: [{ kind: 'text', text: prompt }] }, sourceAttachments: [], quotes: [], replyToCampMessageId: null,
@@ -83,8 +85,20 @@ try {
     await click(`document.querySelector('[data-sidebar-menu-target="camp:${campId}"]')?.closest('.camp-nav-row')?.querySelector('.camp-nav-open')`)
     await waitFor(() => evaluate(`Boolean(document.querySelector('.approval-dock'))`), 'Approval Dock')
     if (await evaluate(`Boolean(document.querySelector('.approval-dock.is-collapsed'))`)) await click(`document.querySelector('.approval-dock-collapse')`)
-    const button = `document.querySelector('[data-approval-id="${pending.approval.id}"] .option-${decision}')`
+    const option = decision === 'allow_remember'
+      ? pending.approval.options.find(value => value.optionId.startsWith('claude.allow_remember.')
+        && value.consequence.endsWith('localSettings · .claude/settings.local.json'))
+      : pending.approval.options.find(value => value.optionId === `claude.${decision}`)
+    if (!option) throw new Error(`Claude did not offer the native ${decision} option`)
+    const button = `document.querySelector('[data-approval-id="${pending.approval.id}"] [data-option-id="${option.optionId}"]')`
     await waitFor(() => evaluate(`Boolean(${button})`), 'Exact native decision button')
+    const expectedLabel = decision === 'deny' ? 'No' : decision === 'allow_once' ? 'Yes' : option.label
+    if (await evaluate(`${button}.textContent`) !== expectedLabel) throw new Error('Desktop did not retain the native English button label')
+    if (decision === 'allow_remember') {
+      if (await evaluate(`${button}.getAttribute('aria-label')`) !== expectedLabel) throw new Error('The full native remember label was not accessible')
+      if (await evaluate(`Boolean(document.querySelector('.approval-remember-scope'))`)) throw new Error('Remember configuration details must not be shown below the choices')
+      rememberedRules = option.consequence.split('\n').slice(0, -1)
+    }
     await screenshot(`${decision}-pending.png`)
     await click(button)
     const settled = await waitFor(async () => {
@@ -99,14 +113,22 @@ try {
     }
     const receipt = await claudeSendReceipt(request, campId, pending.run.id, marker, settled.snapshot)
     const published = settled.snapshot.messages.some(value => value.body === marker && value.sourceAgentRunId === pending.run.id)
-    if (settled.run.status !== 'succeeded' || (decision === 'allow_once'
+    if (settled.run.status !== 'succeeded' || (decision !== 'deny'
       ? action?.status !== 'succeeded' || !receipt || !published
       : action?.status !== 'not_executed' || receipt || published)) {
       throw new Error(`Actual Desktop ${decision} click did not settle correctly: ${JSON.stringify({ action, run: settled.run, receipt, published })}`)
     }
     results.push({ decision, runId: pending.run.id, conversationId: settled.run.conversationId, nativeSessionId,
       actionId: action.id, actionDigest: action.actionDigest, requestDigest: pending.approval.requestDigest, actionStatus: action.status,
-      approvalId: pending.approval.id, receipt, published, clicked: true })
+      approvalId: pending.approval.id, optionId: option.optionId, nativeResponseDigest: option.nativeResponseDigest,
+      label: expectedLabel, scope: decision === 'allow_remember' ? option.consequence : null, receipt, published, clicked: true })
+    if (decision === 'allow_remember') {
+      rememberedSettings = JSON.parse(await readFile(join(project, '.claude/settings.local.json'), 'utf8'))
+      if (JSON.stringify(rememberedSettings.permissions?.allow?.toSorted()) !== JSON.stringify(rememberedRules.toSorted())
+          || rememberedSettings.permissions?.defaultMode === 'bypassPermissions') {
+        throw new Error(`Claude did not save exactly the selected native rules: ${JSON.stringify(rememberedSettings)}`)
+      }
+    }
     await screenshot(`${decision}-settled.png`)
     console.error(`Desktop ${decision} click passed; action=${action.status}; Core receipt=${Boolean(receipt)}`)
   }
@@ -116,8 +138,26 @@ try {
       || !results[0].requestDigest || !results[1].requestDigest || results[0].requestDigest === results[1].requestDigest) {
     throw new Error('Identical Desktop commands did not bind independent native requests')
   }
+  const repeated = await request('camp.messages.send', { commandId: crypto.randomUUID(), campId,
+    content: { version: 2, segments: [{ kind: 'text', text: prompt }] }, sourceAttachments: [], quotes: [], replyToCampMessageId: null,
+    execution: { taskId: null, purpose: 'Verify the saved native rule skips approval on a subsequent Run', completionRole: 'required' } })
+  if (repeated.commandResult?.status !== 'accepted') throw new Error('Remembered-rule repeat was not accepted')
+  const automatic = await waitFor(async () => {
+    const snapshot = await request('camps.snapshot', { campId })
+    const run = snapshot.agentRuns.find(value => !results.some(result => result.runId === value.id))
+    if (snapshot.approvals.some(value => value.agentRunId === run?.id)) throw new Error('Remembered command unexpectedly requested another approval')
+    return run && ['succeeded', 'failed', 'cancelled'].includes(run.status) ? { snapshot, run } : null
+  }, 'Remembered native command without another approval', 240000)
+  const automaticReceipt = await claudeSendReceipt(request, campId, automatic.run.id, marker, automatic.snapshot)
+  const automaticPublished = automatic.snapshot.messages.some(value => value.body === marker && value.sourceAgentRunId === automatic.run.id)
+  const automaticSession = await evaluate(`window.__claudeApprovalSessions.find(value => value.agentRunId === ${JSON.stringify(automatic.run.id)})?.nativeThreadId`)
+  if (automatic.run.status !== 'succeeded' || !automaticReceipt || !automaticPublished || automaticSession !== results[0].nativeSessionId) {
+    throw new Error(`Remembered native command did not really execute: ${JSON.stringify({run: automatic.run, automaticReceipt, automaticPublished, automaticSession})}`)
+  }
+  await screenshot('remembered-repeat-settled.png')
   const result = { ok: true, runtime: installation.snapshot.reportedVersion, permissionMode: 'acceptEdits', sameCommandRepeated: true,
-    nativeSessionResumed: true, results }
+    nativeSessionResumed: true, results, rememberedSettings,
+    automaticRepeat: { runId: automatic.run.id, nativeSessionId: automaticSession, receipt: automaticReceipt, published: automaticPublished, approvals: 0 } }
   await writeFile(join(output, 'result.json'), JSON.stringify(result, null, 2))
   console.log(JSON.stringify(result, null, 2))
 } finally {

@@ -131,6 +131,27 @@ pub fn intercepted_action_request(
     };
     let allow = json!({"behavior": "allow", "updatedInput": tool_input});
     let deny = deny_decision("Rovai 用户拒绝了这次 Claude Code 操作");
+    // Claude's stdio protocol supplies decisions and permission suggestions, not UI labels.
+    // These English labels/templates are from the native Claude Code 2.1.280 dialog.
+    let mut options = vec![
+        RuntimePermissionOption::from_native(
+            "claude.deny",
+            "deny",
+            "No",
+            "拒绝这一次 Claude Code 操作。",
+            deny,
+            false,
+        )?,
+        RuntimePermissionOption::from_native(
+            "claude.allow_once",
+            "allow_once",
+            "Yes",
+            "仅允许这一次 Claude Code 操作，不保存规则。",
+            allow,
+            true,
+        )?,
+    ];
+    options.extend(remembered_permission_options(request, tool_input)?);
     let action_id_digest = canonical_json_digest(&json!({
         "agentRunId": agent_run_id,
         "executionEpoch": execution_epoch,
@@ -148,24 +169,7 @@ pub fn intercepted_action_request(
             native_thread_id: expected_session_id.into(),
             native_turn_id: format!("claude-code:{agent_run_id}:{execution_epoch}"),
             response_context: control_request.clone(),
-            options: vec![
-                RuntimePermissionOption::from_native(
-                    "claude.deny",
-                    "deny",
-                    "拒绝",
-                    "拒绝这一次 Claude Code 操作。",
-                    deny,
-                    false,
-                )?,
-                RuntimePermissionOption::from_native(
-                    "claude.allow_once",
-                    "allow_once",
-                    "允许一次",
-                    "仅允许这一次 Claude Code 操作，不保存规则。",
-                    allow,
-                    true,
-                )?,
-            ],
+            options,
         },
         reason: tool_input
             .get("description")
@@ -173,6 +177,98 @@ pub fn intercepted_action_request(
             .map(str::to_string)
             .or_else(|| Some(tool_name.into())),
     })
+}
+
+pub(crate) fn remembered_permission_options(
+    request: &Value,
+    tool_input: &Value,
+) -> Result<Vec<RuntimePermissionOption>> {
+    let mut options: Vec<RuntimePermissionOption> = Vec::new();
+    // Share this admission rule with the control writer; suppression cannot be bypassed there.
+    if request
+        .get("suppress_always_allow_rule")
+        .is_none_or(|value| value.as_bool() == Some(false))
+        && let Some(suggestions) = request
+            .get("permission_suggestions")
+            .and_then(Value::as_array)
+    {
+        for suggestion in suggestions {
+            if let Some(option) = remembered_permission_option(suggestion, tool_input)?
+                && !options
+                    .iter()
+                    .any(|existing| existing.option_id == option.option_id)
+            {
+                options.push(option);
+            }
+        }
+    }
+    Ok(options)
+}
+
+fn remembered_permission_option(
+    suggestion: &Value,
+    tool_input: &Value,
+) -> Result<Option<RuntimePermissionOption>> {
+    if suggestion.get("type").and_then(Value::as_str) != Some("addRules")
+        || suggestion.get("behavior").and_then(Value::as_str) != Some("allow")
+    {
+        return Ok(None);
+    }
+    let destination = match suggestion.get("destination").and_then(Value::as_str) {
+        Some("localSettings") => "localSettings · .claude/settings.local.json",
+        Some("projectSettings") => "projectSettings · .claude/settings.json",
+        Some("userSettings") => "userSettings",
+        Some("session") => "session",
+        _ => return Ok(None),
+    };
+    let Some(rules) = suggestion.get("rules").and_then(Value::as_array) else {
+        return Ok(None);
+    };
+    if rules.is_empty() {
+        return Ok(None);
+    }
+    let mut scopes = Vec::new();
+    let mut single_label = None;
+    for rule in rules {
+        let Some(tool) = rule
+            .get("toolName")
+            .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty())
+        else {
+            return Ok(None);
+        };
+        match rule.get("ruleContent") {
+            None => {
+                scopes.push(tool.to_string());
+                single_label = Some(format!("Yes, and don’t ask again for any {tool} command"));
+            }
+            Some(Value::String(pattern)) if !pattern.trim().is_empty() => {
+                scopes.push(format!("{tool}({pattern})"));
+                single_label = Some(format!("Yes, and don’t ask again for: {pattern}"));
+            }
+            _ => return Ok(None),
+        }
+    }
+    let label = if scopes.len() == 1 {
+        single_label.expect("a validated rule has a label")
+    } else {
+        format!("Yes, and don’t ask again for: {}", scopes.join(", "))
+    };
+    let scope = format!("{}\n{destination}", scopes.join("\n"));
+    let option_id = format!(
+        "claude.allow_remember.{}",
+        canonical_json_digest(suggestion)?
+    );
+    // Pass through the selected native update unchanged. Never synthesize a rule or setMode.
+    RuntimePermissionOption::from_native(
+        option_id,
+        "other",
+        label,
+        scope,
+        json!({"behavior": "allow", "updatedInput": tool_input, "updatedPermissions": [suggestion]}),
+        true,
+    )
+    .map(Some)
 }
 
 #[cfg(test)]
@@ -201,6 +297,8 @@ mod tests {
         assert_eq!(action.runtime_request.native_request_id, "request-1");
         assert_eq!(action.runtime_request.native_item_id, "tool-1");
         assert_eq!(action.runtime_request.native_thread_id, "session-1");
+        assert_eq!(action.runtime_request.options[0].label, "No");
+        assert_eq!(action.runtime_request.options[1].label, "Yes");
         assert_eq!(
             action.runtime_request.options[1].native_response["updatedInput"],
             request["request"]["input"]
@@ -238,5 +336,95 @@ mod tests {
         let second = convert(&identical).unwrap();
         assert_ne!(action.action_id, second.action_id);
         assert_eq!(second.runtime_request.native_item_id, "tool-2");
+
+        let suggestion = json!({"type":"addRules", "behavior":"allow", "destination":"localSettings",
+            "rules":[{"toolName":"Bash", "ruleContent":"rovai send *"}]});
+        let mut remember = request.clone();
+        remember["request"]["permission_suggestions"] = json!([suggestion, suggestion]);
+        let remembered = convert(&remember).unwrap();
+        let options = &remembered.runtime_request.options;
+        assert_eq!(
+            options.len(),
+            3,
+            "identical native suggestions do not duplicate option IDs"
+        );
+        assert_eq!(
+            options[2].label,
+            "Yes, and don’t ask again for: rovai send *"
+        );
+        assert_eq!(
+            options[2].consequence,
+            "Bash(rovai send *)\nlocalSettings · .claude/settings.local.json"
+        );
+        assert!(options[2].allows_action);
+        assert_eq!(
+            options[2].native_response["updatedInput"],
+            request["request"]["input"]
+        );
+        assert_eq!(
+            options[2].native_response["updatedPermissions"],
+            json!([suggestion])
+        );
+        assert!(
+            options[1]
+                .native_response
+                .get("updatedPermissions")
+                .is_none()
+        );
+        assert_ne!(
+            options[1].native_response_digest,
+            options[2].native_response_digest
+        );
+        for destination in [
+            "userSettings",
+            "projectSettings",
+            "localSettings",
+            "session",
+        ] {
+            let mut different = suggestion.clone();
+            different["destination"] = json!(destination);
+            remember["request"]["permission_suggestions"] = json!([different]);
+            let converted = convert(&remember).unwrap();
+            assert_eq!(
+                converted.runtime_request.options[2].native_response["updatedPermissions"],
+                json!([different])
+            );
+        }
+        remember["request"]["permission_suggestions"] = json!([suggestion]);
+        for suppression in [json!(true), Value::Null, json!("false")] {
+            remember["request"]["suppress_always_allow_rule"] = suppression;
+            assert_eq!(convert(&remember).unwrap().runtime_request.options.len(), 2);
+        }
+        remember["request"]["suppress_always_allow_rule"] = json!(false);
+        assert_eq!(convert(&remember).unwrap().runtime_request.options.len(), 3);
+        for (key, value) in [
+            ("type", json!("setMode")),
+            ("behavior", json!("deny")),
+            ("destination", Value::Null),
+            ("destination", json!("unknown")),
+            ("rules", json!([])),
+            ("rules", json!([{"toolName":""}])),
+            ("rules", json!([{"toolName":"Bash", "ruleContent":[]}])),
+        ] {
+            let mut invalid = suggestion.clone();
+            invalid[key] = value;
+            remember["request"]["permission_suggestions"] = json!([invalid]);
+            assert_eq!(convert(&remember).unwrap().runtime_request.options.len(), 2);
+        }
+        let mut multiple = suggestion.clone();
+        multiple["rules"] =
+            json!([{"toolName":"Bash", "ruleContent":"rovai send *"}, {"toolName":"Read"}]);
+        remember["request"]["permission_suggestions"] = json!([suggestion, multiple]);
+        let options = convert(&remember).unwrap().runtime_request.options;
+        assert_eq!(options.len(), 4);
+        assert_ne!(options[2].option_id, options[3].option_id);
+        assert_eq!(
+            options[3].consequence,
+            "Bash(rovai send *)\nRead\nlocalSettings · .claude/settings.local.json"
+        );
+        assert_eq!(
+            options[3].native_response["updatedPermissions"],
+            json!([multiple])
+        );
     }
 }
