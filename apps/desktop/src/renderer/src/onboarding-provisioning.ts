@@ -3,6 +3,7 @@ import type {
   AdapterInstallation,
   AdapterPermissionConfig,
   AgentProfile,
+  AgentProfileIdentityInput,
   CoreMethod,
   InterfaceLanguage,
   OnboardingApi,
@@ -14,9 +15,10 @@ import {
   runtimeEditorInstallation,
   runtimeModelSelectionAvailable
 } from './MemberRuntimeParameters'
-import { builtinMemberPresetsForLanguage } from './member-presets'
+import { builtinMemberPresetsForLanguage, type BuiltinMemberPreset } from './member-presets'
+import { FIRST_RUN_CAMP_TITLE } from './camp-title'
 
-export const FIRST_RUN_CAMP_TITLE = '初次集结'
+export { FIRST_RUN_CAMP_TITLE } from './camp-title'
 
 type InProgressOnboarding = Extract<OnboardingSnapshot, { status: 'in_progress' }>
 type CompletedOnboarding = Extract<OnboardingSnapshot, { status: 'completed' }>
@@ -58,6 +60,14 @@ export async function provisionFirstRun(
     (candidate) => candidate.role === initialSnapshot.selectedMemberRole
   )
   if (!preset) throw new Error(uiAttribute('所选队员预设已不可用。'))
+  const identity: AgentProfileIdentityInput = {
+    displayName: preset.displayName,
+    teamRole: preset.teamRole,
+    professionalResponsibilities: preset.professionalResponsibilities,
+    personalityTraits: preset.personalityTraits,
+    workingPrinciples: preset.workingPrinciples,
+    growthTopic: preset.growthTopic
+  }
 
   let runtimePermissions: AdapterPermissionConfig
   if (initialSnapshot.provisioning) {
@@ -100,16 +110,27 @@ export async function provisionFirstRun(
     ) ?? null
     let memberAgentId = retained?.agentId ?? null
     let version = retained?.version ?? null
+    const seedPreset = language === 'en'
+      ? builtinMemberPresetsForLanguage('zh-CN').find((candidate) => candidate.role === preset.role)
+      : null
+    // Core seeds Chinese profiles before onboarding. Initialize only untouched,
+    // unconfigured seed text; customized or configured identities remain user data.
+    if (retained && seedPreset && retained.runtimeConfiguration === null && hasPresetIdentity(retained, seedPreset)) {
+      const result = await api.request<StoredCommandResult>('members.update', {
+        commandId: current.provisioning.memberCommandId,
+        command: { ...identity, agentId: retained.agentId, expectedVersion: retained.version }
+      })
+      assertApplied(result, uiAttribute('保存队员信息'))
+      version = positiveVersion(result.payload.version)
+      if (version === null) {
+        throw new Error(uiAttribute('已收到保存回执，但无法确认最新版本，请重新载入。'))
+      }
+    }
     if (!memberAgentId || version === null) {
       const result = await api.request<StoredCommandResult>('members.create', {
         commandId: current.provisioning.memberCommandId,
         command: {
-          displayName: preset.displayName,
-          teamRole: preset.teamRole,
-          professionalResponsibilities: preset.professionalResponsibilities,
-          personalityTraits: preset.personalityTraits,
-          workingPrinciples: preset.workingPrinciples,
-          growthTopic: preset.growthTopic,
+          ...identity,
           avatarRef: preset.avatarRef
         }
       })
@@ -187,6 +208,16 @@ export async function provisionFirstRun(
   }
   onCheckpoint(completed)
   return { snapshot: completed, memberAgentId, quickChatCampId }
+}
+
+function hasPresetIdentity(member: AgentProfile, preset: BuiltinMemberPreset): boolean {
+  return member.displayName === preset.displayName
+    && member.teamRole === preset.teamRole
+    && member.professionalResponsibilities === preset.professionalResponsibilities
+    && member.workingPrinciples === preset.workingPrinciples
+    && member.growthTopic === preset.growthTopic
+    && member.personalityTraits.length === preset.personalityTraits.length
+    && member.personalityTraits.every((trait, index) => trait === preset.personalityTraits[index])
 }
 
 function requireProvisioningSnapshot(snapshot: OnboardingSnapshot): InProgressOnboarding & {

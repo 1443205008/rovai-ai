@@ -13,6 +13,7 @@ import {
   provisionFirstRun,
   type OnboardingProvisioningApi
 } from './onboarding-provisioning'
+import { builtinMemberPresetsForLanguage, type BuiltinMemberPreset } from './member-presets'
 
 type InProgress = Extract<OnboardingSnapshot, { status: 'in_progress' }>
 
@@ -88,7 +89,7 @@ describe('first-run provisioning', () => {
       memberVersionAfterRuntime: 2
     })
 
-    await provisionFirstRun(harness.api, harness.snapshot, [])
+    await provisionFirstRun(harness.api, harness.snapshot, [], () => undefined, 'en')
 
     expect(harness.requests.map(({ method }) => method)).toEqual(['camps.create'])
     expect(events).toEqual([
@@ -115,9 +116,93 @@ describe('first-run provisioning', () => {
     })
     expect(harness.requests.filter(({ method }) => method === 'members.create')).toHaveLength(1)
     expect(harness.requests.find(({ method }) => method === 'camps.create')?.params).toMatchObject({
-      name: FIRST_RUN_CAMP_TITLE,
+      name: '初次集结',
       memberAgentIds: ['agent-first']
     })
+  })
+
+  it.each(builtinMemberPresetsForLanguage('en'))('initializes the untouched $displayName seed with its English identity', async (preset) => {
+    const seed = builtinMember(preset.role)
+    const harness = onboardingHarness([], {}, [seed])
+    harness.snapshot.selectedMemberRole = preset.role
+
+    const result = await provisionFirstRun(harness.api, harness.snapshot, [codexInstallation()], () => undefined, 'en')
+
+    expect(result.memberAgentId).toBe(seed.agentId)
+    expect(harness.requests.find(({ method }) => method === 'members.update')?.params).toEqual({
+      commandId: 'member-command',
+      command: {
+        agentId: seed.agentId,
+        expectedVersion: seed.version,
+        ...identityFor(preset)
+      }
+    })
+    expect(harness.requests.some(({ method }) => method === 'members.create')).toBe(false)
+    expect(harness.requests.find(({ method }) => method === 'members.runtime.set')?.params).toMatchObject({
+      command: { agentId: seed.agentId, expectedVersion: seed.version + 1 }
+    })
+  })
+
+  it.each([
+    { displayName: 'My teammate' },
+    { teamRole: 'My role' },
+    { professionalResponsibilities: 'My responsibilities' },
+    { personalityTraits: ['My trait'] },
+    { workingPrinciples: 'My principles' },
+    { growthTopic: 'My focus' },
+    { runtimeConfiguration: { adapterKind: 'codex-cli', model: { mode: 'runtime_default' }, permissions: codexPermissions() } }
+  ] satisfies Partial<AgentProfile>[])('preserves an existing profile with changes %j', async (patch) => {
+    const seed = { ...builtinMember(), ...patch }
+    const harness = onboardingHarness([], {}, [seed])
+
+    const result = await provisionFirstRun(harness.api, harness.snapshot, [codexInstallation()], () => undefined, 'en')
+
+    expect(result.memberAgentId).toBe(seed.agentId)
+    expect(harness.requests.map(({ method }) => method)).toEqual(['members.list', 'members.runtime.set', 'camps.create'])
+  })
+
+  it('recovers an identity commit before its checkpoint without repeating the update', async () => {
+    const seed = builtinMember()
+    const harness = onboardingHarness([], {}, [seed])
+    const request = harness.api.request.bind(harness.api)
+    const preset = builtinMemberPresetsForLanguage('en')[0]
+    harness.api.request = async <T>(method: CoreMethod, params?: unknown): Promise<T> => {
+      const result = await request<T>(method, params)
+      if (method === 'members.update') {
+        Object.assign(seed, identityFor(preset), { version: seed.version + 1 })
+        throw new Error('reply lost after commit')
+      }
+      return result
+    }
+
+    await expect(provisionFirstRun(harness.api, harness.snapshot, [codexInstallation()], () => undefined, 'en'))
+      .rejects.toThrow('reply lost after commit')
+    expect((harness.current() as InProgress).provisioning?.memberAgentId).toBeNull()
+    harness.api.request = request
+
+    await provisionFirstRun(harness.api, harness.current() as InProgress, [], () => undefined, 'en')
+
+    expect(harness.requests.filter(({ method }) => method === 'members.update')).toHaveLength(1)
+    expect(harness.requests.some(({ method }) => method === 'members.create')).toBe(false)
+    expect(harness.requests.find(({ method }) => method === 'members.runtime.set')?.params).toMatchObject({
+      command: { agentId: seed.agentId, expectedVersion: seed.version }
+    })
+  })
+
+  it('stops before Runtime configuration when the seed identity update conflicts', async () => {
+    const harness = onboardingHarness([])
+    const request = harness.api.request.bind(harness.api)
+    harness.api.request = async <T>(method: CoreMethod, params?: unknown): Promise<T> => {
+      const result = await request<StoredCommandResult>(method, params)
+      return (method === 'members.update'
+        ? { ...result, status: 'rejected', code: 'agent_profile.version_conflict' }
+        : result) as T
+    }
+
+    await expect(provisionFirstRun(harness.api, harness.snapshot, [codexInstallation()], () => undefined, 'en'))
+      .rejects.toThrow('agent_profile.version_conflict')
+    expect(harness.requests.map(({ method }) => method)).toEqual(['members.list', 'members.update'])
+    expect((harness.current() as InProgress).provisioning?.memberAgentId).toBeNull()
   })
 
   it('does not mark training complete until the fourth-page location is restorable', async () => {
@@ -144,7 +229,7 @@ describe('first-run provisioning', () => {
 function onboardingHarness(
   events: string[],
   checkpoints: Partial<OnboardingProvisioningOperation> = {},
-  members: AgentProfile[] = [builtinLuoke()]
+  members: AgentProfile[] = [builtinMember()]
 ): {
   api: OnboardingProvisioningApi
   snapshot: InProgress
@@ -180,10 +265,11 @@ function onboardingHarness(
       requests.push({ method, params })
       events.push(`request:${method}`)
       if (method === 'members.list') return members as T
+      const command = (params as { command: { agentId: string; expectedVersion: number } })?.command
       const result = method === 'members.create'
         ? commandResult(method, { agentId: 'agent-first', version: 1 }, 'agent_profile', 'agent-first')
-        : method === 'members.runtime.set'
-          ? commandResult(method, { agentId: 'agent-luoke', version: 5 }, 'agent_profile', 'agent-luoke')
+        : method === 'members.runtime.set' || method === 'members.update'
+          ? commandResult(method, { agentId: command.agentId, version: command.expectedVersion + 1 }, 'agent_profile', command.agentId)
           : commandResult(method, { campId: 'camp-first' }, 'camp', 'camp-first')
       return result as T
     },
@@ -228,7 +314,7 @@ function onboardingHarness(
           status: 'completed',
           origin: 'onboarding',
           completedAt: '2026-08-17T00:00:00.000Z',
-          selectedMemberRole: 'luoke',
+          selectedMemberRole: current.selectedMemberRole,
           memberAgentId: current.provisioning.memberAgentId,
           quickChatCampId: current.provisioning.quickChatCampId
         }
@@ -331,17 +417,24 @@ function customCodexInstallation(): AdapterInstallation {
   }
 }
 
-function builtinLuoke(): AgentProfile {
+function identityFor(preset: BuiltinMemberPreset) {
   return {
-    agentId: 'agent-luoke',
-    displayName: '叮叮',
-    avatarRef: 'rovai://member-avatar/builtin/luoke/v1',
-    accent: '#4F7F9F',
-    teamRole: '游学者',
-    professionalResponsibilities: '负责理解需求。',
-    personalityTraits: ['好奇'],
-    workingPrinciples: '',
-    growthTopic: '',
+    displayName: preset.displayName,
+    teamRole: preset.teamRole,
+    professionalResponsibilities: preset.professionalResponsibilities,
+    personalityTraits: preset.personalityTraits,
+    workingPrinciples: preset.workingPrinciples,
+    growthTopic: preset.growthTopic
+  }
+}
+
+function builtinMember(role: BuiltinMemberPreset['role'] = 'luoke'): AgentProfile {
+  const preset = builtinMemberPresetsForLanguage('zh-CN').find((candidate) => candidate.role === role)!
+  return {
+    ...identityFor(preset),
+    agentId: `agent-${role}`,
+    avatarRef: preset.avatarRef,
+    accent: preset.accentSample,
     defaultCapabilities: [],
     presence: 'present',
     runtimeConfiguration: null,

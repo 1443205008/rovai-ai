@@ -2626,9 +2626,13 @@ export function BusinessApp({
   const activeCampProject = activeProjectPath && displayNavigation
     ? displayNavigation.projects.find((project) => project.projectPath === activeProjectPath) ?? null
     : null
+  const firstRunCampId = onboardingSnapshot?.status === 'completed'
+    && onboardingSnapshot.origin === 'onboarding'
+    ? onboardingSnapshot.quickChatCampId
+    : null
   const activeCampTitle = activeCamp
-    ? formatCampTitle(activeCamp)
-    : campSnapshot?.camp.id === activeCampId ? formatCampTitle(campSnapshot.camp) : ''
+    ? formatCampTitle(activeCamp, firstRunCampId)
+    : campSnapshot?.camp.id === activeCampId ? formatCampTitle(campSnapshot.camp, firstRunCampId) : ''
   const activeCampContextLabel = activeCampProject?.name
     ?? (activeProjectPath === currentProjectPath ? currentProjectLabel : uiAttribute('快速对话'))
   const activeCancellingTurnIds = useMemo(
@@ -4168,6 +4172,7 @@ export function BusinessApp({
     groupLimits={navigationGroupLimits}
     onGroupLimitChange={navigationRefreshCoordinator.resizeGroup}
     activeCampId={activeCampId}
+    firstRunCampId={firstRunCampId}
     openingCampId={openingCampId}
     currentProjectKey={currentProjectKey}
     shellOnlyProjectPath={shellOnlyCurrentProjectPath}
@@ -4339,6 +4344,7 @@ export function BusinessApp({
             onVisibleNotificationSources={setVisibleNotificationSources}
             runtimeRecovery={runtimeRecovery?.campId === activeCampId ? runtimeRecovery : null}
             firstRunCamp={firstRunCamp}
+            firstRunCampId={firstRunCampId}
             onConfigureRuntime={configureMemberRuntime}
             onDismissRuntimeRecovery={() => setRuntimeRecovery(null)}
             onNotify={notify}
@@ -4350,6 +4356,7 @@ export function BusinessApp({
         {!startupGateVisible && view === 'compose' && (
           <QuickChatWorkspace
             agents={agents}
+            firstRunCampId={firstRunCampId}
             recentCamps={visibleNavigation ? allNavigationCamps(visibleNavigation).slice(0, 5) : []}
             onOpenCamp={chooseCamp}
             onNewConversation={beginNewConversation}
@@ -4530,6 +4537,7 @@ export function BusinessApp({
       <NotificationAttentionController
         enabled={startupStatus === 'resolved'}
         activeCampId={activeCampId}
+        firstRunCampId={firstRunCampId}
         activeCampVisible={view === 'camp'
           && campSnapshot?.camp.id === activeCampId
           && !newConversationOpen

@@ -23,7 +23,11 @@ const firstPort = Number(process.env.ROVAI_ONBOARDING_ACCEPT_DEBUG_PORT ?? 9489)
 const width = 1040
 const height = 700
 const selectedRole = 'qilu'
-const expectedStarter = '我想创建一个新的队员，请用 member-studio 帮我开始。'
+const initialLanguage = process.env.ROVAI_ONBOARDING_ACCEPT_INTERFACE_LANGUAGE ?? 'zh-CN'
+assert(['zh-CN', 'en'].includes(initialLanguage), 'Unsupported onboarding interface language')
+const englishCopy = JSON.parse(await readFile(join(root, 'apps/desktop/src/renderer/src/locales/en.json'), 'utf8'))
+const initialCopy = (text) => initialLanguage === 'en' ? englishCopy[text] ?? text : text
+const expectedStarter = initialCopy('我想创建一个新的队员，请用 member-studio 帮我开始。')
 
 class ExpectedWindowsPlatformAdmissionBlock extends Error {}
 
@@ -40,6 +44,7 @@ const report = {
   outputDir,
   viewport: { width, height },
   selectedRole,
+  initialLanguage,
   runtime: null,
   onboarding: null,
   camp: null,
@@ -78,13 +83,17 @@ try {
   captures.welcomeNight = join(outputDir, '02-welcome-night-1040x700.png')
   await capture(running.cdp, captures.welcomeNight)
   await setTheme(running.cdp, 'day')
+  if (initialLanguage === 'en') {
+    await clickSelector(running.cdp, '.onboarding-language input[value="en"]')
+    await waitForExpression(running.cdp, `document.documentElement.lang === 'en'`)
+  }
 
-  await clickByText(running.cdp, '.onboarding-welcome button', '选择队员')
+  await clickByText(running.cdp, '.onboarding-welcome button', initialCopy('选择队员'))
   await waitForSelector(running.cdp, '.onboarding-member-layout', 5_000)
   const memberPage = await evaluate(running.cdp, `(() => ({
     rows: document.querySelectorAll('.onboarding-member-row').length,
     portraits: document.querySelectorAll('.onboarding-selected-portrait').length,
-    hasSkip: document.body.textContent?.includes('跳过') ?? false,
+    hasSkip: ['跳过', 'Skip'].some((text) => document.body.textContent?.includes(text)),
     hasStepNavigation: Boolean(document.querySelector('.onboarding-step, .onboarding-progress button, .onboarding-progress a')),
     horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth,
     viewport: [window.innerWidth, window.innerHeight]
@@ -126,7 +135,7 @@ try {
   })`)
   assert(resumedMember.selected === selectedRole && resumedMember.welcomeAbsent,
     `Restart did not resume the unfinished member page: ${JSON.stringify(resumedMember)}`)
-  await clickByText(running.cdp, '.onboarding-member-footer button', '下一步')
+  await clickByText(running.cdp, '.onboarding-member-footer button', initialCopy('下一步'))
   await waitForSelector(running.cdp, '.onboarding-runtime-track', 5_000)
   await assertProgress(running.cdp, 3)
   captures.runtimeScan = join(outputDir, '04-runtime-scan-day-1040x700.png')
@@ -217,7 +226,7 @@ try {
     && resumedRuntime.step === 'runtime'
     && resumedRuntime.runtimeSelection?.adapterKind === runtimeSnapshot.runtimeSelection.adapterKind,
   `Restart did not resume the unfinished Runtime page: ${JSON.stringify(resumedRuntime)}`)
-  await clickByText(running.cdp, '.onboarding-runtime-footer button', '开始对话')
+  await clickByText(running.cdp, '.onboarding-runtime-footer button', initialCopy('开始对话'))
   await waitForExpression(running.cdp,
     `Boolean(document.querySelector('.camp-timeline:not([hidden]) .first-run-camp-welcome'))`,
     60_000)
@@ -230,6 +239,14 @@ try {
     && completed.memberAgentId,
   `Page three did not complete onboarding: ${JSON.stringify(completed)}`)
   report.onboarding = completed
+  const member = await request(running.cdp, 'members.get', { agentId: completed.memberAgentId })
+  const expectedPreset = JSON.parse(await readFile(join(root,
+    `apps/desktop/src/renderer/src/assets/characters/${selectedRole}/preset${initialLanguage === 'en' ? '.en' : ''}.json`), 'utf8'))
+  for (const field of ['displayName', 'teamRole', 'professionalResponsibilities', 'personalityTraits', 'workingPrinciples', 'growthTopic']) {
+    assert(JSON.stringify(member[field]) === JSON.stringify(expectedPreset[field]),
+      `Saved member ${field} does not match the ${initialLanguage} preset: ${JSON.stringify(member[field])}`)
+  }
+  report.member = { agentId: member.agentId, displayName: member.displayName, presetLanguage: initialLanguage }
   const beforeProjection = await request(running.cdp, 'camps.open', {
     traceId: randomUUID(),
     campId: completed.quickChatCampId
@@ -254,7 +271,7 @@ try {
   `The created Quick Chat Camp is not exact: ${JSON.stringify(beforeProjection)}`)
   assert(beforeProjection.messages.length === 0 && beforeProjection.agentRuns.length === 0,
     `Initial Camp unexpectedly contains work: ${JSON.stringify({ messages: beforeProjection.messages.length, runs: beforeProjection.agentRuns.length })}`)
-  assert(campState.title?.startsWith('你好，我是')
+  assert(campState.title?.startsWith(initialLanguage === 'en' ? "Hi, I'm" : '你好，我是')
     && campState.keys.length === 0
     && campState.actions.length === 0
     && campState.starters === 3
@@ -294,7 +311,7 @@ try {
   const additionalStarters = [
     '我想创建一个定时任务，让你定期帮我处理一件事。请先问我想做什么、多久执行一次、在什么时间执行，再根据我的回答帮我创建。',
     '帮我做一个能直接预览的小工具网页，比如番茄钟或倒计时。先问我想做哪一种、需要什么功能，再用一个独立 HTML 文件做出第一版。'
-  ]
+  ].map(initialCopy)
   await waitForExpression(running.cdp,
     `Boolean(document.querySelector('.first-run-starters button:not(:disabled)'))`, 10_000)
   for (const [index, prompt] of additionalStarters.entries()) {
@@ -343,7 +360,7 @@ try {
     && draftInteraction.focused
     && draftInteraction.collapsed
     && draftInteraction.caretAtEnd
-    && draftInteraction.notice === '内容已填入，可编辑后发送。',
+    && draftInteraction.notice === initialCopy('内容已填入，可编辑后发送。'),
   `Starter did not only fill/focus the Composer: ${JSON.stringify(draftInteraction)}`)
   report.draft = draftInteraction
   captures.campDraftDay = join(outputDir, '08-first-run-camp-draft-day-1040x700.png')
@@ -574,9 +591,15 @@ async function setTheme(cdp, theme) {
 async function assertProgress(cdp, step) {
   const progress = await evaluate(cdp, `(() => {
     const element = document.querySelector('.onboarding-progress')
-    return { text: element?.textContent?.trim(), label: element?.getAttribute('aria-label'), tag: element?.tagName }
+    return {
+      text: element?.textContent?.trim(),
+      label: element?.getAttribute('aria-label'),
+      tag: element?.tagName,
+      language: document.documentElement.lang
+    }
   })()`)
-  assert(progress.text === `${step} / 3` && progress.label === `第 ${step} 步，共 3 步` && progress.tag === 'SPAN',
+  const expectedLabel = progress.language === 'en' ? `Step ${step} of 3` : `第 ${step} 步，共 3 步`
+  assert(progress.text === `${step} / 3` && progress.label === expectedLabel && progress.tag === 'SPAN',
     `Onboarding progress must be read-only and describe the current step: ${JSON.stringify(progress)}`)
 }
 
@@ -589,7 +612,7 @@ async function surfaceState(cdp, selector) {
       visible: Boolean(surface),
       primaryVisible: Boolean(rect && rect.top >= 0 && rect.bottom <= window.innerHeight),
       primaryEnabled: Boolean(primary && !primary.disabled),
-      hasSkip: document.body.textContent?.includes('跳过') ?? false,
+      hasSkip: ['跳过', 'Skip'].some((text) => document.body.textContent?.includes(text)),
       hasStepNavigation: Boolean(document.querySelector('.onboarding-step, .onboarding-progress button, .onboarding-progress a')),
       horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth
     }
