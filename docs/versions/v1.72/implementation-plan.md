@@ -415,3 +415,9 @@ PR #592 的审批通道替换为 stream-json 输入/输出和 stdio 原生控制
 | 默认 Rust 门禁 | `pnpm test:rust:pr` 本机 394 通过、1 失败、1 忽略；失败仍是未改动的 `database_admission::tests::read_probe_tolerates_only_a_new_empty_wal_not_authority_changes` 对已有 `com.apple.provenance` 的假设，后续 workspace target 被该失败阻断。未删除、禁用或修改该测试 |
 | Rust 后续目标补充检查 | 显式 `--skip database_admission::tests::read_probe_tolerates_only_a_new_empty_wal_not_authority_changes` 后，workspace 共 438 通过、1 忽略、1 过滤；Core bin、CLI、Host、Web 和 doc-tests 均完成。最终 compatibility source digest 的独立定向测试通过；这不改写默认门禁失败结论 |
 | 文档治理 | `pnpm docs:test`、`pnpm docs:check` 和真实 PR base `cb9cd309593cc9403cddd25ce9cf0a114863063a` 的 `docs:check:ci` 通过 |
+
+推送 `7f14abae` 后同步主线 `a39cf861`（#593 执行文案与 #594 Agent 指令英文化）。唯一冲突位于当前版本
+概览，保留两项交付与各自生效边界；原生控制生产路径没有冲突。合并后 `pnpm typecheck`、
+`cargo check --workspace`、44 项 Claude 定向回归（另 1 项人工 Smoke 忽略）及以
+`a39cf861d8f2dd8db4f78603838d57c131958d2e` 为真实基线的文档 CI 门禁通过。上表完整回归与实际
+Desktop 点击证据属于 `7f14abae`，未将主线同步冒充新的实际模型验收。
