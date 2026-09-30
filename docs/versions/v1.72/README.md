@@ -108,7 +108,8 @@ Claude Code 保留 `--print` 结构化输出，增加 stream-json 输入与 stdi
 
 审批选项补充原生建议的显式记忆：一次允许不保存规则，记忆由 Claude 保存选中的范围和 destination，
 请求的 suppression 仍有效。Claude 使用 CLI 2.1.280 已核实的原生英文按钮文案，中英文界面一致；
-历史两个旧中文 host 标签只作展示兼容。验证记录见[原生选项补充验收](implementation-plan.md#2026-09-30-claude-原生选项与规则记忆)。
+历史两个旧中文 host 标签只作展示兼容。Dock 不额外显示配置文件说明，选项放得下一排时同行排列，不足时换行。
+验证记录见[原生选项补充验收](implementation-plan.md#2026-09-30-claude-原生选项与规则记忆)和[审批选项展示收敛](implementation-plan.md#2026-09-30-审批选项展示收敛)。
 
 ## 并行交付：Agent 指令英文化
 

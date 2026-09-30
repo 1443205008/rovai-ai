@@ -4118,8 +4118,6 @@ button.task-event-card:focus-visible .task-card-chevron { color: var(--brand-ink
 .approval-dock .runtime-option { min-height: 30px; border-color: var(--line-strong); background: var(--surface-raised); font-weight: 500; }
 .approval-dock .runtime-option:hover:not(:disabled) { color: var(--ink); border-color: var(--conversation-control-line); background: var(--neutral-hover); }
 .approval-dock .runtime-option:active:not(:disabled) { background: var(--neutral-selected); }
-.approval-remember-option { display: grid; flex: 1 0 100%; grid-column: 1 / -1; min-width: 0; gap: 4px; justify-items: end; }
-.approval-remember-scope { width: 100%; min-width: 0; margin: 0; color: var(--muted); font: 10.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval-dock :is(.runtime-option, .approval-dock-scroll > pre):focus-visible { outline: 2px solid var(--conversation-focus); outline-offset: -2px; }
 
 .runtime-recovery-dock {

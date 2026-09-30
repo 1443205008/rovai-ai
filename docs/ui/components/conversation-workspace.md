@@ -887,14 +887,15 @@ Codex 无原生显示标签的决定由 Adapter 提供固定英文标签，响�
 Core 管理动作的“拒绝 / 允许一次”属于应用文案，按钮文字、title 和无障碍名称跟随界面语言。
 Claude stdio 不返回标签，Adapter 使用 CLI 2.1.280 已核实的原生 `No` / `Yes` / `Yes, and don’t ask again for: …`
 模板，不随界面语言翻译；历史 Claude 两个旧中文 host 标签仅展示为原生英文，不修改冻结 ID 或响应。
-仅 Claude 的原生记忆选项显示对应的完整规则范围和保存 destination，以 `aria-describedby` 关联按钮；
-长规则与路径换行，手机记忆项跨双列且按钮保留 44px 触控高度。规则与 suppression 边界见
+Claude 的记忆选项只显示含规则范围的完整原生按钮标签，不额外显示保存 destination 或配置文件说明。
+所有选项按内容宽度尽量同行排列，空间不足时自然换行，不为记忆项强制预留整行；长标签完整换行，
+手机按钮至少为 44px 触控区域。规则与 suppression 边界见
 [Runtime Launch v46](../../contracts/runtime-launch-and-verification-v46.md)。其他 Runtime 的内部 consequence 不展示。
 
 Dock 保留橙色顶部，以中性边框界定请求，移除左侧橙线和浮层阴影。原始 JSON 的底色与执行台 command
 结果框共用 `--shell-result-canvas`，使用 11.5px 等宽文字，保留空白与局部滚动；请求区可由键盘聚焦和滚动。
 按钮保留原生标签与顺序，使用中性边框、500 字重和明确的按下／提交中状态。
-手机的上下标题、44px 控件、双列选项与可视高度适配见 [Mobile WebUI](../host-web-mobile.md#对话与执行)。
+手机的上下标题、44px 控件、选项换行与可视高度适配见 [Mobile WebUI](../host-web-mobile.md#对话与执行)。
 
 翻页保持刚触发的导航按钮焦点。边界按钮使用 `aria-disabled`，仍可保持焦点但触发无操作。
 顶栏定位以及当前审批结束后接续下一项时只聚焦请求摘要；初次显示和普通刷新不主动聚焦决策按钮。

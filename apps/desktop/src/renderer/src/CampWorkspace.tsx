@@ -8648,11 +8648,9 @@ export function ApprovalDock({
           })} />}
         <pre tabIndex={0} role="region" aria-label={uiAttribute("完整审批请求，可滚动")}>{JSON.stringify(approval.canonicalInput, null, 2)}</pre>
         <div className="approval-dock-actions">
-          {approval.options.map((option, index) => {
+          {approval.options.map(option => {
             const label = approvalOptionLabel(approval, option, t)
-            const remember = isClaudePermission(approval) && option.optionId.startsWith('claude.allow_remember.')
-            const scopeId = remember ? `${contentId}-scope-${index}` : undefined
-            const button = (
+            return (
               <button
                 className={`runtime-option option-${option.kind}`}
                 type="button"
@@ -8662,15 +8660,10 @@ export function ApprovalDock({
                 disabled={busy}
                 title={label}
                 aria-label={label}
-                aria-describedby={scopeId}
               >
                 {label}
               </button>
             )
-            return remember ? <div className="approval-remember-option" key={option.optionId}>
-              {button}
-              <p id={scopeId} className="approval-remember-scope">{option.consequence}</p>
-            </div> : button
           })}
           {approval.options.length === 0 && (
             <p className="approval-option-error"><UiText zh={"当前智能体未提供可无损回传的原生选项，请求无法提交。"} /></p>

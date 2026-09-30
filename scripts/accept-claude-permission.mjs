@@ -95,8 +95,8 @@ try {
     const expectedLabel = decision === 'deny' ? 'No' : decision === 'allow_once' ? 'Yes' : option.label
     if (await evaluate(`${button}.textContent`) !== expectedLabel) throw new Error('Desktop did not retain the native English button label')
     if (decision === 'allow_remember') {
-      const visibleScope = await evaluate(`document.getElementById(${button}.getAttribute('aria-describedby'))?.textContent`)
-      if (visibleScope !== option.consequence) throw new Error('Remembered native scope was not visible and accessible')
+      if (await evaluate(`${button}.getAttribute('aria-label')`) !== expectedLabel) throw new Error('The full native remember label was not accessible')
+      if (await evaluate(`Boolean(document.querySelector('.approval-remember-scope'))`)) throw new Error('Remember configuration details must not be shown below the choices')
       rememberedRules = option.consequence.split('\n').slice(0, -1)
     }
     await screenshot(`${decision}-pending.png`)

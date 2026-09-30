@@ -33,10 +33,9 @@ true 或不识别的 suppression 值不得提供该选项。缺少建议、无�
 所选原生建议，所有字段和 destination 原样回填。规则保存、优先级、未来匹配和持久期限由 Claude 原生实现
 拥有；Rovai 不另存权限规则，不扩张 pattern，不改写成员配置，不自行写用户 settings。
 
-记忆选项的 consequence 承载逐条原生 `toolName(ruleContent)` 范围和 destination，Dock 显示在对应按钮下，
-并以 aria-describedby 关联。localSettings / projectSettings 同时显示对应 `.claude/settings.local.json` /
-`.claude/settings.json`；userSettings 和 session 保留原生 destination，不能推断或写死用户配置目录。
-Runtime 的其他内部 consequence 不因本次修改进入界面。
+记忆选项的 consequence 保留逐条原生 `toolName(ruleContent)` 范围和 destination 元数据，供冻结响应与审计使用。
+Dock 只显示原生按钮标签及其规则范围，不额外展示保存 destination 或配置文件说明；内部 consequence 不展示。
+所有选项使用内容宽度按钮，空间足够时同行排列，不足时自然换行；不为记忆选项强制预留整行。
 
 记忆选项使用既有 other kind，allows_action 为 true，仍由冻结 nativeResponseDigest 约束和既有 Delivery
 串行投递。用户记住规则不证明工具执行成功；实际工具结果仍使用原 tool_use_id 结算。取消、断线、迟到决定、
@@ -51,8 +50,8 @@ suppression 均拒绝。请求完成、取消和断线时随既有 pending 状�
 和独立响应 digest。
 控制写入与取消扩展既有 claude_control writer/reader seam owner，验证精确记忆响应、范围/目的地篡改、
 跨请求借用及取消/断线后的迟到记忆响应不会写入。
-生产 ApprovalDock 夹具覆盖中英文界面下原生英文不变、旧标签兼容、决定身份、记忆范围可访问及桌面/手机
-长规则换行。实际 Desktop 验收先保留允许一次和拒绝，再点击记忆并核对隔离项目 settings
+生产 ApprovalDock 夹具覆盖中英文界面下原生英文不变、旧标签兼容、决定身份、完整原生标签可访问、
+配置文件说明不展示、空间足够时一排及不足时两排、桌面/手机长规则换行。实际 Desktop 验收先保留允许一次和拒绝，再点击记忆并核对隔离项目 settings
 仅保存选中规则；后续 Run 无新增 Approval、真实 Core send receipt 和 exact message 均存在。
 
 原生语义参考[官方 Approve and remember 文档](https://code.claude.com/docs/en/agent-sdk/user-input#respond-to-tool-requests)。
