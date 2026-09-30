@@ -1627,7 +1627,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(start_body, "开始使命");
+        assert_eq!(start_body, "Start the current Mission.");
         state.command_id = Uuid::new_v4().to_string();
         state.payload.status = MissionStatus::NeedsYou;
         state.payload.source_message_id = Some(source.clone());
@@ -1644,7 +1644,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             signal.mention.as_ref().unwrap().summary.as_deref(),
-            Some("开始使命")
+            Some("Start the current Mission.")
         );
         assert_eq!(signal.action.subject.as_ref().unwrap().id, id);
         assert_eq!(

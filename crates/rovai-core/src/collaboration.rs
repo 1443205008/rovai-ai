@@ -3565,7 +3565,7 @@ pub(crate) fn admit_mission_start(
     let now_text = now.to_rfc3339();
     ensure_resolution_conversations(transaction, camp_id, &mut resolution, &now_text)?;
     let message_id = Uuid::new_v4().to_string();
-    let body = "开始使命".to_string();
+    let body = "Start the current Mission.".to_string();
     let content = normalize_content(vec![StructuredCampMessageSegment::Text {
         text: body.clone(),
     }]);

@@ -525,7 +525,7 @@ mod tests {
             )
             .unwrap();
         }
-        let managed = ManagedSkills::new(managed_root.clone(), resources).unwrap();
+        let managed = ManagedSkills::new(managed_root.clone(), resources.clone()).unwrap();
         managed.sync().unwrap();
         fs::write(managed_root.join("campfire").join("SKILL.md"), "modified").unwrap();
         fs::write(managed_root.join("keep.txt"), "user data").unwrap();
@@ -533,6 +533,24 @@ mod tests {
         assert_eq!(
             read_frontmatter(&managed_root.join("campfire").join("SKILL.md"), "campfire").unwrap(),
             "campfire description"
+        );
+        // An app upgrade replaces owned resources at the same managed paths.
+        let upgraded = "---\nname: campfire\ndescription: Updated discussion guidance\n---\nNew instructions.\n";
+        fs::write(resources.join("campfire").join("SKILL.md"), upgraded).unwrap();
+        let references = resources.join("campfire").join("references");
+        fs::create_dir_all(&references).unwrap();
+        fs::write(references.join("lead.md"), "Updated host instructions.\n").unwrap();
+        managed.sync().unwrap();
+        assert_eq!(
+            fs::read_to_string(managed_root.join("campfire").join("SKILL.md")).unwrap(),
+            upgraded
+        );
+        let (entries, omitted) = managed.index(["campfire"]);
+        assert!(omitted.is_empty());
+        assert_eq!(entries[0].desc, "Updated discussion guidance");
+        assert_eq!(
+            fs::read_to_string(managed_root.join("campfire").join("references/lead.md")).unwrap(),
+            "Updated host instructions.\n"
         );
         assert_eq!(
             fs::read_to_string(managed_root.join("keep.txt")).unwrap(),
