@@ -89,6 +89,20 @@ pub fn normalize_event(message: &Value) -> (&'static str, Value) {
                 }),
             )
         }
+        Some("message_update")
+            if message
+                .pointer("/assistantMessageEvent/type")
+                .and_then(Value::as_str)
+                == Some("thinking_delta") =>
+        {
+            (
+                "agent.thought.delta",
+                json!({
+                    "delta": message.pointer("/assistantMessageEvent/delta").and_then(Value::as_str).unwrap_or(""),
+                    "contentIndex": message.pointer("/assistantMessageEvent/contentIndex"),
+                }),
+            )
+        }
         Some("message_update") => ("runtime.event", json!({"type": "message_update"})),
         Some("tool_execution_start") => (
             "runtime.action",
@@ -163,10 +177,12 @@ pub fn normalize_event(message: &Value) -> (&'static str, Value) {
 
 /// Pi's delta frame contains a contentIndex, not a message identity. Keep that
 /// index scoped to this Runtime's explicit message_start/message_end interval.
+
 #[derive(Default)]
 pub(super) struct PiTextState {
     message_ordinal: u64,
     native_message_id: Option<String>,
+    assistant_active: bool,
 }
 
 impl PiTextState {
@@ -186,12 +202,14 @@ impl PiTextState {
             message.pointer("/message/role").and_then(Value::as_str) == Some("assistant");
         if event == Some("message_start") && assistant {
             self.message_ordinal += 1;
+            self.assistant_active = crate::observable_output::is_root_output(message);
             self.native_message_id = message
                 .pointer("/message/id")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
         }
         if event == Some("message_end") && assistant {
+            self.assistant_active = false;
             return message.pointer("/message/content").and_then(Value::as_array)
                 .into_iter().flatten().enumerate().filter_map(|(index, block)| {
                     (block.get("type").and_then(Value::as_str) == Some("text"))
@@ -206,7 +224,12 @@ impl PiTextState {
                 }).collect();
         }
         let (event_type, mut payload) = normalize_event(message);
-        if event_type == "agent.text.delta" {
+        if event_type == "agent.thought.delta"
+            && (!self.assistant_active || !crate::observable_output::is_root_output(message))
+        {
+            return vec![];
+        }
+        if matches!(event_type, "agent.text.delta" | "agent.thought.delta") {
             let index = message
                 .pointer("/assistantMessageEvent/contentIndex")
                 .and_then(Value::as_u64)
@@ -458,6 +481,23 @@ mod tests {
         state.normalize(&json!({"type":"message_start","message":{"role":"assistant"}}));
         let a = state.normalize(&json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"A"}}));
         let b = state.normalize(&json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":2,"delta":"B"}}));
+        let thinking = json!({"type":"message_update","assistantMessageEvent":{
+            "type":"thinking_delta","contentIndex":1,"delta":"PRIVATE_THOUGHT_MARKER",
+            "partial":{"content":[{"type":"thinking","thinking":"PRIVATE_FULL_BLOCK"}]}
+        }});
+        let thought = state.normalize(&thinking);
+        assert_eq!(thought[0].0, "agent.thought.delta");
+        assert_ne!(thought[0].1["itemId"], a[0].1["itemId"]);
+        assert!(
+            !serde_json::to_string(&thought[0].1)
+                .unwrap()
+                .contains("PRIVATE_FULL_BLOCK")
+        );
+        for field in ["subagentId", "parent_tool_use_id", "replay", "snapshot"] {
+            let mut excluded = thinking.clone();
+            excluded["assistantMessageEvent"]["partial"][field] = json!(true);
+            assert!(state.normalize(&excluded).is_empty());
+        }
         let terminal = state.normalize(&json!({"type":"message_end","message":{"role":"assistant","stopReason":"aborted","content":[{"type":"text","text":"A final"},{"type":"toolCall","id":"tool"},{"type":"text","text":"B partial"}]}}));
         assert_ne!(a[0].1["itemId"], b[0].1["itemId"]);
         assert_eq!(terminal.len(), 2);
@@ -466,6 +506,7 @@ mod tests {
         assert_eq!(terminal[1].1["itemId"], b[0].1["itemId"]);
         assert_eq!(terminal[0].1["text"], "A final");
         assert_eq!(terminal[0].1["status"], "interrupted");
+        assert!(state.normalize(&thinking).is_empty());
         state.normalize(&json!({"type":"message_start","message":{"role":"assistant"}}));
         let next = state.normalize(&json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"C"}}));
         assert_ne!(next[0].1["itemId"], a[0].1["itemId"]);

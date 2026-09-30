@@ -37,7 +37,9 @@ const toolDetailsOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_TOOL_DETAILS_O
 const completeToolOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_COMPLETE_TOOL_ONLY === '1'
 const executionAutoFollowOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_AUTO_FOLLOW_ONLY === '1'
 const executionMetricsOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_ONLY === '1'
+const observableRealRuntime = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_OBSERVABLE_REAL === '1'
 const executionMetricsStreamOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_STREAM_ONLY === '1'
+  || observableRealRuntime
 const placementRestartOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_PLACEMENT_RESTART_ONLY === '1'
 const withdrawalOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_WITHDRAWAL_ONLY === '1'
 const databasePath = join(dataDir, 'rovai.sqlite')
@@ -1270,6 +1272,7 @@ async function verifyExecutionMetricsRenderer(app, capturesRoot, onRestart) {
 }
 
 async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
+  if (observableRealRuntime) return verifyRealCodexObservableOutput(app, capturesRoot)
   const request = (method, params = {}) => evaluate(app.cdp,
     `window.rovai.request(${JSON.stringify(method)}, ${JSON.stringify(params)})`, true)
   const agentId = runtimes.find((entry) => entry.key === 'qwen')?.agentId
@@ -1473,6 +1476,101 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
       reopened, switched, speedChanges, usageRows },
     captures: { steady: steadyCapture, idle: idleCapture, resumed: resumedCapture, terminal: terminalCapture }
   }
+}
+
+async function verifyRealCodexObservableOutput(app, capturesRoot) {
+  const request = (method, params = {}) => evaluate(app.cdp,
+    `window.rovai.request(${JSON.stringify(method)}, ${JSON.stringify(params)})`, true)
+  const agentId = runtimes.find((entry) => entry.key === 'codex').agentId
+  const installation = await configureProductRuntime(request, 'codex-cli', [agentId])
+  const profile = await request('members.get', { agentId })
+  const selection = await request('members.runtime.set', { commandId: crypto.randomUUID(), command: {
+    agentId, expectedVersion: profile.version, adapterKind: 'codex-cli',
+    permissions: profile.runtimeConfiguration.permissions,
+    model: { mode: 'explicit', modelId: process.env.ROVAI_OBSERVABLE_MODEL ?? 'gpt-6.1-sol',
+      options: { reasoning_effort: 'high' } }
+  } })
+  assert(selection.status === 'applied', 'Real Codex acceptance model was not applied')
+  const workspace = await request('workspaces.inspect', { path: fixtureExecutionRoot })
+  const setup = await createConfiguredCampAndSend(request, {
+    commandId: crypto.randomUUID(), name: '可观测输出真实 Codex 验收', workspace,
+    memberAgentIds: [agentId], defaultLeadAgentId: agentId,
+    body: process.env.ROVAI_OBSERVABLE_PROMPT_FILE
+      ? await readFile(process.env.ROVAI_OBSERVABLE_PROMPT_FILE, 'utf8')
+      : 'This is an isolated acceptance. Analyze commit ordering with six concurrent clients, two replicas, lost acknowledgements, retries, cancellations, recovery and Unicode. Emit three substantial public commentary sections, about 800 English words each, outside tool arguments. Between sections execute sleep 6 once. Do not delegate or modify files. Finally use rovai send --public-only for a brief completion per Session Charter. Finish normally.',
+    purpose: 'Long Codex observable output through packaged Renderer'
+  })
+  assert(setup.status === 'accepted', 'Real Codex acceptance was not accepted')
+  const liveCampId = setup.payload.campId
+  const runId = await waitForControlledMessageRun(request, liveCampId, setup.payload.campMessageId)
+  await openCamp(app.cdp, liveCampId)
+  await selectCampConversationView(app.cdp, 'conversation')
+  await evaluate(app.cdp, `document.querySelector('.camp-detail-entry[data-detail="execution"]')?.click()`)
+  await waitForExpression(app.cdp,
+    `Boolean(document.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)}))`, 15_000)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})?.click()`)
+  await evaluate(app.cdp, `(() => {
+    const probe = { changes: [], last: null }
+    const record = () => {
+      const speed = document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim() ?? null
+      if (speed !== probe.last) { probe.last = speed; probe.changes.push({ at: performance.now(), speed }) }
+    }
+    probe.observer = new MutationObserver(record)
+    probe.observer.observe(document.querySelector('.execution-drawer-header'),
+      { subtree: true, childList: true, characterData: true })
+    window.__streamMetricsProbe = probe
+  })()`)
+  const samples = [], started = Date.now(), capturePath = join(capturesRoot, 'observable-real-codex.png')
+  let captured = false, status = null, nextProgress = started + 30_000
+  while (Date.now() - started < 480_000) {
+    const state = await request('camps.snapshot', { campId: liveCampId })
+    const run = state.agentRuns.find((candidate) => candidate.id === runId)
+    status = run?.status
+    const value = await request('monitoring.observableOutput', {
+      campId: liveCampId, agentRunId: runId, executionEpoch: run.executionEpoch
+    })
+    const ui = await evaluate(app.cdp, `(() => {
+      const speed = document.querySelector('.execution-drawer-header .execution-current-speed')
+      const stage = document.querySelector(${JSON.stringify(`.execution-process-stage[data-agent-run-id="${runId}"]`)})
+      const context = document.querySelector('.execution-drawer-header .execution-context-trigger')
+      return { speed: speed?.textContent?.trim() ?? null, scope: speed?.getAttribute('aria-label'),
+        duration: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
+        speedInCard: Boolean(stage?.querySelector('.execution-current-speed')),
+        sameLine: Boolean(speed && context && Math.abs(speed.getBoundingClientRect().top - context.getBoundingClientRect().top) < 12) }
+    })()`)
+    samples.push({ atMs: Date.now() - started, status, value, ui })
+    if (ui.speed && !captured) { await capture(app.cdp, capturePath); captured = true }
+    if (['succeeded', 'failed', 'cancelled'].includes(status)) break
+    if (Date.now() >= nextProgress) {
+      console.log(JSON.stringify({ stage: 'real-codex-live', status,
+        publicUnits: value?.publicTextUnits, reasoningUnits: value?.reasoningUnits, speed: ui.speed }))
+      nextProgress = Date.now() + 30_000
+    }
+    await wait(250)
+  }
+  const changes = await evaluate(app.cdp, `(() => {
+    window.__streamMetricsProbe.observer.disconnect()
+    return window.__streamMetricsProbe.changes
+  })()`)
+  const numericChanges = changes.filter((change) => /^\d+\.\d tok\/s$/.test(change.speed ?? ''))
+  const report = { version: installation.snapshot?.reportedVersion, campId: liveCampId, runId, status,
+    publicUnits: Math.max(0, ...samples.map((sample) => sample.value?.publicTextUnits ?? 0)),
+    reasoningUnits: Math.max(0, ...samples.map((sample) => sample.value?.reasoningUnits ?? 0)),
+    rendererPublications: numericChanges.length, samples, changes }
+  const reportPath = join(capturesRoot, 'observable-real-codex.json')
+  await writeFile(reportPath, JSON.stringify(report, null, 2))
+  assert(status === 'succeeded' && report.publicUnits > 0 && report.reasoningUnits > 0
+    && samples.some((sample) => sample.value?.reasoningSource === 'stream_summary')
+    && numericChanges.length > 10 && captured
+    && numericChanges.every((change, index) => index === 0 || change.at - numericChanges[index - 1].at >= 850)
+    && samples.filter((sample) => sample.ui.speed).every((sample) =>
+      sample.ui.duration && sample.ui.sameLine && !sample.ui.speedInCard)
+    && samples.at(-1).ui.speed === null,
+  `Real Codex output acceptance failed; numeric evidence is in ${reportPath}`)
+  return { verified: { status, version: report.version, publicUnits: report.publicUnits,
+    reasoningUnits: report.reasoningUnits, rendererPublications: report.rendererPublications },
+  captures: { speed: capturePath, report: reportPath } }
 }
 
 async function waitForControlledMessageRun(request, campId, messageId) {
@@ -5540,11 +5638,13 @@ async function connectCdp(url) {
     const pendingRequest = pending.get(message.id)
     if (!pendingRequest) return
     pending.delete(message.id)
+    clearTimeout(pendingRequest.timer)
     if (message.error) pendingRequest.reject(new Error(message.error.message))
     else pendingRequest.resolve(message)
   })
   socket.addEventListener('close', () => {
     for (const pendingRequest of pending.values()) {
+      clearTimeout(pendingRequest.timer)
       pendingRequest.reject(new Error('CDP connection closed'))
     }
     pending.clear()
@@ -5553,7 +5653,11 @@ async function connectCdp(url) {
     send(method, params = {}) {
       return new Promise((resolveSend, rejectSend) => {
         const id = nextId++
-        pending.set(id, { resolve: resolveSend, reject: rejectSend })
+        const timer = setTimeout(() => {
+          pending.delete(id)
+          rejectSend(new Error(`CDP ${method} timed out`))
+        }, 30_000)
+        pending.set(id, { resolve: resolveSend, reject: rejectSend, timer })
         socket.send(JSON.stringify({ id, method, params }))
       })
     },

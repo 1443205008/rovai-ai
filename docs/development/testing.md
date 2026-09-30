@@ -766,3 +766,18 @@ Windows 平台实测独立记录，不能由此 macOS 浏览器结果推断。
 定向验证：`cargo test -p rovai-core --features extended-tests --lib attachment_send_keeps_source_path`、
 `cargo test -p rovai-core --bin rovai`、`node --test scripts/lib/host-web-html.test.mjs scripts/lib/host-web.test.mjs`；
 完整 Core library 与 Context slow suite 继续执行，不用删除旧迁移测试换取通过。
+
+## 可观测输出真实 Runtime 验收
+
+`node --experimental-strip-types scripts/probe-observable-output.mjs <runtime-kind>` 创建独立 Core、bundled CLI、data-dir、Skill Library、MCP 和工作区，默认发送三段约 800 字的公开正文及工具停顿，最长观察 8 分钟。仅 relay 原始 Native 流，保留字段形态、匿名身份、字符数量、计时和 Core 数值快照；不保存思考正文、内容哈希或诊断原文。它调用生产显示状态机，但 `rendererVerified` 固定为 false，不能作为实际界面验收。
+
+可选环境变量：`ROVAI_OBSERVABLE_CORE` 指定 Core 来源；`ROVAI_OBSERVABLE_MODEL`／`ROVAI_OBSERVABLE_MODEL_OPTIONS` 冻结显式模型；`ROVAI_OBSERVABLE_PROMPT_FILE` 指定公开任务；`ROVAI_OBSERVABLE_THINKING_LEVEL` 调整隔离 Pi 默认思考级别，或声明隔离 DSH 自定义 route 的该项 effort；`ROVAI_OBSERVABLE_NATIVE_HOME` 只复制 Grok／DSH 的必要配置到私有夹具；Kimi 的 `ROVAI_OBSERVABLE_SUB2API=1` 使用 Claude 已授权 Provider 配置，写入隔离的 0600 provider file，并用 `ROVAI_KIMI_CONFIG` 避免日常配置覆盖。探针不修改日常 Native 配置。证据导出只选 `evidence.json` 和 `native-shapes.jsonl`，不能打包整个含凭据的 fixture。
+
+打包 App 的可重复入口：
+
+```bash
+ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_STREAM_ONLY=1 node scripts/accept-runtime-activity-ui.mjs <packaged-app>
+ROVAI_RUNTIME_ACTIVITY_ACCEPT_OBSERVABLE_REAL=1 node scripts/accept-runtime-activity-ui.mjs <packaged-app>
+```
+
+第一项用合成 ACP 流证明去重、正文与思考合并、途中打开、切历史 Run、工具停顿、恢复、终态、迟到 Usage 和私有标记不扩散；第二项使用真实 Codex 长回合证明当前模型的 summary 数值和实际 DOM 更新。两者均隔离 App/Core 数据，CDP 请求有 30 秒超时；不结束日常 App。字符权重与 500ms／1Hz／2.5s／1s／5s 参数由既有最低层 owner 验证，不为真实网络调用新增 Rust 单元测试。

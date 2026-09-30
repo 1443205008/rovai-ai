@@ -173,6 +173,7 @@ impl CodexThreadRoute {
 #[derive(Default)]
 struct CodexThreadRoutes {
     inner: RwLock<HashMap<String, CodexThreadRoute>>,
+    output_sequence: AtomicU64,
 }
 
 impl CodexThreadRoutes {
@@ -326,7 +327,7 @@ async fn route_codex_stdout_ingress(
     host_instance_id: &str,
     routes: &CodexThreadRoutes,
     incoming: &mpsc::UnboundedSender<CodexIncoming>,
-    message: Value,
+    mut message: Value,
 ) -> (CodexIngressDisposition, Option<Value>) {
     let request_id = message.get("id").cloned();
     let (disposition, owner) = routes.ingress_route(&message).await;
@@ -336,6 +337,18 @@ async fn route_codex_stdout_ingress(
         }
         CodexIngressDisposition::Forward => {
             if let Some(owner) = owner {
+                // The stdio reader delivers one receipt per live notification.
+                // Mint its identity before any Core batching/fallback can copy it.
+                // Thread/turn routing excludes restore and unbound child threads.
+                if message["method"] == "item/reasoning/summaryTextDelta"
+                    && message
+                        .pointer("/params/turnId")
+                        .and_then(Value::as_str)
+                        .is_some()
+                {
+                    message["_rovaiOutputReceipt"] =
+                        json!(routes.output_sequence.fetch_add(1, Ordering::Relaxed) + 1);
+                }
                 let _ = incoming.send(owner.message(host_instance_id, message));
                 (disposition, None)
             } else {
@@ -2130,6 +2143,10 @@ pub fn normalize_event(method: &str, params: &Value) -> (&'static str, Value) {
     match method {
         "item/agentMessage/delta" => ("agent.text.delta", params.clone()),
         "item/reasoning/summaryTextDelta" => ("agent.reasoning.summary.delta", params.clone()),
+        // Raw reasoning is deliberately not counted alongside the summary.
+        // Still classify it as private so an unfamiliar notification cannot
+        // escape via the generic public runtime.native branch.
+        "item/reasoning/textDelta" => ("agent.thought.delta", params.clone()),
         "turn/plan/updated" => ("runtime.plan", params.clone()),
         "item/plan/delta" => ("runtime.plan.delta", params.clone()),
         "item/commandExecution/outputDelta" | "command/exec/outputDelta" => {
@@ -3012,6 +3029,30 @@ while IFS= read -r ignored; do :; done
         };
         assert_eq!(message["id"], 91);
 
+        let summary = json!({"method":"item/reasoning/summaryTextDelta", "params":{
+            "threadId":"thread-current", "turnId":"turn-current", "itemId":"reasoning-1",
+            "summaryIndex":0, "delta":"PRIVATE_SUMMARY"
+        }});
+        route_codex_stdout_ingress("host-current", &routes, &incoming, summary.clone()).await;
+        let CodexIncoming::Message { message: first, .. } = receiver.try_recv().unwrap() else {
+            panic!()
+        };
+        route_codex_stdout_ingress("host-current", &routes, &incoming, summary.clone()).await;
+        let CodexIncoming::Message {
+            message: second, ..
+        } = receiver.try_recv().unwrap()
+        else {
+            panic!()
+        };
+        assert!(
+            first["_rovaiOutputReceipt"].as_u64().unwrap()
+                < second["_rovaiOutputReceipt"].as_u64().unwrap()
+        );
+        let mut old_summary = summary.clone();
+        old_summary["params"]["turnId"] = json!("turn-old");
+        route_codex_stdout_ingress("host-current", &routes, &incoming, old_summary).await;
+        assert!(receiver.try_recv().is_err());
+
         routes
             .deactivate_turn("thread-current", &owner, Some("turn-current"))
             .await;
@@ -3443,6 +3484,11 @@ while IFS= read -r ignored; do :; done
         assert_eq!(
             normalize_event("turn/plan/updated", &plan),
             ("runtime.plan", plan)
+        );
+        let raw = json!({"delta":"PRIVATE_RAW_REASONING","itemId":"reasoning-1"});
+        assert_eq!(
+            normalize_event("item/reasoning/textDelta", &raw),
+            ("agent.thought.delta", raw)
         );
     }
 }

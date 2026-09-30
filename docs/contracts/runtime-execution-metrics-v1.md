@@ -4,7 +4,7 @@ contract: runtime-execution-metrics
 version: 1
 status: accepted
 source_version: v1.72
-last_updated: 2026-09-29
+last_updated: 2026-09-30
 ---
 
 # Runtime Execution Metrics v1
@@ -29,10 +29,19 @@ last_updated: 2026-09-29
 
 `monitoring.observableOutput({campId, agentRunId, executionEpoch})` 只在请求的 Run 属于 Camp、仍运行且代次匹配时返回最近数值；其他情况返回 `null`。`agentRunId + executionEpoch + counterGeneration` 是计数身份，`sequence` 单调递增；`sampledAtMs` 与 `lastOutputAtMs` 均来自同一 Core 进程单调时钟。返回 `algorithmVersion`、`unicodeDataVersion`、`publicTextUnits`、`reasoningUnits`、`reasoningSource`、`streamConfirmed`，单位为 0.01 个显示估算 token。接口不含正文、思考、摘要、工具 payload 或内容哈希；Web 对返回字段再做一次白名单投影。Core 重启、计数缺口或容量重建会更换 `counterGeneration`，Renderer 先建立基线；网络断开超过 2 秒同样重新建基线，不把积压量回放成当前速度。
 
-分类使用 ICU4X 2.2.0 随程序打包的 Unicode 属性数据：空白与指定格式字符为 0，可打印 ASCII 和 Latin 为 0.25，Han／Kana／Hangul／明确的 CJK 共享标点为 0.60，其他图形符号为 1.00，其余标量为 0.50。单个标量只能归入一类；`Script_Extensions` 只用于共享字符的单次归类。假名、韩文、符号与其他脚本的权重未按具体模型校准。只有原生完整流式增量及可用的 offset 或已验证的原生序号才能累计；ACP 路由接收序号是本地分配，不能作为思考去重依据，当前 ACP 思考必须有原生 `textOffset`。单个终稿不能使 `streamConfirmed` 成立。旧 `visible-text-heuristic-v2` 不再驱动速度。
+分类使用 ICU4X 2.2.0 随程序打包的 Unicode 属性数据：空白与指定格式字符为 0，可打印 ASCII 和 Latin 为 0.25，Han／Kana／Hangul／明确的 CJK 共享标点为 0.60，其他图形符号为 1.00，其余标量为 0.50。单个标量只能归入一类；`Script_Extensions` 只用于共享字符的单次归类。假名、韩文、符号与其他脚本的权重未按具体模型校准。旧 `visible-text-heuristic-v2` 不再驱动速度。
+
+准入的实时增量使用原生 UTF-16 offset、原生序号，或已经过 Host／Session／当前 prompt（Codex 为 thread／turn）栅栏的 stdio 接收身份。接收身份在 Core 分发前产生，同一通知的 Core 重试沿用该身份；它不证明两个独立 wire 通知不是上游重发。没有原生游标的通道依赖已核验的实时投递语义，历史恢复必须在进入计数前隔离，不通过保存全文或内容哈希去重。新方言存在未声明的重复、回放或完整块语义时保持未验证。
+
+- Codex 只计 `item/reasoning/summaryTextDelta`，以根 item 和当前 turn 的接收身份去重；`summaryIndex` 是摘要分段编号，不是 offset。原文 `textDelta`、终态完整 reasoning item 不计，也不进入公开 Evidence。
+- Pi 只计当前根 assistant `message_start` 到 `message_end` 之间的 `thinking_delta`，以 message 身份／本次 message 序号、`contentIndex` 与接收序号归属。`partial` 完整块不保留；start/end 不携带计数增量。
+- 标准 ACP 的实时 `agent_thought_chunk` 可以不带 `messageId`／offset，此时用当前 native prompt 身份和已栅栏的接收序号。`LoadingReplay`、闲置／终态 owner、显式子 Agent、replay 和 snapshot 不计。ZCode 的私有 `reasoning_delta` 先用原生 input／turn／seq 栅栏，再映射为该临时来源。
+- DeepSeek Harness 当前官方 ACP profile 从已提交的 `assistant/message` 投影完整正文和 reasoning 块（0.1.5-rc.3 已核验），即使事件名为 `*_chunk` 也不计实时速度。接入新的真正实时来源后才可改变该资格。
+
+来源模式由 Runtime 方言确定，不由原文／摘要哪个先到决定。同 item 的明文与摘要互斥；完整块不补计。只有实际实时分片才能确认流，不能用多个已完成调用的完整块制造 `streamConfirmed`。
 
 ## 证据门槛
 
 字段资格由 Runtime、版本及实际 wire 方言决定。Parser 命中、安装版本、端到端 Run、持久化和 UI 是不同证据阶段；未经过当前安装版本与真实调用核验的字段保持“未验证”。原生输入为缓存包含总量时直接使用原生总量；互斥桶只有齐全才合成 Input。Reasoning 已包含在 Output 时不重加。重复模型调用与终态统计按来源身份去重，恢复累计量由 checkpoint 建立基线；失败、取消和超时保留部分观测。
 
-逐 Runtime 原生 Usage 证据见[第二轮执行指标核验记录](../research/runtime-monitoring/execution-metrics-verification-2026-09-29.md)；v3 思考来源资格、合成夹具和未决事项见[可观测输出 v3 核验](../research/runtime-monitoring/observable-output-v3-verification-2026-09-29.md)。
+逐 Runtime 原生 Usage 证据见[第二轮执行指标核验记录](../research/runtime-monitoring/execution-metrics-verification-2026-09-29.md)；当前 v3 思考来源资格、长回合和 Renderer 证据见[思考流接通与验收](../research/runtime-monitoring/observable-output-v3-verification-2026-09-30.md)。[首轮 v3 核验](../research/runtime-monitoring/observable-output-v3-verification-2026-09-29.md)保留当时的 offset 限制与验证状态，不作为最新支持结论。

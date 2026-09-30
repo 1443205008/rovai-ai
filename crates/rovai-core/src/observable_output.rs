@@ -9,6 +9,7 @@ use icu_properties::{
     script::ScriptWithExtensions,
 };
 use serde::Serialize;
+use serde_json::Value;
 use uuid::Uuid;
 
 pub const ALGORITHM_VERSION: &str = "observable-output-heuristic-v3";
@@ -16,6 +17,49 @@ pub const UNICODE_DATA_VERSION: &str = "icu4x-2.2.0";
 const MAX_RUNS: usize = 128;
 const MAX_ITEMS_PER_RUN: usize = 512;
 const MAX_ITEM_ID_BYTES: usize = 256;
+
+/// Reject explicit child ownership, replay and complete snapshots before an
+/// adapter strips private payload fields. Native Session/turn fencing still
+/// belongs to the transport; this helper cannot establish ownership by itself.
+pub fn is_root_output(payload: &Value) -> bool {
+    [
+        payload,
+        &payload["_meta"],
+        &payload["content"],
+        &payload["content"]["_meta"],
+        &payload["message"],
+        &payload["assistantMessageEvent"],
+        &payload["assistantMessageEvent"]["partial"],
+        &payload["payload"],
+        &payload["payload"]["_meta"],
+    ]
+    .iter()
+    .all(|value| {
+        ![
+            "agentId",
+            "sourceAgentId",
+            "subagentId",
+            "parentAgentId",
+            "parentSessionId",
+            "parent_tool_use_id",
+            "parentToolCallId",
+            "parent_tool_call_id",
+            "subAgentId",
+            "source_agent_id",
+            "replay",
+            "isReplay",
+            "historical",
+            "snapshot",
+            "isSnapshot",
+        ]
+        .iter()
+        .any(|field| {
+            value
+                .get(*field)
+                .is_some_and(|value| !value.is_null() && value != false)
+        })
+    })
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutputKind {
@@ -32,7 +76,9 @@ pub struct Fragment<'a> {
     pub item_id: &'a str,
     /// Native/Execution Text offset, in UTF-16 code units. Gaps establish a new baseline.
     pub offset_utf16: Option<usize>,
-    /// A native ingress sequence may replace an offset for genuine delta protocols.
+    /// A native sequence or fenced live-stdio receipt may replace an offset.
+    /// Receipts are minted before Core fanout; restore/replay must be quarantined
+    /// by the owning adapter. Never mint new receipts while retrying this fragment.
     pub source_sequence: Option<u64>,
     pub text: &'a str,
 }
@@ -424,6 +470,13 @@ mod tests {
         assert_eq!(sample.reasoning_units, 120);
         assert_eq!(sample.reasoning_source, "stream_summary");
         assert!(!sample.stream_confirmed);
+        counter.observe(fragment(OutputKind::ReasoningSummary, 6, "继续"));
+        counter.observe(fragment(OutputKind::ReasoningSummary, 6, "继续"));
+        let live = counter.sample("run", 1).unwrap();
+        assert_eq!(live.reasoning_units, 240);
+        assert!(live.stream_confirmed);
+        let numeric = serde_json::to_string(&live).unwrap();
+        assert!(!numeric.contains("考虑") && !numeric.contains("继续"));
         assert!(counter.sample("run", 2).is_none());
     }
 }

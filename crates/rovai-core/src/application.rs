@@ -19020,7 +19020,7 @@ async fn process_agent_run_pi_message(
                 agent_run_id,
                 execution_epoch,
                 Some(AdapterKind::Pi),
-                None,
+                Some(sequence),
                 None,
                 runtime
                     .builtin_tool_process_config()
@@ -21087,11 +21087,17 @@ async fn observe_runtime_output(
     execution_epoch: i64,
     adapter_kind: Option<AdapterKind>,
     source_sequence: Option<u64>,
-    _fallback_item_id: Option<&str>,
+    fallback_item_id: Option<&str>,
     event_type: &str,
     payload: &Value,
     evidence: Option<&AgentRunExecutionEvidence>,
 ) {
+    // The official DSH ACP profile projects committed assistant/message blocks,
+    // not model-stream deltas (verified 0.1.5-rc.3). Never infer live speed from
+    // those complete body/thought blocks, even if an update is named *_chunk.
+    if adapter_kind == Some(AdapterKind::DeepseekHarness) {
+        return;
+    }
     let (kind, item_id, offset, sequence, text) = match event_type {
         "agent.text.delta"
             if evidence.is_some()
@@ -21114,37 +21120,67 @@ async fn observe_runtime_output(
             payload.get("delta").and_then(Value::as_str),
         ),
         "agent.thought.delta"
-            if source_sequence.is_some()
-                && payload.get("textOffset").and_then(Value::as_u64).is_some()
-                && ![
-                    "agentId",
-                    "sourceAgentId",
-                    "subagentId",
-                    "parentAgentId",
-                    "parentSessionId",
-                ]
-                .iter()
-                .any(|field| payload.get(*field).is_some_and(|value| !value.is_null())) =>
+            if adapter_kind == Some(AdapterKind::Pi)
+                && rovai_core::observable_output::is_root_output(payload) =>
         {
             (
                 OutputKind::ReasoningText,
-                // ACP's route sequence is assigned locally on receipt; a replay
-                // receives a new one. Only native text offsets can dedupe it.
-                payload.get("messageId").and_then(Value::as_str),
-                payload.get("textOffset").and_then(Value::as_u64),
+                payload.get("itemId").and_then(Value::as_str),
                 None,
+                source_sequence,
+                payload.get("delta").and_then(Value::as_str),
+            )
+        }
+        "agent.thought.delta"
+            if source_sequence.is_some()
+                && fallback_item_id.is_some()
+                && adapter_kind.is_some_and(|kind| {
+                    matches!(
+                        kind,
+                        AdapterKind::OpencodeCli
+                            | AdapterKind::CodebuddyCli
+                            | AdapterKind::QwenCode
+                            | AdapterKind::KimiCodeCli
+                            | AdapterKind::GrokBuild
+                            | AdapterKind::QoderCli
+                            | AdapterKind::KiroCli
+                            | AdapterKind::TraeCnCli
+                            | AdapterKind::ZcodeApp
+                    )
+                })
+                && rovai_core::observable_output::is_root_output(payload) =>
+        {
+            let native_id = payload.get("messageId").and_then(Value::as_str);
+            let offset = payload.get("textOffset").and_then(Value::as_u64);
+            (
+                OutputKind::ReasoningText,
+                // Standard ACP chunks can omit message IDs and offsets. Their
+                // live receipt is admitted only after Host/Session/prompt fencing;
+                // LoadingReplay and idle notifications never reach this branch.
+                native_id.or(fallback_item_id),
+                native_id.and(offset),
+                payload
+                    .get("nativeSequence")
+                    .and_then(Value::as_u64)
+                    .or(source_sequence),
                 payload.pointer("/content/text").and_then(Value::as_str),
             )
         }
-        // Codex only qualifies when the native dialect actually supplies a
-        // stable offset. `summaryIndex` is an item index, never a text offset.
-        "agent.reasoning.summary.delta" if adapter_kind == Some(AdapterKind::CodexCli) => (
-            OutputKind::ReasoningSummary,
-            payload.get("itemId").and_then(Value::as_str),
-            payload.get("textOffset").and_then(Value::as_u64),
-            None,
-            payload.get("delta").and_then(Value::as_str),
-        ),
+        // Codex uses only streamed summaries, never raw reasoning plus summaries.
+        // summaryIndex is a part index, not an offset. The root item and receipt
+        // identity were admitted by the current Host/thread/turn stdio route.
+        "agent.reasoning.summary.delta"
+            if adapter_kind == Some(AdapterKind::CodexCli)
+                && rovai_core::observable_output::is_root_output(payload) =>
+        {
+            (
+                OutputKind::ReasoningSummary,
+                payload.get("itemId").and_then(Value::as_str),
+                payload.get("textOffset").and_then(Value::as_u64),
+                source_sequence,
+                payload.get("delta").and_then(Value::as_str),
+            )
+        }
         _ => return,
     };
     let (Some(item_id), Some(text)) = (item_id, text) else {
@@ -22677,7 +22713,7 @@ async fn process_agent_run_codex_message(
         agent_run_id,
         execution_epoch,
         Some(AdapterKind::CodexCli),
-        None,
+        message.get("_rovaiOutputReceipt").and_then(Value::as_u64),
         None,
         runtime
             .builtin_tool_process_config()
@@ -30425,6 +30461,34 @@ done
 
     #[test]
     fn acp_agent_message_events_preserve_only_safe_message_identity_metadata() {
+        let thought = json!({"sessionUpdate":"agent_thought_chunk",
+            "content":{"type":"text","text":"PRIVATE_THOUGHT"}});
+        assert!(rovai_core::observable_output::is_root_output(&thought));
+        for field in ["subagentId", "parent_tool_use_id", "replay", "snapshot"] {
+            for path in ["", "/_meta", "/content", "/content/_meta"] {
+                let mut excluded = thought.clone();
+                if path == "/_meta" {
+                    excluded["_meta"] = json!({});
+                }
+                if path == "/content/_meta" {
+                    excluded["content"]["_meta"] = json!({});
+                }
+                let container = if path.is_empty() {
+                    &mut excluded
+                } else {
+                    excluded.pointer_mut(path).unwrap()
+                };
+                container[field] = json!(true);
+                assert!(!rovai_core::observable_output::is_root_output(&excluded));
+                let container = if path.is_empty() {
+                    &mut excluded
+                } else {
+                    excluded.pointer_mut(path).unwrap()
+                };
+                container[field] = Value::Null;
+                assert!(rovai_core::observable_output::is_root_output(&excluded));
+            }
+        }
         let (_, update_identity) = normalize_acp_event(
             AdapterKind::OpencodeCli,
             "session/update",

@@ -50,11 +50,14 @@ for await (const line of createInterface({ input: process.stdin })) {
       update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } })
       if (index === 0) {
         update({ sessionUpdate: 'agent_thought_chunk', messageId: 'fixture-root-thought',
-          content: { type: 'text', text: 'Q'.repeat(1000) } })
+          snapshot: true, content: { type: 'text', text: 'Q'.repeat(1000) } })
       }
       if (index % 2 === 0) {
-        update({ sessionUpdate: 'agent_thought_chunk', messageId: 'fixture-root-thought',
-          textOffset: thoughtOffset, content: { type: 'text', text: thought } })
+        // Cover both native offsets and standard ACP chunks without an offset.
+        const value = { sessionUpdate: 'agent_thought_chunk', messageId: 'fixture-root-thought',
+          textOffset: thoughtOffset, content: { type: 'text', text: thought } }
+        if (index >= 6) { delete value.messageId; delete value.textOffset }
+        update(value)
         thoughtOffset += thought.length // ACP offsets use UTF-16 code units.
       }
       await pause(500)

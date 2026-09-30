@@ -7,6 +7,8 @@ target_version: "v1.72"
 
 # 可观测输出测速 v3 来源资格与核验
 
+本记录冻结 2026-09-29 的核验结果；接收身份准入、Codex／Pi／ZCode 修复以及长回合结论已由[2026-09-30 验收](observable-output-v3-verification-2026-09-30.md)更新。下文的 offset 限制和未验证状态不是当前支持矩阵。
+
 本记录只讨论显示用 `tok/s`。Input、Output、Cache 与 Session Context 的原生用量结论仍见[第二轮字段级核验](execution-metrics-verification-2026-09-29.md)。v3 将正文和合格思考的临时字符计数放在 Core，Renderer 只读取累计数字；不能把既有 v2 正文实测直接写成 v3 思考支持。真实 Provider 是否发送思考流仍需按安装版本和有效配置观察。
 
 ## 资格判定
