@@ -49,13 +49,14 @@ object produced by the configured path is created through existing Core authorit
 finishes. The deferred path creates no onboarding-owned product object and therefore has no partial Core state to
 reconcile.
 
-Core initially seeds Chinese built-in profiles. Before recording the selected member checkpoint, English onboarding
-initializes that profile with the selected English preset only when it has no Runtime configuration and all six
-identity fields still exactly match the Chinese factory preset. It uses the existing versioned `members.update`
-command and the provisioning member command ID, then records the returned version for Runtime configuration.
-Customized or configured profiles retain their saved identity; a language switch never translates saved member data.
-If the identity commit succeeds before its checkpoint is saved, recovery recognizes the English profile and records
-its current version without repeating the identity write.
+Core initially seeds four Chinese built-in profiles. Before recording the selected member checkpoint, configured
+English onboarding initializes every present factory profile with its English preset only when it has no Runtime
+configuration and all six identity fields still exactly match the Chinese factory preset. It uses existing versioned
+`members.update` commands: the selected member retains the provisioning member command ID; other seeds use IDs
+derived from that command ID and their member ID. Only the selected member receives Runtime configuration and joins
+the first Camp, using its returned version. Customized, configured or removed profiles retain their saved identity;
+a language switch after onboarding never translates saved member data. If initialization stops partway before the
+member checkpoint, recovery recognizes already initialized English profiles and writes only the remaining seeds.
 
 ## Recovery boundary
 

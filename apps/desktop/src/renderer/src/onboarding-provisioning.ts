@@ -56,18 +56,12 @@ export async function provisionFirstRun(
   if (!initialSnapshot.runtimeSelection?.model) {
     throw new Error(uiAttribute('请先完成智能体与模型配置。'))
   }
-  const preset = builtinMemberPresetsForLanguage(language).find(
+  const presets = builtinMemberPresetsForLanguage(language)
+  const preset = presets.find(
     (candidate) => candidate.role === initialSnapshot.selectedMemberRole
   )
   if (!preset) throw new Error(uiAttribute('所选队员预设已不可用。'))
-  const identity: AgentProfileIdentityInput = {
-    displayName: preset.displayName,
-    teamRole: preset.teamRole,
-    professionalResponsibilities: preset.professionalResponsibilities,
-    personalityTraits: preset.personalityTraits,
-    workingPrinciples: preset.workingPrinciples,
-    growthTopic: preset.growthTopic
-  }
+  const identity = presetIdentity(preset)
 
   let runtimePermissions: AdapterPermissionConfig
   if (initialSnapshot.provisioning) {
@@ -110,21 +104,26 @@ export async function provisionFirstRun(
     ) ?? null
     let memberAgentId = retained?.agentId ?? null
     let version = retained?.version ?? null
-    const seedPreset = language === 'en'
-      ? builtinMemberPresetsForLanguage('zh-CN').find((candidate) => candidate.role === preset.role)
-      : null
+    const seedPresets = language === 'en' ? builtinMemberPresetsForLanguage('zh-CN') : []
     // Core seeds Chinese profiles before onboarding. Initialize only untouched,
     // unconfigured seed text; customized or configured identities remain user data.
-    if (retained && seedPreset && retained.runtimeConfiguration === null && hasPresetIdentity(retained, seedPreset)) {
+    for (const seedPreset of seedPresets) {
+      const member = existingMembers.find((candidate) => candidate.avatarRef === seedPreset.avatarRef
+        && candidate.presence !== 'removed' && candidate.removedAt === null)
+      if (!member || member.runtimeConfiguration !== null || !hasPresetIdentity(member, seedPreset)) continue
+      const englishPreset = presets.find((candidate) => candidate.role === seedPreset.role)!
       const result = await api.request<StoredCommandResult>('members.update', {
-        commandId: current.provisioning.memberCommandId,
-        command: { ...identity, agentId: retained.agentId, expectedVersion: retained.version }
+        commandId: member.agentId === memberAgentId
+          ? current.provisioning.memberCommandId
+          : `${current.provisioning.memberCommandId}:seed:${member.agentId}`,
+        command: { ...presetIdentity(englishPreset), agentId: member.agentId, expectedVersion: member.version }
       })
       assertApplied(result, uiAttribute('保存队员信息'))
-      version = positiveVersion(result.payload.version)
-      if (version === null) {
+      const updatedVersion = positiveVersion(result.payload.version)
+      if (updatedVersion === null) {
         throw new Error(uiAttribute('已收到保存回执，但无法确认最新版本，请重新载入。'))
       }
+      if (member.agentId === memberAgentId) version = updatedVersion
     }
     if (!memberAgentId || version === null) {
       const result = await api.request<StoredCommandResult>('members.create', {
@@ -208,6 +207,17 @@ export async function provisionFirstRun(
   }
   onCheckpoint(completed)
   return { snapshot: completed, memberAgentId, quickChatCampId }
+}
+
+function presetIdentity(preset: BuiltinMemberPreset): AgentProfileIdentityInput {
+  return {
+    displayName: preset.displayName,
+    teamRole: preset.teamRole,
+    professionalResponsibilities: preset.professionalResponsibilities,
+    personalityTraits: preset.personalityTraits,
+    workingPrinciples: preset.workingPrinciples,
+    growthTopic: preset.growthTopic
+  }
 }
 
 function hasPresetIdentity(member: AgentProfile, preset: BuiltinMemberPreset): boolean {

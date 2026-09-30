@@ -240,13 +240,33 @@ try {
   `Page three did not complete onboarding: ${JSON.stringify(completed)}`)
   report.onboarding = completed
   const member = await request(running.cdp, 'members.get', { agentId: completed.memberAgentId })
-  const expectedPreset = JSON.parse(await readFile(join(root,
-    `apps/desktop/src/renderer/src/assets/characters/${selectedRole}/preset${initialLanguage === 'en' ? '.en' : ''}.json`), 'utf8'))
+  const expectedPreset = await readInitialPreset(selectedRole)
   for (const field of ['displayName', 'teamRole', 'professionalResponsibilities', 'personalityTraits', 'workingPrinciples', 'growthTopic']) {
     assert(JSON.stringify(member[field]) === JSON.stringify(expectedPreset[field]),
       `Saved member ${field} does not match the ${initialLanguage} preset: ${JSON.stringify(member[field])}`)
   }
   report.member = { agentId: member.agentId, displayName: member.displayName, presetLanguage: initialLanguage }
+  const initialMembers = await request(running.cdp, 'members.list')
+  assert(initialMembers.length === 4, `Expected four initial members, received ${initialMembers.length}`)
+  const initialPresets = await Promise.all(['luoke', 'muwa', 'mianzhi', 'qilu'].map(readInitialPreset))
+  report.initialMembers = []
+  for (const preset of initialPresets) {
+    const profile = initialMembers.find((candidate) => candidate.avatarRef === preset.avatarRef)
+    assert(profile, `Missing initial member with avatar ${preset.avatarRef}`)
+    for (const field of ['displayName', 'teamRole', 'professionalResponsibilities', 'personalityTraits', 'workingPrinciples', 'growthTopic']) {
+      assert(JSON.stringify(profile[field]) === JSON.stringify(preset[field]),
+        `Initial member ${profile.agentId} ${field} does not match the ${initialLanguage} preset: ${JSON.stringify(profile[field])}`)
+    }
+    const runtimeConfigured = profile.runtimeConfiguration !== null
+    assert(runtimeConfigured === (profile.agentId === completed.memberAgentId),
+      `Unexpected Runtime configuration on initial member ${profile.agentId}`)
+    report.initialMembers.push({
+      agentId: profile.agentId,
+      displayName: profile.displayName,
+      presetLanguage: initialLanguage,
+      runtimeConfigured
+    })
+  }
   const beforeProjection = await request(running.cdp, 'camps.open', {
     traceId: randomUUID(),
     campId: completed.quickChatCampId
@@ -505,6 +525,14 @@ async function launchApp(port) {
     await terminateChild(child)
     throw error
   }
+}
+
+async function readInitialPreset(role) {
+  const directory = join(root, 'apps/desktop/src/renderer/src/assets/characters', role)
+  const base = JSON.parse(await readFile(join(directory, 'preset.json'), 'utf8'))
+  if (initialLanguage !== 'en') return base
+  const english = JSON.parse(await readFile(join(directory, 'preset.en.json'), 'utf8'))
+  return { ...base, ...english }
 }
 
 async function closeApp(app) {
