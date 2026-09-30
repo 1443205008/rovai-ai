@@ -393,22 +393,25 @@ macOS 清单序列化启用 YAML 1.1 字符串兼容，保留旧客户端所需�
 
 此项未重新打包、签名或安装 App；本地生成物与现有公开发布资产分别记录。
 
-## 2026-09-29 Claude Code 权限审批
+## 2026-09-30 Claude Code 原生双向审批
 
-保留 `--print` 与原有流式输入/终态，在私有运行设置里注册 Claude Code `PermissionRequest`
-Hook。Hook 使用当前 Run lease 进入 Core，经 Native Session、Run/epoch 和完整工具输入与原生 Tool ID
-唯一关联，复用 Action/Approval Dock 的允许一次或拒绝；已批准的原始输入回填给 Claude，工具结果再
-结算 Action。内部 Hook 命令不进入 Agent Built-in 业务目录。合同与理由分别见
+PR #592 的审批通道替换为 stream-json 输入/输出和 stdio 原生控制请求。删除审批 command Hook、专用 IPC
+与完整输入匹配缓存；按 request_id 回填、按 tool_use_id 结算。Action/Approval 与历史数据复用既有表，
+用户配置冻结，Fast settings 和 `rovai send` 业务 lease 保留。stdin 在协议初始化后投递任务，在末轮
+结果与 Session idle、无未决请求/任务后关闭；异常有界清理。合同与理由见
 [Runtime Launch v45](../../contracts/runtime-launch-and-verification-v45.md)和[V1.72-D06](decisions.md#v1-72-d06)。
+
+原 2026-09-29 的 CLI 2.1.274 Hook Smoke 和组件夹具已不构成本实现验收证据。当前原生协议的确定性、
+真实 Core 与实际 Desktop 点击验收如下；完整回执见[Runtime 兼容性清单](../../runtime-compatibility.md#claude-code-原生双向审批2026-09-30)。
 
 | 验证 | 结果与边界 |
 | --- | --- |
-| `cargo check -p rovai-core --bins --lib`、两项定向 Rust 测试 | 编译通过；Hook 原样输入与 Session fence、唯一 Tool ID 领取、响应 flush ACK 和 Run 清理通过 |
-| `ROVAI_CLAUDE_APPROVAL_SMOKE=1 node scripts/smoke-claude-runtime.mjs` | 本机 Claude Code CLI 2.1.274 的隔离 Core/Git fixture 通过：`acceptEdits` 中允许一次使 `rovai send` 发布且 Action succeeded；拒绝与待审批取消均无消息副作用、Action not_executed；原有 Resume、命令输出、Edit 差异和执行中取消也通过 |
-| `pnpm test:approval-dock` | 隔离 Electron `userData` 的既有审批 Dock 交互测试通过，覆盖原生选项身份、焦点和桌面/手机布局；未启动 Core 或 Runtime |
-| 兼容性证据绑定 | 新 Smoke 记录改变了 `docs/runtime-compatibility.md` 的 SHA-256；同步更新 `MACOS_RUNTIME_COMPATIBILITY_EVIDENCE_REVISION`，定向 `platform_evidence_revisions_bind_their_frozen_source_bytes` 测试通过，平台准入集合不变 |
-| `pnpm test:rust:pr` | 本机 393 通过、1 失败、1 忽略；唯一失败为未改动的 `database_admission::tests::read_probe_tolerates_only_a_new_empty_wal_not_authority_changes` 对 macOS `com.apple.provenance` 不存在的假设，与本节改动无关，同一基线问题已在上节记录 |
-| `cargo test --workspace -- --skip read_probe_tolerates_only_a_new_empty_wal_not_authority_changes` | 跳过上述单项已知环境失败后，workspace 其余 Rust 目标全部通过；不把该跳过视为原门禁全绿 |
-| `pnpm docs:test`、`pnpm docs:check`、带真实基线 SHA 的 `pnpm docs:check:ci` | 均通过；版本、决定、合同与导航门禁通过 |
-
-本次真实验收使用 Core 和 Claude CLI，没有启动或安装日常 Desktop；审批 Dock 复用现有通用渲染与选项提交路径。
+| 控制协议确定性矩阵 | `cargo test -p rovai-core --features extended-tests --lib claude` 44 项通过、1 项人工目录 Smoke 忽略。初始化失败、模式漂移、缺少可靠工具 ID 拒绝；256 次普通工具后仍审批；相同命令的并发请求按独立 ID 回填；取消/断线撤回已排队允许；长审批/后台任务暂停计时，两个官方任务终态形态解除跟踪；多结果与 idle 联合决定 stdin 关闭 |
+| 既有 Action 事务 | 慢速 native-resolution owner 1 项通过；在原 SQLite fixture 内覆盖已交付响应的 ACK，以及 Codex/Claude 未决 Approval 取消、实际 Runtime 来源署名 |
+| 真实 Core 审批 | CLI `2.1.280`，冻结 `acceptEdits`；允许一次后真实发送并根据工具结果结算，拒绝后无消息/回执，待审批取消为 `not_executed` |
+| 完整 Claude 回归 | `ROVAI_CLAUDE_APPROVAL_SMOKE=1 node scripts/smoke-claude-runtime.mjs` 通过；新 Session 与同 Session resume、Runtime model、文本、工具输出、真实 Edit mutation、取消进程树及允许/拒绝/待审批取消均覆盖。多结果末轮输出与用量保留由上述 reader 确定性测试拥有 |
+| 实际 Desktop 点击 | 真实 `pnpm dev`，隔离 userData/Skill Library/MCP；实际点击 Dock 的允许与拒绝，直接核对 Core Native Session binding 事件相同、两次 Shell canonical argv 完全一致、Action digest 相同但 Action/request digest 独立，分别真实发送和无新增消息/回执。保存四张截图与结果 JSON；这次未打包或安装日常 App |
+| TypeScript / JavaScript 回归 | `pnpm typecheck`、`pnpm test` 通过；Vitest 222 文件/2376 测试，Node 业务协议 328 通过/2 跳过，文档治理 10 项通过 |
+| 默认 Rust 门禁 | `pnpm test:rust:pr` 本机 394 通过、1 失败、1 忽略；失败仍是未改动的 `database_admission::tests::read_probe_tolerates_only_a_new_empty_wal_not_authority_changes` 对已有 `com.apple.provenance` 的假设，后续 workspace target 被该失败阻断。未删除、禁用或修改该测试 |
+| Rust 后续目标补充检查 | 显式 `--skip database_admission::tests::read_probe_tolerates_only_a_new_empty_wal_not_authority_changes` 后，workspace 共 438 通过、1 忽略、1 过滤；Core bin、CLI、Host、Web 和 doc-tests 均完成。最终 compatibility source digest 的独立定向测试通过；这不改写默认门禁失败结论 |
+| 文档治理 | `pnpm docs:test`、`pnpm docs:check` 和真实 PR base `cb9cd309593cc9403cddd25ce9cf0a114863063a` 的 `docs:check:ci` 通过 |

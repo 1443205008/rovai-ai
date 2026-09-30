@@ -1,7 +1,7 @@
 ---
 document_type: development-guide
 authority: test-policy-and-command-routing
-last_updated: 2026-09-28
+last_updated: 2026-09-30
 ---
 
 # 测试与 Smoke Test
@@ -242,15 +242,32 @@ Electron 回归使用生产 adapter、CampWorkspace 与 CSS，验证空事件下
 
 ### Claude Code 无 Prompt 目录验证
 
-`claude_permission::tests::permission_hook_binds_session_and_preserves_exact_tool_input` 是 Claude
-`PermissionRequest` 输入准入与原样回填的最低成本 owner：修复前 `acceptEdits` 下的 `rovai send`
-没有可回填的审批请求；既有流解析测试不覆盖 Hook 的 Session 与选项语义。最小命令为
-`cargo test -p rovai-core --lib claude_permission::tests::`。
-`application::tests::claude_permission_host_requires_unique_native_tool_and_delivery_ack`
-单独拥有 Hook/流式 Tool ID 的进程内关联及 flush ACK 边界；纯 parser 无法证明重复工具不会
-被错配或响应发送前即被视为交付。最小命令为
-`cargo test -p rovai-core --features extended-tests --lib claude_permission_host_requires_unique_native_tool_and_delivery_ack`。
-真实允许、拒绝和取消仍需隔离 Claude Runtime Smoke 验证，不归入普通 Rust 测试。
+原生审批转换由 `claude_permission::tests::native_permission_ids_and_exact_input_bind_frozen_approval_options`
+拥有最低成本输入矩阵：request_id/tool_use_id 区分、原 input 回填、缺失身份拒绝及重复命令独立绑定。
+最低成本控制准入由 `claude_control::tests::incompatible_initialization_and_missing_tool_identity_never_admit_permission`
+拥有：初始化错误、模式漂移和可选 tool_use_id 缺失必须拒绝，不能自动放行。
+最小命令：`cargo test -p rovai-core --lib claude_permission::tests::`、
+`cargo test -p rovai-core --lib incompatible_initialization_and_missing_tool_identity`。
+
+控制写入并发与关闭由 `claude_control::tests::native_decisions_are_serialized_by_id_and_close_only_after_the_last_idle_result`
+拥有，覆盖 256 次普通工具后、相同输入的独立 ID、NDJSON 串行化、后台任务与多结果收尾。
+暂停的 Tokio 时钟验证长审批/后台任务不触发结束计时，两个官方任务终态形态均能解除跟踪并重新计时。
+`cancelled_queued_decisions_and_disconnect_never_write_late_allowances` 单独拥有排队响应被撤销的竞态。
+这两个 seam 无法由 Action 转换纯函数证明，进入 extended-tests；最小命令为
+`cargo test -p rovai-core --features extended-tests --lib claude_control::tests::`。
+`claude::tests::native_permissions_do_not_block_stdout_or_replace_the_last_result` 拥有 reader 与控制通道
+组合边界：未决审批期间普通文本仍可读取，早期 result 不截断后续输出，末轮结果和用量保留。
+writer-only owner 无法覆盖该解析链路，使用 extended-tests 的内存 pipe，不创建进程或数据库；最小命令为
+`cargo test -p rovai-core --features extended-tests --lib native_permissions_do_not_block_stdout`。
+既有慢速 `action::tests::slow_tests::native_request_resolution_is_the_exact_authorization_delivery_ack`
+扩展未决取消矩阵，验证 Codex/Claude 的审批失效由实际 Runtime actor 署名，复用其唯一 SQLite fixture。
+该署名属于同一 native-resolution 事务，纯控制测试不能证明持久状态；最小命令为
+`cargo test -p rovai-core --features slow-tests --lib native_request_resolution_is_the_exact_authorization_delivery_ack`。
+既有 `claude::tests` 进程清理与 stdout owner 改为原生初始化/结构化输入夹具，保留原先的故障、取消、
+多结果和私有文件清理边界。原 Hook/完整工具输入匹配测试随生产路径退出，Git 保留旧实现。
+真实允许、拒绝、取消与 Core receipt 使用 `ROVAI_CLAUDE_APPROVAL_SMOKE=1 node scripts/smoke-claude-runtime.mjs`；
+实际 Desktop 点击由 `node scripts/accept-claude-permission.mjs` 在独立 userData/Skill Library/MCP 下验证。
+模型 Smoke 不进入普通 Rust 测试。旧 Hook Smoke 不作为原生协议通过记录。
 
 目录协议与进程生命周期由共享 Core library 的 `health::claude_catalog_tests` owner 验证，正常门禁使用临时
 可执行夹具，不启动真实模型。安装版手工验证使用显式 ignored 测试：

@@ -6,6 +6,7 @@ mod antigravity;
 pub mod application;
 mod builtin_tool_runtime;
 mod claude;
+mod claude_control;
 mod codex;
 mod health;
 mod pi;

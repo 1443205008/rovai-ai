@@ -23,7 +23,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     future::Future,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex as StdMutex},
+    sync::Arc,
     time::Instant,
 };
 
@@ -100,8 +100,7 @@ use rovai_core::{
         BUILTIN_TOOL_CONTRACT_VERSION, BUILTIN_TOOL_IPC_PROTOCOL_VERSION, BuiltinToolError,
         BuiltinToolInvocationEnvelope, BuiltinToolIpcRequest, BuiltinToolIpcRequestBody,
         BuiltinToolIpcResponse, COMPACTION_HOOK_IPC_PROTOCOL_VERSION,
-        COMPACTION_OBSERVATION_IPC_KIND, ClaudePermissionHookIpcRequest,
-        ClaudePermissionHookIpcResponse, CompactionHookIpcRequest, CompactionHookIpcResponse,
+        COMPACTION_OBSERVATION_IPC_KIND, CompactionHookIpcRequest, CompactionHookIpcResponse,
         builtin_tool_catalog_digest, builtin_tool_description, recovery_for_operation_error,
     },
     camp_attachment::{
@@ -136,10 +135,7 @@ use rovai_core::{
         UpsertDingTalkMemberBotCommand, UpsertFeishuAccountCommand, UpsertFeishuMemberBotCommand,
         VerifyFeishuOwnerCommand,
     },
-    claude_permission::{
-        self, CLAUDE_PERMISSION_HOOK_IPC_KIND, CLAUDE_PERMISSION_HOOK_IPC_VERSION,
-        CLAUDE_PERMISSION_NATIVE_METHOD,
-    },
+    claude_permission::{self, CLAUDE_PERMISSION_NATIVE_METHOD},
     collaboration::{
         AddCampMemberCommand, CampActivationState, CampCollaborationMode, ChangeDefaultLeadCommand,
         CollaborationService, CreateCampCommand, CreateTaskCommand, DeleteCampCommand,
@@ -2347,7 +2343,6 @@ struct Core {
     zcode_app: AcpCliRuntimeAdapter,
     runtime_fleet: Arc<AgentRuntimeFleetManager>,
     builtin_tool_leases: Arc<BuiltinToolLeaseRegistry>,
-    claude_permission_host: Arc<ClaudePermissionHost>,
     claude_code_cli: ClaudeCodeCliRuntimeAdapter,
     antigravity_app: AntigravityAppRuntimeAdapter,
     planned_shutdown: Arc<PlannedShutdownCoordinator>,
@@ -2403,191 +2398,12 @@ enum AgentRunRuntime {
     Codex(Arc<CodexRuntime>),
     Pi(Arc<PiRuntime>),
     Acp(Arc<AcpRuntime>),
-    Claude(Arc<ClaudePermissionHost>, String, i64),
-}
-
-struct ClaudePermissionReply {
-    decision: Value,
-    acknowledged: oneshot::Sender<bool>,
-}
-
-#[derive(Default)]
-struct ClaudePermissionHost {
-    pending: StdMutex<HashMap<(String, i64, String), oneshot::Sender<ClaudePermissionReply>>>,
-    observed_tools: StdMutex<HashMap<(String, i64), HashMap<String, ClaudeObservedTool>>>,
-}
-
-struct ClaudeObservedTool {
-    name: String,
-    input: Value,
-    claimed: bool,
-}
-
-struct ClaudePermissionRunGuard {
-    host: Arc<ClaudePermissionHost>,
-    key: (String, i64),
-}
-
-impl Drop for ClaudePermissionRunGuard {
-    fn drop(&mut self) {
-        self.host
-            .observed_tools
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.key);
-    }
-}
-
-struct ClaudePermissionRegistration {
-    host: Arc<ClaudePermissionHost>,
-    key: (String, i64, String),
-}
-
-impl Drop for ClaudePermissionRegistration {
-    fn drop(&mut self) {
-        self.host
-            .pending
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.key);
-    }
-}
-
-impl ClaudePermissionHost {
-    fn run_guard(self: &Arc<Self>, run_id: &str, epoch: i64) -> ClaudePermissionRunGuard {
-        ClaudePermissionRunGuard {
-            host: self.clone(),
-            key: (run_id.to_string(), epoch),
-        }
-    }
-
-    fn observe_tool(&self, run_id: &str, epoch: i64, payload: &Value) {
-        let (Some(id), Some(name), Some(input)) = (
-            payload.get("toolCallId").and_then(Value::as_str),
-            payload.get("toolName").and_then(Value::as_str),
-            payload.get("toolInput").filter(|input| input.is_object()),
-        ) else {
-            return;
-        };
-        let mut observed = self
-            .observed_tools
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tools = observed.entry((run_id.to_string(), epoch)).or_default();
-        if tools.len() >= 128 && !tools.contains_key(id) {
-            return;
-        }
-        tools
-            .entry(id.to_string())
-            .or_insert_with(|| ClaudeObservedTool {
-                name: name.to_string(),
-                input: input.clone(),
-                claimed: false,
-            });
-    }
-
-    async fn claim_unique_tool(
-        &self,
-        run_id: &str,
+    Claude {
+        protocol: Arc<crate::claude_control::ClaudeControl>,
+        adapter: ClaudeCodeCliRuntimeAdapter,
+        run_id: String,
         epoch: i64,
-        name: &str,
-        input: &Value,
-    ) -> Result<String> {
-        for _ in 0..150 {
-            let matches = {
-                let mut observed = self
-                    .observed_tools
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let tools = observed.entry((run_id.to_string(), epoch)).or_default();
-                let ids = tools
-                    .iter()
-                    .filter(|(_, tool)| !tool.claimed && tool.name == name && tool.input == *input)
-                    .map(|(id, _)| id.clone())
-                    .collect::<Vec<_>>();
-                if ids.len() == 1 {
-                    tools
-                        .get_mut(&ids[0])
-                        .expect("matching Claude tool exists")
-                        .claimed = true;
-                }
-                ids
-            };
-            match matches.as_slice() {
-                [id] => return Ok(id.clone()),
-                [_, _, ..] => {
-                    anyhow::bail!("Claude permission request matches multiple native tools")
-                }
-                [] => tokio::time::sleep(Duration::from_millis(20)).await,
-            }
-        }
-        anyhow::bail!("Claude permission request has no unique native tool observation")
-    }
-
-    fn register(
-        self: &Arc<Self>,
-        run_id: &str,
-        epoch: i64,
-        request_id: &str,
-    ) -> Result<(
-        oneshot::Receiver<ClaudePermissionReply>,
-        ClaudePermissionRegistration,
-    )> {
-        let key = (run_id.to_string(), epoch, request_id.to_string());
-        let (sender, receiver) = oneshot::channel();
-        let mut pending = self
-            .pending
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if pending.contains_key(&key) {
-            anyhow::bail!("Claude permission request ID is already pending");
-        }
-        pending.insert(key.clone(), sender);
-        Ok((
-            receiver,
-            ClaudePermissionRegistration {
-                host: self.clone(),
-                key,
-            },
-        ))
-    }
-
-    fn has_run(&self, run_id: &str, epoch: i64) -> bool {
-        self.pending
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .keys()
-            .any(|(candidate_run, candidate_epoch, _)| {
-                candidate_run == run_id && *candidate_epoch == epoch
-            })
-    }
-
-    async fn respond(
-        &self,
-        run_id: &str,
-        epoch: i64,
-        request_id: &str,
-        decision: Value,
-    ) -> Result<()> {
-        let sender = self
-            .pending
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&(run_id.to_string(), epoch, request_id.to_string()))
-            .context("Claude permission callback is no longer pending")?;
-        let (acknowledged, received) = oneshot::channel();
-        sender
-            .send(ClaudePermissionReply {
-                decision,
-                acknowledged,
-            })
-            .map_err(|_| anyhow::anyhow!("Claude permission hook disconnected"))?;
-        if tokio::time::timeout(Duration::from_secs(10), received).await?? {
-            Ok(())
-        } else {
-            anyhow::bail!("Claude permission decision was not delivered to the hook")
-        }
-    }
+    },
 }
 
 fn data_directory_check(data_dir: &Path, observed_at: &str) -> DiagnosticCheck {
@@ -2888,7 +2704,7 @@ impl AgentRunRuntime {
             Self::Codex(_) => rovai_core::agent_profile::AdapterKind::CodexCli,
             Self::Pi(_) => rovai_core::agent_profile::AdapterKind::Pi,
             Self::Acp(runtime) => runtime.adapter_kind(),
-            Self::Claude(_, _, _) => AdapterKind::ClaudeCodeCli,
+            Self::Claude { .. } => AdapterKind::ClaudeCodeCli,
         }
     }
 
@@ -2901,16 +2717,7 @@ impl AgentRunRuntime {
             Self::Codex(runtime) => runtime.respond(id, result).await,
             Self::Pi(runtime) => runtime.respond(id, result).await,
             Self::Acp(runtime) => runtime.respond(id, result).await,
-            Self::Claude(host, run_id, epoch) => {
-                host.respond(
-                    run_id,
-                    *epoch,
-                    id.as_str()
-                        .context("Claude permission response ID is not a string")?,
-                    result,
-                )
-                .await
-            }
+            Self::Claude { protocol, .. } => protocol.respond(id, result).await,
         }
     }
 
@@ -2919,7 +2726,15 @@ impl AgentRunRuntime {
             Self::Codex(runtime) => runtime.interrupt().await,
             Self::Pi(runtime) => runtime.cancel().await,
             Self::Acp(runtime) => runtime.cancel().await,
-            Self::Claude(_, _, _) => Ok(()),
+            Self::Claude {
+                adapter,
+                run_id,
+                epoch,
+                ..
+            } => {
+                adapter.interrupt(run_id, *epoch).await;
+                Ok(())
+            }
         }
     }
 
@@ -2928,7 +2743,7 @@ impl AgentRunRuntime {
             Self::Codex(runtime) => runtime.detach_and_flush_ingress().await,
             Self::Pi(runtime) => runtime.detach_and_flush_ingress().await,
             Self::Acp(runtime) => runtime.detach_and_flush_ingress().await,
-            Self::Claude(_, _, _) => true,
+            Self::Claude { .. } => true,
         }
     }
 }
@@ -5307,15 +5122,16 @@ impl Core {
         agent_run_id: &str,
         execution_epoch: i64,
     ) -> Option<AgentRunRuntime> {
-        if self
-            .claude_permission_host
-            .has_run(agent_run_id, execution_epoch)
+        if let Some(runtime) = self
+            .claude_code_cli
+            .get_agent_run(agent_run_id, execution_epoch)
         {
-            return Some(AgentRunRuntime::Claude(
-                self.claude_permission_host.clone(),
-                agent_run_id.to_string(),
-                execution_epoch,
-            ));
+            return Some(AgentRunRuntime::Claude {
+                protocol: runtime,
+                adapter: self.claude_code_cli.clone(),
+                run_id: agent_run_id.to_string(),
+                epoch: execution_epoch,
+            });
         }
         if let Some(runtime) = self
             .codex_cli
@@ -5840,70 +5656,39 @@ impl Core {
         }
     }
 
-    async fn handle_claude_permission_hook_ipc(
+    async fn prepare_claude_permission_action(
         &self,
-        request: ClaudePermissionHookIpcRequest,
-    ) -> Result<ClaudePermissionReply> {
-        if request.kind != CLAUDE_PERMISSION_HOOK_IPC_KIND
-            || request.ipc_protocol_version != CLAUDE_PERMISSION_HOOK_IPC_VERSION
-            || uuid::Uuid::parse_str(&request.request_id).is_err()
-            || serde_json::to_vec(&request.hook)?.len() > 1024 * 1024
-        {
-            anyhow::bail!("Claude permission hook IPC request is invalid");
-        }
-        let authorized = self
-            .builtin_tool_leases
-            .authenticate(&request.auth)
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!(
-                    "Claude permission hook Run lease is unavailable: {}",
-                    error.code
-                )
-            })?;
+        source: &AgentRunExecution,
+        payload: &Value,
+    ) -> Result<()> {
         let execution = {
             let database = self.database.lock().await;
             ExecutionRuntimeService::default().load_agent_run_execution(
                 &database,
-                &authorized.agent_run_id,
-                authorized.execution_epoch,
-            )
-        }?
-        .context("Claude permission hook AgentRun is unavailable or fenced")?;
+                &source.agent_run_id,
+                source.execution_epoch,
+            )?
+        }
+        .context("Claude permission AgentRun is unavailable or fenced")?;
         if execution.runtime.adapter_kind != AdapterKind::ClaudeCodeCli
             || (execution.permission_semantics == PermissionSemantics::CoreEnforcedV1
                 && execution.workspace.access == "read_only")
         {
-            anyhow::bail!("Claude permission hook is not allowed for this AgentRun");
+            anyhow::bail!("Claude permission is not allowed for this AgentRun");
+        }
+        let session_id = execution
+            .native_session_id
+            .as_deref()
+            .context("Claude permission Native Session is unavailable")?;
+        if payload.get("nativeSessionId").and_then(Value::as_str) != Some(session_id) {
+            anyhow::bail!("Claude control channel is outside the active Native Session");
         }
         let action = claude_permission::intercepted_action_request(
-            &authorized.agent_run_id,
-            authorized.execution_epoch,
-            execution
-                .native_session_id
-                .as_deref()
-                .context("Claude permission hook Native Session is unavailable")?,
+            &execution.agent_run_id,
+            execution.execution_epoch,
+            session_id,
             Path::new(&execution.workspace.execution_root),
-            &request.request_id,
-            &self
-                .claude_permission_host
-                .claim_unique_tool(
-                    &authorized.agent_run_id,
-                    authorized.execution_epoch,
-                    request
-                        .hook
-                        .get("tool_name")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                    request.hook.get("tool_input").unwrap_or(&Value::Null),
-                )
-                .await?,
-            &request.hook,
-        )?;
-        let (receiver, _registration) = self.claude_permission_host.register(
-            &authorized.agent_run_id,
-            authorized.execution_epoch,
-            &request.request_id,
+            &payload["controlRequest"],
         )?;
         let reason = action.reason.clone();
         let preparation = {
@@ -5913,12 +5698,12 @@ impl Core {
                 &CommandEnvelope {
                     command_id: format!("runtime-action-prepare:{}", action.action_id),
                     actor: ActorRef::Agent {
-                        agent_id: execution.agent_id,
-                        source_agent_run_id: authorized.agent_run_id.clone(),
+                        agent_id: execution.agent_id.clone(),
+                        source_agent_run_id: execution.agent_run_id.clone(),
                     },
-                    camp_id: Some(execution.camp_id),
+                    camp_id: Some(execution.camp_id.clone()),
                     expected_versions: Vec::new(),
-                    execution_epoch: Some(authorized.execution_epoch),
+                    execution_epoch: Some(execution.execution_epoch),
                     payload: PrepareActionCommand {
                         action_id: action.action_id,
                         input: action.input,
@@ -5942,17 +5727,65 @@ impl Core {
             &self.output,
             "action.prepared",
             json!({
-                "agentRunId": authorized.agent_run_id,
-                "executionEpoch": authorized.execution_epoch,
+                "agentRunId": execution.agent_run_id,
+                "executionEpoch": execution.execution_epoch,
                 "nativeMethod": CLAUDE_PERMISSION_NATIVE_METHOD,
                 "reason": reason,
                 "result": preparation.result,
                 "replayed": preparation.replayed,
             }),
         );
-        receiver
-            .await
-            .context("Claude permission callback was cancelled")
+        Ok(())
+    }
+
+    async fn cancel_claude_permission_action(
+        &self,
+        execution: &AgentRunExecution,
+        payload: &Value,
+    ) -> Result<()> {
+        let request_id = payload
+            .get("requestId")
+            .filter(|id| id.is_string())
+            .context("Claude cancellation has no native request ID")?;
+        let session_id = payload
+            .get("nativeSessionId")
+            .and_then(Value::as_str)
+            .context("Claude cancellation has no native session ID")?;
+        let confirmation = {
+            let mut database = self.database.lock().await;
+            ActionSafetyService::default().confirm_runtime_request_resolved(
+                &mut database,
+                &CommandEnvelope {
+                    command_id: format!(
+                        "claude-request-cancelled:{}:{}:{}",
+                        execution.agent_run_id,
+                        execution.execution_epoch,
+                        canonical_json_digest(request_id)?
+                    ),
+                    actor: ActorRef::System {
+                        component_id: "runtime-adapter:claude-code-cli".into(),
+                    },
+                    camp_id: Some(execution.camp_id.clone()),
+                    expected_versions: Vec::new(),
+                    execution_epoch: None,
+                    payload: ConfirmRuntimeRequestResolvedCommand {
+                        agent_run_id: execution.agent_run_id.clone(),
+                        execution_epoch: execution.execution_epoch,
+                        native_thread_id: session_id.to_string(),
+                        native_request_id: request_id.clone(),
+                    },
+                },
+            )?
+        };
+        if confirmation.result.status != CommandResultStatus::Rejected {
+            emit(
+                &self.output,
+                "runtime_request.resolved",
+                json!({"agentRunId":execution.agent_run_id,
+                "executionEpoch":execution.execution_epoch,"result":confirmation.result,"replayed":confirmation.replayed}),
+            );
+        }
+        Ok(())
     }
 
     async fn handle_compaction_hook_ipc(
@@ -13113,7 +12946,7 @@ impl Core {
                 Ok(response)
             } else if candidate.native_method == CLAUDE_PERMISSION_NATIVE_METHOD {
                 Ok(if approved {
-                    json!({"behavior": "allow", "updatedInput": candidate.response_context["tool_input"]})
+                    json!({"behavior": "allow", "updatedInput": candidate.response_context["request"]["input"]})
                 } else {
                     claude_permission::deny_decision("Rovai 用户拒绝了这次 Claude Code 操作")
                 })
@@ -15085,9 +14918,6 @@ impl Core {
             output,
             launch_permit,
         } = launch;
-        let _permission_run_guard = self
-            .claude_permission_host
-            .run_guard(&execution.agent_run_id, execution.execution_epoch);
         let attachment_access = CampAttachmentRunAccess {
             admission: attachment_admission,
             authorization: attachment_authorization,
@@ -15485,13 +15315,30 @@ impl Core {
         managed_output_root: &Path,
         event: &claude::ClaudeCodeRuntimeEvent,
     ) -> Result<()> {
-        if event.event_type == "claude.permission_tool_started" {
-            self.claude_permission_host.observe_tool(
-                &execution.agent_run_id,
-                execution.execution_epoch,
-                &event.payload,
-            );
+        if event.event_type == "claude.permission_request" {
+            if let Err(error) = self
+                .prepare_claude_permission_action(execution, &event.payload)
+                .await
+            {
+                if let Some(runtime) = self
+                    .claude_code_cli
+                    .get_agent_run(&execution.agent_run_id, execution.execution_epoch)
+                {
+                    let _ = runtime
+                        .respond(
+                            event.payload["controlRequest"]["request_id"].clone(),
+                            claude_permission::deny_decision("Rovai 审批请求不可用，操作已拒绝"),
+                        )
+                        .await;
+                }
+                return Err(error);
+            }
             return Ok(());
+        }
+        if event.event_type == "claude.permission_cancelled" {
+            return self
+                .cancel_claude_permission_action(execution, &event.payload)
+                .await;
         }
         if event.event_type == "runtime.action" {
             self.record_claude_action_completion(execution, output, &event.payload)
@@ -17779,7 +17626,6 @@ async fn run_core(
                 .unwrap_or(CompactionDetectorPolicy::Disabled),
         ),
         claude_code_cli,
-        claude_permission_host: Arc::new(ClaudePermissionHost::default()),
         antigravity_app,
         planned_shutdown,
         agent_run_tasks: Mutex::new(tokio::task::JoinSet::new()),
@@ -24591,55 +24437,6 @@ async fn handle_builtin_tool_connection(core: Arc<Core>, stream: LocalIpcStream)
                 .as_ref()
                 .and_then(|value| value.get("kind"))
                 .and_then(Value::as_str)
-                == Some(CLAUDE_PERMISSION_HOOK_IPC_KIND)
-            {
-                let request = value.and_then(|value| {
-                    serde_json::from_value::<ClaudePermissionHookIpcRequest>(value).ok()
-                });
-                let mut unexpected_input = Vec::new();
-                let reply = match request {
-                    Some(request) => tokio::select! {
-                        reply = core.handle_claude_permission_hook_ipc(request) => reply,
-                        disconnected = reader.read_until(b'\n', &mut unexpected_input) => {
-                            let _ = disconnected;
-                            return Ok(());
-                        },
-                    },
-                    None => Err(anyhow::anyhow!(
-                        "Claude permission hook IPC request is malformed"
-                    )),
-                };
-                let (decision, acknowledged) = match reply {
-                    Ok(reply) => (reply.decision, Some(reply.acknowledged)),
-                    Err(error) => {
-                        eprintln!("Claude permission hook denied: {error:#}");
-                        (
-                            claude_permission::deny_decision("Rovai 审批请求不可用，操作已拒绝"),
-                            None,
-                        )
-                    }
-                };
-                let response = ClaudePermissionHookIpcResponse { decision };
-                let delivered = async {
-                    writer
-                        .write_all(serde_json::to_string(&response)?.as_bytes())
-                        .await?;
-                    writer.write_all(b"\n").await?;
-                    writer.flush().await?;
-                    Ok::<(), anyhow::Error>(())
-                }
-                .await;
-                if let Some(acknowledged) = acknowledged {
-                    let _ = acknowledged.send(delivered.is_ok());
-                }
-                delivered?;
-                writer.shutdown().await?;
-                return Ok(());
-            }
-            if value
-                .as_ref()
-                .and_then(|value| value.get("kind"))
-                .and_then(Value::as_str)
                 == Some(COMPACTION_OBSERVATION_IPC_KIND)
             {
                 let response = match value.and_then(|value| {
@@ -25110,73 +24907,6 @@ mod tests {
     use super::*;
     #[cfg(feature = "slow-tests")]
     use std::fs;
-
-    #[cfg(feature = "extended-tests")]
-    #[tokio::test]
-    async fn claude_permission_host_requires_unique_native_tool_and_delivery_ack() {
-        let host = Arc::new(ClaudePermissionHost::default());
-        let run = host.run_guard("run-1", 4);
-        let tool = json!({"command": "rovai send --public-only --body hello"});
-        host.observe_tool(
-            "run-1",
-            4,
-            &json!({
-                "toolCallId": "tool-1", "toolName": "Bash", "toolInput": tool,
-            }),
-        );
-        assert_eq!(
-            host.claim_unique_tool("run-1", 4, "Bash", &tool)
-                .await
-                .unwrap(),
-            "tool-1",
-        );
-        assert!(
-            host.claim_unique_tool("run-1", 4, "Bash", &tool)
-                .await
-                .is_err()
-        );
-        host.observe_tool(
-            "run-1",
-            4,
-            &json!({
-                "toolCallId": "tool-2", "toolName": "Bash", "toolInput": tool,
-            }),
-        );
-        host.observe_tool(
-            "run-1",
-            4,
-            &json!({
-                "toolCallId": "tool-3", "toolName": "Bash", "toolInput": tool,
-            }),
-        );
-        assert!(
-            host.claim_unique_tool("run-1", 4, "Bash", &tool)
-                .await
-                .is_err()
-        );
-
-        let (receiver, _registration) = host.register("run-1", 4, "request-1").unwrap();
-        let responder = tokio::spawn({
-            let host = host.clone();
-            async move {
-                host.respond("run-1", 4, "request-1", json!({"behavior": "allow"}))
-                    .await
-            }
-        });
-        let reply = receiver.await.unwrap();
-        assert_eq!(reply.decision["behavior"], "allow");
-        reply.acknowledged.send(true).unwrap();
-        responder.await.unwrap().unwrap();
-        assert!(!host.has_run("run-1", 4));
-        drop(run);
-        assert!(
-            host.observed_tools
-                .lock()
-                .unwrap()
-                .get(&("run-1".into(), 4))
-                .is_none()
-        );
-    }
 
     #[cfg(feature = "slow-tests")]
     fn test_git_binary() -> PathBuf {
@@ -25803,7 +25533,6 @@ mod tests {
                     .unwrap_or(CompactionDetectorPolicy::Disabled),
             )?,
             claude_code_cli: ClaudeCodeCliRuntimeAdapter::new(&data_dir)?,
-            claude_permission_host: Arc::new(ClaudePermissionHost::default()),
             antigravity_app: AntigravityAppRuntimeAdapter::new(&data_dir)?,
             planned_shutdown: PlannedShutdownCoordinator::new(uuid::Uuid::new_v4().to_string()),
             agent_run_tasks: Mutex::new(tokio::task::JoinSet::new()),

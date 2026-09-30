@@ -373,15 +373,16 @@ status 和 stdin 写入都不是 accepted evidence。Adapter 只接受带预期 
 
 ### Claude Code 权限审批回调
 
-Claude Code 保持 `--print` 与现有 stdin 一次性交付。可能出现原生权限询问的模式通过本轮私有
-`--settings` 注册 `PermissionRequest` command hook；Hook 调用内部 `rovai` CLI 子命令，经现有
-Run lease 认证后进入 Core Action/Approval，待用户在审批 Dock 决策再回填。该内部命令不是 Agent
-业务操作，不进入 Built-in CLI catalog，也不恢复已退役的 MCP 业务 Bridge。完整请求、原生 Tool ID
-和待交付响应都按 Run/epoch 隔离；授权响应只有在 Hook 收到后才 ACK。
+Claude Code 的打印进程同时读写 stream-json。审批使用 stdout 的原生 can_use_tool 控制请求和
+stdin 的 control_response，进程所有权绑定 Run/epoch/Native Session，初始化成功后才发送任务。
+request_id 用于回复，tool_use_id 关联实际工具结果。Core 转换为既有 Action/Approval；Dock 的
+允许一次回填原 input，拒绝回填 deny，响应 write/flush 完成才 ACK Runtime Delivery。
 
-Claude 流的 `assistant.tool_use` 提供 Tool ID 和完整输入，Core 只在本轮内存中用于与 Hook 请求精确匹配。
-Hook 不提供 Tool ID，无法唯一匹配的请求拒绝。允许后，同一 Tool ID 的 `tool_result` 才结算 Action；
-Run 终态继续受原有未决 Action/Approval/Delivery 阻断。字段、失败语义与测试边界由
+控制通道仅保存待处理请求，完成、取消或断线后清理。普通工具展示状态仍由输出解析器拥有。
+审批不经过 Built-in 业务 IPC、不按工具输入反查身份，也没有累计工具调用额度；用户原有 Hook
+由 Claude 原生配置处理。业务 `rovai send` 继续由现有 Run lease 认证。
+
+允许后的同一 tool_use_id 的真实 tool_result 结算 Action；会话结束、stdin 关闭、取消与失败边界由
 [Runtime Launch and Verification v45](../contracts/runtime-launch-and-verification-v45.md) 拥有。
 
 ### ACP Prompt 输入确认

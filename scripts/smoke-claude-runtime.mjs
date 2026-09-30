@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { configureProductRuntime } from './configure-product-runtime.mjs'
 import { createConfiguredCampAndSend } from './lib/create-configured-camp.mjs'
+import { claudeSendReceipt } from './lib/claude-send-receipt.mjs'
 import {
   coreDataDirectoryArguments,
   removeEphemeralRuntimeCampFilesRoot
@@ -14,6 +15,7 @@ const root = resolve(import.meta.dirname, '..')
 const fixtureRoot = await realpath(await mkdtemp(join(tmpdir(), 'rovai-claude-runtime-smoke-')))
 const projectRoot = join(fixtureRoot, 'project')
 const dataDir = join(fixtureRoot, 'data')
+console.error(`Isolated Claude Core acceptance: data=${dataDir}; skills=${join(dataDir, 'managed-skill-library')}; MCP=${join(dataDir, 'mcp.json')}`)
 let core = null
 
 try {
@@ -49,6 +51,18 @@ try {
     throw new Error(`Claude Code capability snapshot is invalid: ${JSON.stringify(snapshot)}`)
   }
 
+  if (process.env.ROVAI_CLAUDE_APPROVAL_ONLY === '1') {
+    const profile = await core.request('members.get', { agentId: 'agent_1' })
+    await core.request('members.runtime.set', { commandId: crypto.randomUUID(), command: {
+      agentId: profile.agentId, expectedVersion: profile.version, adapterKind: 'claude-code-cli', model: profile.runtimeConfiguration.model,
+      permissions: { adapterKind: 'claude-code-cli', schemaVersion: 1, values: { permission_mode: 'acceptEdits' } }
+    } })
+    const workspace = await core.request('workspaces.inspect', { path: projectRoot })
+    const allowed = await runClaudeApprovalScenario(core, workspace, 'allow_once')
+    const denied = await runClaudeApprovalScenario(core, workspace, 'deny')
+    const cancelled = await runClaudeApprovalScenario(core, workspace, 'cancel')
+    console.log(JSON.stringify({ ok: true, runtime: snapshot.reportedVersion, approvalSmoke: { allowed, denied, cancelled } }, null, 2))
+  } else {
   let profile = await core.request('members.get', { agentId: 'agent_1' })
   const permissionsConfigured = await core.request('members.runtime.set', {
     commandId: crypto.randomUUID(),
@@ -442,6 +456,7 @@ try {
     approvalSmoke,
     teamToolAdvertised: true
   }, null, 2))
+  }
 } finally {
   if (core) await core.stop()
   await removeEphemeralRuntimeCampFilesRoot(dataDir)
@@ -511,19 +526,22 @@ async function runClaudeApprovalScenario(core, workspace, decision) {
   const finalSnapshot = await core.request('camps.snapshot', { campId })
   const action = finalSnapshot.actions.find((candidate) => candidate.agentRunId === runId)
   const published = finalSnapshot.messages.some((message) => message.body === marker)
+  const sendReceipt = await claudeSendReceipt(core.request, campId, runId, marker, finalSnapshot)
   if (!resolvedApprovalId
-      || (decision === 'allow_once' && (result.run.status !== 'succeeded' || action?.status !== 'succeeded' || !published))
-      || (decision === 'deny' && (action?.status !== 'not_executed' || published))
-      || (decision === 'cancel' && (result.run.status !== 'cancelled' || action?.status !== 'not_executed' || published))) {
+      || (decision === 'allow_once' && (result.run.status !== 'succeeded' || action?.status !== 'succeeded' || !published || !sendReceipt))
+      || (decision === 'deny' && (action?.status !== 'not_executed' || published || sendReceipt))
+      || (decision === 'cancel' && (result.run.status !== 'cancelled' || action?.status !== 'not_executed' || published || sendReceipt))) {
     throw new Error(`Claude ${decision} approval did not settle safely: ${JSON.stringify({
-      run: result.run,
+      runStatus: result.run.status,
       action,
       published,
+      sendReceipt,
+      resolvedApprovalId,
       approval: finalSnapshot.approvals.find((candidate) => candidate.id === resolvedApprovalId),
-      events: core.events.filter((event) => event.params?.agentRunId === runId).slice(-30)
+      events: core.events.filter((event) => event.params?.agentRunId === runId && ['action.prepared', 'runtime_request.resolved', 'runtime.diagnostic', 'runtime.action'].includes(event.method)).slice(-12)
     })}`)
   }
-  return { runStatus: result.run.status, actionStatus: action?.status, published }
+  return { runStatus: result.run.status, actionStatus: action?.status, published, sendReceipt }
 }
 
 function startCore(dataDirectory) {
