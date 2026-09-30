@@ -116,7 +116,7 @@ describe('first-run provisioning', () => {
     })
     expect(harness.requests.filter(({ method }) => method === 'members.create')).toHaveLength(1)
     expect(harness.requests.find(({ method }) => method === 'camps.create')?.params).toMatchObject({
-      name: FIRST_RUN_CAMP_TITLE,
+      name: '初次集结',
       memberAgentIds: ['agent-first']
     })
   })

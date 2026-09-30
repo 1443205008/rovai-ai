@@ -116,6 +116,7 @@ export function CampNavigation({
   groupLimits = {},
   onGroupLimitChange = async () => undefined,
   activeCampId,
+  firstRunCampId = null,
   openingCampId = null,
   currentProjectKey = 'quick-chat',
   shellOnlyProjectPath = null,
@@ -159,6 +160,7 @@ export function CampNavigation({
   groupLimits?: NavigationGroupLimits
   onGroupLimitChange?(groupKey: string, limit: number): Promise<void>
   activeCampId: string | null
+  firstRunCampId?: string | null
   openingCampId?: string | null
   currentProjectKey?: string
   shellOnlyProjectPath?: string | null
@@ -429,6 +431,7 @@ export function CampNavigation({
               <CampRow
                 key={camp.id}
                 camp={camp}
+                firstRunCampId={firstRunCampId}
                 active={camp.id === activeCampId}
                 opening={camp.id === openingCampId}
                 pinned
@@ -453,6 +456,7 @@ export function CampNavigation({
                 projectExpanded={!collapsedProjectGroups.has(groupKey)}
                 loadingMore={loadingGroups.has(groupKey)}
                 activeCampId={activeCampId}
+                firstRunCampId={firstRunCampId}
                 openingCampId={openingCampId}
                 currentProject={currentProjectKey === project.projectKey}
                 createDisabled={creatingConversation}
@@ -494,6 +498,7 @@ export function CampNavigation({
                 projectExpanded={!collapsedProjectGroups.has(groupKey)}
                 loadingMore={loadingGroups.has(groupKey)}
                 activeCampId={activeCampId}
+                firstRunCampId={firstRunCampId}
                 openingCampId={openingCampId}
                 currentProject={currentProjectKey === project.projectKey}
                 createDisabled={creatingConversation}
@@ -526,6 +531,7 @@ export function CampNavigation({
             projectExpanded={!collapsedProjectGroups.has('quick-chat')}
             loadingMore={loadingGroups.has('quick-chat')}
             activeCampId={activeCampId}
+            firstRunCampId={firstRunCampId}
             openingCampId={openingCampId}
             currentProject={currentProjectKey === 'quick-chat'}
             createDisabled={creatingConversation}
@@ -581,6 +587,7 @@ export function CampNavigation({
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
         navigation={navigation}
+        firstRunCampId={firstRunCampId}
         onCamp={(camp) => {
           setPaletteOpen(false)
           onCamp(camp)
@@ -776,11 +783,13 @@ function CommandPalette({
   open,
   onOpenChange,
   navigation,
+  firstRunCampId,
   onCamp
 }: {
   open: boolean
   onOpenChange(open: boolean): void
   navigation: NavigationSnapshot | null
+  firstRunCampId: string | null
   onCamp(camp: NavigationCampTarget): void
 }): JSX.Element {
   const [query, setQuery] = useState('')
@@ -790,7 +799,7 @@ function CommandPalette({
     [navigation]
   )
   const camps = useMemo(() => navigation ? allNavigationCamps(navigation) : [], [navigation])
-  const search = navigationCampSearch(query, camps, projectNameByPath)
+  const search = navigationCampSearch(query, camps, projectNameByPath, firstRunCampId)
   const campId = search.kind === 'id' ? search.campId : null
   const [lookup, setLookup] = useState<NavigationCampLookup | null>(null)
   const currentLookup = lookup?.campId === campId ? lookup : null
@@ -855,7 +864,7 @@ function CommandPalette({
                 onClick={() => onCamp(camp)}
                 onMouseEnter={() => setActiveIndex(index)}
               >
-                <span className="truncate" title={formatCampTitle(camp)}>{formatCampTitle(camp)}</span>
+                <span className="truncate" title={formatCampTitle(camp, firstRunCampId)}>{formatCampTitle(camp, firstRunCampId)}</span>
                 <small>{camp.projectBindingKind === 'directory' ? projectNameByPath.get(camp.projectPath) ?? uiAttribute('项目') : uiAttribute("快速对话")}</small>
               </button>
             ))}
@@ -882,6 +891,7 @@ function CampGroup({
   projectExpanded,
   loadingMore,
   activeCampId,
+  firstRunCampId,
   openingCampId,
   currentProject,
   createDisabled,
@@ -908,6 +918,7 @@ function CampGroup({
   projectExpanded: boolean
   loadingMore: boolean
   activeCampId: string | null
+  firstRunCampId: string | null
   openingCampId: string | null
   currentProject: boolean
   createDisabled: boolean
@@ -995,6 +1006,7 @@ function CampGroup({
           <CampRow
             key={camp.id}
             camp={camp}
+            firstRunCampId={firstRunCampId}
             active={camp.id === activeCampId}
             opening={camp.id === openingCampId}
             pinned={false}
@@ -1018,6 +1030,7 @@ function CampGroup({
 
 function CampRow({
   camp,
+  firstRunCampId,
   active,
   opening,
   pinned,
@@ -1027,6 +1040,7 @@ function CampRow({
   onAction
 }: {
   camp: NavigationCampItem
+  firstRunCampId: string | null
   active: boolean
   opening: boolean
   pinned: boolean
@@ -1037,7 +1051,7 @@ function CampRow({
 }): JSX.Element {
   const mobile = useMobileLayout()
   const pressMenu = useNavigationPressMenu(mobile)
-  const title = formatCampTitle(camp)
+  const title = formatCampTitle(camp, firstRunCampId)
   const hasNewReply = camp.marker === 'unread_completed'
   const loadingStatus = opening ? 'opening' : camp.marker === 'loading' ? 'loading' : null
   const status = loadingStatus ?? (hasNewReply ? 'unread' : 'none')

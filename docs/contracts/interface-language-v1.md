@@ -5,7 +5,7 @@ version: 1
 status: accepted
 authority: interface-language-preference-and-presentation
 source_version: v1.71
-last_updated: 2026-09-27
+last_updated: 2026-09-30
 ---
 
 # Interface Language v1
@@ -19,6 +19,8 @@ Desktop Main exposes a local-only language read through `DesktopSessionApi` afte
 The catalog contains only App-owned navigation, controls, explanatory copy, status and error shells, and accessible names. User-written text, saved member profiles, draft content, messages, memories, Runtime output, paths, commands, model names and IDs retain their original bytes. The four built-in member candidates use language-specific initial text before creation; only the selected candidate is saved through the existing onboarding command. Once saved, its identity fields are ordinary member data and are never rewritten by a language change. The durable first-run Camp title follows the existing [First-run Onboarding v5](first-run-onboarding-v5.md) contract.
 
 Shared AgentRun presentation retains its existing Chinese copy for non-Renderer callers. Camp execution status labels and recovery/approval instructions enter the interface catalog only at the Renderer display boundary; this does not translate Agent output or Feishu cards.
+
+Desktop may localize the App-owned first-run Camp default title at the display boundary, using the completed onboarding snapshot's `quickChatCampId` as provenance. Only that Camp while its saved title remains `初次集结` displays `First Chat` in English. The saved title and command payloads retain their original bytes; renamed Camps and other Camps with the same text remain user data. Navigation search accepts both the display title and the saved title.
 
 ## References
 

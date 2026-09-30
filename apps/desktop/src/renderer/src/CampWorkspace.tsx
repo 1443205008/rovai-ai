@@ -1508,6 +1508,7 @@ export function emptyCampRuntimeSummary(
 export function QuickChatWorkspace({
   agents,
   recentCamps,
+  firstRunCampId = null,
   onOpenCamp,
   onNewConversation,
   onOpenMembers,
@@ -1515,6 +1516,7 @@ export function QuickChatWorkspace({
 }: {
   agents: AgentProfile[]
   recentCamps: NavigationCampItem[]
+  firstRunCampId?: string | null
   onOpenCamp(camp: NavigationCampItem): void
   onNewConversation(): void
   onOpenMembers(): void
@@ -1550,7 +1552,7 @@ export function QuickChatWorkspace({
                   <span className="camp-marker-slot" aria-hidden="true">
                     {camp.marker === 'unread_completed' && <i className="task-dot camp-marker-unread_completed" />}
                   </span>
-                  <span className="truncate" title={formatCampTitle(camp)}>{formatCampTitle(camp)}</span>
+                  <span className="truncate" title={formatCampTitle(camp, firstRunCampId)}>{formatCampTitle(camp, firstRunCampId)}</span>
                   {camp.marker === 'loading' && <span className="camp-loading-spinner camp-marker-loading" role="img" aria-label={uiAttribute("正在运行")} />}
                   <small>{relativeTimeLabel(camp.lastActivityAt)}</small>
                 </button>
@@ -1627,6 +1629,7 @@ export function CampWorkspace({
   singleChatTarget,
   runtimeRecovery = null,
   firstRunCamp = null,
+  firstRunCampId = null,
   onConfigureRuntime,
   onDismissRuntimeRecovery,
   onNotify = () => undefined,
@@ -1685,6 +1688,7 @@ export function CampWorkspace({
   singleChatTarget?: import("@contracts").NotificationSingleChatSource & { requestId: number } | null
   runtimeRecovery?: CampRuntimeRecovery | null
   firstRunCamp?: FirstRunCampContext | null
+  firstRunCampId?: string | null
   onConfigureRuntime?(agentId: string): void
   onDismissRuntimeRecovery?(): void
   onNotify?(message: string): void
@@ -4588,7 +4592,7 @@ export function CampWorkspace({
     && Boolean(filePreview?.paneVisible && filePreview.activeTab?.kind === 'execution')
 
   return (
-    <section ref={workspaceShellRef} className="workspace-shell camp-workspace" data-mobile-panel={mobile && inspectorVisible ? inspectorSurfaceTab : undefined} data-mobile-execution-maximized={mobile && mobileExecutionMaximized || undefined} aria-label={uiAttribute("会话：{0}", String(formatCampTitle(snapshot.camp)))}>
+    <section ref={workspaceShellRef} className="workspace-shell camp-workspace" data-mobile-panel={mobile && inspectorVisible ? inspectorSurfaceTab : undefined} data-mobile-execution-maximized={mobile && mobileExecutionMaximized || undefined} aria-label={uiAttribute("会话：{0}", String(formatCampTitle(snapshot.camp, firstRunCampId)))}>
       <FilePreviewWorkspace
       >
         <RevealNotificationConversation active={!!notificationFocus?.active
