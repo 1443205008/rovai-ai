@@ -311,8 +311,9 @@ app
       'runtime menu has every admitted product icon and keyboard focus return',
       async () => {
         await click(`${active}[data-member-runtime-select]`)
+        const menuCount = await run('window.memberFixture.installations.length + 1')
         await wait(
-          'document.querySelectorAll(".member-runtime-menu-item").length === 15'
+          `document.querySelectorAll(".member-runtime-menu-item").length === ${menuCount}`
         )
         const labels = await run(
           '[...document.querySelectorAll(".member-runtime-menu-item")].map(node => node.textContent.trim())'
@@ -324,7 +325,7 @@ app
           await run(
             'document.querySelectorAll(".member-runtime-menu-item .member-runtime-glyph").length'
           ),
-          15
+          menuCount
         )
         await capture('runtime-menu')
         await key('Escape')
