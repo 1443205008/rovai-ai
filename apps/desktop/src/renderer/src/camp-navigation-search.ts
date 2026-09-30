@@ -5,7 +5,8 @@ import { uiAttribute } from './interface-language'
 export function navigationCampSearch(
   query: string,
   camps: readonly NavigationCampTarget[],
-  projectNameByPath: ReadonlyMap<string, string>
+  projectNameByPath: ReadonlyMap<string, string>,
+  firstRunCampId: string | null = null
 ): { kind: 'id'; campId: string } | { kind: 'text'; camps: NavigationCampTarget[] } {
   const trimmed = query.trim()
   if (isCampId(trimmed)) return { kind: 'id', campId: trimmed }
@@ -17,7 +18,8 @@ export function navigationCampSearch(
       const projectName = camp.projectBindingKind === 'directory'
         ? projectNameByPath.get(camp.projectPath) ?? ''
         : uiAttribute('快速对话')
-      return formatCampTitle(camp).toLowerCase().includes(text)
+      return formatCampTitle(camp, firstRunCampId).toLowerCase().includes(text)
+        || camp.title.toLowerCase().includes(text)
         || projectName.toLowerCase().includes(text)
     }) : camps).slice(0, 12)
   }

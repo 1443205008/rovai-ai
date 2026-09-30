@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NavigationCampTarget } from '@contracts'
 import { navigationCampSearch, startNavigationCampLookup } from './camp-navigation-search'
+import { changeInterfaceLanguage } from './interface-language'
+import { DEFAULT_GENERAL_PREFERENCES } from '../../shared/general-preferences-model'
+import type { GeneralPreferencesApi } from '@contracts'
 
 const campId = 'rvcamp_01h47kvsy5fk1shh6w1g60eecf'
 const target: NavigationCampTarget = {
@@ -43,6 +46,31 @@ describe('navigation search routing', () => {
     expect(navigationCampSearch('lArK话题', [channelCamp, larkCamp], projects)).toEqual({ kind: 'text', camps: [larkCamp] })
     const camps = Array.from({ length: 13 }, (_, index) => ({ ...target, id: String(index) }))
     expect(navigationCampSearch('  ', camps, projects)).toEqual({ kind: 'text', camps: camps.slice(0, 12) })
+  })
+
+  it('finds the first-run Camp by its displayed or saved title and returns original data', async () => {
+    const languageApi = {
+      setInterfaceLanguage: async (interfaceLanguage: 'zh-CN' | 'en') =>
+        ({ ...DEFAULT_GENERAL_PREFERENCES, interfaceLanguage })
+    } as GeneralPreferencesApi
+    const firstRunCamp = { ...target, title: '初次集结' }
+    const userCamp = { ...firstRunCamp, id: 'camp-user' }
+    await changeInterfaceLanguage(languageApi, 'en')
+    try {
+      const result = navigationCampSearch('FIRST CHAT', [firstRunCamp, userCamp], projects, campId)
+      expect(result).toEqual({ kind: 'text', camps: [firstRunCamp] })
+      if (result.kind !== 'text') throw new Error('Expected title search')
+      expect(result.camps[0]).toBe(firstRunCamp)
+      expect(result.camps[0].title).toBe('初次集结')
+      expect(navigationCampSearch('初次集结', [firstRunCamp, userCamp], projects, campId))
+        .toEqual({ kind: 'text', camps: [firstRunCamp, userCamp] })
+      expect(navigationCampSearch(campId, [], projects, campId)).toEqual({ kind: 'id', campId })
+      firstRunCamp.title = '我的新会话'
+      expect(navigationCampSearch('First Chat', [firstRunCamp], projects, campId))
+        .toEqual({ kind: 'text', camps: [] })
+    } finally {
+      await changeInterfaceLanguage(languageApi, 'zh-CN')
+    }
   })
 })
 

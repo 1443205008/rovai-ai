@@ -38,6 +38,7 @@ export type NotificationNavigationResult =
 interface NotificationAttentionControllerProps {
   enabled: boolean
   activeCampId: string | null
+  firstRunCampId?: string | null
   activeCampVisible: boolean
   navigationActive: boolean
   onNavigate(
@@ -310,6 +311,7 @@ export function visibleAcknowledgementIntent(
 export function NotificationAttentionController({
   enabled,
   activeCampId,
+  firstRunCampId = null,
   activeCampVisible,
   navigationActive,
   onNavigate,
@@ -743,6 +745,7 @@ export function NotificationAttentionController({
           key={`${currentHeadsUp.episode.id}:${currentHeadsUp.signal.action.singleChat?.conversationId ?? 'public'}`}
           active={windowAttentive && foregroundReady}
           entry={currentHeadsUp}
+          firstRunCampId={firstRunCampId}
           busy={busyAcknowledgementId !== null}
           onOpen={() => void openAction(
             currentHeadsUp.episode,
@@ -774,12 +777,14 @@ export function NotificationAttentionController({
 export function NotificationHeadsUp({
   active = true,
   entry,
+  firstRunCampId = null,
   busy,
   onOpen,
   onDismiss
 }: {
   active?: boolean
   entry: NotificationHeadsUpEntry
+  firstRunCampId?: string | null
   busy: boolean
   onOpen(): void
   onDismiss(): void
@@ -787,7 +792,7 @@ export function NotificationHeadsUp({
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const presentation = notificationHeadsUpPresentation(entry.signal)
-  const campTitle = formatCampTitle(entry.episode.camp)
+  const campTitle = formatCampTitle(entry.episode.camp, firstRunCampId)
   const privateTitle = entry.signal.action.singleChat ? uiAttribute(" · 与{0}单聊", String(entry.signal.action.singleChat.agentDisplayName)) : ''
   useHeadsUpLifetime(!active || hovered || focused || busy, onDismiss, entry.signal.action.acknowledgementId)
   return (

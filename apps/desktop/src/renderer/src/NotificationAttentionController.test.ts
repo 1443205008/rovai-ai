@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import type {
+  GeneralPreferencesApi,
   NotificationActionView,
   NotificationEpisodeChange,
   NotificationEpisodeChangeBatch,
@@ -16,9 +19,34 @@ import {
   shouldPollForNotificationEvent,
   visibleAcknowledgementIntent,
   filterVisibleNotificationHeadsUp,
-  shouldShowHeadsUp
+  shouldShowHeadsUp,
+  NotificationHeadsUp
 } from './NotificationAttentionController'
 import { preferenceFromUnknown } from './NotificationSettings'
+import { DEFAULT_GENERAL_PREFERENCES } from '../../shared/general-preferences-model'
+import { changeInterfaceLanguage } from './interface-language'
+
+it('localizes the identified first-run notification title while retaining the episode data', async () => {
+  const languageApi = {
+    setInterfaceLanguage: async (interfaceLanguage: 'zh-CN' | 'en') =>
+      ({ ...DEFAULT_GENERAL_PREFERENCES, interfaceLanguage })
+  } as GeneralPreferencesApi
+  const current = episode('turn_completed', { camp: { id: 'camp-1', title: '初次集结' } })
+  const entry = { episode: current, signal: headsUpSignal(current, 'turn_completed'), changeSequence: 1 }
+  const render = (firstRunCampId: string | null) => renderToStaticMarkup(createElement(NotificationHeadsUp, {
+    entry, firstRunCampId, busy: false, onOpen() {}, onDismiss() {}
+  }))
+  await changeInterfaceLanguage(languageApi, 'en')
+  try {
+    expect(render('camp-1')).toContain('title="First Chat"')
+    expect(render('camp-1')).not.toContain('初次集结')
+    expect(render(null)).toContain('title="初次集结"')
+    expect(current.camp.title).toBe('初次集结')
+    expect(entry.signal.action.campId).toBe('camp-1')
+  } finally {
+    await changeInterfaceLanguage(languageApi, 'zh-CN')
+  }
+})
 
 it('does not create visible ack commands for global cursor churn, and freezes uncertain retries', () => {
   let ids = 0
