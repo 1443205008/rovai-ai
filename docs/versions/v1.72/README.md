@@ -5,8 +5,8 @@ lifecycle: current
 authority: version-scope-and-status
 design_status: confirmed
 implementation_status: in_progress
-model_context_change: false
-last_updated: 2026-09-29
+model_context_change: true
+last_updated: 2026-09-30
 ---
 
 # Rovai-ai v1.72：Lark 独立渠道
@@ -102,6 +102,14 @@ Snapshot 与 SSE，不增加私有 Evidence、文件差异、写操作或新数�
 v0.4.1 发布后补齐候选版本的日期兼容：macOS 合并清单保留日期字符串，Main 同时归一化更新器可能返回的
 日期对象；真实 Provider 解析器覆盖生成端和消费端的回归。见[补充验证](implementation-plan.md#2026-09-29-候选版本发布日期兼容)。
 
+## 并行交付：Agent 指令英文化
+
+按 Principal 确认的 r5，将会进入 Agent 上下文的 9 项发布 Skill（30 份 Markdown）和三处系统／CLI
+短文本改为简洁英文。完整原文、替换内容、确认记录及验证边界见
+[模型上下文变更说明](model-context-change-agent-english.md)。实际用户内容和回复语言保持。
+旧会话沿用冻结 Bootstrap 继续 resume，新会话首次生成英文索引；内置 Skill 沿用既有固定路径同步。
+不提升会话兼容版本、不新增迁移。工具箱共用的说明原文随资源显示英文。
+
 ## 跨版本文档影响
 
 | 范围 | 结论 | 证据或理由 |
@@ -112,6 +120,6 @@ v0.4.1 发布后补齐候选版本的日期兼容：macOS 合并清单保留日�
 | Architecture | 已更新 | 新增 [Lark 渠道架构](../../architecture/lark-channel.md)；[飞书渠道架构](../../architecture/feishu-channel.md)移除 `larksuite.com` 并改指 v17；[侧栏刷新](../../architecture/desktop-navigation-refresh.md)与[Skills 来源](../../architecture/skills.md)说明局部读取及目录缓存；[钉钉渠道架构](../../architecture/dingtalk-channel.md)补齐原生附件出站与重试边界；[Public Camp Composer](../../architecture/camp-composer-draft.md#发送)说明邀请与发布命令边界；[Desktop App Updates](../../architecture/desktop-app-updates.md)补齐随包发布日期来源 |
 | UI | 已更新 | [渠道设置](../../ui/components/channel-settings.md)增加 Lark 页签、品牌显示与未验收提示，并明确只读网页执行台的历史区、生产组件及重连呈现；[Camp 命名](../../contracts/channel-camp-naming-v1.md)和[统一侧栏](../../ui/components/app-shell-navigation.md)补齐 Lark 来源及范围刷新；[结构化 Mention](../../ui/components/structured-mentions.md#member-typeahead)和[会话工作区](../../ui/components/conversation-workspace.md#camp-composer)说明待邀请反馈 |
 | Runtime Activity | 确认无需更新 | Canonical Activity、Adapter mapping 与 Registry 不变；本版只涉及渠道 provider |
-| Runtime compatibility | 确认无需更新 | 不改变 Runtime 协议、实测版本、Agent 输入或安装资格 |
-| Documentation routing | 已更新 | 文档任务入口、合同索引、架构索引、当前决定导航与版本指针路由到 Lark v1、Feishu v17、Navigation Read v1、DingTalk v14 与 v1.72 |
+| Runtime compatibility | 确认无需更新 | 不改变 Runtime 协议、实测版本或安装资格；Agent 指令英文化保持 Binding 兼容轴，生效边界见[变更说明](model-context-change-agent-english.md) |
+| Documentation routing | 已更新 | 文档任务入口、合同索引、架构索引、当前决定导航与版本指针路由到 Lark v1、Feishu v17、Navigation Read v1、DingTalk v14 与 v1.72；版本内新增[Agent 指令变更说明](model-context-change-agent-english.md)及完整对照 |
 | Root README | 确认无需更新 | Lark 未完成真实租户验收，按 Lark Channel v1 第 8 节不得在根 README 宣称支持 |

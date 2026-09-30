@@ -1,57 +1,30 @@
-# Camp 与 History：选择读取范围
+# Camp and history
 
-根据问题需要的范围选择最窄读取：
+Choose the narrowest scope that answers the question:
 
-- 列出可见 Camp 或取得 Camp ID：`rovai camp list --help`
-- 在当前 Camp 内搜索消息：`rovai camp search --query "amount"`
-- 在一个已知、可访问的历史 Camp 内搜索消息：
-  `rovai camp search --camp-id "<camp-id>" --query "amount"`
-- 已有稳定 message ID，或需要 timeline/thread 分页：`rovai camp read --help`
-- 不知道消息属于哪个 Camp，需要跨 Camp 搜索：`rovai history search --help`
+| Need | Command |
+| --- | --- |
+| Find accessible Camps or a Camp ID | `rovai camp list --help` |
+| Search the current Camp | `rovai camp search --query "amount"` |
+| Search a known historical Camp | `rovai camp search --camp-id <camp-id> --query "amount"` |
+| Read an exact message or a timeline/thread page | `rovai camp read --help` |
+| Find a message whose Camp is unknown | `rovai history search --help` |
 
-## `camp.read` 读取形态
+## Read forms
 
-`rovai camp read` 读取当前 Camp 最新的 20 条可见消息；`--camp-id` 只改变目标 Camp。四种 canonical
-调用直接由字段表达，不使用 mode 或 direction：
+Bare `rovai camp read` returns the latest 20 visible messages in the current Camp. `--camp-id` changes only the target Camp.
 
 ```bash
 rovai camp read --limit 20
 rovai camp read --before <nextCursor>
-rovai camp read --message-id "<message-id>"
-rovai camp read --thread "<message-id>" --limit 20
+rovai camp read --message-id <message-id>
+rovai camp read --thread <message-id> --limit 20
 ```
 
-Timeline 和 thread 都从最新/锚点向更早消息读取；继续分页时，把返回的 `nextCursor` 传给
-`--before`。`--message-id` 是完整单条读取，不能与 `--thread`、`--before` 或 `--limit` 组合。
+Timeline and thread pages move from the latest message or anchor toward older messages. Continue with the returned `nextCursor` as `--before`. Exact `--message-id` reads return the full message and cannot combine with `--thread`, `--before` or `--limit`. There are no mode or direction fields.
 
-`camp.search` 和 `camp.read` 都只解析一个 Camp target：省略 `--camp-id` 时是当前 Camp，显式传入时是
-当前 AgentRun 冻结 Manifest 中仍有实时访问权的那个历史 Camp。显式传入当前 Camp ID 与省略完全等价；
-不会因为省略而搜索全部历史 Camp，也不会仅凭 `messageId` 跨 Camp 反查。
+Search/read resolve one Camp: omitted scope means the current Camp; an explicit historical target must belong to the current Run's frozen access scope and remain accessible. An explicit current Camp ID is equivalent to omission. A message ID alone does not search across Camps.
 
-标准调用链：
+When the Camp is unknown, use history search to obtain `campId` and `messageId`, then read that exact pair. When the Camp is known, search there if needed, then read the exact message. Inspect the exact item's `addressing` when recipients or Principal mentions matter; snippets are discovery aids.
 
-```text
-目标 Camp 未知
-  → rovai history search --query "amount"
-  → 取得 campId + messageId
-  → rovai camp read --camp-id "<camp-id>" --message-id "<message-id>"
-
-目标 Camp 已知
-  → rovai camp search --camp-id "<camp-id>" --query "amount"
-  → 取得 messageId
-  → rovai camp read --camp-id "<camp-id>" --message-id "<message-id>"
-```
-
-读取当前 Camp 时可省略范围：
-
-```bash
-rovai camp read --message-id "<message-id>"
-```
-
-`rovai send` 仍然隐式使用当前 authenticated AgentRun Camp；它不接受 Agent 提供 `campId`。
-
-优先 stable-ID exact read 验证具体消息。搜索结果用于发现，不应替代 exact item 的权威字段；需要确认
-Agent recipients 或 Current User Mention 时，读取 exact item 的 `addressing`。
-
-跨 Camp 搜索只用于用户确实需要更宽历史范围时。不要为了确认一次 mutation 的 outcome，用正文、作者、
-时间或近似搜索猜测 invocation identity；这种情况遵循 [Recovery](recovery.md)。
+Cross-Camp search requires a real need for wider history. An uncertain mutation outcome follows [Recovery](recovery.md); similar text, author or time cannot prove invocation identity. Send always uses the authenticated current Camp and accepts no caller-supplied Camp ID.
