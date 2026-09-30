@@ -2,7 +2,7 @@
 document_type: ui-component-contract
 authority: renderer-camp-workspace
 status: accepted
-last_updated: 2026-09-28
+last_updated: 2026-09-30
 ---
 
 # Camp 会话工作区
@@ -885,6 +885,8 @@ Desktop / 宽屏 Web 的 Dock 与底部执行台共用会话列全宽，不跟�
 选项使用紧凑内容宽度按钮，严格保留 Runtime 的原始顺序、原生标签和 `optionId`，不显示 `consequence`，
 也不通过翻译或术语替换改写 Runtime 文案。ACP 缺少有效 `name` / `label` 时直接展示 `optionId`；
 Codex 无原生显示标签的决定由 Adapter 提供固定英文标签，响应值和作用域不变。
+Core 管理动作与 `claude/permission_request` 中由 Rovai 生成的“拒绝 / 允许一次”属于应用文案，按钮文字、
+title 和无障碍名称跟随界面语言；展示翻译保留选项顺序、`optionId` 和原生响应身份。
 
 Dock 保留橙色顶部，以中性边框界定请求，移除左侧橙线和浮层阴影。原始 JSON 的底色与执行台 command
 结果框共用 `--shell-result-canvas`，使用 11.5px 等宽文字，保留空白与局部滚动；请求区可由键盘聚焦和滚动。
