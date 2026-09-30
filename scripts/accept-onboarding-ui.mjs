@@ -93,7 +93,7 @@ try {
   const memberPage = await evaluate(running.cdp, `(() => ({
     rows: document.querySelectorAll('.onboarding-member-row').length,
     portraits: document.querySelectorAll('.onboarding-selected-portrait').length,
-    hasSkip: document.body.textContent?.includes('跳过') ?? false,
+    hasSkip: ['跳过', 'Skip'].some((text) => document.body.textContent?.includes(text)),
     hasStepNavigation: Boolean(document.querySelector('.onboarding-step, .onboarding-progress button, .onboarding-progress a')),
     horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth,
     viewport: [window.innerWidth, window.innerHeight]
@@ -591,9 +591,15 @@ async function setTheme(cdp, theme) {
 async function assertProgress(cdp, step) {
   const progress = await evaluate(cdp, `(() => {
     const element = document.querySelector('.onboarding-progress')
-    return { text: element?.textContent?.trim(), label: element?.getAttribute('aria-label'), tag: element?.tagName }
+    return {
+      text: element?.textContent?.trim(),
+      label: element?.getAttribute('aria-label'),
+      tag: element?.tagName,
+      language: document.documentElement.lang
+    }
   })()`)
-  assert(progress.text === `${step} / 3` && progress.label === `第 ${step} 步，共 3 步` && progress.tag === 'SPAN',
+  const expectedLabel = progress.language === 'en' ? `Step ${step} of 3` : `第 ${step} 步，共 3 步`
+  assert(progress.text === `${step} / 3` && progress.label === expectedLabel && progress.tag === 'SPAN',
     `Onboarding progress must be read-only and describe the current step: ${JSON.stringify(progress)}`)
 }
 
@@ -606,7 +612,7 @@ async function surfaceState(cdp, selector) {
       visible: Boolean(surface),
       primaryVisible: Boolean(rect && rect.top >= 0 && rect.bottom <= window.innerHeight),
       primaryEnabled: Boolean(primary && !primary.disabled),
-      hasSkip: document.body.textContent?.includes('跳过') ?? false,
+      hasSkip: ['跳过', 'Skip'].some((text) => document.body.textContent?.includes(text)),
       hasStepNavigation: Boolean(document.querySelector('.onboarding-step, .onboarding-progress button, .onboarding-progress a')),
       horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth
     }
