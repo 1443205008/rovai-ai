@@ -15,6 +15,8 @@ import { CurrentUserAvatar, useCurrentUserProfile } from './CurrentUserProfile'
 import { markdownInlineContentPrefix } from './safe-markdown-model'
 import { ExecutionLatestContext, ExecutionReadingContext, useExecutionWindow } from './useExecutionWindow'
 import { ReturnToLatest } from './ReturnToLatest'
+import { UserMessageAnchors } from './UserMessageAnchors'
+import { userMessageAnchors } from './user-message-anchors'
 import { prefersReducedMotion } from './reduced-motion'
 import { isFileFindTarget, useOptionalFileFind } from './FilePreviewFind'
 import { readErrorMessage } from './error-message'
@@ -2433,6 +2435,14 @@ export function CampWorkspace({
     }
     return null
   }, [conversationTimeline])
+  const userAnchors = useMemo(() => userMessageAnchors(
+    conversationTimeline.flatMap(item => item.kind === 'camp_message' ? [item.message] : []),
+    snapshot.agentRuns,
+    snapshot.turns,
+    message => message.content?.length
+      ? structuredCampContentPlainText(message.content, snapshot.members, currentUserName)
+      : message.body
+  ), [conversationTimeline, snapshot.agentRuns, snapshot.turns, snapshot.members, currentUserName])
   const groupingFollowsLatest = useCallback(() => !conversationFind.open
     && (timelineReadingPosition.current?.campId !== snapshot.camp.id
       || timelineReadingPosition.current.position.followingLatest !== false),
@@ -2944,6 +2954,27 @@ export function CampWorkspace({
       })
     })
   }, [snapshot.camp.id])
+
+  const navigateUserAnchor = useCallback((messageId: string): void => {
+    const campId = snapshot.camp.id
+    if (conversationFind.open) closeConversationFind(false)
+    // Closing Find changes the reading inset; locate after its layout has committed.
+    window.requestAnimationFrame(() => {
+      const viewport = timelineScrollRef.current
+      if (!viewport || viewport.hidden || mountedCampId.current !== campId) return
+      const target = viewport.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`)
+      if (!target) return
+      timelineReadingPosition.current = {
+        campId, position: { scrollTop: viewport.scrollTop, followingLatest: false }
+      }
+      target.focus({ preventScroll: true })
+      viewport.scrollTo({
+        top: Math.max(0, viewport.scrollTop + target.getBoundingClientRect().top
+          - viewport.getBoundingClientRect().top - 18),
+        behavior: prefersReducedMotion() ? 'instant' : 'smooth'
+      })
+    })
+  }, [snapshot.camp.id, conversationFind.open, closeConversationFind])
 
   const navigateConversationFind = (direction: 1 | -1): void => {
     const snapshotResult = conversationFind.snapshot
@@ -5343,6 +5374,9 @@ export function CampWorkspace({
               )}
               </div>
             </div>
+            <UserMessageAnchors key={snapshot.camp.id} anchors={userAnchors}
+              viewportRef={timelineScrollRef} enabled={conversationView === 'conversation'}
+              followingLatest={groupingFollowsLatest} onNavigate={navigateUserAnchor} />
             <ReturnToLatest
               viewportRef={timelineScrollRef}
               ownerKey={snapshot.camp.id}
