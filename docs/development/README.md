@@ -107,6 +107,7 @@ App，以受控本机 API 和时钟验证页面框架、截止时间与 authorit
 修改审批 Dock 的焦点、原生选项或 Reason 展示时运行 `pnpm test:approval-dock`，使用生产组件的隔离 Electron
 夹具验证键盘操作与动态布局，不启动 Core 或模型。
 修改消息选文引用时运行 `pnpm test:message-quotes`：隔离 Electron 使用生产正文、引用组件与共享投影样例，验证选区排除、原生悬浮、键盘、完整选文和整行定位。验收窗口使用独立 userData，不启动 Core 或模型；其他会争用 OS 焦点的 Electron 验收应顺序运行。
+修改用户消息锚点时运行 `pnpm test:message-anchors`：隔离 Electron 使用生产 CampWorkspace，验证用户数量阈值、日夜主题、原生悬浮、可见范围、首条回复、长轨道与内部滚动、键盘定位、历史加载和草稿保留；不启动 Core 或模型。
 修改飞书接口扫码时运行 `pnpm test:feishu-login`：隔离 Electron 使用生产 Session HTTP、被动 HTML bootstrap、Cookie
 恢复和 QR Dialog 验证登录没有隐藏窗口、进度与本地提交的取消边界。默认使用受控响应；
 `ROVAI_FEISHU_LIVE_PROBE=1 pnpm test:feishu-login` 另做匿名真实 init/poll，不替代真人扫码与 Bot 发布。
