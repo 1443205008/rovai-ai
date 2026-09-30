@@ -326,7 +326,7 @@ last_updated: 2026-09-25
 - Claude Code 的 `--print` 权限询问经原生双向 stream-json 控制通道接入同一 Action/Approval。
   request_id 用于审批回复，tool_use_id 用于实际结果；Run/epoch/Session 由进程绑定。不完整或失效
   请求拒绝。允许一次只回填原 input，不保存原生规则；取消与断线撤销待处理 ID，工具执行成功只能
-  由对应结果确认。字段与生命周期由 [Runtime Launch v45](../contracts/runtime-launch-and-verification-v45.md) 拥有。
+  由对应结果确认。字段与生命周期由 [Runtime Launch v46](../contracts/runtime-launch-and-verification-v46.md) 拥有。
 
 - TRAE 的 light check、显式 availability verification、cold resume、HistoryRestore 和 replay quarantine 使用独立的用户授权、Session ID 校验和有界恢复路径；恢复响应 ID 不一致时 fail closed。
 - Product execution qualification 是 `AdapterKind × HostPlatformKey` 的封闭准入。存在安装或能启动进程不等于平台合格；不合格组合保留配置但阻止执行，并提供结构化 reason/evidence。

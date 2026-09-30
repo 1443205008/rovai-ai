@@ -243,7 +243,9 @@ Electron 回归使用生产 adapter、CampWorkspace 与 CSS，验证空事件下
 ### Claude Code 无 Prompt 目录验证
 
 原生审批转换由 `claude_permission::tests::native_permission_ids_and_exact_input_bind_frozen_approval_options`
-拥有最低成本输入矩阵：request_id/tool_use_id 区分、原 input 回填、缺失身份拒绝及重复命令独立绑定。
+拥有最低成本输入矩阵：request_id/tool_use_id 区分、原 input 回填、缺失身份拒绝及重复命令独立绑定；
+原生建议的精确 updatedPermissions、四种 destination、suppression、无效/未支持建议、建议去重与响应 digest
+在同一纯转换 owner 内扩展，不新建 SQLite 或进程 fixture。
 最低成本控制准入由 `claude_control::tests::incompatible_initialization_and_missing_tool_identity_never_admit_permission`
 拥有：初始化错误、模式漂移和可选 tool_use_id 缺失必须拒绝，不能自动放行。
 最小命令：`cargo test -p rovai-core --lib claude_permission::tests::`、
@@ -251,8 +253,11 @@ Electron 回归使用生产 adapter、CampWorkspace 与 CSS，验证空事件下
 
 控制写入并发与关闭由 `claude_control::tests::native_decisions_are_serialized_by_id_and_close_only_after_the_last_idle_result`
 拥有，覆盖 256 次普通工具后、相同输入的独立 ID、NDJSON 串行化、后台任务与多结果收尾。
+同一 owner 扩展精确记忆响应：范围/目的地篡改、跨请求借用及 suppression 均拒绝；允许的 updatedPermissions
+逐字段保留在原 request_id 的输出中。
 暂停的 Tokio 时钟验证长审批/后台任务不触发结束计时，两个官方任务终态形态均能解除跟踪并重新计时。
 `cancelled_queued_decisions_and_disconnect_never_write_late_allowances` 单独拥有排队响应被撤销的竞态。
+该 owner 使用记忆响应验证取消和断线清理，迟到的永久规则允许也不能写入。
 这两个 seam 无法由 Action 转换纯函数证明，进入 extended-tests；最小命令为
 `cargo test -p rovai-core --features extended-tests --lib claude_control::tests::`。
 `claude::tests::native_permissions_do_not_block_stdout_or_replace_the_last_result` 拥有 reader 与控制通道
@@ -267,6 +272,8 @@ writer-only owner 无法覆盖该解析链路，使用 extended-tests 的内存 
 多结果和私有文件清理边界。原 Hook/完整工具输入匹配测试随生产路径退出，Git 保留旧实现。
 真实允许、拒绝、取消与 Core receipt 使用 `ROVAI_CLAUDE_APPROVAL_SMOKE=1 node scripts/smoke-claude-runtime.mjs`；
 实际 Desktop 点击由 `node scripts/accept-claude-permission.mjs` 在独立 userData/Skill Library/MCP 下验证。
+允许一次、拒绝之后追加原生记忆点击，核对隔离项目的 settings 只保存选中规则，再执行相同命令验证无新增
+Approval 且有本轮 Core send receipt 和 exact message；记忆按钮、scope 与 CLI 版本随证据保存。
 模型 Smoke 不进入普通 Rust 测试。旧 Hook Smoke 不作为原生协议通过记录。
 
 目录协议与进程生命周期由共享 Core library 的 `health::claude_catalog_tests` owner 验证，正常门禁使用临时

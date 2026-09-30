@@ -2633,6 +2633,52 @@ describe('task event projections', () => {
     expect(markup).not.toContain('还没有可用的队员')
   })
 
+  it('shows the localized first-run title in navigation and recent chats across language changes', async () => {
+    const languageApi = {
+      setInterfaceLanguage: async (interfaceLanguage: 'zh-CN' | 'en') =>
+        ({ ...DEFAULT_GENERAL_PREFERENCES, interfaceLanguage })
+    } as GeneralPreferencesApi
+    const camp = {
+      id: 'camp-first', title: '初次集结', activationState: 'active' as const,
+      projectBindingKind: 'quick_chat' as const, projectPath: '/tmp/quick-chat', defaultLead: null,
+      marker: 'none' as const, lastActivityAt: '2026-09-30T00:00:00Z',
+      lastActivityGlobalSequence: 0, latestCompletionGlobalSequence: 0, version: 1
+    }
+    const recent = () => renderToStaticMarkup(createElement(QuickChatWorkspace, {
+      agents: [], recentCamps: [camp], firstRunCampId: camp.id,
+      onOpenCamp() {}, onNewConversation() {}, onOpenMembers() {}, onOpenRuntimeSettings() {}
+    }))
+    const navigation = (pinned: boolean) => renderToStaticMarkup(createElement(CampNavigation, {
+      view: 'camp', state: 'ready', activeCampId: camp.id, firstRunCampId: camp.id,
+      navigation: {
+        schemaVersion: 3, throughGlobalSequence: 0, projects: [],
+        quickChat: { totalCount: 1, recentCamps: [camp] }
+      },
+      pins: pinned ? [{ kind: 'camp', targetKey: camp.id, pinnedAt: '' }] : [],
+      pendingMemoryCount: 0, onNewConversation() {}, onMembers() {}, onMemory() {},
+      onSettings() {}, onOpenProject() {}, onCamp() {}, onError() {},
+      async onRemoveProject() {}, async onRename() {}, async onDelete() {}
+    }))
+    await changeInterfaceLanguage(languageApi, 'en')
+    try {
+      expect(recent()).toContain('title="First Chat">First Chat</span>')
+      for (const pinned of [false, true]) {
+        const markup = navigation(pinned)
+        expect(markup).toContain('aria-label="First Chat" title="First Chat"')
+        expect(markup).not.toContain('初次集结')
+      }
+      expect(camp.title).toBe('初次集结')
+      camp.title = '我的会话'
+      expect(recent()).toContain('title="我的会话">我的会话</span>')
+      expect(navigation(false)).toContain('aria-label="我的会话" title="我的会话"')
+      camp.title = '初次集结'
+    } finally {
+      await changeInterfaceLanguage(languageApi, 'zh-CN')
+    }
+    expect(recent()).toContain('title="初次集结">初次集结</span>')
+    expect(navigation(false)).toContain('aria-label="初次集结" title="初次集结"')
+  })
+
   it('defaults to configured usable members without preferring deep readiness', () => {
     const selection = initialCampSelection({
       admissible: true,

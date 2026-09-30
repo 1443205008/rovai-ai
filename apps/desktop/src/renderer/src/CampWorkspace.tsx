@@ -1511,6 +1511,7 @@ export function emptyCampRuntimeSummary(
 export function QuickChatWorkspace({
   agents,
   recentCamps,
+  firstRunCampId = null,
   onOpenCamp,
   onNewConversation,
   onOpenMembers,
@@ -1518,6 +1519,7 @@ export function QuickChatWorkspace({
 }: {
   agents: AgentProfile[]
   recentCamps: NavigationCampItem[]
+  firstRunCampId?: string | null
   onOpenCamp(camp: NavigationCampItem): void
   onNewConversation(): void
   onOpenMembers(): void
@@ -1553,7 +1555,7 @@ export function QuickChatWorkspace({
                   <span className="camp-marker-slot" aria-hidden="true">
                     {camp.marker === 'unread_completed' && <i className="task-dot camp-marker-unread_completed" />}
                   </span>
-                  <span className="truncate" title={formatCampTitle(camp)}>{formatCampTitle(camp)}</span>
+                  <span className="truncate" title={formatCampTitle(camp, firstRunCampId)}>{formatCampTitle(camp, firstRunCampId)}</span>
                   {camp.marker === 'loading' && <span className="camp-loading-spinner camp-marker-loading" role="img" aria-label={uiAttribute("正在运行")} />}
                   <small>{relativeTimeLabel(camp.lastActivityAt)}</small>
                 </button>
@@ -1630,6 +1632,7 @@ export function CampWorkspace({
   singleChatTarget,
   runtimeRecovery = null,
   firstRunCamp = null,
+  firstRunCampId = null,
   onConfigureRuntime,
   onDismissRuntimeRecovery,
   onNotify = () => undefined,
@@ -1688,6 +1691,7 @@ export function CampWorkspace({
   singleChatTarget?: import("@contracts").NotificationSingleChatSource & { requestId: number } | null
   runtimeRecovery?: CampRuntimeRecovery | null
   firstRunCamp?: FirstRunCampContext | null
+  firstRunCampId?: string | null
   onConfigureRuntime?(agentId: string): void
   onDismissRuntimeRecovery?(): void
   onNotify?(message: string): void
@@ -4592,7 +4596,7 @@ export function CampWorkspace({
     && Boolean(filePreview?.paneVisible && filePreview.activeTab?.kind === 'execution')
 
   return (
-    <section ref={workspaceShellRef} className="workspace-shell camp-workspace" data-mobile-panel={mobile && inspectorVisible ? inspectorSurfaceTab : undefined} data-mobile-execution-maximized={mobile && mobileExecutionMaximized || undefined} aria-label={uiAttribute("会话：{0}", String(formatCampTitle(snapshot.camp)))}>
+    <section ref={workspaceShellRef} className="workspace-shell camp-workspace" data-mobile-panel={mobile && inspectorVisible ? inspectorSurfaceTab : undefined} data-mobile-execution-maximized={mobile && mobileExecutionMaximized || undefined} aria-label={uiAttribute("会话：{0}", String(formatCampTitle(snapshot.camp, firstRunCampId)))}>
       <FilePreviewWorkspace
       >
         <RevealNotificationConversation active={!!notificationFocus?.active
@@ -8855,13 +8859,14 @@ export function ApprovalDock({
           })} />}
         <pre tabIndex={0} role="region" aria-label={uiAttribute("完整审批请求，可滚动")}>{JSON.stringify(approval.canonicalInput, null, 2)}</pre>
         <div className="approval-dock-actions">
-          {approval.options.map((option) => {
+          {approval.options.map(option => {
             const label = approvalOptionLabel(approval, option, t)
             return (
               <button
                 className={`runtime-option option-${option.kind}`}
                 type="button"
                 key={option.optionId}
+                data-option-id={option.optionId}
                 onClick={() => onResolve(approval, option.optionId)}
                 disabled={busy}
                 title={label}
@@ -8887,11 +8892,18 @@ function approvalOptionLabel(
 ): string {
   const coreLabel = approval.permissionSemantics === 'core_enforced_v1'
     && ['core.deny', 'core.allow_once'].includes(option.optionId)
-  const claudeLabel = approval.adapterKind === 'claude-code-cli'
-    && approval.nativeMethod === 'claude/permission_request'
-    && ['claude.deny', 'claude.allow_once'].includes(option.optionId)
-  // These labels are created by Rovai; Runtime-supplied option text stays verbatim.
-  return coreLabel || claudeLabel ? t(option.label) : option.label
+  // Historical Claude approvals froze Chinese host labels. Present the verified native
+  // equivalents without changing their option IDs, responses or stored history.
+  if (isClaudePermission(approval)) {
+    if (option.optionId === 'claude.deny' && option.label === '拒绝') return 'No'
+    if (option.optionId === 'claude.allow_once' && option.label === '允许一次') return 'Yes'
+  }
+  // Only Core-owned application text is localized. Runtime choices stay in their native language.
+  return coreLabel ? t(option.label) : option.label
+}
+
+function isClaudePermission(approval: ActionApprovalView): boolean {
+  return approval.adapterKind === 'claude-code-cli' && approval.nativeMethod === 'claude/permission_request'
 }
 
 function normalizedApprovalText(value: string): string {
