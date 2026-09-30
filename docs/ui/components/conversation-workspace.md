@@ -881,11 +881,15 @@ Header/通知摘要只展开、定位并聚焦 Dock，不改变执行台位置�
 
 Desktop / 宽屏 Web 的 Dock 与底部执行台共用会话列全宽，不跟随正文或 Composer 的内缩轨道。单行顶栏显示当前请求摘要、
 当前队员与 Runtime、队列导航和收起入口；命令与请求 JSON 原样展示，达到内容高度上限后局部滚动。
-选项使用紧凑内容宽度按钮，严格保留 Runtime 的原始顺序、原生标签和 `optionId`，不显示 `consequence`，
+选项使用紧凑内容宽度按钮，严格保留 Runtime 的原始顺序、原生标签和 `optionId`，默认不显示内部 `consequence`，
 也不通过翻译或术语替换改写 Runtime 文案。ACP 缺少有效 `name` / `label` 时直接展示 `optionId`；
 Codex 无原生显示标签的决定由 Adapter 提供固定英文标签，响应值和作用域不变。
-Core 管理动作与 `claude/permission_request` 中由 Rovai 生成的“拒绝 / 允许一次”属于应用文案，按钮文字、
-title 和无障碍名称跟随界面语言；展示翻译保留选项顺序、`optionId` 和原生响应身份。
+Core 管理动作的“拒绝 / 允许一次”属于应用文案，按钮文字、title 和无障碍名称跟随界面语言。
+Claude stdio 不返回标签，Adapter 使用 CLI 2.1.280 已核实的原生 `No` / `Yes` / `Yes, and don’t ask again for: …`
+模板，不随界面语言翻译；历史 Claude 两个旧中文 host 标签仅展示为原生英文，不修改冻结 ID 或响应。
+仅 Claude 的原生记忆选项显示对应的完整规则范围和保存 destination，以 `aria-describedby` 关联按钮；
+长规则与路径换行，手机记忆项跨双列且按钮保留 44px 触控高度。规则与 suppression 边界见
+[Runtime Launch v46](../../contracts/runtime-launch-and-verification-v46.md)。其他 Runtime 的内部 consequence 不展示。
 
 Dock 保留橙色顶部，以中性边框界定请求，移除左侧橙线和浮层阴影。原始 JSON 的底色与执行台 command
 结果框共用 `--shell-result-canvas`，使用 11.5px 等宽文字，保留空白与局部滚动；请求区可由键盘聚焦和滚动。

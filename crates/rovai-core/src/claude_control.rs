@@ -22,6 +22,7 @@ pub(crate) const EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct PendingPermission {
     input: Value,
+    remember_response_digests: HashSet<String>,
 }
 
 #[derive(Default)]
@@ -175,7 +176,10 @@ impl ClaudeControl {
             match decision.get("behavior").and_then(Value::as_str) {
                 Some("allow")
                     if decision.get("updatedInput") == Some(&pending.input)
-                        && decision.get("updatedPermissions").is_none() => {}
+                        && (decision.get("updatedPermissions").is_none()
+                            || pending
+                                .remember_response_digests
+                                .contains(&crate::command::canonical_json_digest(&decision)?)) => {}
                 Some("deny") if decision.get("message").and_then(Value::as_str).is_some() => {}
                 _ => bail!("Claude permission decision changed the reviewed input or rules"),
             }
@@ -266,6 +270,14 @@ impl ClaudeControl {
                     id.to_string(),
                     PendingPermission {
                         input: request["input"].clone(),
+                        remember_response_digests:
+                            crate::claude_permission::remembered_permission_options(
+                                request,
+                                &request["input"],
+                            )?
+                            .into_iter()
+                            .map(|option| option.native_response_digest)
+                            .collect(),
                     },
                 );
                 state.refresh_end_wait();
@@ -612,8 +624,14 @@ mod tests {
             control.observe(&json!({"type":"assistant","message":{"content":[{
                 "type":"tool_use","id":format!("ordinary-{index}"),"name":"Read","input":{"file_path":"file"}}]}})).unwrap();
         }
+        let suggestion = json!({"type":"addRules", "behavior":"allow", "destination":"localSettings",
+            "rules":[{"toolName":"Bash", "ruleContent":"rovai send *"}]});
         for (id, tool) in [("request-a", "tool-a"), ("request-b", "tool-b")] {
-            control.route(&permission(id, json!(tool))).unwrap();
+            let mut frame = permission(id, json!(tool));
+            if id == "request-a" {
+                frame["request"]["permission_suggestions"] = json!([suggestion]);
+            }
+            control.route(&frame).unwrap();
             let event = received.recv().await.unwrap();
             assert_eq!(
                 event.payload["controlRequest"]["request"]["tool_use_id"],
@@ -627,8 +645,35 @@ mod tests {
             "user Approval pauses the end timer"
         );
         let allow = json!({"behavior":"allow","updatedInput":{"command":"rovai send --public-only --body same"}});
+        let mut remember = allow.clone();
+        remember["updatedPermissions"] = json!([suggestion]);
+        assert!(
+            control
+                .respond(json!("request-b"), remember.clone())
+                .await
+                .is_err(),
+            "another native request cannot borrow a suggested rule"
+        );
+        let mut changed_rule = remember.clone();
+        changed_rule["updatedPermissions"][0]["rules"][0]["ruleContent"] = json!("*");
+        assert!(
+            control
+                .respond(json!("request-a"), changed_rule)
+                .await
+                .is_err(),
+            "a remembered rule cannot be widened after review"
+        );
+        let mut changed_destination = remember.clone();
+        changed_destination["updatedPermissions"][0]["destination"] = json!("userSettings");
+        assert!(
+            control
+                .respond(json!("request-a"), changed_destination)
+                .await
+                .is_err(),
+            "a remembered rule cannot change its destination after review"
+        );
         let (a, b) = tokio::join!(
-            control.respond(json!("request-a"), allow.clone()),
+            control.respond(json!("request-a"), remember.clone()),
             control.respond(
                 json!("request-b"),
                 crate::claude_permission::deny_decision("Denied")
@@ -641,6 +686,9 @@ mod tests {
             line.clear();
             output.read_line(&mut line).await.unwrap();
             let frame: Value = serde_json::from_str(&line).unwrap();
+            if frame["response"]["request_id"] == "request-a" {
+                assert_eq!(frame["response"]["response"], remember);
+            }
             ids.insert(
                 frame["response"]["request_id"]
                     .as_str()
@@ -658,10 +706,15 @@ mod tests {
                 .await
                 .is_err()
         );
-        control
-            .route(&permission("cancelled", json!("tool-c")))
-            .unwrap();
+        let mut suppressed = permission("cancelled", json!("tool-c"));
+        suppressed["request"]["permission_suggestions"] = json!([suggestion]);
+        suppressed["request"]["suppress_always_allow_rule"] = json!(true);
+        control.route(&suppressed).unwrap();
         let _ = received.recv().await;
+        assert!(
+            control.respond(json!("cancelled"), remember).await.is_err(),
+            "the writer also honors the native suppression"
+        );
         control
             .route(&json!({"type":"control_cancel_request","request_id":"cancelled"}))
             .unwrap();
@@ -727,11 +780,14 @@ mod tests {
             "subtype":"success","request_id":control.initialize_id,"response":{}}}))
             .unwrap();
         control.state.lock().unwrap().prompt_sent = true;
-        let allow = json!({"behavior":"allow","updatedInput":{"command":"rovai send --public-only --body same"}});
+        let suggestion = json!({"type":"addRules", "behavior":"allow", "destination":"localSettings",
+            "rules":[{"toolName":"Bash", "ruleContent":"rovai send *"}]});
+        let allow = json!({"behavior":"allow","updatedInput":{"command":"rovai send --public-only --body same"},
+            "updatedPermissions":[suggestion]});
         for disconnected in [false, true] {
-            control
-                .route(&permission("pending", json!("tool")))
-                .unwrap();
+            let mut frame = permission("pending", json!("tool"));
+            frame["request"]["permission_suggestions"] = json!([suggestion]);
+            control.route(&frame).unwrap();
             let _ = received.recv().await;
             let response = tokio::spawn({
                 let control = control.clone();

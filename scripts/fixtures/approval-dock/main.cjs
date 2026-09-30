@@ -170,32 +170,52 @@ app.whenReady().then(async () => {
     state = await click('.runtime-option:last-child')
     assert.deepEqual(state.requests[1], { approvalId: 'approval-2', optionId: 'extended-11', version: 2 })
 
-    // Change language on an already mounted Dock, preserving the exact selected option ID.
-    for (const source of ['core', 'claude', 'native']) {
+    // Change language on an already mounted Dock. Only Core-owned copy is localized.
+    for (const source of ['core', 'claude', 'claude-remember', 'native']) {
       await run(`window.approvalTest.setOptionsSource(${JSON.stringify(source)})`)
       await run("window.approvalTest.setLanguage('zh-CN')")
       state = await snapshot()
-      assert.deepEqual(state.labels, ['拒绝', '允许一次'])
+      const nativeClaude = source.startsWith('claude')
+      const rememberLabels = source === 'claude-remember' ? ['Yes, and don’t ask again for: rovai send *'] : []
+      const chineseLabels = nativeClaude ? ['No', 'Yes', ...rememberLabels] : ['拒绝', '允许一次']
+      assert.deepEqual(state.labels, chineseLabels)
+      const identities = { optionIds: state.optionIds, nativeResponseDigests: state.nativeResponseDigests }
       await run("window.approvalTest.setLanguage('en')")
       state = await snapshot()
-      const labels = source === 'native' ? ['拒绝', '允许一次'] : ['Reject', 'Allow once']
-      assert.deepEqual(state.labels, labels, 'Only Rovai-owned option labels enter the language catalog')
+      const labels = source === 'core' ? ['Reject', 'Allow once'] : chineseLabels
+      assert.deepEqual(state.labels, labels, 'Runtime choices keep their native labels in both languages')
+      assert.deepEqual({ optionIds: state.optionIds, nativeResponseDigests: state.nativeResponseDigests }, identities)
       assert.deepEqual(state.titles, labels)
       assert.deepEqual(state.accessibleLabels, labels)
       assert.equal(state.summary, '允许一次', 'Request summaries remain verbatim')
       assert.equal(state.reason, '拒绝', 'Request reasons remain verbatim')
       assert.equal(state.codeText, state.expectedCode)
       assert.equal(state.consequenceVisible, false)
+      assert.deepEqual(state.rememberScopes, source === 'claude-remember'
+        ? ['Bash(rovai send *)\nlocalSettings · .claude/settings.local.json'] : [])
+      assert.deepEqual(state.descriptions, source === 'claude-remember'
+        ? [null, null, state.rememberScopes[0]] : [null, null])
       assert.equal(state.pageOverflow, false)
       await capture(`approval-language-${source}`)
       await run("window.approvalTest.setLanguage('zh-CN')")
-      assert.deepEqual((await snapshot()).labels, ['拒绝', '允许一次'])
+      assert.deepEqual((await snapshot()).labels, chineseLabels)
       await run("window.approvalTest.setLanguage('en')")
-      state = await click(source === 'core' ? '.runtime-option:first-child' : '.runtime-option:last-child')
-      assert.deepEqual(state.requests, [{ approvalId: 'approval-1', optionId: source === 'core' ? 'core.deny' : 'claude.allow_once', version: 1 }])
+      const optionId = source === 'core' ? 'core.deny' : source === 'claude-remember' ? 'claude.allow_remember.rule-digest' : 'claude.allow_once'
+      state = await click(`[data-option-id="${optionId}"]`)
+      assert.deepEqual(state.requests, [{ approvalId: 'approval-1', optionId, version: 1 }])
       assert.ok(state.disabled)
     }
-    console.log(JSON.stringify({ ok: true, cases: ['native labels/order/optionId', 'queue keyboard boundaries', 'summary focus', 'refresh focus', 'exact reason dedup', 'resize without rerender', 'approval identity', 'day/night', '1040×700', '420px conversation', 'complete command', '375/390/430px mobile', 'landscape/reduced viewport', '44px targets', 'scrolling long option lists', 'live language changes', 'Rovai-owned approval labels', 'native text preservation', 'translated decision identity'] }))
+    await run("window.approvalTest.setOptionsSource('claude-remember'); window.approvalTest.longRememberRule()")
+    for (const [width, height, mobile] of [[1040, 700, false], [375, 812, true], [430, 932, true]]) {
+      await run(`window.approvalTest.setMobile(${mobile})`)
+      await window.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile })
+      state = await snapshot()
+      assert.equal(state.pageOverflow, false, 'Native rule labels and scopes wrap without page overflow')
+      assert.ok(state.rememberScopes[0].endsWith('projectSettings · .claude/settings.json'))
+      if (mobile) assert.ok(state.touchTargets.every(target => target.height >= 44))
+      await capture(`approval-remember-long-${width}`)
+    }
+    console.log(JSON.stringify({ ok: true, cases: ['native labels/order/optionId', 'queue keyboard boundaries', 'summary focus', 'refresh focus', 'exact reason dedup', 'resize without rerender', 'approval identity', 'day/night', '1040×700', '420px conversation', 'complete command', '375/390/430px mobile', 'landscape/reduced viewport', '44px targets', 'scrolling long option lists', 'live language changes', 'Core-owned approval labels', 'native Claude English in both languages', 'native text preservation', 'decision identity', 'remember scope accessibility', 'long remember rule wrapping'] }))
     window.destroy(); app.quit()
   } catch (error) {
     console.error(await snapshot())

@@ -421,3 +421,29 @@ PR #592 的审批通道替换为 stream-json 输入/输出和 stdio 原生控制
 `cargo check --workspace`、44 项 Claude 定向回归（另 1 项人工 Smoke 忽略）及以
 `a39cf861d8f2dd8db4f78603838d57c131958d2e` 为真实基线的文档 CI 门禁通过。上表完整回归与实际
 Desktop 点击证据属于 `7f14abae`，未将主线同步冒充新的实际模型验收。
+
+## 2026-09-30 Claude 原生选项与规则记忆
+
+在主线 `df7f7abd1a43b9e1002d6974e693f79e2f0b0f0c` 上补充原生建议的规则记忆。stdio 请求没有按钮标签数组，
+使用本机 Claude Code `2.1.280` 可核实的原生 `Yes`、`No` 和 `Yes, and don’t ask again for: …` 模板。
+ACP 原生标签和 Codex 的固定英文决定标签原样展示；Claude 同样不随界面语言翻译。旧 Claude Approval 的两个
+中文 host 标签只在展示时兼容，不修改历史冻结响应和 ID。Core 自有审批文案继续按界面语言显示。
+
+有效 addRules/allow 建议分别冻结为记忆选项，原生范围和 destination 随按钮展示；允许一次不携带权限更新。
+记忆决定原样回填 selected suggestion，Claude 负责规则保存与未来匹配；suppression 或无效/未支持建议
+不会产生记忆选项。控制 writer 与转换层共用建议准入，只保存未决请求有效记忆响应的 digest，完成、取消和
+断线时清理；响应的范围、destination 或 input 改动不能通过校验。当前合同见
+[Runtime Launch v46](../../contracts/runtime-launch-and-verification-v46.md)。
+
+| 验证 | 结果与边界 |
+| --- | --- |
+| Claude 确定性回归 | `cargo test -p rovai-core --features extended-tests --lib claude` 44 项通过、1 项人工目录 Smoke 忽略。扩展既有纯转换及 writer/reader seam owners，覆盖建议精确透传、四种 destination、suppression、重复/无效建议、独立响应 digest、规则范围/目的地篡改、跨请求借用和取消/断线后的迟到记忆写入；原有 256 次普通工具、并发、初始化、多结果和收尾测试保留 |
+| 生产 ApprovalDock | `pnpm test:approval-dock` 通过；中英文界面均保持 Claude 原生英文，语言切换保留 optionId/digest。Core 标签继续本地化，其他 Runtime 标签保持原样。记忆 scope 可见且作为无障碍描述，长规则在桌面与手机换行，44px 控件、完整请求和队列焦点边界保留 |
+| 类型与格式 | `pnpm typecheck`、`cargo fmt --package rovai-core -- --check` 通过 |
+| 真实 Desktop 点击 | CLI `2.1.280 (Claude Code)`、冻结 acceptEdits，独立临时 userData/Skill Library/MCP 与 Git 项目；依次实际点击 Yes、No、记忆，Action 分别 succeeded/not_executed/succeeded。三个相同命令的请求与 Action ID 独立，使用同一 Native Session；允许与记忆各有对应 Run 的 Core receipt 和 exact message，拒绝均无发送 |
+| 原生保存与后续执行 | Claude 写入隔离项目 `.claude/settings.local.json`，allow 数组仅含本次选中 `Bash(rovai send *)`，无 bypass 模式。第四个 resumed Run 没有新增 Approval，仍产生独立 Core send receipt 与 exact message；结果 JSON、七张真实截图和 native button source 证据保存在任务附件中 |
+| UI 检查 | 对三个改动 UI 文件执行 Impeccable detector，文件中 116 项既有报告，本次改动行零命中；结合生产桌面/手机截图人工核验，未新增忽略规则 |
+
+首轮真实记忆点击发现旧 writer 只允许不带 updatedPermissions 的响应，导致批准后的投递失败、Action unknown，
+验收在 240 秒上限内失败并清理隔离进程。保留失败证据后补齐精确建议 digest 校验，再以全新隔离环境完成上表
+全部真实点击与第四轮发送验收；没有用旧允许/拒绝结果代替记忆证据。本补充只验证开发版，未重新打包或安装日常 App。

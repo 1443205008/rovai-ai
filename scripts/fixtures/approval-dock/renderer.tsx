@@ -35,7 +35,12 @@ let setTarget: (id: string | null) => void
 let setMobile: (value: boolean) => void
 let reset: () => void
 let manyOptions: () => void
-let setOptionsSource: (source: 'core' | 'claude' | 'native') => void
+type OptionsSource = 'core' | 'claude' | 'claude-remember' | 'native'
+let setOptionsSource: (source: OptionsSource) => void
+let longRememberRule: () => void
+let nativeResponseDigests: () => string[]
+const rememberLabel = 'Yes, and don’t ask again for: rovai send *'
+const rememberScope = 'Bash(rovai send *)\nlocalSettings · .claude/settings.local.json'
 let focusSerial = 0
 const presented: number[] = []
 
@@ -45,6 +50,7 @@ function Fixture() {
   const [busy, setBusy] = useState(false)
   const [focus, setFocus] = useState<{ id: string | null; serial: number } | null>(null)
   const dockRef = useRef<HTMLElement>(null)
+  nativeResponseDigests = () => approvals[0]?.options.map(option => option.nativeResponseDigest) ?? []
   refresh = () => setApprovals(previous => previous.map(item => ({ ...item })))
   setTarget = id => setFocus({ id, serial: ++focusSerial })
   setMobile = updateMobile
@@ -55,15 +61,22 @@ function Fixture() {
     setApprovals([{
       ...initial[0], actionSummary: '允许一次', reason: '拒绝',
       adapterKind: source === 'core' ? 'unknown' : 'claude-code-cli',
-      nativeMethod: source === 'core' ? null : source === 'claude' ? 'claude/permission_request' : 'session/request_permission',
+      nativeMethod: source === 'core' ? null : source.startsWith('claude') ? 'claude/permission_request' : 'session/request_permission',
       permissionSemantics: source === 'core' ? 'core_enforced_v1' : 'runtime_managed_v2',
       options: [
-        { optionId: `${prefix}.deny`, kind: 'deny', label: '拒绝', consequence: 'Internal consequence must not be displayed', nativeResponseDigest: 'deny-digest' },
-        { optionId: `${prefix}.allow_once`, kind: 'allow_once', label: '允许一次', consequence: 'Internal consequence must not be displayed', nativeResponseDigest: 'allow-digest' }
+        { optionId: `${prefix}.deny`, kind: 'deny', label: source === 'claude-remember' ? 'No' : '拒绝', consequence: 'Internal consequence must not be displayed', nativeResponseDigest: 'deny-digest' },
+        { optionId: `${prefix}.allow_once`, kind: 'allow_once', label: source === 'claude-remember' ? 'Yes' : '允许一次', consequence: 'Internal consequence must not be displayed', nativeResponseDigest: 'allow-digest' },
+        ...(source === 'claude-remember' ? [{ optionId: 'claude.allow_remember.rule-digest', kind: 'other' as const,
+          label: rememberLabel, consequence: rememberScope, nativeResponseDigest: 'remember-digest' }] : [])
       ]
     }])
     setBusy(false); setFocus(null); requests.length = 0
   }
+  longRememberRule = () => setApprovals(items => items.map(item => ({ ...item, options: item.options.map(option =>
+    option.optionId.startsWith('claude.allow_remember.') ? { ...option,
+      label: `Yes, and don’t ask again for: ${'/a-long-project-directory'.repeat(12)}/*`,
+      consequence: `Read(${ '/a-long-project-directory'.repeat(12)}/*)\nprojectSettings · .claude/settings.json`
+    } : option) })))
   return <MobileLayoutProvider value={mobile}><div className={mobile ? 'app-shell' : undefined} style={mobile ? undefined : { height: '100vh' }}>
     <div className="camp-workspace" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
     <div style={{ display: 'flex', gap: 12, padding: 12 }}>
@@ -94,7 +107,8 @@ Object.assign(window, { approvalTest: {
   complete: () => complete(), refresh: () => refresh(), locate: (id: string) => setTarget(id),
   setMobile: (value: boolean) => setMobile(value), reset: () => reset(),
   manyOptions: () => manyOptions(),
-  setOptionsSource: (source: 'core' | 'claude' | 'native') => setOptionsSource(source),
+  setOptionsSource: (source: OptionsSource) => setOptionsSource(source),
+  longRememberRule: () => longRememberRule(),
   setLanguage: (language: InterfaceLanguage) => changeInterfaceLanguage({
     setInterfaceLanguage: async interfaceLanguage => ({ ...DEFAULT_GENERAL_PREFERENCES, interfaceLanguage })
   } as GeneralPreferencesApi, language),
@@ -115,6 +129,10 @@ Object.assign(window, { approvalTest: {
       nextDisabled: document.querySelector('[aria-label="下一项审批"]')?.getAttribute('aria-disabled'),
       labels: buttons.map(button => button.textContent), disabled: buttons.every(button => button.disabled),
       titles: buttons.map(button => button.title), accessibleLabels: buttons.map(button => button.getAttribute('aria-label')),
+      optionIds: buttons.map(button => button.dataset.optionId),
+      nativeResponseDigests: nativeResponseDigests(),
+      rememberScopes: [...document.querySelectorAll('.approval-remember-scope')].map(node => node.textContent),
+      descriptions: buttons.map(button => document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent ?? null),
       summary: summary?.querySelector('strong')?.textContent,
       reason: reasonNode?.textContent ?? null, expectedReason: reason,
       reasonHeight: reasonNode?.clientHeight, reasonScrollHeight: reasonNode?.scrollHeight,
