@@ -46,6 +46,29 @@ describe('Camp display titles', () => {
     })).toBe('【飞书私聊】Murray · 快速对话')
   })
 
+  it('localizes only the identified first-run default without changing saved titles', async () => {
+    const languageApi = {
+      setInterfaceLanguage: async (interfaceLanguage: 'zh-CN' | 'en') =>
+        ({ ...DEFAULT_GENERAL_PREFERENCES, interfaceLanguage })
+    } as GeneralPreferencesApi
+    const firstRunCamp = { id: 'camp-first', title: '初次集结' }
+    expect(formatCampTitle(firstRunCamp, 'camp-first')).toBe('初次集结')
+    await changeInterfaceLanguage(languageApi, 'en')
+    try {
+      expect(formatCampTitle(firstRunCamp, 'camp-first')).toBe('First Chat')
+      expect(firstRunCamp.title).toBe('初次集结')
+      expect(formatCampTitle(firstRunCamp)).toBe('初次集结')
+      expect(formatCampTitle({ title: '初次集结' }, 'camp-first')).toBe('初次集结')
+      expect(formatCampTitle({ id: 'camp-user', title: '初次集结' }, 'camp-first')).toBe('初次集结')
+      firstRunCamp.title = '我的工作台'
+      expect(formatCampTitle(firstRunCamp, 'camp-first')).toBe('我的工作台')
+      expect(firstRunCamp.title).toBe('我的工作台')
+    } finally {
+      await changeInterfaceLanguage(languageApi, 'zh-CN')
+    }
+    expect(formatCampTitle({ ...firstRunCamp, title: '初次集结' }, 'camp-first')).toBe('初次集结')
+  })
+
   it('translates only the channel decoration in English', async () => {
     const languageApi = {
       setInterfaceLanguage: async (interfaceLanguage: 'zh-CN' | 'en') =>

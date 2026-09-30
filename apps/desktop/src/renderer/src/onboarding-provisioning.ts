@@ -15,8 +15,9 @@ import {
   runtimeModelSelectionAvailable
 } from './MemberRuntimeParameters'
 import { builtinMemberPresetsForLanguage } from './member-presets'
+import { FIRST_RUN_CAMP_TITLE } from './camp-title'
 
-export const FIRST_RUN_CAMP_TITLE = '初次集结'
+export { FIRST_RUN_CAMP_TITLE } from './camp-title'
 
 type InProgressOnboarding = Extract<OnboardingSnapshot, { status: 'in_progress' }>
 type CompletedOnboarding = Extract<OnboardingSnapshot, { status: 'completed' }>
