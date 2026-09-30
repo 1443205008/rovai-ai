@@ -7,7 +7,7 @@ target_version: "v1.72"
 
 # 可观测输出 v3 思考流接通与长回合验收
 
-本次更新 PR #568 的思考来源资格，不改变速度位置、Run Card、上下文圆环、用量气泡或字符权重。主线基线为 `51113b7401ba8f1bc88d15c220f251a726e39879`，合并头为 `78d0e809`。本轮覆盖临时测速，不重写[四项 Usage 与 Context 的字段级结论](execution-metrics-verification-2026-09-29.md)。[首轮 v3 记录](observable-output-v3-verification-2026-09-29.md)中的 offset 必须存在限制已被本次已栅栏的接收身份替代。
+本次更新 PR #568 的思考来源资格，不改变速度位置、Run Card、上下文圆环、用量气泡或字符权重。实现提交为 `8b270ce4`；最终候选 `d2193d5d` 合入当时最新主线 `df7f7abd1a43b9e1002d6974e693f79e2f0b0f0c`，包含 #595 的审批选项文案修复。之前的主线基线 `51113b74` 与合并头 `78d0e809` 保留在首次安装记录中。本轮覆盖临时测速，不重写[四项 Usage 与 Context 的字段级结论](execution-metrics-verification-2026-09-29.md)。[首轮 v3 记录](observable-output-v3-verification-2026-09-29.md)中的 offset 必须存在限制已被本次已栅栏的接收身份替代。
 
 ## 修改与资格
 
@@ -25,7 +25,7 @@ target_version: "v1.72"
 
 | Runtime / 本次版本 | Provider / 模型证据 | 本次正文与思考形态 | 资格与验证范围 |
 | --- | --- | --- | --- |
-| Codex CLI 0.159.2 | sub2api；冻结显式 gpt-6.1-sol / high，实际 wire 模型未独立留证 | 约 178s 成功；2929 正文增量、378 summary delta；Core 思考 45475 单位 | summary→Core 数值通过；实际 App 验收见下节 |
+| Codex CLI 0.159.2 | sub2api；冻结显式 gpt-6.1-sol / high，实际 wire 模型未独立留证 | 独立 Core 约 178s 成功，378 summary delta；实际 App 约 194s 成功，82 summary delta | summary→Core→实际 App 数值与思考范围提示通过；见下节 |
 | Claude Code 2.1.280 | 当前已授权配置；模型/Provider 原始字段未独立留证 | 约 367s 成功；4847 text delta，没有 thinking_delta；签名不计 | 本次思考 raw_absent；已有 parser 准入，不能将 2.1.274 的正样本冒充本次 Core 思考通过 |
 | GitHub Copilot CLI | 用户要求忽略 | 本轮未运行 | 排除本轮范围 |
 | OpenCode 1.18.32 | 当前已配置模型；冻结默认选择，原始模型未独立留证 | 长回合成功；2902 正文 chunk，没有 thought chunk | 本次思考 raw_absent；ACP 准入可用但未得到思考样本 |
@@ -58,7 +58,14 @@ target_version: "v1.72"
 
 ## 打包 App 动态验收
 
-此节在候选 App 实际验收后回填；当前不将生产显示状态机探针计为 Renderer 通过。可重复命令和隔离规则见[测试与 Smoke](../../development/testing.md#可观测输出真实-runtime-验收)。
+最终候选 `d2193d5d` 使用 `pnpm package:mac:daily` 构建，arm64 App/Core/Host/CLI、Bundle ID 与 ad-hoc 签名门通过。已签名 Core SHA-256 为 `73c21d50a85158f16459815a849fd868e9b6b254b51e113ef3b1fdd4dbc46bd2`。各次 App 使用独立临时 userData、Skill Library 和 MCP，日常宿主持续运行。字段级结果见[实际 Renderer 证据](fixtures/round4-observable-output-renderer-acceptance.json)，完整数字轨迹、脱敏 Native 形态和截图在本地附件 `observable-output-20260930/`；可重复入口见[测试与 Smoke](../../development/testing.md#可观测输出真实-runtime-验收)。
+
+- 固定 ACP 流混合 3 个原生 offset 帧和 4 个无 messageId/offset 的实时帧，并发送不合格完整 snapshot。观测快照为正文 15200、思考 3780 单位；这是运行中的部分累计，不是终态总量。途中打开先建立基线，切历史 Run 不改变当前队员顶部速度，工具停顿后隐藏、恢复重新预热，运行耗时保持。私有标记在 Evidence 为 0 行，Renderer 未出现，隔离 userData 常规文件扫描为空。
+- Run 先结束后，用独立 fixture 数据库投递晚到 Usage，完成卡片刷新为 `2k`；气泡为四项 Usage 加执行耗时，卡片上没有独立耗时文字。合成数据不作为真实 Runtime Usage 支持证明。
+- 真实 Codex 0.159.2 的图依赖推理长任务约 194s 成功：原始 2057 个正文增量、82 个 summary delta（458 个摘要标量）；Core 运行中最高读到正文 294710、思考 9700 单位。原始 summary 帧有 itemId/turnId/summaryIndex，没有文本 offset。App 实际产生 46 次数字变化，任意 30s 窗口最多 20 次，最短观测间隔约 994ms；源码节拍仍是 1Hz。17 个 DOM 采样带思考摘要提示，既见仅摘要范围，也见正文与摘要范围。当前队员选择保持、单行布局和运行耗时通过；终态立即无速度。
+- 另一次约 171s 成功回合原始没有 summary delta，App 正文速度正常（63 次变化）。严格思考正样本断言没有通过，按 `raw_absent` 留证，不解释为模型没有思考。还有一次已收到摘要的尝试因验收脚本初始选择竞态停在总览而无速度，未计作 Renderer 通过；脚本已改为幂等打开、选择可见队员、等待非总览头，并逐帧记录与验证选中对象。
+
+本轮自动化包括 workspace 默认 Rust 447 项通过、1 项忽略；最终改动相关的 Core Unicode/归属/去重/隐私既有 owner 定向通过；Renderer 5 项固定回放、TypeScript、文档 10 项测试与通用文档门通过。实际 Renderer 正样本仅扩展 Codex 结论，其余 Runtime 的独立 Core 探针仍不冒充逐 Runtime App 验收。没有新增数据库表或思考文本保存路径。
 
 ## 未决事项
 

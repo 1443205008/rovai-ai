@@ -1495,9 +1495,8 @@ async function verifyRealCodexObservableOutput(app, capturesRoot) {
   const setup = await createConfiguredCampAndSend(request, {
     commandId: crypto.randomUUID(), name: '可观测输出真实 Codex 验收', workspace,
     memberAgentIds: [agentId], defaultLeadAgentId: agentId,
-    body: process.env.ROVAI_OBSERVABLE_PROMPT_FILE
-      ? await readFile(process.env.ROVAI_OBSERVABLE_PROMPT_FILE, 'utf8')
-      : 'This is an isolated acceptance. Analyze commit ordering with six concurrent clients, two replicas, lost acknowledgements, retries, cancellations, recovery and Unicode. Emit three substantial public commentary sections, about 800 English words each, outside tool arguments. Between sections execute sleep 6 once. Do not delegate or modify files. Finally use rovai send --public-only for a brief completion per Session Charter. Finish normally.',
+    body: await readFile(process.env.ROVAI_OBSERVABLE_PROMPT_FILE
+      ?? join(root, 'scripts', 'fixtures', 'observable-output-reasoning-task.txt'), 'utf8'),
     purpose: 'Long Codex observable output through packaged Renderer'
   })
   assert(setup.status === 'accepted', 'Real Codex acceptance was not accepted')
@@ -1505,11 +1504,23 @@ async function verifyRealCodexObservableOutput(app, capturesRoot) {
   const runId = await waitForControlledMessageRun(request, liveCampId, setup.payload.campMessageId)
   await openCamp(app.cdp, liveCampId)
   await selectCampConversationView(app.cdp, 'conversation')
-  await evaluate(app.cdp, `document.querySelector('.camp-detail-entry[data-detail="execution"]')?.click()`)
+  await evaluate(app.cdp, `(() => {
+    const entry = document.querySelector('.camp-detail-entry[data-detail="execution"]')
+    if (entry?.getAttribute('aria-expanded') !== 'true') entry?.click()
+  })()`)
   await waitForExpression(app.cdp,
-    `Boolean(document.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)}))`, 15_000)
-  await evaluate(app.cdp,
-    `document.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})?.click()`)
+    `Boolean([...document.querySelectorAll(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})]
+      .find(chip => chip.getClientRects().length))`, 15_000)
+  await evaluate(app.cdp, `(() => {
+    const chip = [...document.querySelectorAll(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})]
+      .find(candidate => candidate.getClientRects().length)
+    if (chip?.getAttribute('aria-pressed') !== 'true') chip?.click()
+  })()`)
+  await waitForExpression(app.cdp, `Boolean(
+    [...document.querySelectorAll(${JSON.stringify(`.run-pulse-chip.is-selected[data-agent-id="${agentId}"]`)})]
+      .some(chip => chip.getClientRects().length)
+    && [...document.querySelectorAll('.execution-drawer-header:not(.is-overview)')]
+      .some(header => header.getClientRects().length))`, 15_000)
   await evaluate(app.cdp, `(() => {
     const probe = { changes: [], last: null }
     const record = () => {
@@ -1535,6 +1546,9 @@ async function verifyRealCodexObservableOutput(app, capturesRoot) {
       const stage = document.querySelector(${JSON.stringify(`.execution-process-stage[data-agent-run-id="${runId}"]`)})
       const context = document.querySelector('.execution-drawer-header .execution-context-trigger')
       return { speed: speed?.textContent?.trim() ?? null, scope: speed?.getAttribute('aria-label'),
+        selectedAgentId: [...document.querySelectorAll('.run-pulse-chip.is-selected')]
+          .find(chip => chip.getClientRects().length)?.dataset.agentId ?? null,
+        overview: document.querySelector('.execution-drawer-header')?.classList.contains('is-overview') ?? null,
         duration: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
         speedInCard: Boolean(stage?.querySelector('.execution-current-speed')),
         sameLine: Boolean(speed && context && Math.abs(speed.getBoundingClientRect().top - context.getBoundingClientRect().top) < 12) }
@@ -1564,6 +1578,8 @@ async function verifyRealCodexObservableOutput(app, capturesRoot) {
     && samples.some((sample) => sample.value?.reasoningSource === 'stream_summary')
     && numericChanges.length > 10 && captured
     && numericChanges.every((change, index) => index === 0 || change.at - numericChanges[index - 1].at >= 850)
+    && samples.filter((sample) => sample.status === 'running').every((sample) =>
+      sample.ui.selectedAgentId === agentId && sample.ui.overview === false)
     && samples.filter((sample) => sample.ui.speed).every((sample) =>
       sample.ui.duration && sample.ui.sameLine && !sample.ui.speedInCard)
     && samples.at(-1).ui.speed === null,

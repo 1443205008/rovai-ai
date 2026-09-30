@@ -780,4 +780,4 @@ ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_STREAM_ONLY=1 node scripts/accept-runtime-
 ROVAI_RUNTIME_ACTIVITY_ACCEPT_OBSERVABLE_REAL=1 node scripts/accept-runtime-activity-ui.mjs <packaged-app>
 ```
 
-第一项用合成 ACP 流证明去重、正文与思考合并、途中打开、切历史 Run、工具停顿、恢复、终态、迟到 Usage 和私有标记不扩散；第二项使用真实 Codex 长回合证明当前模型的 summary 数值和实际 DOM 更新。两者均隔离 App/Core 数据，CDP 请求有 30 秒超时；不结束日常 App。字符权重与 500ms／1Hz／2.5s／1s／5s 参数由既有最低层 owner 验证，不为真实网络调用新增 Rust 单元测试。
+第一项用合成 ACP 流证明去重、正文与思考合并、途中打开、切历史 Run、工具停顿、恢复、终态、迟到 Usage 和私有标记不扩散；第二项默认使用仓库的 `scripts/fixtures/observable-output-reasoning-task.txt` 图依赖推理长任务，也可用 `ROVAI_OBSERVABLE_PROMPT_FILE` 覆盖，验证当前模型的 summary 数值和实际 DOM 更新。后者幂等选择可见队员并逐帧确认不是总览；真实 Provider 未发摘要时不能把严格正样本断言失败归为漏计，需独立 Native 形态证据区分。两者均隔离 App/Core 数据，CDP 请求有 30 秒超时；不结束日常 App。字符权重与 500ms／1Hz／2.5s／1s／5s 参数由既有最低层 owner 验证，不为真实网络调用新增 Rust 单元测试。
