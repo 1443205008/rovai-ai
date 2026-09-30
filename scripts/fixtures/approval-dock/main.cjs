@@ -169,7 +169,33 @@ app.whenReady().then(async () => {
     assert.ok(await run("(() => { const button=document.querySelector('.runtime-option:last-child'); const r=button.getBoundingClientRect(); return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)===button })()"), 'The last native option remains reachable by user scrolling')
     state = await click('.runtime-option:last-child')
     assert.deepEqual(state.requests[1], { approvalId: 'approval-2', optionId: 'extended-11', version: 2 })
-    console.log(JSON.stringify({ ok: true, cases: ['native labels/order/optionId', 'queue keyboard boundaries', 'summary focus', 'refresh focus', 'exact reason dedup', 'resize without rerender', 'approval identity', 'day/night', '1040×700', '420px conversation', 'complete command', '375/390/430px mobile', 'landscape/reduced viewport', '44px targets', 'scrolling long option lists'] }))
+
+    // Change language on an already mounted Dock, preserving the exact selected option ID.
+    for (const source of ['core', 'claude', 'native']) {
+      await run(`window.approvalTest.setOptionsSource(${JSON.stringify(source)})`)
+      await run("window.approvalTest.setLanguage('zh-CN')")
+      state = await snapshot()
+      assert.deepEqual(state.labels, ['拒绝', '允许一次'])
+      await run("window.approvalTest.setLanguage('en')")
+      state = await snapshot()
+      const labels = source === 'native' ? ['拒绝', '允许一次'] : ['Reject', 'Allow once']
+      assert.deepEqual(state.labels, labels, 'Only Rovai-owned option labels enter the language catalog')
+      assert.deepEqual(state.titles, labels)
+      assert.deepEqual(state.accessibleLabels, labels)
+      assert.equal(state.summary, '允许一次', 'Request summaries remain verbatim')
+      assert.equal(state.reason, '拒绝', 'Request reasons remain verbatim')
+      assert.equal(state.codeText, state.expectedCode)
+      assert.equal(state.consequenceVisible, false)
+      assert.equal(state.pageOverflow, false)
+      await capture(`approval-language-${source}`)
+      await run("window.approvalTest.setLanguage('zh-CN')")
+      assert.deepEqual((await snapshot()).labels, ['拒绝', '允许一次'])
+      await run("window.approvalTest.setLanguage('en')")
+      state = await click(source === 'core' ? '.runtime-option:first-child' : '.runtime-option:last-child')
+      assert.deepEqual(state.requests, [{ approvalId: 'approval-1', optionId: source === 'core' ? 'core.deny' : 'claude.allow_once', version: 1 }])
+      assert.ok(state.disabled)
+    }
+    console.log(JSON.stringify({ ok: true, cases: ['native labels/order/optionId', 'queue keyboard boundaries', 'summary focus', 'refresh focus', 'exact reason dedup', 'resize without rerender', 'approval identity', 'day/night', '1040×700', '420px conversation', 'complete command', '375/390/430px mobile', 'landscape/reduced viewport', '44px targets', 'scrolling long option lists', 'live language changes', 'Rovai-owned approval labels', 'native text preservation', 'translated decision identity'] }))
     window.destroy(); app.quit()
   } catch (error) {
     console.error(await snapshot())

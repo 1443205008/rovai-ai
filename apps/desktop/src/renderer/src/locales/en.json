@@ -1515,6 +1515,7 @@
   "· 基准": "· Baseline",
   "目标记忆已变化，不能再接受或编辑；你仍可以明确拒绝并结束这条审核。": "Target memory has changed and can no longer be accepted or edited; you may still explicitly reject and end this review.",
   "拒绝": "Reject",
+  "允许一次": "Allow once",
   "编辑后接受": "Edit and accept",
   "接受": "Accept",
   "处理记录": "Process record",
