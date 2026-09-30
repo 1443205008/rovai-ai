@@ -135,6 +135,7 @@ use rovai_core::{
         UpsertDingTalkMemberBotCommand, UpsertFeishuAccountCommand, UpsertFeishuMemberBotCommand,
         VerifyFeishuOwnerCommand,
     },
+    claude_permission::{self, CLAUDE_PERMISSION_NATIVE_METHOD},
     collaboration::{
         AddCampMemberCommand, CampActivationState, CampCollaborationMode, ChangeDefaultLeadCommand,
         CollaborationService, CreateCampCommand, CreateTaskCommand, DeleteCampCommand,
@@ -2397,6 +2398,12 @@ enum AgentRunRuntime {
     Codex(Arc<CodexRuntime>),
     Pi(Arc<PiRuntime>),
     Acp(Arc<AcpRuntime>),
+    Claude {
+        protocol: Arc<crate::claude_control::ClaudeControl>,
+        adapter: ClaudeCodeCliRuntimeAdapter,
+        run_id: String,
+        epoch: i64,
+    },
 }
 
 fn data_directory_check(data_dir: &Path, observed_at: &str) -> DiagnosticCheck {
@@ -2697,6 +2704,7 @@ impl AgentRunRuntime {
             Self::Codex(_) => rovai_core::agent_profile::AdapterKind::CodexCli,
             Self::Pi(_) => rovai_core::agent_profile::AdapterKind::Pi,
             Self::Acp(runtime) => runtime.adapter_kind(),
+            Self::Claude { .. } => AdapterKind::ClaudeCodeCli,
         }
     }
 
@@ -2709,6 +2717,7 @@ impl AgentRunRuntime {
             Self::Codex(runtime) => runtime.respond(id, result).await,
             Self::Pi(runtime) => runtime.respond(id, result).await,
             Self::Acp(runtime) => runtime.respond(id, result).await,
+            Self::Claude { protocol, .. } => protocol.respond(id, result).await,
         }
     }
 
@@ -2717,6 +2726,15 @@ impl AgentRunRuntime {
             Self::Codex(runtime) => runtime.interrupt().await,
             Self::Pi(runtime) => runtime.cancel().await,
             Self::Acp(runtime) => runtime.cancel().await,
+            Self::Claude {
+                adapter,
+                run_id,
+                epoch,
+                ..
+            } => {
+                adapter.interrupt(run_id, *epoch).await;
+                Ok(())
+            }
         }
     }
 
@@ -2725,6 +2743,7 @@ impl AgentRunRuntime {
             Self::Codex(runtime) => runtime.detach_and_flush_ingress().await,
             Self::Pi(runtime) => runtime.detach_and_flush_ingress().await,
             Self::Acp(runtime) => runtime.detach_and_flush_ingress().await,
+            Self::Claude { .. } => true,
         }
     }
 }
@@ -5104,6 +5123,17 @@ impl Core {
         execution_epoch: i64,
     ) -> Option<AgentRunRuntime> {
         if let Some(runtime) = self
+            .claude_code_cli
+            .get_agent_run(agent_run_id, execution_epoch)
+        {
+            return Some(AgentRunRuntime::Claude {
+                protocol: runtime,
+                adapter: self.claude_code_cli.clone(),
+                run_id: agent_run_id.to_string(),
+                epoch: execution_epoch,
+            });
+        }
+        if let Some(runtime) = self
             .codex_cli
             .get_agent_run(agent_run_id, execution_epoch)
             .await
@@ -5624,6 +5654,138 @@ impl Core {
                 BuiltinToolIpcResponse::Envelope { envelope }
             }
         }
+    }
+
+    async fn prepare_claude_permission_action(
+        &self,
+        source: &AgentRunExecution,
+        payload: &Value,
+    ) -> Result<()> {
+        let execution = {
+            let database = self.database.lock().await;
+            ExecutionRuntimeService::default().load_agent_run_execution(
+                &database,
+                &source.agent_run_id,
+                source.execution_epoch,
+            )?
+        }
+        .context("Claude permission AgentRun is unavailable or fenced")?;
+        if execution.runtime.adapter_kind != AdapterKind::ClaudeCodeCli
+            || (execution.permission_semantics == PermissionSemantics::CoreEnforcedV1
+                && execution.workspace.access == "read_only")
+        {
+            anyhow::bail!("Claude permission is not allowed for this AgentRun");
+        }
+        let session_id = execution
+            .native_session_id
+            .as_deref()
+            .context("Claude permission Native Session is unavailable")?;
+        if payload.get("nativeSessionId").and_then(Value::as_str) != Some(session_id) {
+            anyhow::bail!("Claude control channel is outside the active Native Session");
+        }
+        let action = claude_permission::intercepted_action_request(
+            &execution.agent_run_id,
+            execution.execution_epoch,
+            session_id,
+            Path::new(&execution.workspace.execution_root),
+            &payload["controlRequest"],
+        )?;
+        let reason = action.reason.clone();
+        let preparation = {
+            let mut database = self.database.lock().await;
+            ActionSafetyService::default().prepare_action(
+                &mut database,
+                &CommandEnvelope {
+                    command_id: format!("runtime-action-prepare:{}", action.action_id),
+                    actor: ActorRef::Agent {
+                        agent_id: execution.agent_id.clone(),
+                        source_agent_run_id: execution.agent_run_id.clone(),
+                    },
+                    camp_id: Some(execution.camp_id.clone()),
+                    expected_versions: Vec::new(),
+                    execution_epoch: Some(execution.execution_epoch),
+                    payload: PrepareActionCommand {
+                        action_id: action.action_id,
+                        input: action.input,
+                        control_mode: ActionControlMode::Intercepted,
+                        native_action_id: Some(action.native_action_id),
+                        runtime_request: Some(action.runtime_request),
+                        reason: reason.clone(),
+                        execute_before: None,
+                        requested_for_user_id: CURRENT_USER_ID.to_string(),
+                    },
+                },
+            )
+        }?;
+        if preparation.result.status == CommandResultStatus::Rejected {
+            anyhow::bail!(
+                "Claude permission Action admission rejected: {}",
+                preparation.result.code
+            );
+        }
+        emit(
+            &self.output,
+            "action.prepared",
+            json!({
+                "agentRunId": execution.agent_run_id,
+                "executionEpoch": execution.execution_epoch,
+                "nativeMethod": CLAUDE_PERMISSION_NATIVE_METHOD,
+                "reason": reason,
+                "result": preparation.result,
+                "replayed": preparation.replayed,
+            }),
+        );
+        Ok(())
+    }
+
+    async fn cancel_claude_permission_action(
+        &self,
+        execution: &AgentRunExecution,
+        payload: &Value,
+    ) -> Result<()> {
+        let request_id = payload
+            .get("requestId")
+            .filter(|id| id.is_string())
+            .context("Claude cancellation has no native request ID")?;
+        let session_id = payload
+            .get("nativeSessionId")
+            .and_then(Value::as_str)
+            .context("Claude cancellation has no native session ID")?;
+        let confirmation = {
+            let mut database = self.database.lock().await;
+            ActionSafetyService::default().confirm_runtime_request_resolved(
+                &mut database,
+                &CommandEnvelope {
+                    command_id: format!(
+                        "claude-request-cancelled:{}:{}:{}",
+                        execution.agent_run_id,
+                        execution.execution_epoch,
+                        canonical_json_digest(request_id)?
+                    ),
+                    actor: ActorRef::System {
+                        component_id: "runtime-adapter:claude-code-cli".into(),
+                    },
+                    camp_id: Some(execution.camp_id.clone()),
+                    expected_versions: Vec::new(),
+                    execution_epoch: None,
+                    payload: ConfirmRuntimeRequestResolvedCommand {
+                        agent_run_id: execution.agent_run_id.clone(),
+                        execution_epoch: execution.execution_epoch,
+                        native_thread_id: session_id.to_string(),
+                        native_request_id: request_id.clone(),
+                    },
+                },
+            )?
+        };
+        if confirmation.result.status != CommandResultStatus::Rejected {
+            emit(
+                &self.output,
+                "runtime_request.resolved",
+                json!({"agentRunId":execution.agent_run_id,
+                "executionEpoch":execution.execution_epoch,"result":confirmation.result,"replayed":confirmation.replayed}),
+            );
+        }
+        Ok(())
     }
 
     async fn handle_compaction_hook_ipc(
@@ -12782,6 +12944,12 @@ impl Core {
 
             let response = if let Some(response) = frozen_runtime_response {
                 Ok(response)
+            } else if candidate.native_method == CLAUDE_PERMISSION_NATIVE_METHOD {
+                Ok(if approved {
+                    json!({"behavior": "allow", "updatedInput": candidate.response_context["request"]["input"]})
+                } else {
+                    claude_permission::deny_decision("Rovai 用户拒绝了这次 Claude Code 操作")
+                })
             } else if candidate.native_method == "session/request_permission" {
                 acp::legacy_approval_result(&candidate.response_context, approved)
             } else {
@@ -14965,18 +15133,8 @@ impl Core {
                             runtime_event_channel_open = false;
                             continue;
                         };
-                        if let Err(error) = process_runtime_event(
-                            self,
-                            output,
-                            RuntimeEventScope {
-                                adapter_kind: AdapterKind::ClaudeCodeCli,
-                                camp_id: &execution.camp_id,
-                                agent_run_id: &execution.agent_run_id,
-                                execution_epoch: execution.execution_epoch,
-                                managed_output_root: Some(builtin_tools.run_tmp()),
-                            },
-                            runtime_event.event_type,
-                            &runtime_event.payload,
+                        if let Err(error) = self.process_claude_runtime_event(
+                            execution, output, builtin_tools.run_tmp(), &runtime_event,
                         ).await {
                             eprintln!(
                                 "failed to persist Claude Code Runtime Evidence for AgentRun {}: {error:#}",
@@ -14988,21 +15146,9 @@ impl Core {
                 }
             };
             while let Ok(runtime_event) = runtime_event_receiver.try_recv() {
-                if let Err(error) = process_runtime_event(
-                    self,
-                    output,
-                    RuntimeEventScope {
-                        adapter_kind: AdapterKind::ClaudeCodeCli,
-                        camp_id: &execution.camp_id,
-                        agent_run_id: &execution.agent_run_id,
-                        execution_epoch: execution.execution_epoch,
-                        managed_output_root: Some(builtin_tools.run_tmp()),
-                    },
-                    runtime_event.event_type,
-                    &runtime_event.payload,
-                )
-                .await
-                {
+                if let Err(error) = self.process_claude_runtime_event(
+                    execution, output, builtin_tools.run_tmp(), &runtime_event,
+                ).await {
                     eprintln!(
                         "failed to persist queued Claude Code Runtime Evidence for AgentRun {}: {error:#}",
                         execution.agent_run_id
@@ -15160,6 +15306,148 @@ impl Core {
             output,
         )
         .await
+    }
+
+    async fn process_claude_runtime_event(
+        &self,
+        execution: &AgentRunExecution,
+        output: &mpsc::UnboundedSender<String>,
+        managed_output_root: &Path,
+        event: &claude::ClaudeCodeRuntimeEvent,
+    ) -> Result<()> {
+        if event.event_type == "claude.permission_request" {
+            if let Err(error) = self
+                .prepare_claude_permission_action(execution, &event.payload)
+                .await
+            {
+                if let Some(runtime) = self
+                    .claude_code_cli
+                    .get_agent_run(&execution.agent_run_id, execution.execution_epoch)
+                {
+                    let _ = runtime
+                        .respond(
+                            event.payload["controlRequest"]["request_id"].clone(),
+                            claude_permission::deny_decision("Rovai 审批请求不可用，操作已拒绝"),
+                        )
+                        .await;
+                }
+                return Err(error);
+            }
+            return Ok(());
+        }
+        if event.event_type == "claude.permission_cancelled" {
+            return self
+                .cancel_claude_permission_action(execution, &event.payload)
+                .await;
+        }
+        if event.event_type == "runtime.action" {
+            self.record_claude_action_completion(execution, output, &event.payload)
+                .await?;
+        }
+        process_runtime_event(
+            self,
+            output,
+            RuntimeEventScope {
+                adapter_kind: AdapterKind::ClaudeCodeCli,
+                camp_id: &execution.camp_id,
+                agent_run_id: &execution.agent_run_id,
+                execution_epoch: execution.execution_epoch,
+                managed_output_root: Some(managed_output_root),
+            },
+            event.event_type,
+            &event.payload,
+        )
+        .await
+    }
+
+    async fn record_claude_action_completion(
+        &self,
+        execution: &AgentRunExecution,
+        output: &mpsc::UnboundedSender<String>,
+        payload: &Value,
+    ) -> Result<()> {
+        let Some(status @ ("completed" | "failed")) = payload.get("status").and_then(Value::as_str)
+        else {
+            return Ok(());
+        };
+        let Some(native_item_id) = payload.get("toolCallId").and_then(Value::as_str) else {
+            return Ok(());
+        };
+        let attempts = {
+            let database = self.database.lock().await;
+            ActionSafetyService::default().load_intercepted_action_attempts(
+                &database,
+                &execution.agent_run_id,
+                execution.execution_epoch,
+                native_item_id,
+            )?
+        };
+        for attempt in attempts {
+            let succeeded = status == "completed";
+            let recorded = {
+                let mut database = self.database.lock().await;
+                ActionSafetyService::default().record_result(
+                    &mut database,
+                    &CommandEnvelope {
+                        command_id: format!(
+                            "runtime-action-result:{}:{}:{}",
+                            attempt.action_id, attempt.attempt_id, attempt.action_execution_epoch,
+                        ),
+                        actor: ActorRef::System {
+                            component_id: "runtime-adapter:claude-code-cli".into(),
+                        },
+                        camp_id: Some(attempt.camp_id),
+                        expected_versions: Vec::new(),
+                        execution_epoch: None,
+                        payload: RecordActionResultCommand {
+                            action_id: attempt.action_id.clone(),
+                            attempt_id: attempt.attempt_id,
+                            action_execution_epoch: attempt.action_execution_epoch,
+                            outcome: if succeeded {
+                                ActionResultOutcome::Succeeded
+                            } else {
+                                ActionResultOutcome::Failed
+                            },
+                            result_code: if succeeded {
+                                "claude_tool_completed"
+                            } else {
+                                "claude_tool_failed"
+                            }
+                            .into(),
+                            result_summary: if succeeded {
+                                "Claude Code tool completed"
+                            } else {
+                                "Claude Code tool failed"
+                            }
+                            .into(),
+                            result_data: json!({"nativeItemId": native_item_id}),
+                            effect_disposition: if succeeded { "complete" } else { "unknown" }
+                                .into(),
+                        },
+                    },
+                )
+            }?;
+            if recorded.result.status == CommandResultStatus::Rejected {
+                anyhow::bail!(
+                    "Claude Action result was rejected: {}",
+                    recorded.result.code
+                );
+            }
+            emit(
+                output,
+                "action.result_recorded",
+                json!({
+                    "agentRunId": execution.agent_run_id,
+                    "executionEpoch": execution.execution_epoch,
+                    "actionId": attempt.action_id,
+                    "actionKind": attempt.action_kind,
+                    "nativeItemId": native_item_id,
+                    "result": recorded.result,
+                    "replayed": recorded.replayed,
+                }),
+            );
+        }
+        Ok(())
     }
 
     async fn complete_one_shot_agent_run(

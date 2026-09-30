@@ -323,6 +323,11 @@ last_updated: 2026-09-25
   模式若仍发出合格请求，Core 只为 ACP 兼容直接选择原生 allow；交互模式仍保留 fenced Approval 与 exact native
   option。两种响应都不授予、撤销或消费文件读写资格；stale Session、cancel/detach、非法 request 与协议关联仍
   fail closed。
+- Claude Code 的 `--print` 权限询问经原生双向 stream-json 控制通道接入同一 Action/Approval。
+  request_id 用于审批回复，tool_use_id 用于实际结果；Run/epoch/Session 由进程绑定。不完整或失效
+  请求拒绝。允许一次只回填原 input，不保存原生规则；取消与断线撤销待处理 ID，工具执行成功只能
+  由对应结果确认。字段与生命周期由 [Runtime Launch v45](../contracts/runtime-launch-and-verification-v45.md) 拥有。
+
 - TRAE 的 light check、显式 availability verification、cold resume、HistoryRestore 和 replay quarantine 使用独立的用户授权、Session ID 校验和有界恢复路径；恢复响应 ID 不一致时 fail closed。
 - Product execution qualification 是 `AdapterKind × HostPlatformKey` 的封闭准入。存在安装或能启动进程不等于平台合格；不合格组合保留配置但阻止执行，并提供结构化 reason/evidence。
 - Pi 不得继承 ACP、Kimi、Grok 或通用平台 evidence。macOS arm64、macOS x64、Windows x64 当前分别绑定各自 Pi immutable qualification artifact 并为 Qualified；任何未来平台或不兼容版本在自己的 artifact 建立前仍必须 NotQualified。本机 debug override 只用于隔离 smoke，release 不得读取或应用。

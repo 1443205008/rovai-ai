@@ -371,6 +371,20 @@ status 和 stdin 写入都不是 accepted evidence。Adapter 只接受带预期 
 模型事件和 success result 之前失败时，结果仍按未知投递处理。单行 stream event 保持 2 MiB 安全上限，
 不会把完整流、Hook 正文或模型增量复制进 Runtime Input Delivery Evidence。
 
+### Claude Code 权限审批回调
+
+Claude Code 的打印进程同时读写 stream-json。审批使用 stdout 的原生 can_use_tool 控制请求和
+stdin 的 control_response，进程所有权绑定 Run/epoch/Native Session，初始化成功后才发送任务。
+request_id 用于回复，tool_use_id 关联实际工具结果。Core 转换为既有 Action/Approval；Dock 的
+允许一次回填原 input，拒绝回填 deny，响应 write/flush 完成才 ACK Runtime Delivery。
+
+控制通道仅保存待处理请求，完成、取消或断线后清理。普通工具展示状态仍由输出解析器拥有。
+审批不经过 Built-in 业务 IPC、不按工具输入反查身份，也没有累计工具调用额度；用户原有 Hook
+由 Claude 原生配置处理。业务 `rovai send` 继续由现有 Run lease 认证。
+
+允许后的同一 tool_use_id 的真实 tool_result 结算 Action；会话结束、stdin 关闭、取消与失败边界由
+[Runtime Launch and Verification v45](../contracts/runtime-launch-and-verification-v45.md) 拥有。
+
 ### ACP Prompt 输入确认
 
 OpenCode、Copilot、Kiro、Qoder、CodeBuddy、Qwen 与 TRAE 共用 ACP Host 输入确认。Core 创建

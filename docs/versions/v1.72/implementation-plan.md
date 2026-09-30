@@ -392,3 +392,32 @@ macOS 清单序列化启用 YAML 1.1 字符串兼容，保留旧客户端所需�
 | 已发布清单的修补预演 | 对 v0.4.1 清单重新序列化，仅增加日期引号；解析后的字段值、文件地址与安装包哈希一致，配套 checksum 仅更新清单一行。该预演不表示已替换远端 Release 资产 |
 
 此项未重新打包、签名或安装 App；本地生成物与现有公开发布资产分别记录。
+
+## 2026-09-30 Claude Code 原生双向审批
+
+PR #592 的审批通道替换为 stream-json 输入/输出和 stdio 原生控制请求。删除审批 command Hook、专用 IPC
+与完整输入匹配缓存；按 request_id 回填、按 tool_use_id 结算。Action/Approval 与历史数据复用既有表，
+用户配置冻结，Fast settings 和 `rovai send` 业务 lease 保留。stdin 在协议初始化后投递任务，在末轮
+结果与 Session idle、无未决请求/任务后关闭；异常有界清理。合同与理由见
+[Runtime Launch v45](../../contracts/runtime-launch-and-verification-v45.md)和[V1.72-D06](decisions.md#v1-72-d06)。
+
+原 2026-09-29 的 CLI 2.1.274 Hook Smoke 和组件夹具已不构成本实现验收证据。当前原生协议的确定性、
+真实 Core 与实际 Desktop 点击验收如下；完整回执见[Runtime 兼容性清单](../../runtime-compatibility.md#claude-code-原生双向审批2026-09-30)。
+
+| 验证 | 结果与边界 |
+| --- | --- |
+| 控制协议确定性矩阵 | `cargo test -p rovai-core --features extended-tests --lib claude` 44 项通过、1 项人工目录 Smoke 忽略。初始化失败、模式漂移、缺少可靠工具 ID 拒绝；256 次普通工具后仍审批；相同命令的并发请求按独立 ID 回填；取消/断线撤回已排队允许；长审批/后台任务暂停计时，两个官方任务终态形态解除跟踪；多结果与 idle 联合决定 stdin 关闭 |
+| 既有 Action 事务 | 慢速 native-resolution owner 1 项通过；在原 SQLite fixture 内覆盖已交付响应的 ACK，以及 Codex/Claude 未决 Approval 取消、实际 Runtime 来源署名 |
+| 真实 Core 审批 | CLI `2.1.280`，冻结 `acceptEdits`；允许一次后真实发送并根据工具结果结算，拒绝后无消息/回执，待审批取消为 `not_executed` |
+| 完整 Claude 回归 | `ROVAI_CLAUDE_APPROVAL_SMOKE=1 node scripts/smoke-claude-runtime.mjs` 通过；新 Session 与同 Session resume、Runtime model、文本、工具输出、真实 Edit mutation、取消进程树及允许/拒绝/待审批取消均覆盖。多结果末轮输出与用量保留由上述 reader 确定性测试拥有 |
+| 实际 Desktop 点击 | 真实 `pnpm dev`，隔离 userData/Skill Library/MCP；实际点击 Dock 的允许与拒绝，直接核对 Core Native Session binding 事件相同、两次 Shell canonical argv 完全一致、Action digest 相同但 Action/request digest 独立，分别真实发送和无新增消息/回执。保存四张截图与结果 JSON；这次未打包或安装日常 App |
+| TypeScript / JavaScript 回归 | `pnpm typecheck`、`pnpm test` 通过；Vitest 222 文件/2376 测试，Node 业务协议 328 通过/2 跳过，文档治理 10 项通过 |
+| 默认 Rust 门禁 | `pnpm test:rust:pr` 本机 394 通过、1 失败、1 忽略；失败仍是未改动的 `database_admission::tests::read_probe_tolerates_only_a_new_empty_wal_not_authority_changes` 对已有 `com.apple.provenance` 的假设，后续 workspace target 被该失败阻断。未删除、禁用或修改该测试 |
+| Rust 后续目标补充检查 | 显式 `--skip database_admission::tests::read_probe_tolerates_only_a_new_empty_wal_not_authority_changes` 后，workspace 共 438 通过、1 忽略、1 过滤；Core bin、CLI、Host、Web 和 doc-tests 均完成。最终 compatibility source digest 的独立定向测试通过；这不改写默认门禁失败结论 |
+| 文档治理 | `pnpm docs:test`、`pnpm docs:check` 和真实 PR base `cb9cd309593cc9403cddd25ce9cf0a114863063a` 的 `docs:check:ci` 通过 |
+
+推送 `7f14abae` 后同步主线 `a39cf861`（#593 执行文案与 #594 Agent 指令英文化）。唯一冲突位于当前版本
+概览，保留两项交付与各自生效边界；原生控制生产路径没有冲突。合并后 `pnpm typecheck`、
+`cargo check --workspace`、44 项 Claude 定向回归（另 1 项人工 Smoke 忽略）及以
+`a39cf861d8f2dd8db4f78603838d57c131958d2e` 为真实基线的文档 CI 门禁通过。上表完整回归与实际
+Desktop 点击证据属于 `7f14abae`，未将主线同步冒充新的实际模型验收。
