@@ -1,7 +1,7 @@
 ---
 document_type: development-guide
 authority: test-policy-and-command-routing
-last_updated: 2026-09-28
+last_updated: 2026-09-30
 ---
 
 # 测试与 Smoke Test
@@ -241,6 +241,33 @@ Electron 回归使用生产 adapter、CampWorkspace 与 CSS，验证空事件下
 和生产组件组合测试，不冒充已安装 App 的真实会话端到端耗时。
 
 ### Claude Code 无 Prompt 目录验证
+
+原生审批转换由 `claude_permission::tests::native_permission_ids_and_exact_input_bind_frozen_approval_options`
+拥有最低成本输入矩阵：request_id/tool_use_id 区分、原 input 回填、缺失身份拒绝及重复命令独立绑定。
+最低成本控制准入由 `claude_control::tests::incompatible_initialization_and_missing_tool_identity_never_admit_permission`
+拥有：初始化错误、模式漂移和可选 tool_use_id 缺失必须拒绝，不能自动放行。
+最小命令：`cargo test -p rovai-core --lib claude_permission::tests::`、
+`cargo test -p rovai-core --lib incompatible_initialization_and_missing_tool_identity`。
+
+控制写入并发与关闭由 `claude_control::tests::native_decisions_are_serialized_by_id_and_close_only_after_the_last_idle_result`
+拥有，覆盖 256 次普通工具后、相同输入的独立 ID、NDJSON 串行化、后台任务与多结果收尾。
+暂停的 Tokio 时钟验证长审批/后台任务不触发结束计时，两个官方任务终态形态均能解除跟踪并重新计时。
+`cancelled_queued_decisions_and_disconnect_never_write_late_allowances` 单独拥有排队响应被撤销的竞态。
+这两个 seam 无法由 Action 转换纯函数证明，进入 extended-tests；最小命令为
+`cargo test -p rovai-core --features extended-tests --lib claude_control::tests::`。
+`claude::tests::native_permissions_do_not_block_stdout_or_replace_the_last_result` 拥有 reader 与控制通道
+组合边界：未决审批期间普通文本仍可读取，早期 result 不截断后续输出，末轮结果和用量保留。
+writer-only owner 无法覆盖该解析链路，使用 extended-tests 的内存 pipe，不创建进程或数据库；最小命令为
+`cargo test -p rovai-core --features extended-tests --lib native_permissions_do_not_block_stdout`。
+既有慢速 `action::tests::slow_tests::native_request_resolution_is_the_exact_authorization_delivery_ack`
+扩展未决取消矩阵，验证 Codex/Claude 的审批失效由实际 Runtime actor 署名，复用其唯一 SQLite fixture。
+该署名属于同一 native-resolution 事务，纯控制测试不能证明持久状态；最小命令为
+`cargo test -p rovai-core --features slow-tests --lib native_request_resolution_is_the_exact_authorization_delivery_ack`。
+既有 `claude::tests` 进程清理与 stdout owner 改为原生初始化/结构化输入夹具，保留原先的故障、取消、
+多结果和私有文件清理边界。原 Hook/完整工具输入匹配测试随生产路径退出，Git 保留旧实现。
+真实允许、拒绝、取消与 Core receipt 使用 `ROVAI_CLAUDE_APPROVAL_SMOKE=1 node scripts/smoke-claude-runtime.mjs`；
+实际 Desktop 点击由 `node scripts/accept-claude-permission.mjs` 在独立 userData/Skill Library/MCP 下验证。
+模型 Smoke 不进入普通 Rust 测试。旧 Hook Smoke 不作为原生协议通过记录。
 
 目录协议与进程生命周期由共享 Core library 的 `health::claude_catalog_tests` owner 验证，正常门禁使用临时
 可执行夹具，不启动真实模型。安装版手工验证使用显式 ignored 测试：
@@ -484,7 +511,7 @@ Windows x64 job 验证。改动还涉及完整桌面挂载和恢复时，在遵�
 | --- | --- | --- |
 | `pnpm smoke:intake` | Codex | 创建 Git fixture；验证 Camp 消息、连续 Conversation、重启和删除 |
 | `pnpm smoke:acp-runtime` | 已完成接入的 ACP Runtime（含 TRAE、Kimi、Grok） | `ROVAI_ACP_SMOKE_ADAPTER` 可选择单一 Runtime；命令矩阵断言公开 command output 进入 `runtime.action.payload.output`。TRAE 覆盖 warm Host/Session 与 exact `session/load` HistoryRestore；Grok `>= 1.0.0` 覆盖 warm Host/Session 与标准 ACP `session/resume`；Kimi/Grok 的普通 ACP agent text（包括 provider `<think>`）原样进入执行台与 final。Grok 正式 Host 使用官方 `$GROK_HOME/config.toml` 和 mode-0600 `.env`；隔离 Probe/Smoke 使用同一官方布局 |
-| `pnpm smoke:claude-runtime` | Claude Code | 验证原生权限、连续性和 Resume；两次无工具回复必须投影公开 narration；随后强制 `Bash` 固定 `printf`，断言公开 output、原生 tool-use ID 与同 Session/Conversation 关联 |
+| `pnpm smoke:claude-runtime` | Claude Code | 验证原生权限、连续性和 Resume；两次无工具回复必须投影公开 narration；随后强制 `Bash` 固定 `printf`，断言公开 output、原生 tool-use ID 与同 Session/Conversation 关联。`ROVAI_CLAUDE_APPROVAL_SMOKE=1` 追加 `acceptEdits` 下真实 `rovai send` 允许一次、拒绝及待审批取消，核对 Action、Run 和消息效果 |
 | `pnpm smoke:antigravity-runtime` | Antigravity + Codex | 要求 `output.stream_json`，强制原生 `run_command` 固定 `printf` 并断言公开 output/step ID；另覆盖同 Session 续接、私有日志清理和 Antigravity 到 Codex 换绑 |
 | `pnpm smoke:pi-runtime` | Pi 0.84.4+ | 复制官方 Pi auth/settings/models 到临时 0700 `PI_CODING_AGENT_DIR`，隔离 Probe/Native Session/data/workspace；验证 exact cold resume、warm LRU、managed receipt、allow/deny、cancel 无副作用、Action output、locator 隐私与结构化 Usage。自动设置只在 debug Core 有效的 Pi qualification override；结果不是正式平台资格 |
 | `pnpm smoke:action-approval` | Codex | 验证越界动作的 Approval 与唯一副作用 |

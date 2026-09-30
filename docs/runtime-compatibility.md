@@ -1,7 +1,7 @@
 ---
 document_type: runtime-compatibility-register
 authority: runtime-validation-evidence
-last_updated: 2026-09-24
+last_updated: 2026-09-30
 ---
 
 # Agent Runtime 兼容性清单
@@ -881,6 +881,27 @@ message/thought、plan、tool、permission request 与 usage/mode/catalog update
 属于当前 Prompt。只有匹配 request ID 的成功 prompt response 确认 accepted，匹配 error response
 结算为 `not_accepted`。这项共享实现不改写上表各 Runtime 的实测版本；上游若改变
 ACP prompt response shape，须重新执行对应真实 Runtime smoke。
+
+### Claude Code 原生双向审批（2026-09-30）
+
+当前通道为 `--print --input-format stream-json --output-format stream-json --permission-prompt-tool stdio`，
+原生 can_use_tool 提供 request_id 与 tool_use_id。本机 CLI 2.1.280 探针确认初始化成功后结构化输入、
+审批原 input 回填、工具结果与 result/idle 后 stdin 关闭均成立。该 CLI 通过
+`CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1` 输出会话状态；官方 SDK 当前源码另有较新的 host-only
+环境参数，本机 2.1.280 尚不识别该参数，不能据最新 SDK 源码猜测本地行为。
+
+此前 2026-09-29 / CLI 2.1.274 的 command Hook Smoke 仅属于已经替换的方案，不能证明当前原生控制协议。
+2026-09-30 在 macOS arm64、Claude Code `2.1.280` 和冻结的 `acceptEdits` 下完成以下独立验收。
+
+| 验收 | 结果与范围 |
+| --- | --- |
+| 真实 Core 审批 Smoke | `ROVAI_CLAUDE_APPROVAL_ONLY=1 node scripts/smoke-claude-runtime.mjs` 通过。允许一次后 Action 根据实际工具结果为 `succeeded`；拒绝和待审批取消均为 `not_executed`，没有发送消息或 Core 发送回执 |
+| 真实发送核对 | 允许 Run `c500309b-efcc-41ee-8609-9dbde89f520a` 的 Core 回执为 `sha256:f762d3263afc1f235bfe71a51ea77252e9185ccffd87bad172a800eb8ec78d9d`，对应消息 `b418615c-74c0-452c-bb09-c1efe90b4af6`；检查 durable Evidence 和消息的 source Run，未使用模型最终文本充当发送证明 |
+| 实际 Desktop 审批点击 | `node scripts/accept-claude-permission.mjs` 在 `pnpm dev` 的独立 userData、Skill Library、MCP 和 Git workspace 中通过。先在既有 Dock 点击“允许一次”，再 resume 同一 Native Session、重复完全相同命令并点击“拒绝”；分别真实发送和未发送，截图与 JSON 记录均已保存 |
+| Desktop 发送核对 | 允许 Run `ead59cff-6707-4e14-b835-38c93ac1011e` 的消息为 `363f5535-cfac-4c35-b96a-13842be97704`，Core 回执 `sha256:b6d9f081db56530d72f8871829417f3816ca356a45fc3946d03d5916bbdb9ed5`；拒绝 Run `dd1b68ee-1e9f-45d9-a8d9-ae049b8e21e2` 没有新增消息或回执 |
+
+这些是本机 Debug Core 与实际开发版 Desktop 的原生协议验收，不替代打包、签名、其他 CLI 版本或平台的验收，
+也不扩大 Provider 资格。
 
 ## Antigravity one-shot 输入确认
 

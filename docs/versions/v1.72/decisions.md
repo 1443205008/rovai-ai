@@ -3,10 +3,38 @@ document_type: version-decisions
 version: v1.72
 authority: decision-rationale
 lifecycle: current
-last_updated: 2026-09-28
+last_updated: 2026-09-30
 ---
 
 # v1.72 版本决定
+
+<a id="v1-72-d06"></a>
+## V1.72-D06：Claude Code 打印模式通过原生双向控制协议接入审批
+
+- 状态：accepted
+- 日期：2026-09-30
+- 当前权威：[Runtime Launch and Verification v45](../../contracts/runtime-launch-and-verification-v45.md) 与 [Built-in Tool Runtime](../../architecture/builtin-tool-runtime.md#claude-code-权限审批回调)
+
+### 背景
+
+打印模式缺少审批宿主时，原生权限规则要求询问的调用会被拒绝。Rovai 应当展示 Claude 发出的
+真实权限请求，并把用户决定回填。此前 PR 的 command Hook 需要按完整输入匹配工具身份，
+重复或并发调用存在歧义，累计观察缓存又使后续工具失去关联机会。
+
+### 选择
+
+保留打印模式和结构化输出，采用 stream-json 输入、stdio permission prompt 和原生控制消息。
+原生 request_id 回复审批，tool_use_id 结算工具结果，进程所有权绑定 Run/epoch/Session。
+初始化成功才发送任务；审批等待与持续读流独立，stdin 统一串行写入。结束由原生会话状态、
+结果与待处理请求共同判断，带有界异常清理。Action/Approval、用户选项和 Dock 复用现有实现。
+
+### 后果与替代方案
+
+删除本 PR 注入的审批 command Hook、专用 IPC、完整工具输入匹配和累计缓存。仅保留待处理
+控制请求；用户 Hook、Fast settings 与业务 `rovai send` lease 不受该替换影响。
+原生 allow/ask/deny 配置保持冻结，不为修复审批增加 bypass 或全局 allow。
+未采用非打印模式，因为它需要终端交互与输出协议改造；未保留 Hook 回退，因为第二条审批入口
+会重新引入身份歧义。缺少可靠原生工具 ID 的版本明确拒绝并报告不兼容。
 
 <a id="v1-72-d01"></a>
 ## V1.72-D01：Lark 作为独立 provider，克隆表族并参数化飞书实现
