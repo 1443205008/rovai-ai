@@ -143,6 +143,93 @@ describe('first-run provisioning', () => {
     })
   })
 
+  it.each(builtinMemberPresetsForLanguage('en'))('initializes all four seeds when $displayName is selected', async (selected) => {
+    const members = builtinMemberPresetsForLanguage('zh-CN').map((preset) => builtinMember(preset.role))
+    const harness = onboardingHarness([], {}, members)
+    harness.snapshot.selectedMemberRole = selected.role
+
+    const result = await provisionFirstRun(harness.api, harness.snapshot, [codexInstallation()], () => undefined, 'en')
+
+    const updates = harness.requests.filter(({ method }) => method === 'members.update')
+    expect(updates).toHaveLength(4)
+    for (const preset of builtinMemberPresetsForLanguage('en')) {
+      const member = members.find((candidate) => candidate.avatarRef === preset.avatarRef)!
+      expect(updates).toContainEqual({
+        method: 'members.update',
+        params: {
+          commandId: preset.role === selected.role ? 'member-command' : `member-command:seed:${member.agentId}`,
+          command: { agentId: member.agentId, expectedVersion: member.version, ...identityFor(preset) }
+        }
+      })
+    }
+    const selectedMember = members.find((member) => member.avatarRef === selected.avatarRef)!
+    expect(result.memberAgentId).toBe(selectedMember.agentId)
+    expect(harness.requests.filter(({ method }) => method === 'members.runtime.set')).toEqual([{
+      method: 'members.runtime.set',
+      params: {
+        commandId: 'runtime-command',
+        command: {
+          agentId: selectedMember.agentId,
+          expectedVersion: selectedMember.version + 1,
+          adapterKind: 'codex-cli',
+          model: { mode: 'runtime_default' },
+          permissions: codexPermissions()
+        }
+      }
+    }])
+    expect(harness.requests.find(({ method }) => method === 'camps.create')?.params).toMatchObject({
+      memberAgentIds: [selectedMember.agentId], defaultLeadAgentId: selectedMember.agentId
+    })
+  })
+
+  it('preserves edited, configured and removed unselected profiles', async () => {
+    const edited = { ...builtinMember('muwa'), displayName: 'My teammate' }
+    const configured = { ...builtinMember('mianzhi'), runtimeConfiguration: {
+      adapterKind: 'codex-cli' as const, model: { mode: 'runtime_default' as const }, permissions: codexPermissions()
+    } }
+    const removed = { ...builtinMember('qilu'), presence: 'removed' as const, removedAt: '2026-09-30T00:00:00Z' }
+    const harness = onboardingHarness([], {}, [builtinMember(), edited, configured, removed])
+
+    await provisionFirstRun(harness.api, harness.snapshot, [codexInstallation()], () => undefined, 'en')
+
+    expect(harness.requests.filter(({ method }) => method === 'members.update')).toHaveLength(1)
+    expect(harness.requests.find(({ method }) => method === 'members.update')?.params).toMatchObject({
+      command: { agentId: 'agent-luoke' }
+    })
+  })
+
+  it('recovers a partial four-seed initialization without repeating committed writes', async () => {
+    const members = builtinMemberPresetsForLanguage('zh-CN').map((preset) => builtinMember(preset.role))
+    const selectedMember = members[3]
+    const harness = onboardingHarness([], {}, members)
+    harness.snapshot.selectedMemberRole = 'qilu'
+    const request = harness.api.request.bind(harness.api)
+    let updates = 0
+    harness.api.request = async <T>(method: CoreMethod, params?: unknown): Promise<T> => {
+      const result = await request<T>(method, params)
+      if (method === 'members.update') {
+        const { command } = params as { command: { agentId: string } }
+        const member = members.find((candidate) => candidate.agentId === command.agentId)!
+        const preset = builtinMemberPresetsForLanguage('en').find((candidate) => candidate.avatarRef === member.avatarRef)!
+        Object.assign(member, identityFor(preset), { version: member.version + 1 })
+        if (++updates === 2) throw new Error('reply lost after second seed commit')
+      }
+      return result
+    }
+
+    await expect(provisionFirstRun(harness.api, harness.snapshot, [codexInstallation()], () => undefined, 'en'))
+      .rejects.toThrow('reply lost after second seed commit')
+    expect((harness.current() as InProgress).provisioning?.memberAgentId).toBeNull()
+
+    await provisionFirstRun(harness.api, harness.current() as InProgress, [], () => undefined, 'en')
+
+    expect(updates).toBe(4)
+    expect(members.map((member) => member.displayName)).toEqual(['Dingding', 'Cheese', 'Gugu', 'Bunny'])
+    expect(harness.requests.find(({ method }) => method === 'members.runtime.set')?.params).toMatchObject({
+      command: { agentId: selectedMember.agentId, expectedVersion: selectedMember.version }
+    })
+  })
+
   it.each([
     { displayName: 'My teammate' },
     { teamRole: 'My role' },
