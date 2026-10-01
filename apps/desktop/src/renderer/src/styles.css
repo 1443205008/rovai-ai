@@ -2522,9 +2522,9 @@ button.file-preview-html-feedback:hover,
 .conversation-anchor-items::-webkit-scrollbar { display: none; }
 .conversation-anchor-item { display: flex; width: 44px; height: 10px; min-height: 10px; align-items: center; padding: 0 14px; border: 0; border-radius: 3px; background: transparent; cursor: pointer; }
 .conversation-anchor-item:active:not(:disabled) { transform: none; }
-.conversation-anchor-mark { display: block; width: 8px; height: 2px; flex: none; border-radius: 2px; background: var(--faint); opacity: .6; transition: width 140ms ease, background-color 140ms ease, opacity 140ms ease; }
+.conversation-anchor-mark { display: block; width: 6px; height: 2px; flex: none; border-radius: 2px; background: var(--faint); opacity: .6; transition: width 140ms ease, background-color 140ms ease, opacity 140ms ease; }
 .conversation-anchor-item.in-view .conversation-anchor-mark { background: var(--ink); opacity: 1; }
-.conversation-anchor-item:hover .conversation-anchor-mark { width: 16px; }
+.conversation-anchor-item:hover .conversation-anchor-mark { width: 12px; }
 .conversation-anchor-preview { position: absolute; left: 44px; width: 260px; padding: 9px 11px 10px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: var(--surface-raised); box-shadow: var(--shadow-float); transform: translateY(-50%); pointer-events: none; }
 .conversation-anchor-preview-title { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 500; line-height: 1.6; white-space: nowrap; text-overflow: ellipsis; }
 .conversation-anchor-preview-copy { display: -webkit-box; margin: 5px 0 0; overflow: hidden; color: var(--muted); -webkit-box-orient: vertical; -webkit-line-clamp: 3; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }

@@ -50,7 +50,7 @@ app.whenReady().then(async () => {
     await check('all visible users are dark and all unhovered ticks remain equally short', async () => {
       const snapshot = await state()
       assert.ok(snapshot.markers.filter(marker => marker.current).length >= 2)
-      assert.ok(snapshot.markers.every(marker => marker.width === 8))
+      assert.ok(snapshot.markers.every(marker => marker.width === 6))
       assert.ok(new Set(snapshot.markers.filter(marker => marker.current).map(marker => marker.color)).size === 1)
       await capture('01-compact-ticks')
     })
@@ -59,8 +59,8 @@ app.whenReady().then(async () => {
         await run(`window.anchorsTest.theme('${theme}')`)
         await move({ x: 600, y: 40 })
         const snapshot = await move(await run('window.anchorsTest.firstMarker()'))
-        assert.equal(snapshot.markers[0].width, 16)
-        assert.ok(snapshot.markers.slice(1).every(marker => marker.width === 8))
+        assert.equal(snapshot.markers[0].width, 12)
+        assert.ok(snapshot.markers.slice(1).every(marker => marker.width === 6))
         assert.equal(snapshot.title, await run('window.anchorsTest.longTitle'))
         assert.equal(snapshot.reply, await run('window.anchorsTest.firstReply'))
         assert.equal(snapshot.titleStyle.whiteSpace, 'nowrap')
@@ -70,7 +70,7 @@ app.whenReady().then(async () => {
         await capture(`02-preview-${theme}`)
       }
       const snapshot = await move({ x: 600, y: 40 })
-      assert.ok(snapshot.markers.every(marker => marker.width === 8))
+      assert.ok(snapshot.markers.every(marker => marker.width === 6))
       assert.equal(snapshot.title, null)
     })
     await check('transparent action rows do not make the preceding user visible', async () => {
@@ -112,7 +112,7 @@ app.whenReady().then(async () => {
       await run('window.anchorsTest.focus()')
       const end = await key('End')
       assert.equal(end.focusedAnchor, 'user-240')
-      assert.ok(end.markers.every(marker => marker.width === 8))
+      assert.ok(end.markers.every(marker => marker.width === 6))
       assert.equal(end.title, '第 240 个问题：确认阅读位置与会话交互。')
       assert.equal(end.reply, null)
       await key('Escape')
