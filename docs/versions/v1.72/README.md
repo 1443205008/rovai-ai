@@ -133,6 +133,14 @@ Claude Code 保留 `--print` 结构化输出，增加 stream-json 输入与 stdi
 旧会话沿用冻结 Bootstrap 继续 resume，新会话首次生成英文索引；内置 Skill 沿用既有固定路径同步。
 不提升会话兼容版本、不新增迁移。工具箱共用的说明原文随资源显示英文。
 
+## 并行交付：Sidecar 行操作与未读提醒
+
+按确认的 v3 交互稿实现项目/对话的右键、三点、键盘与长按共用菜单。行操作默认隐藏；对话的运行与未读
+独立并列，悬浮后由最右侧三点替换，运行环沿用中性灰。项目创建入口复用 New Chat 图标，菜单增加系统目录
+定位和复制路径。手动未读随本机偏好保存，真实查看水位保持；失败或缓存预览不清除提醒。
+当前语义见[统一侧栏](../../ui/components/app-shell-navigation.md)、[Navigation Read v1](../../contracts/navigation-read-v1.md)
+与[侧栏刷新](../../architecture/desktop-navigation-refresh.md)，验收见[实施记录](implementation-plan.md#2026-10-02-sidecar-v3-交互实现)。
+
 ## 跨版本文档影响
 
 | 范围 | 结论 | 证据或理由 |

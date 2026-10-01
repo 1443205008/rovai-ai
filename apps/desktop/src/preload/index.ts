@@ -329,6 +329,14 @@ const api: RovaiApi = {
     }
   },
   navigationPreferences: {
+    setThreadReadState(threadId, state) {
+      return ipcRenderer.invoke('rovai:navigation-preferences-set-thread-read-state', threadId, state)
+    },
+    onChanged(listener) {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: NavigationPreferencesSnapshot): void => listener(snapshot)
+      ipcRenderer.on('rovai:navigation-preferences-changed', handler)
+      return () => ipcRenderer.removeListener('rovai:navigation-preferences-changed', handler)
+    },
     get() {
       return ipcRenderer.invoke('rovai:navigation-preferences-get') as Promise<NavigationPreferencesSnapshot>
     },
@@ -582,6 +590,9 @@ const api: RovaiApi = {
   },
   selectSkillImportDirectory() {
     return ipcRenderer.invoke('rovai:select-skill-import-directory')
+  },
+  revealProjectDirectory(projectPath) {
+    return ipcRenderer.invoke('rovai:reveal-project-directory', projectPath)
   },
   revealSkill(skillId: string) {
     return ipcRenderer.invoke('rovai:reveal-skill', skillId)

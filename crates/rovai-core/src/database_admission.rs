@@ -1748,15 +1748,18 @@ mod tests {
         {
             use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
-            assert!(
-                !nonempty_wal
-                    .main
-                    .as_ref()
-                    .unwrap()
-                    .macos_provenance
-                    .unwrap()
-                    .present
-            );
+            // macOS can tag new fixture files before the first observation. Model
+            // the untagged baseline explicitly for this namespace comparison;
+            // the observed tagged file and all authority-change cases remain real.
+            let mut untagged = nonempty_wal.clone();
+            untagged
+                .main
+                .as_mut()
+                .unwrap()
+                .macos_provenance
+                .as_mut()
+                .unwrap()
+                .present = false;
             let path = CString::new(main.as_os_str().as_bytes()).unwrap();
             let value = [1_u8, 2_u8];
             assert_eq!(
@@ -1776,12 +1779,12 @@ mod tests {
                 .ok()
                 .unwrap();
             assert!(!nonempty_wal.authority_unchanged(&tagged));
-            assert!(nonempty_wal.macos_provenance_only_change(&tagged));
+            assert!(untagged.macos_provenance_only_change(&tagged));
             std::fs::write(&main, b"changed authority").unwrap();
             let changed = observe_namespace(&lease, AuthorityNamespace::Rovai)
                 .ok()
                 .unwrap();
-            assert!(!nonempty_wal.macos_provenance_only_change(&changed));
+            assert!(!untagged.macos_provenance_only_change(&changed));
         }
     }
 
