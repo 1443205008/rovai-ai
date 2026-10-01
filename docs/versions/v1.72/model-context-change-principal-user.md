@@ -2,15 +2,18 @@
 document_type: model-context-change
 version: v1.72
 revision: 2
-confirmation_status: pending
+confirmation_status: confirmed
+confirmed_revision: 2
+confirmed_by: local_user
+confirmed_at: 2026-10-02
 last_updated: 2026-10-02
 ---
 
 # Principal 改为 User 的上下文变更说明
 
-本稿 r2 待审阅。[完整前后对照](principal-user-context-comparison.md)包含 20 组替换文本，覆盖当前公开协作、
+本稿 r2 已于 2026-10-02 经用户确认实施。[完整前后对照](principal-user-context-comparison.md)包含 20 组替换文本，覆盖当前公开协作、
 单聊及历史公开单输入 Bootstrap、A2A 返回指导、结构化用户提及、CLI 教学与四项 Skill 的八份 Markdown；另列八段保持原文的相邻指令。
-当前没有修改产品实现、Schema 或当前合同。
+实现按本稿推进；验收结果在收口时记录。
 
 本次将人类用户的主要称呼统一为 **User**，命令主用法改为 `--to-user`，Agent 提及主投影改为 `@User`。
 **旧 Native Session 保持原绑定和冻结 Bootstrap，新绑定才生成新 Bootstrap；Skill 随新版程序同步原路径。**
@@ -27,8 +30,8 @@ r2 将公开 Bootstrap 收敛为同一份生成模板：已有冻结 Bootstrap �
 | 当前版本 | 由[版本索引](../README.md)解析为 v1.72 |
 | 分支 | `rovai/principal-user-context` |
 | Worktree | `/Users/murray.xue/VSCodeProjects/opensource/rovai-ai-principal-user-context` |
-| Governance | 当前仅准备独立提案，没有本次已确认治理提交 |
-| 状态与下一步 | `active`；审阅 r2，后续继续复用此 worktree |
+| Governance | 用户已确认 r2；确认记录先于实现提交 |
+| 状态与下一步 | `active`；实施 r2，创建 PR 并合入 main；复用此 worktree |
 
 本稿依据当前源码和有效合同；已合入的 Thread 改名与 Skill 英文化只提供已有机制的事实，不把其确认继承为本次确认。
 
@@ -167,11 +170,14 @@ Bootstrap、Session ID 与绑定 generation。未冻结上下文的新 preparati
 
 ## 二次确认
 
-当前为 `pending`。r2 根据用户关于跨版本恢复共用当前 Bootstrap 的意见更新；本轮方案核对不记作整份
-称呼、命令、投影和 Skill 变更的实施确认。
-依据[核心模型上下文变更治理](../../development/model-context-change-governance.md#二次确认门槛)：
-“未取得确认时可以继续调查和编辑提案文档，但不得修改实现、Schema、当前合同或执行 clean break。”
-后续明确确认本稿后，再记录确认人、实际时间和相等的 `confirmed_revision`；不继承其他命名或英文化任务的确认。
+用户在审阅 r2 完整对照后于 2026-10-02 明确回复：
+
+> 没问题，改完pr到main merge。不需要走gate评测了。
+
+确认人为 `local_user`，消息 ID 为 `47e39710-e3d1-4f2a-82fc-f4b3bf54336b`。
+本次确认涵盖 r2 实施、创建 PR 与合入 main，并明确免除上下文 Gate 模型评测；代码检查、迁移及恢复回归仍执行。
+Front Matter 记录 `confirmed_revision: 2`，不继承其他命名或英文化任务的确认。
+
 
 ## 验证
 
@@ -216,7 +222,7 @@ r2 对照文本合计由 29,668 变为 27,544 UTF-8 字节。统计为逐组前�
 继续原 Session、触发一次原机制 Bootstrap 补发，并在新 Session 读取新 Charter；旧会话读取同路径新版 Skill 后执行新旧通知命令。
 不能用新建 Session 代替旧 Session resume 的验证，也不使用日常 Electron userData。
 
-按[上下文 Gate](../../development/evaluation.md#上下文改动-gate)，本次共享 CLI／核心上下文影响使用基线仓库
+以下是原计划，已由上述用户确认免除，不执行、不计为通过。按[上下文 Gate](../../development/evaluation.md#上下文改动-gate)，本次共享 CLI／核心上下文影响使用基线仓库
 `qualification/context-regression/suite.json` 的 12 个通用 Case DEMO-101–112，Suite 2.12.0，评分
 `generic-task-quality@2.10.0`。基线固定为本稿 SHA，候选固定为实施 commit；同 Runtime、模型、权限和预算。
 每例一次，每 campaign `wallSeconds=14400`、`maxParallelCases=2`、`judgeSeconds=2400`，最多两次。
