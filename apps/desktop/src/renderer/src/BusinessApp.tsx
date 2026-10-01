@@ -1438,20 +1438,17 @@ export function BusinessApp({
 
   const memberRosterReader = useMemo(() => createMemberRosterReader(
     () => client.request<AgentProfile[]>('members.list'),
-    setAgents
+    (nextAgents) => {
+      setAgents(nextAgents)
+      if (viewRef.current === 'members') setMemberRosterEntryReady(true)
+    }
   ), [client])
   const loadAgents = useCallback((): Promise<AgentProfile[]> => memberRosterReader.refresh(), [memberRosterReader])
 
   useEffect(() => {
     if (startupStatus !== 'resolved' || view !== 'members') return
-    let cancelled = false
     // Enter the page with its current roster; the read must not block navigation.
-    void loadAgents().then(() => {
-      if (!cancelled) setMemberRosterEntryReady(true)
-    }).catch((nextError) => {
-      if (!cancelled) setError(errorMessage(nextError))
-    })
-    return () => { cancelled = true }
+    void loadAgents().catch((nextError) => setError(errorMessage(nextError)))
   }, [loadAgents, startupStatus, view])
 
   const commitNavigation = useCallback((

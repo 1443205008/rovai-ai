@@ -66,7 +66,7 @@ status and never becomes a start-conversation action.
 
 - Existing `team_tool` member-create transaction test owns rollback, direct-user authorization, idempotent replay,
   no added public message/membership, immutable snapshots and Open projection.
-- `db_member_creation` owns the new schema 129 to 129 boundary, rollback and profile preservation.
+- `db_member_creation` owns the new schema 129 to 130 boundary, rollback and profile preservation.
 - Renderer helper/navigation tests own deterministic selection and local draft overlay.
 - `pnpm test:member-creation` exercises production conversation/member surfaces with isolated transport and native input;
   it does not qualify a real model or physical mobile device.

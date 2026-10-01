@@ -153,6 +153,7 @@ export function MemberSidebar({
   }
 
   const moveMember = (agent: AgentProfile, direction: -1 | 1): void => {
+    if (busy) return
     const group = members.filter((candidate) => candidate.presence === agent.presence)
     const index = group.findIndex((candidate) => candidate.agentId === agent.agentId)
     const target = group[index + direction]
@@ -181,7 +182,7 @@ export function MemberSidebar({
         <div className="member-sidebar-actions member-add-split">
           <button type="button" aria-label={uiAttribute("添加队员")} title={uiAttribute("对话添加队员")}
             disabled={creating} aria-busy={creating || undefined} onClick={(event) => onCreate(event.currentTarget)}>
-            <SidebarIcon name="plus" /><span><UiText zh={"添加"} /></span>
+            <SidebarIcon /><span><UiText zh={"添加"} /></span>
           </button>
           <Menu.Root>
             <Menu.Trigger asChild>
@@ -393,15 +394,8 @@ function MemberSidebarRow({
   )
 }
 
-function SidebarIcon({ name }: { name: 'plus' | 'grip' }): React.JSX.Element {
-  if (name === 'plus') {
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11" /></svg>
-  }
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path d="M7 5h.01M13 5h.01M7 10h.01M13 10h.01M7 15h.01M13 15h.01" />
-    </svg>
-  )
+function SidebarIcon(): React.JSX.Element {
+  return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11" /></svg>
 }
 
 function assertApplied(result: StoredCommandResult): void {
