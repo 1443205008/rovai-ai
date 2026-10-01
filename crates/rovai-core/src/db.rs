@@ -293,7 +293,7 @@ impl MainCampMigrationSource {
 }
 
 pub(crate) const CURRENT_DATA_CONTRACT_VERSION: &str = "v1.72";
-pub(crate) const CURRENT_PROJECTION_SCHEMA_VERSION: i64 = 128;
+pub(crate) const CURRENT_PROJECTION_SCHEMA_VERSION: i64 = 129;
 const V147_MIGRATION_SOURCE_DATA_CONTRACT_VERSION: &str = "v1.54";
 const V147_MIGRATION_SOURCE_PROJECTION_SCHEMA_VERSION: i64 = 96;
 const V145_MIGRATION_SOURCE_DATA_CONTRACT_VERSION: &str = "v1.53";
@@ -746,6 +746,7 @@ struct CurrentMigrationState {
     v176: bool,
     v177: bool,
     v178: bool,
+    v179: bool,
 }
 
 impl CurrentMigrationState {
@@ -767,11 +768,19 @@ impl CurrentMigrationState {
     }
 
     fn admits(&self, contract: &str, schema: i64, classifier: &str) -> bool {
+        if self.v179 {
+            let mut previous = *self;
+            previous.v179 = false;
+            return contract == CURRENT_DATA_CONTRACT_VERSION
+                && schema == CURRENT_PROJECTION_SCHEMA_VERSION
+                && self.v178
+                && previous.admits("v1.72", 128, classifier);
+        }
         if self.v178 {
             let mut previous = *self;
             previous.v178 = false;
             return contract == CURRENT_DATA_CONTRACT_VERSION
-                && schema == CURRENT_PROJECTION_SCHEMA_VERSION
+                && schema == 128
                 && self.v177
                 && previous.admits("v1.72", 127, classifier);
         }
@@ -3235,6 +3244,7 @@ pub(crate) fn classify_database_contract(
         || (migrations.v176 && !lark_channel_v176_schema_matches(connection)?)
         || (migrations.v177 && !navigation_summary_schema_matches(connection)?)
         || (migrations.v178 && !runtime_session_context_schema_matches(connection)?)
+        || (migrations.v179 && !runtime_session_context_ratio_schema_matches(connection)?)
         || (migrations.v156
             && !migrations.v157
             && !attachment_paths::schema_matches(connection)?
@@ -3976,6 +3986,16 @@ fn navigation_summary_schema_matches(connection: &Connection) -> rusqlite::Resul
               (type='index' AND name IN ('camp_navigation_window_idx', 'agent_run_navigation_active_idx', 'agent_run_navigation_legacy_active_idx'))
               OR (type='trigger' AND name IN ('camp_navigation_event_insert', 'camp_navigation_event_sequence', 'camp_navigation_reply_tombstone'))) = 6",
         [], |row| row.get(0))
+}
+
+fn runtime_session_context_ratio_schema_matches(connection: &Connection) -> rusqlite::Result<bool> {
+    let column: bool = connection.query_row(
+        "SELECT COUNT(*)=1 FROM pragma_table_info('runtime_session_context_latest') WHERE name='native_context_ratio' AND type='REAL' AND [notnull]=0 AND dflt_value IS NULL",
+        [], |row| row.get(0))?;
+    let schema: String = connection.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='runtime_session_context_latest'", [], |row| row.get(0))?;
+    Ok(column
+        && schema.contains("native_context_ratio >= 0")
+        && schema.contains("native_context_ratio <= 1"))
 }
 
 fn runtime_session_context_schema_matches(connection: &Connection) -> rusqlite::Result<bool> {
@@ -4992,7 +5012,8 @@ fn load_current_migration_state(
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 175),
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 176),
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 177),
-               EXISTS(SELECT 1 FROM schema_migration WHERE version = 178)
+               EXISTS(SELECT 1 FROM schema_migration WHERE version = 178),
+               EXISTS(SELECT 1 FROM schema_migration WHERE version = 179)
         "#,
         [],
         |row| {
@@ -5106,6 +5127,7 @@ fn load_current_migration_state(
                 v176: row.get(106)?,
                 v177: row.get(107)?,
                 v178: row.get(108)?,
+                v179: row.get(109)?,
             })
         },
     )
@@ -8193,6 +8215,12 @@ impl Database {
             if !self.schema_migration_applied(178)? {
                 migration_step!("migration_178", self.migrate_runtime_session_context_v178());
             }
+            if !self.schema_migration_applied(179)? {
+                migration_step!(
+                    "migration_179",
+                    self.migrate_runtime_session_context_ratio_v179()
+                );
+            }
             if let Err(error) =
                 crate::notification::maintain_notification_episode_retention(self.connection())
             {
@@ -8942,6 +8970,12 @@ impl Database {
         }
         if !self.schema_migration_applied(178)? {
             migration_step!("migration_178", self.migrate_runtime_session_context_v178());
+        }
+        if !self.schema_migration_applied(179)? {
+            migration_step!(
+                "migration_179",
+                self.migrate_runtime_session_context_ratio_v179()
+            );
         }
         if let Err(error) =
             crate::notification::maintain_notification_episode_retention(self.connection())
@@ -28378,9 +28412,41 @@ impl Database {
         anyhow::ensure!(
             matches!(
                 classify_database_contract(&tx)?,
+                DatabaseContractClassification::SupportedMigrationSource(ref marker)
+                    if marker.contract_version == "v1.72" && marker.projection_schema_version == 128
+            ),
+            "Runtime session context migration failed schema 128 source admission"
+        );
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn migrate_runtime_session_context_ratio_v179(&mut self) -> Result<()> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        anyhow::ensure!(
+            matches!(classify_database_contract(&tx)?,
+            DatabaseContractClassification::SupportedMigrationSource(ref marker)
+                if marker.contract_version == "v1.72" && marker.projection_schema_version == 128),
+            "Runtime context ratio migration requires v1.72/schema 128"
+        );
+        tx.execute_batch(r#"
+            ALTER TABLE runtime_session_context_latest ADD COLUMN native_context_ratio REAL
+                CHECK(native_context_ratio IS NULL OR (native_context_ratio >= 0 AND native_context_ratio <= 1));
+            INSERT INTO schema_migration VALUES (179, datetime('now'));
+            UPDATE rovai_data_contract SET projection_schema_version=129, updated_at=datetime('now') WHERE singleton=1;
+        "#)?;
+        anyhow::ensure!(
+            runtime_session_context_ratio_schema_matches(&tx)?,
+            "Runtime context ratio schema is incomplete"
+        );
+        anyhow::ensure!(
+            matches!(
+                classify_database_contract(&tx)?,
                 DatabaseContractClassification::Current(_)
             ),
-            "Runtime session context migration failed current schema admission"
+            "Runtime context ratio migration failed current schema admission"
         );
         tx.commit()?;
         Ok(())
@@ -33894,7 +33960,7 @@ fn downgrade_runtime_session_context_for_test(connection: &Connection) {
     connection
         .execute_batch(
             "DROP TABLE runtime_session_context_latest;
-             DELETE FROM schema_migration WHERE version=178;
+             DELETE FROM schema_migration WHERE version IN (178,179);
              UPDATE rovai_data_contract SET projection_schema_version=127 WHERE singleton=1;",
         )
         .unwrap();
@@ -38363,6 +38429,29 @@ mod tests {
             .unwrap();
         database.migrate_runtime_session_context_v178().unwrap();
         assert!(runtime_session_context_schema_matches(database.connection()).unwrap());
+        database.seed_agents().unwrap();
+        database.connection().execute_batch("INSERT INTO conversation(id,camp_id,agent_id,created_at,updated_at)
+            VALUES('context-conversation','context-camp','agent_1','2026-01-01','2026-01-01');
+            INSERT INTO runtime_session_context_latest VALUES('context-conversation','binding',1,'session','codex-cli',
+            '0.157.1','model','config',125,1000,'runtime_event','fixture','2026-01-01','run',1);
+            CREATE TEMP TRIGGER reject_ratio_receipt BEFORE INSERT ON schema_migration
+            WHEN NEW.version=179 BEGIN SELECT RAISE(ABORT,'ratio receipt failure'); END;").unwrap();
+        assert!(
+            database
+                .migrate_runtime_session_context_ratio_v179()
+                .unwrap_err()
+                .to_string()
+                .contains("ratio receipt failure")
+        );
+        assert!(!runtime_session_context_ratio_schema_matches(database.connection()).unwrap());
+        assert!(
+            matches!(classify_database_contract(database.connection()).unwrap(),
+            DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 128)
+        );
+        database
+            .connection()
+            .execute_batch("DROP TRIGGER reject_ratio_receipt")
+            .unwrap();
         drop(database);
         let reopened = Database::open(&directory).unwrap();
         assert!(matches!(
@@ -38379,6 +38468,23 @@ mod tests {
                 )
                 .unwrap(),
             "kept"
+        );
+        let saved: (Option<i64>,Option<i64>,Option<f64>) = reopened.connection().query_row(
+            "SELECT context_used_tokens,context_window_tokens,native_context_ratio FROM runtime_session_context_latest",
+            [],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(
+            saved,
+            (Some(125), Some(1000), None),
+            "schema 128 installed data survives the additive ratio migration"
+        );
+        assert!(
+            reopened
+                .connection()
+                .execute(
+                    "UPDATE runtime_session_context_latest SET native_context_ratio=1.01",
+                    []
+                )
+                .is_err()
         );
         drop(reopened);
         std::fs::remove_dir_all(directory).unwrap();
@@ -40113,6 +40219,7 @@ mod tests {
             v176: version >= 176,
             v177: version >= 177,
             v178: version >= 178,
+            v179: version >= 179,
         }
     }
 
@@ -40800,7 +40907,7 @@ mod tests {
         }
 
         assert!(migration_state_through(141).admits("v1.52", 92, V142_CLASSIFIER_VERSION));
-        let current = migration_state_through(178);
+        let current = migration_state_through(179);
         let v092_source = migration_state_through(91);
         let mut missing_intermediate = current;
         missing_intermediate.v84 = false;
@@ -41281,7 +41388,7 @@ mod tests {
             )
             .expect("current contract marker should load");
 
-        assert_eq!(state, migration_state_through(178));
+        assert_eq!(state, migration_state_through(179));
         assert!(state.admits(&contract, schema, &classifier));
         assert!(has_admissible_data_contract(
             &directory.join("rovai.sqlite")

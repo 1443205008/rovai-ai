@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Controlled ACP text stream for the isolated packaged-App metrics acceptance.
-// This impersonates a Qwen ACP executable only when the test sets ROVAI_QWEN_BIN.
+// This impersonates a selected ACP executable only through an isolated test override.
 import { createInterface } from 'node:readline'
 
+const copilot = process.env.ROVAI_STREAMING_ACP_KIND === 'copilot-cli'
 if (process.argv.includes('--version')) {
-  process.stdout.write('0.24.5\n')
+  process.stdout.write(copilot ? 'GitHub Copilot CLI 1.0.83.\n' : '0.24.5\n')
   process.exit(0)
 }
 
@@ -12,6 +13,8 @@ const sessionId = `fixture-stream-${process.pid}`
 const send = (value) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...value })}\n`)
 const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 const update = (value) => send({ method: 'session/update', params: { sessionId, update: value } })
+const privateEvent = (type, data, extra = {}) => send({ method: 'github.com/copilot/sessionEvent',
+  params: { sessionId, type, timestamp: new Date().toISOString(), data, ...extra } })
 const text = 'steady visible output '.repeat(4)
 const thought = 'V3_PRIVATE_REASONING_FIXTURE_かな🙂'
 let busy = false
@@ -51,6 +54,11 @@ for await (const line of createInterface({ input: process.stdin })) {
       if (index === 0) {
         update({ sessionUpdate: 'agent_thought_chunk', messageId: 'fixture-root-thought',
           snapshot: true, content: { type: 'text', text: 'Q'.repeat(1000) } })
+        if (copilot) {
+          privateEvent('assistant.reasoning_delta', { reasoningId: 'child', deltaContent: thought.repeat(100) }, { agentId: 'child' })
+          privateEvent('assistant.reasoning_delta', {}, { dataOmitted: 'too-large' })
+          privateEvent('assistant.usage', { reasoningSummary: thought })
+        }
       }
       if (index % 2 === 0) {
         // Cover both native offsets and standard ACP chunks without an offset.
@@ -58,6 +66,7 @@ for await (const line of createInterface({ input: process.stdin })) {
           textOffset: thoughtOffset, content: { type: 'text', text: thought } }
         if (index >= 6) { delete value.messageId; delete value.textOffset }
         update(value)
+        if (copilot) privateEvent('assistant.reasoning_delta', { reasoningId: 'fixture-root-thought', deltaContent: thought })
         thoughtOffset += thought.length // ACP offsets use UTF-16 code units.
       }
       await pause(500)

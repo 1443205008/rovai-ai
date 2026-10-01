@@ -6529,9 +6529,12 @@ function ExecutionDurationPopover({ run }: { run: AgentRunView }): JSX.Element {
 function ExecutionContextPopover({ context }: { context: SessionContext | null }): JSX.Element {
   const used = context?.usedTokens ?? null
   const windowTokens = context?.windowTokens ?? null
+  const nativeRatio = context?.nativeRatio ?? null
   const percent = used !== null && windowTokens !== null && windowTokens > 0
     ? Math.min(100, Math.max(0, used / windowTokens * 100))
-    : null
+    : nativeRatio !== null && Number.isFinite(nativeRatio) && nativeRatio >= 0 && nativeRatio <= 1
+      ? nativeRatio * 100
+      : null
   return <Popover.Root>
     <Popover.Trigger asChild>
       <button className="execution-context-trigger" type="button"

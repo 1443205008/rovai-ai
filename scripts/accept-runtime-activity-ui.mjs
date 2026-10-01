@@ -161,7 +161,7 @@ await mkdir(dataDir, { recursive: true })
 if (executionMetricsStreamOnly) {
   const runtime = join(root, 'scripts', 'fixtures', 'streaming-acp-runtime.mjs')
   await chmod(runtime, 0o755)
-  process.env.ROVAI_QWEN_BIN = runtime
+  process.env[process.env.ROVAI_STREAMING_ACP_KIND === 'copilot-cli' ? 'ROVAI_COPILOT_BIN' : 'ROVAI_QWEN_BIN'] = runtime
 }
 seedCompletedOnboardingForAcceptance(dataDir)
 await writeFile(join(dataDir, 'general-preferences.json'), `${JSON.stringify({
@@ -1275,9 +1275,10 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
   if (observableRealRuntime) return verifyRealRuntimeObservableOutput(app, capturesRoot)
   const request = (method, params = {}) => evaluate(app.cdp,
     `window.rovai.request(${JSON.stringify(method)}, ${JSON.stringify(params)})`, true)
-  const agentId = runtimes.find((entry) => entry.key === 'qwen')?.agentId
-  assert(agentId, 'The streaming fixture has no Qwen member')
-  await configureProductRuntime(request, 'qwen-code', [agentId])
+  const controlledCopilot = process.env.ROVAI_STREAMING_ACP_KIND === 'copilot-cli'
+  const agentId = runtimes.find((entry) => entry.key === (controlledCopilot ? 'copilot' : 'qwen'))?.agentId
+  assert(agentId, 'The streaming fixture has no selected member')
+  await configureProductRuntime(request, controlledCopilot ? 'copilot-cli' : 'qwen-code', [agentId])
   const workspace = await request('workspaces.inspect', { path: fixtureExecutionRoot })
   const setup = await createConfiguredCampAndSend(request, {
     commandId: crypto.randomUUID(),
@@ -1299,6 +1300,12 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
   await selectCampConversationView(app.cdp, 'conversation')
   await waitForExpression(app.cdp,
     `document.body.innerText.includes('ROVAI_STREAM_FAST_READY')`, 20_000)
+  await evaluate(app.cdp, `(() => {
+    window.__privateThoughtIpcLeaks = 0
+    window.__privateThoughtIpcUnsubscribe = window.rovai.onEvent(event => {
+      if (JSON.stringify(event).includes('V3_PRIVATE_REASONING_FIXTURE')) window.__privateThoughtIpcLeaks++
+    })
+  })()`)
 
   const sent = await request('camp.messages.send', {
     commandId: crypto.randomUUID(),
@@ -1468,11 +1475,16 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
   const terminalCapture = join(capturesRoot, 'execution-metrics-stream-late-usage.png')
   await capture(app.cdp, terminalCapture)
   const leakedFiles = await filesContainingMarker(dataDir, 'V3_PRIVATE_REASONING_FIXTURE')
+  const leakedIpc = await evaluate(app.cdp, `(() => {
+    window.__privateThoughtIpcUnsubscribe?.()
+    return window.__privateThoughtIpcLeaks
+  })()`)
   assert(leakedFiles.length === 0,
     `The controlled private thought marker escaped into isolated Core files: ${JSON.stringify(leakedFiles)}`)
+  assert(leakedIpc === 0, 'The controlled private thought marker escaped through public IPC')
   return {
     verified: { streamCampId, runId, setupRunId, numericSample,
-      leakedEvidence: Number(leakedEvidence.trim()), leakedRenderer, leakedFiles,
+      leakedEvidence: Number(leakedEvidence.trim()), leakedRenderer, leakedFiles, leakedIpc,
       reopened, switched, speedChanges, usageRows },
     captures: { steady: steadyCapture, idle: idleCapture, resumed: resumedCapture, terminal: terminalCapture }
   }
@@ -1627,10 +1639,20 @@ async function verifyRealRuntimeObservableOutput(app, capturesRoot) {
     `${drawerExpression}?.querySelector('.execution-drawer-header .execution-context-trigger')?.getAttribute('aria-label') ?? null`)
   if (process.env.ROVAI_OBSERVABLE_VERIFY_CONTEXT === '1') {
     const context = projection.sessions[0]
-    assert(context?.usedTokens > 0 && context.windowTokens > 0 && contextLabel?.includes(metricK(context.usedTokens))
-      && contextLabel?.includes(metricK(context.windowTokens)), 'Renderer Context differs from native projection')
+    assert(context && (context.usedTokens > 0 || context.nativeRatio != null)
+      && contextLabel?.includes(metricK(context.usedTokens)) && contextLabel?.includes(metricK(context.windowTokens)),
+    'Renderer Context differs from native projection')
+    const percent = context.usedTokens != null && context.windowTokens > 0
+      ? context.usedTokens / context.windowTokens * 100
+      : context.nativeRatio != null ? context.nativeRatio * 100 : null
+    assert(percent == null ? contextLabel.includes('比例未知') : contextLabel.includes(`${percent.toFixed(1)}%`),
+      'Renderer Context ratio differs from the same native observation')
     await evaluate(app.cdp, `${drawerExpression}?.querySelector('.execution-drawer-header .execution-context-trigger').click()`)
     await waitForExpression(app.cdp, `Boolean(document.querySelector('.execution-context-popover'))`)
+    const contextRows = await evaluate(app.cdp, `[...document.querySelectorAll('.execution-context-popover > span')].map(node => node.textContent)`)
+    assert(JSON.stringify(contextRows) === JSON.stringify([
+      `${metricK(context.usedTokens)} / ${metricK(context.windowTokens)}`, percent == null ? '—' : `${percent.toFixed(1)}%`
+    ]), 'Native ratio must not infer missing token quantities in the popover')
     await capture(app.cdp, join(capturesRoot, `native-context-${runtimeKind}.png`))
   }
   const report = { runtimeKind, version: installation.snapshot?.reportedVersion, campId: liveCampId, runId, status,

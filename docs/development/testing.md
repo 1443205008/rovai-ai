@@ -821,3 +821,14 @@ cargo test -p rovai-core --features extended-tests --lib root_call_usage_is_nume
 cargo test -p rovai-core --features extended-tests --lib numeric_context_rejects_content_and_stale_run_host_session_or_binding
 cargo test -p rovai-core --features extended-tests --lib grouped_acp_models
 ```
+
+2026-10-01 继续扩展上述 native DTO／cursor／OpenCode owner：Qoder 自定义来源、隐藏用量、
+比例独立性、旧 pending、重复与半行使用同一文件 seam；OpenCode 增加最新调用占用，不猜窗口。
+既有 `runtime_parsers_emit_sparse_usage_without_antigravity_inference` 增加实际版本 banner、
+Copilot 逐调用／子 Agent／dataOmitted／缺失与终态累计排除，以及 Grok 独立 Context 来源。
+`session_context_rejects_late_observations_after_binding_rotation` 以最小表覆盖比例零／无效值、
+数量清空、输入确认前只保留最新 Gauge、确认后的同源重试和拒绝输入；它不放宽接受栅栏。
+既有 `session_context_migration_upgrades_schema_127_and_rolls_back_atomically` 同时拥有
+已安装 schema 128 → 129 的保留与 179 收据失败回滚。Grok 原生配置 owner 只扩展显式窗口和
+未知模型断言。未新增、删除、合并或停用 Rust owner；实际 App／字段证据见
+[本轮核验](../research/runtime-monitoring/native-context-ratio-verification-2026-10-01.md)。

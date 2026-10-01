@@ -1295,6 +1295,7 @@ pub(crate) struct AcpHost {
     ephemeral_config: Mutex<Option<EphemeralMcpConfigFile>>,
     executable_path: PathBuf,
     builtin_tools: Option<BuiltinToolProcessConfig>,
+    grok_context_windows: BTreeMap<String, i64>,
 }
 
 impl AcpHost {
@@ -1322,8 +1323,18 @@ impl AcpHost {
             prepare_private_host_config(private_runtime_dir, frozen_runtime.adapter_kind)?;
         let private_config_root = private_config.as_ref().map(|config| config.root.as_path());
         let host_instance_id = uuid::Uuid::new_v4().to_string();
-        let grok_byok_configured =
-            frozen_runtime.adapter_kind == AdapterKind::GrokBuild && grok_native_byok_configured()?;
+        let grok_configuration = if frozen_runtime.adapter_kind == AdapterKind::GrokBuild {
+            Some(load_grok_native_configuration()?)
+        } else {
+            None
+        };
+        let grok_byok_configured = grok_configuration
+            .as_ref()
+            .is_some_and(|c| c.byok_configured);
+        let grok_context_windows = grok_configuration
+            .as_ref()
+            .map(|c| c.context_windows.clone())
+            .unwrap_or_default();
         let mut command = if frozen_runtime.adapter_kind == AdapterKind::ZcodeApp {
             crate::zcode::command(Path::new(&frozen_runtime.executable_path))?
         } else {
@@ -1477,29 +1488,35 @@ impl AcpHost {
             ephemeral_config: Mutex::new(ephemeral_config),
             executable_path: PathBuf::from(&frozen_runtime.executable_path),
             builtin_tools,
+            grok_context_windows,
         });
         Self::spawn_stdout_reader(host.clone(), stdout);
         Self::spawn_stderr_reader(host.clone(), stderr);
-        let initialized = host
-            .rpc(
-                "initialize",
-                json!({
-                    "protocolVersion": 1,
-                    "clientCapabilities": {
-                        "fs": {
-                            "readTextFile": allow_client_fs,
-                            "writeTextFile": allow_client_fs
-                        },
-                        "terminal": host.client_terminal_mode.is_available()
-                    },
-                    "clientInfo": {
-                        "name": "rovai",
-                        "title": "Rovai-ai",
-                        "version": env!("CARGO_PKG_VERSION")
-                    }
-                }),
-            )
-            .await;
+        let mut initialize_params = json!({
+            "protocolVersion": 1,
+            "clientCapabilities": {
+                "fs": {
+                    "readTextFile": allow_client_fs,
+                    "writeTextFile": allow_client_fs
+                },
+                "terminal": host.client_terminal_mode.is_available()
+            },
+            "clientInfo": {
+                "name": "rovai",
+                "title": "Rovai-ai",
+                "version": env!("CARGO_PKG_VERSION")
+            }
+        });
+        if host.adapter_kind == AdapterKind::CopilotCli
+            && crate::monitoring::reported_version_is(host.reported_version.as_deref(), [1, 0, 83])
+        {
+            // Native events distinguish streamed reasoning from one-shot intent,
+            // and per-call Usage from ACP's process/session cumulative result.
+            initialize_params["clientCapabilities"]["_meta"] = json!({
+                "github.com/copilot": {"events": ["assistant.usage", "assistant.reasoning_delta"]}
+            });
+        }
+        let initialized = host.rpc("initialize", initialize_params).await;
         match initialized {
             Ok(result) if result.get("protocolVersion").and_then(Value::as_u64) == Some(1) => {
                 *host.initialize_result.write().await = Some(result.clone());
@@ -3851,6 +3868,14 @@ impl AcpRuntime {
     }
 
     pub async fn observed_model_id(&self) -> Option<String> {
+        if self.adapter_kind() == AdapterKind::CopilotCli
+            && crate::monitoring::reported_version_is(self.reported_version(), [1, 0, 83])
+        {
+            // This installed version advertises a Session default that may not
+            // be the root call's model. Its validated assistant.usage owns the
+            // first actual model observation in Core.
+            return None;
+        }
         self.session_result
             .read()
             .await
@@ -4278,6 +4303,17 @@ impl AcpRuntime {
         self.native_usage.lock().await.is_some()
     }
 
+    pub(crate) async fn observed_context_window(&self) -> Option<i64> {
+        if self.adapter_kind() != AdapterKind::GrokBuild
+            || !crate::monitoring::reported_version_is(self.reported_version(), [1, 0, 44])
+        {
+            return None;
+        }
+        self.observed_model_id()
+            .await
+            .and_then(|id| self.host.grok_context_windows.get(&id).copied())
+    }
+
     pub(crate) async fn poll_native_usage(&self, prompt_end: bool) -> Vec<NativeUsageObservation> {
         let Some(reader) = self.native_usage.lock().await.clone() else {
             return Vec::new();
@@ -4552,7 +4588,10 @@ impl AcpCliRuntimeAdapter {
     pub(crate) async fn native_usage_runs(&self) -> Vec<(String, i64, Arc<AcpRuntime>)> {
         if !matches!(
             self.kind,
-            AdapterKind::CodebuddyCli | AdapterKind::KimiCodeCli | AdapterKind::OpencodeCli
+            AdapterKind::CodebuddyCli
+                | AdapterKind::KimiCodeCli
+                | AdapterKind::OpencodeCli
+                | AdapterKind::QoderCli
         ) {
             return Vec::new();
         }
@@ -5300,6 +5339,7 @@ struct GrokNativeConfiguration {
     byok_configured: bool,
     environment: BTreeMap<String, String>,
     compatibility_digest: String,
+    context_windows: BTreeMap<String, i64>,
 }
 
 fn grok_home_path() -> Result<PathBuf> {
@@ -5545,6 +5585,18 @@ fn load_grok_native_configuration_from_paths(
         None => toml::Value::Table(toml::map::Map::new()),
     };
     let literal_api_key = grok_config_has_literal_api_key(&config);
+    // Use only an explicit native model configuration. Unknown built-in
+    // catalog entries and the CLI's default window do not become guessed limits.
+    let context_windows = config
+        .get("model")
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flat_map(|entries| entries.iter())
+        .filter_map(|(id, model)| {
+            let window = model.get("context_window")?.as_integer()?;
+            (window > 0 && window as u64 <= 9_007_199_254_740_991).then_some((id.clone(), window))
+        })
+        .collect();
     let (credential_keys, injected_keys) = collect_grok_model_environment_keys(&config)?;
     let (file_environment, environment_contents) =
         read_grok_environment_file(environment_path, &injected_keys)?;
@@ -5572,6 +5624,7 @@ fn load_grok_native_configuration_from_paths(
         byok_configured,
         environment,
         compatibility_digest,
+        context_windows,
     })
 }
 
@@ -8557,6 +8610,7 @@ done
                 "\n",
                 "[model.minimax-m3]\n",
                 "model = \"MiniMax-M3\"\n",
+                "context_window = 204800\n",
                 "base_url = \"https://api.minimaxi.com/v1\"\n",
                 "env_key = \"MINIMAX_API_KEY\"\n",
                 "env_http_headers = { \"X-Tenant\" = \"MINIMAX_TENANT_TOKEN\" }\n",
@@ -8586,6 +8640,11 @@ done
             &BTreeMap::new(),
         )
         .unwrap();
+        assert_eq!(
+            configuration.context_windows.get("minimax-m3"),
+            Some(&204800)
+        );
+        assert!(!configuration.context_windows.contains_key("unknown"));
         assert!(configuration.byok_configured);
         assert_eq!(configuration.environment.len(), 2);
         assert_eq!(

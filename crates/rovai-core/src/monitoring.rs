@@ -119,7 +119,7 @@ impl RuntimeInputSemantics {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeUsageFields {
     pub input_tokens: Option<i64>,
@@ -130,6 +130,7 @@ pub struct RuntimeUsageFields {
     pub cache_write_input_tokens: Option<i64>,
     pub context_used_tokens: Option<i64>,
     pub context_size_tokens: Option<i64>,
+    pub native_context_ratio: Option<f64>,
 }
 
 impl RuntimeUsageFields {
@@ -142,6 +143,7 @@ impl RuntimeUsageFields {
             && self.cache_write_input_tokens.is_none()
             && self.context_used_tokens.is_none()
             && self.context_size_tokens.is_none()
+            && self.native_context_ratio.is_none()
     }
 }
 
@@ -154,7 +156,7 @@ pub struct RuntimeUsageCost {
     pub grain: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParsedRuntimeUsage {
     pub identity_suffix: String,
@@ -498,6 +500,9 @@ fn merge_delta_fields(
     )?;
     current.context_used_tokens = incoming.context_used_tokens.or(current.context_used_tokens);
     current.context_size_tokens = incoming.context_size_tokens.or(current.context_size_tokens);
+    current.native_context_ratio = incoming
+        .native_context_ratio
+        .or(current.native_context_ratio);
     Ok(())
 }
 
@@ -612,7 +617,7 @@ impl MonitoringService {
             r#"
             SELECT c.id, c.agent_id, x.native_binding_generation, x.runtime_kind,
                    x.model_key, x.context_used_tokens, x.context_window_tokens,
-                   x.source, x.dialect_id, x.observed_at
+                   x.source, x.dialect_id, x.observed_at, x.native_context_ratio
             FROM conversation c
             JOIN runtime_session_context_latest x ON x.conversation_id = c.id
                 AND x.native_binding_id = c.native_binding_id
@@ -656,6 +661,7 @@ impl MonitoringService {
                     "source": row.get::<_, String>(7)?,
                     "dialectId": row.get::<_, String>(8)?,
                     "observedAt": row.get::<_, String>(9)?,
+                    "nativeRatio": row.get::<_, Option<f64>>(10)?,
                 }))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -846,22 +852,42 @@ impl MonitoringService {
         database: &mut Database,
         batches: &[RuntimeUsageFlushBatch],
     ) -> Result<usize> {
+        Ok(Self::record_usage_batches_with_deferred_context(database, batches)?.0)
+    }
+
+    pub fn record_usage_batches_with_deferred_context(
+        database: &mut Database,
+        batches: &[RuntimeUsageFlushBatch],
+    ) -> Result<(usize, Vec<RuntimeUsageFlushBatch>)> {
         if batches.is_empty() {
-            return Ok(0);
+            return Ok((0, Vec::new()));
         }
         let (collection_epoch, _) = collection_identity(database)?;
         let transaction = database.connection_mut().transaction()?;
         let mut changed = 0;
+        let mut deferred = Vec::new();
         for batch in batches {
+            let mut latest_context = None;
             for record in &batch.records {
+                if context_waits_for_input(&transaction, &batch.run, &record.usage)? {
+                    retain_latest_context(&mut latest_context, record)?;
+                    continue;
+                }
                 if persist_usage_record(&transaction, &collection_epoch, &batch.run, record)? {
                     changed += 1;
                 }
             }
+            if let Some(record) = latest_context {
+                deferred.push(RuntimeUsageFlushBatch {
+                    run: batch.run.clone(),
+                    records: vec![record],
+                    pending_since: batch.pending_since,
+                });
+            }
             project_codex_run_cost(&transaction, &collection_epoch, &batch.run)?;
         }
         transaction.commit()?;
-        Ok(changed)
+        Ok((changed, deferred))
     }
 
     pub fn finalize_usage_run(database: &mut Database, agent_run_id: &str) -> Result<bool> {
@@ -1034,6 +1060,7 @@ fn persist_usage_record(
     }
     if record.usage.fields.context_used_tokens.is_some()
         || record.usage.fields.context_size_tokens.is_some()
+        || record.usage.fields.native_context_ratio.is_some()
     {
         persist_session_context(transaction, run, &record.usage)?;
     }
@@ -1111,6 +1138,81 @@ fn persist_usage_record(
     Ok(true)
 }
 
+fn retain_latest_context(
+    latest: &mut Option<BufferedUsageRecord>,
+    incoming: &BufferedUsageRecord,
+) -> Result<()> {
+    let time = parse_time(
+        incoming
+            .usage
+            .occurred_at
+            .as_deref()
+            .context("Context observation has no time")?,
+    )?;
+    if latest.as_ref().is_none_or(|previous| {
+        previous
+            .usage
+            .occurred_at
+            .as_deref()
+            .and_then(|s| parse_time(s).ok())
+            .is_none_or(|old| time >= old)
+    }) {
+        *latest = Some(incoming.clone());
+    }
+    Ok(())
+}
+
+fn context_waits_for_input(
+    transaction: &rusqlite::Transaction<'_>,
+    run: &RuntimeUsageRun,
+    usage: &ParsedRuntimeUsage,
+) -> Result<bool> {
+    let mut other = usage.fields.clone();
+    other.context_used_tokens = None;
+    other.context_size_tokens = None;
+    other.native_context_ratio = None;
+    if usage.scope != "session"
+        || usage.counter_mode != RuntimeUsageCounterMode::Gauge
+        || usage.cost.is_some()
+        || !other.is_empty()
+    {
+        return Ok(false);
+    }
+    let used = usage.fields.context_used_tokens;
+    let window = usage.fields.context_size_tokens.filter(|n| *n > 0);
+    let ratio = usage
+        .fields
+        .native_context_ratio
+        .filter(|n| n.is_finite() && (0.0..=1.0).contains(n));
+    if (used.is_none() && window.is_none() && ratio.is_none())
+        || used.zip(window).is_some_and(|(used, window)| used > window)
+    {
+        return Ok(false);
+    }
+    // Defer only a still-current binding whose input acknowledgement is pending.
+    // Rejected inputs, stale Sessions/epochs and a newer accepted owner cannot
+    // keep an observation alive. The buffer retains one latest numeric record.
+    Ok(transaction.query_row(r#"
+        SELECT EXISTS(
+            SELECT 1 FROM agent_run ar
+            JOIN runtime_input_delivery d ON d.agent_run_id=ar.id AND d.execution_epoch=ar.execution_epoch
+            JOIN conversation c ON c.id=ar.conversation_id
+            WHERE ar.id=?1 AND ar.execution_epoch=?2 AND c.native_session_id=?3
+              AND c.native_binding_id=d.native_binding_id
+              AND c.native_binding_generation=d.native_binding_generation
+              AND d.status IN ('prepared','delivery_unknown')
+              AND NOT EXISTS (
+                  SELECT 1 FROM agent_run newer
+                  JOIN runtime_input_delivery nd ON nd.agent_run_id=newer.id AND nd.execution_epoch=newer.execution_epoch
+                  WHERE newer.conversation_id=ar.conversation_id
+                    AND nd.native_binding_id=d.native_binding_id
+                    AND nd.native_binding_generation=d.native_binding_generation
+                    AND nd.status='accepted'
+                    AND (newer.started_at>ar.started_at OR (newer.started_at=ar.started_at AND newer.id>ar.id))
+              )
+        )"#, params![run.key.agent_run_id,run.key.execution_epoch,usage.native_session_id],|r|r.get(0))?)
+}
+
 fn persist_session_context(
     transaction: &rusqlite::Transaction<'_>,
     run: &RuntimeUsageRun,
@@ -1124,7 +1226,11 @@ fn persist_session_context(
     }
     let used = usage.fields.context_used_tokens;
     let window = usage.fields.context_size_tokens.filter(|value| *value > 0);
-    if used.is_none() && window.is_none() {
+    let native_ratio = usage
+        .fields
+        .native_context_ratio
+        .filter(|n| n.is_finite() && (0.0..=1.0).contains(n));
+    if used.is_none() && window.is_none() && native_ratio.is_none() {
         return Ok(());
     }
     if used.zip(window).is_some_and(|(used, window)| used > window) {
@@ -1141,12 +1247,12 @@ fn persist_session_context(
             conversation_id, native_binding_id, native_binding_generation,
             native_session_id, runtime_kind, runtime_version, model_key,
             effective_config_digest, context_used_tokens, context_window_tokens,
-            source, dialect_id, observed_at, source_agent_run_id, source_execution_epoch
+            source, dialect_id, observed_at, source_agent_run_id, source_execution_epoch, native_context_ratio
         )
         SELECT c.id, d.native_binding_id, d.native_binding_generation,
                c.native_session_id, ?4, ?5,
                COALESCE(NULLIF(ar.runtime_observed_model_id, ''), ?6),
-               ar.runtime_host_config_digest, ?7, ?8, ?9, ?10, ?11, ?1, ?2
+               ar.runtime_host_config_digest, ?7, ?8, ?9, ?10, ?11, ?1, ?2, ?12
         FROM agent_run ar
         JOIN runtime_input_delivery d ON d.agent_run_id = ar.id
             AND d.execution_epoch = ar.execution_epoch
@@ -1181,7 +1287,8 @@ fn persist_session_context(
             dialect_id = excluded.dialect_id,
             observed_at = excluded.observed_at,
             source_agent_run_id = excluded.source_agent_run_id,
-            source_execution_epoch = excluded.source_execution_epoch
+            source_execution_epoch = excluded.source_execution_epoch,
+            native_context_ratio = excluded.native_context_ratio
         WHERE excluded.native_binding_id <> runtime_session_context_latest.native_binding_id
            OR excluded.native_binding_generation <> runtime_session_context_latest.native_binding_generation
            OR excluded.observed_at >= runtime_session_context_latest.observed_at
@@ -1198,6 +1305,7 @@ fn persist_session_context(
             usage.source,
             usage.dialect_id,
             observed_at,
+            native_ratio,
         ],
     )?;
     Ok(())
@@ -2874,7 +2982,11 @@ fn reported_version_at_least(runtime_version: Option<&str>, minimum: [u64; 3]) -
         .is_some_and(|version| version >= minimum)
 }
 
-fn parse_reported_version(value: &str) -> Option<[u64; 3]> {
+pub(crate) fn reported_version_is(runtime_version: Option<&str>, exact: [u64; 3]) -> bool {
+    runtime_version.and_then(parse_reported_version) == Some(exact)
+}
+
+pub(crate) fn parse_reported_version(value: &str) -> Option<[u64; 3]> {
     value
         .split(|character: char| !character.is_ascii_digit() && character != '.')
         .filter(|part| !part.is_empty())
@@ -2957,6 +3069,7 @@ pub fn parse_codex_usage_message(method: &str, params: &Value) -> Vec<ParsedRunt
         cache_write_input_tokens: integer_at_any(value, &["/cacheWriteInputTokens"]),
         context_used_tokens: None,
         context_size_tokens: None,
+        native_context_ratio: None,
     };
     let mut observations = Vec::new();
     if !fields.is_empty() {
@@ -3037,6 +3150,52 @@ pub fn parse_acp_usage_message(
     method: &str,
     params: &Value,
 ) -> Vec<ParsedRuntimeUsage> {
+    if adapter_kind == AdapterKind::CopilotCli && reported_version_is(runtime_version, [1, 0, 83]) {
+        if method == "rovai/acp_prompt_completed" {
+            // Native ACP JTn(session.usage) restates earlier prompts in this
+            // process. Subscribed per-call events own this Run's consumption.
+            return Vec::new();
+        }
+        if method == "github.com/copilot/sessionEvent" {
+            if params["type"] != "assistant.usage"
+                || params.get("agentId").is_some_and(|v| !v.is_null())
+                || params.get("dataOmitted").is_some()
+            {
+                return Vec::new();
+            }
+            let Some(time) = params["timestamp"]
+                .as_str()
+                .filter(|s| DateTime::parse_from_rfc3339(s).is_ok())
+            else {
+                return Vec::new();
+            };
+            let data = &params["data"];
+            let fields = RuntimeUsageFields {
+                input_tokens: integer_at_any(data, &["/inputTokens"]),
+                output_tokens: integer_at_any(data, &["/outputTokens"]),
+                cache_read_input_tokens: integer_at_any(data, &["/cacheReadTokens"]),
+                cache_write_input_tokens: integer_at_any(data, &["/cacheWriteTokens"]),
+                reasoning_output_tokens: integer_at_any(data, &["/reasoningTokens"]),
+                ..Default::default()
+            };
+            if fields.is_empty() {
+                return Vec::new();
+            }
+            return vec![ParsedRuntimeUsage {
+                identity_suffix: "native_model_call".into(),
+                dialect_id: "copilot-native-call-usage-1.0.83".into(),
+                source: "runtime_private_extension".into(),
+                scope: "model_call".into(),
+                counter_mode: RuntimeUsageCounterMode::Delta,
+                input_semantics: RuntimeInputSemantics::CacheInclusiveTotal,
+                native_session_id: string_at_any(params, &["/sessionId"]),
+                native_turn_id: None,
+                fields,
+                cost: None,
+                occurred_at: Some(time.into()),
+            }];
+        }
+    }
     if adapter_kind == AdapterKind::GrokBuild
         && reported_version_at_least(runtime_version, [1, 0, 41])
         && method == "_x.ai/session_notification"
@@ -3185,6 +3344,7 @@ pub fn parse_acp_usage_message(
                     reasoning_output_tokens: None,
                     context_used_tokens: None,
                     context_size_tokens: None,
+                    native_context_ratio: None,
                 },
                 cost: None,
                 occurred_at: None,
@@ -3196,6 +3356,32 @@ pub fn parse_acp_usage_message(
         let update = &params["update"];
         let update_kind = update.get("sessionUpdate").and_then(Value::as_str);
         let mut observations = Vec::new();
+
+        if adapter_kind == AdapterKind::GrokBuild
+            && reported_version_is(runtime_version, [1, 0, 44])
+            && crate::observable_output::is_root_output(params)
+            && crate::observable_output::is_root_output(update)
+            && let Some(used) = integer_at_any(params, &["/_meta/totalTokens"])
+        {
+            // Grok's per-notification metadata is current context, distinct
+            // from result._meta.usage's cumulative consumption.
+            observations.push(ParsedRuntimeUsage {
+                identity_suffix: "context_occupancy".into(),
+                dialect_id: "grok-acp-meta-context-1.0.44".into(),
+                source: "runtime_event".into(),
+                scope: "session".into(),
+                counter_mode: RuntimeUsageCounterMode::Gauge,
+                input_semantics: RuntimeInputSemantics::Unknown,
+                native_session_id: string_at_any(params, &["/sessionId"]),
+                native_turn_id: None,
+                fields: RuntimeUsageFields {
+                    context_used_tokens: Some(used),
+                    ..Default::default()
+                },
+                cost: None,
+                occurred_at: None,
+            });
+        }
 
         if adapter_kind == AdapterKind::CodebuddyCli && update_kind == Some("usage_update") {
             let usage = update.pointer("/_meta/usage").unwrap_or(&Value::Null);
@@ -3217,6 +3403,7 @@ pub fn parse_acp_usage_message(
                 cache_write_input_tokens: None,
                 context_used_tokens: None,
                 context_size_tokens: None,
+                native_context_ratio: None,
             };
             if !fields.is_empty() {
                 observations.push(ParsedRuntimeUsage {
@@ -3246,6 +3433,7 @@ pub fn parse_acp_usage_message(
                 cache_write_input_tokens: None,
                 context_used_tokens: None,
                 context_size_tokens: None,
+                native_context_ratio: None,
             };
             if !fields.is_empty() {
                 observations.push(ParsedRuntimeUsage {
@@ -3370,6 +3558,7 @@ pub fn parse_acp_usage_message(
                 ),
                 context_used_tokens: None,
                 context_size_tokens: None,
+                native_context_ratio: None,
             },
         ),
         AdapterKind::OpencodeCli => {
@@ -3413,6 +3602,7 @@ pub fn parse_acp_usage_message(
                     cache_write_input_tokens: cache_write,
                     context_used_tokens: None,
                     context_size_tokens: None,
+                    native_context_ratio: None,
                 },
             )
         }
@@ -3455,6 +3645,19 @@ pub fn acp_usage_source_identity(
     params: &Value,
 ) -> Result<Option<String>> {
     let stable = match (adapter_kind, method) {
+        (AdapterKind::CopilotCli, "github.com/copilot/sessionEvent") => {
+            (params["type"] == "assistant.usage").then(|| {
+                json!({
+                    "dialect": "copilot-native-call-usage-1.0.83",
+                    "sessionId": params.get("sessionId"), "timestamp": params.get("timestamp"),
+                    "input": params.pointer("/data/inputTokens"),
+                    "output": params.pointer("/data/outputTokens"),
+                    "read": params.pointer("/data/cacheReadTokens"),
+                    "write": params.pointer("/data/cacheWriteTokens"),
+                    "reasoning": params.pointer("/data/reasoningTokens"),
+                })
+            })
+        }
         (AdapterKind::CodebuddyCli, "session/update") => {
             let usage = params.pointer("/update/_meta/usage");
             let request_id = params.pointer("/update/_meta/codebuddy.ai~1requestId");
@@ -3550,6 +3753,7 @@ pub fn parse_pi_usage_message(
         cache_write_input_tokens: integer_at_any(usage, &["/cacheWrite"]),
         context_used_tokens: None,
         context_size_tokens: None,
+        native_context_ratio: None,
     };
     if fields.is_empty() {
         return Vec::new();
@@ -3623,6 +3827,7 @@ pub fn parse_claude_result_usage(result: &Value) -> Vec<ParsedRuntimeUsage> {
         ),
         context_used_tokens: None,
         context_size_tokens: None,
+        native_context_ratio: None,
     };
     let cost = cost_from_value(
         value_at_any(result, &["/total_cost_usd", "/cost_usd"]),
@@ -3749,6 +3954,7 @@ mod tests {
                 cache_write_input_tokens: write,
                 context_used_tokens: None,
                 context_size_tokens: None,
+                native_context_ratio: None,
             },
             cost: None,
             occurred_at: None,
@@ -3988,7 +4194,7 @@ mod tests {
                 runtime_kind TEXT, runtime_version TEXT, model_key TEXT,
                 effective_config_digest TEXT, context_used_tokens INTEGER,
                 context_window_tokens INTEGER, source TEXT, dialect_id TEXT,
-                observed_at TEXT, source_agent_run_id TEXT, source_execution_epoch INTEGER
+                observed_at TEXT, source_agent_run_id TEXT, source_execution_epoch INTEGER, native_context_ratio REAL
             );
             INSERT INTO conversation VALUES ('conversation', 'session-a', 'binding-a', 1);
             INSERT INTO agent_run VALUES ('run-a', 'conversation', 1, '2026-09-28T00:00:00Z', NULL, NULL);
@@ -4049,6 +4255,100 @@ mod tests {
             "an older observation must not overwrite a newer one"
         );
 
+        // A native Gauge may arrive before the ACP prompt acknowledgement.
+        // Keep only its latest numeric observation, then reapply the same
+        // binding gate after acknowledgement without replaying consumption.
+        tx.execute(
+            "UPDATE runtime_input_delivery SET status='prepared' WHERE agent_run_id='run-a'",
+            [],
+        )
+        .unwrap();
+        let owner = run("run-a");
+        let mut buffer = RuntimeUsageBuffer::default();
+        for (index, used) in [(1, 330), (2, 260)] {
+            let mut gauge = observation("session-a", used, &format!("2026-09-28T00:00:3{index}Z"));
+            gauge.identity_suffix = format!("context:{used}");
+            assert!(context_waits_for_input(&tx, &owner, &gauge).unwrap());
+            buffer
+                .observe_run(
+                    &owner,
+                    &format!("pending-{index}"),
+                    &[gauge],
+                    Instant::now(),
+                )
+                .unwrap();
+        }
+        let mut batch = buffer.drain(RuntimeUsageFlushTarget::Periodic).remove(0);
+        let mut latest = None;
+        for record in &batch.records {
+            retain_latest_context(&mut latest, record).unwrap();
+        }
+        batch.records = vec![latest.unwrap()];
+        assert_eq!(batch.records[0].usage.fields.context_used_tokens, Some(260));
+        buffer.restore(vec![batch]).unwrap();
+        tx.execute(
+            "UPDATE runtime_input_delivery SET status='not_accepted' WHERE agent_run_id='run-a'",
+            [],
+        )
+        .unwrap();
+        let batch = buffer.drain(RuntimeUsageFlushTarget::Periodic).remove(0);
+        assert!(!context_waits_for_input(&tx, &owner, &batch.records[0].usage).unwrap());
+        tx.execute(
+            "UPDATE runtime_input_delivery SET status='accepted' WHERE agent_run_id='run-a'",
+            [],
+        )
+        .unwrap();
+        persist_session_context(&tx, &owner, &batch.records[0].usage).unwrap();
+        assert_eq!(
+            tx.query_row(
+                "SELECT context_used_tokens FROM runtime_session_context_latest",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            260
+        );
+
+        let mut native_only = observation("session-a", 0, "2026-09-28T00:00:35Z");
+        native_only.fields = RuntimeUsageFields {
+            native_context_ratio: Some(0.125),
+            ..Default::default()
+        };
+        persist_session_context(&tx, &run("run-a"), &native_only).unwrap();
+        let saved: (Option<i64>, Option<i64>, Option<f64>) = tx.query_row(
+            "SELECT context_used_tokens,context_window_tokens,native_context_ratio FROM runtime_session_context_latest",
+            [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(
+            saved,
+            (None, None, Some(0.125)),
+            "a ratio neither infers nor stitches old quantities"
+        );
+        native_only.fields.native_context_ratio = Some(1.01);
+        native_only.occurred_at = Some("2026-09-28T00:00:40Z".into());
+        persist_session_context(&tx, &run("run-a"), &native_only).unwrap();
+        assert_eq!(
+            tx.query_row(
+                "SELECT native_context_ratio FROM runtime_session_context_latest",
+                [],
+                |r| r.get::<_, f64>(0)
+            )
+            .unwrap(),
+            0.125
+        );
+        native_only.fields.native_context_ratio = Some(0.0);
+        persist_session_context(&tx, &run("run-a"), &native_only).unwrap();
+        native_only.occurred_at = Some("2026-09-28T00:00:45Z".into());
+        persist_session_context(&tx, &run("run-a"), &native_only).unwrap();
+        assert_eq!(
+            tx.query_row(
+                "SELECT observed_at FROM runtime_session_context_latest",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "2026-09-28T00:00:45Z",
+            "same ratio at a fresh native time updates freshness"
+        );
         tx.execute("UPDATE conversation SET native_session_id='session-b', native_binding_id='binding-b', native_binding_generation=2 WHERE id='conversation'", []).unwrap();
         persist_session_context(
             &tx,
@@ -4424,6 +4724,163 @@ mod tests {
         );
         assert_eq!(copilot_usage[0].fields.cache_write_input_tokens, Some(10));
 
+        let native = json!({"sessionId":"copilot-session","type":"assistant.usage",
+            "timestamp":"2026-10-01T00:00:00Z","data":{"inputTokens":100,"outputTokens":10,
+            "cacheReadTokens":40,"cacheWriteTokens":0,"reasoningTokens":3}});
+        let parse = |frame: &Value| {
+            parse_acp_usage_message(
+                AdapterKind::CopilotCli,
+                Some("1.0.83"),
+                "github.com/copilot/sessionEvent",
+                frame,
+            )
+        };
+        let call = parse(&native);
+        assert_eq!(call.len(), 1);
+        assert_eq!(
+            normalize_usage(&call[0]).unwrap().prompt_input_total_tokens,
+            Some(100)
+        );
+        assert_eq!(normalize_usage(&call[0]).unwrap().output_tokens, Some(10));
+        assert_eq!(call[0].fields.cache_write_input_tokens, Some(0));
+        assert!(
+            parse_acp_usage_message(
+                AdapterKind::CopilotCli,
+                Some("1.0.83"),
+                copilot["method"].as_str().unwrap(),
+                &copilot["params"]
+            )
+            .is_empty(),
+            "process cumulative terminal cannot be counted again"
+        );
+        for (key, value) in [
+            ("agentId", json!("child")),
+            ("dataOmitted", json!("too-large")),
+            ("type", json!("assistant.reasoning_delta")),
+            ("timestamp", json!("invalid")),
+        ] {
+            let mut invalid = native.clone();
+            invalid[key] = value;
+            assert!(parse(&invalid).is_empty());
+        }
+        let mut missing = native.clone();
+        missing["data"]
+            .as_object_mut()
+            .unwrap()
+            .remove("cacheWriteTokens");
+        assert_eq!(parse(&missing)[0].fields.cache_write_input_tokens, None);
+        let mut later = native.clone();
+        later["timestamp"] = json!("2026-10-01T00:00:01Z");
+        assert_ne!(
+            acp_usage_source_identity(
+                AdapterKind::CopilotCli,
+                "github.com/copilot/sessionEvent",
+                &native
+            )
+            .unwrap(),
+            acp_usage_source_identity(
+                AdapterKind::CopilotCli,
+                "github.com/copilot/sessionEvent",
+                &later
+            )
+            .unwrap()
+        );
+        let grok = parse_acp_usage_message(
+            AdapterKind::GrokBuild,
+            Some("grok 1.0.44 (5b807183dd79)"),
+            "session/update",
+            &json!({"sessionId":"grok-session","_meta":{"totalTokens":125},"update":{"sessionUpdate":"agent_message_chunk"}}),
+        );
+        assert_eq!(grok[0].fields.context_used_tokens, Some(125));
+        assert_eq!(grok[0].counter_mode, RuntimeUsageCounterMode::Gauge);
+        assert!(!normalize_usage(&grok[0]).unwrap().any_observed());
+        let native_witness: Value = serde_json::from_str(include_str!(
+            "../../../docs/research/runtime-monitoring/fixtures/round6-native-context-ratio.json"
+        ))
+        .unwrap();
+        for entry in native_witness["entries"].as_array().unwrap() {
+            let adapter = match entry["runtime"].as_str().unwrap() {
+                "copilot-cli" => AdapterKind::CopilotCli,
+                "grok-build" => AdapterKind::GrokBuild,
+                _ => continue,
+            };
+            for run in entry["runs"].as_array().unwrap() {
+                for record in run["sourceRecords"].as_array().unwrap() {
+                    let raw = &record["raw"];
+                    let parsed = parse_acp_usage_message(
+                        adapter,
+                        entry["version"].as_str(),
+                        raw["method"].as_str().unwrap(),
+                        &raw["params"],
+                    );
+                    assert_eq!(parsed.len(), 1);
+                    let normalized = normalize_usage(&parsed[0]).unwrap();
+                    assert_eq!(
+                        json!({"promptInputTotalTokens":normalized.prompt_input_total_tokens,
+                            "outputTokens":normalized.output_tokens,
+                            "cacheReadTokens":normalized.cache_read_tokens,
+                            "cacheWriteTokens":normalized.cache_write_tokens}),
+                        record["expectedParsed"]
+                    );
+                }
+                let raw = &run["rawContext"];
+                let parsed = parse_acp_usage_message(
+                    adapter,
+                    entry["version"].as_str(),
+                    raw["method"].as_str().unwrap(),
+                    &raw["params"],
+                );
+                assert_eq!(
+                    parsed[0].fields.context_used_tokens.map(|n| json!(n)),
+                    Some(run["expectedContext"]["usedTokens"].clone())
+                );
+                assert!(!normalize_usage(&parsed[0]).unwrap().any_observed());
+            }
+        }
+        let renderer_witness: Value = serde_json::from_str(include_str!(
+            "../../../docs/research/runtime-monitoring/fixtures/round6-native-context-renderer.json"
+        ))
+        .unwrap();
+        for app in renderer_witness["apps"].as_array().unwrap() {
+            if app["runtime"] != "copilot-cli" {
+                continue;
+            }
+            for record in app["sourceRecords"].as_array().unwrap() {
+                let raw = &record["raw"];
+                let parsed = parse_acp_usage_message(
+                    AdapterKind::CopilotCli,
+                    app["version"].as_str(),
+                    raw["method"].as_str().unwrap(),
+                    &raw["params"],
+                );
+                assert_eq!(parsed.len(), 1);
+                assert_eq!(
+                    normalize_usage(&parsed[0])
+                        .unwrap()
+                        .prompt_input_total_tokens
+                        .map(|n| json!(n)),
+                    Some(record["expectedParsed"]["promptInputTotalTokens"].clone())
+                );
+                let identity = acp_usage_source_identity(
+                    AdapterKind::CopilotCli,
+                    raw["method"].as_str().unwrap(),
+                    &raw["params"],
+                )
+                .unwrap();
+                let mut without_summary = raw["params"].clone();
+                without_summary["data"]["reasoningSummary"] = json!("PRIVATE_CANARY");
+                assert_eq!(
+                    identity,
+                    acp_usage_source_identity(
+                        AdapterKind::CopilotCli,
+                        raw["method"].as_str().unwrap(),
+                        &without_summary
+                    )
+                    .unwrap(),
+                    "private payload must not enter the numeric source identity"
+                );
+            }
+        }
         let claude: Value =
             serde_json::from_str(include_str!("../tests/fixtures/runtime-usage/claude.json"))
                 .unwrap();

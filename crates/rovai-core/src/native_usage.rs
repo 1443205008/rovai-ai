@@ -27,6 +27,7 @@ const MAX_IDENTITIES: usize = 8192;
 enum Dialect {
     CodeBuddy,
     Kimi,
+    Qoder,
 }
 
 pub(crate) struct NativeUsageObservation {
@@ -46,7 +47,9 @@ impl NativeUsageReader {
         workspace: &Path,
         session_id: &str,
     ) -> Option<Self> {
-        if kind == AdapterKind::OpencodeCli && version == Some("1.18.30") {
+        if kind == AdapterKind::OpencodeCli
+            && crate::monitoring::reported_version_is(version, [1, 18, 30])
+        {
             OpenCodeUsageReader::for_prompt(workspace, session_id).map(Self::OpenCode)
         } else {
             NativeJsonlUsageReader::for_prompt(kind, version, workspace, session_id)
@@ -122,12 +125,18 @@ impl NativeJsonlUsageReader {
     ) -> Option<Self> {
         // These are installed-version witnesses, not a promise about future
         // journal formats. Other versions continue using their wire dialect.
-        let (dialect, env_key, default_home) = match (kind, version) {
-            (AdapterKind::CodebuddyCli, Some("2.133.1")) => {
+        let (dialect, env_key, default_home) = match (
+            kind,
+            version.and_then(crate::monitoring::parse_reported_version),
+        ) {
+            (AdapterKind::CodebuddyCli, Some([2, 133, 1])) => {
                 (Dialect::CodeBuddy, "CODEBUDDY_CONFIG_DIR", ".codebuddy")
             }
-            (AdapterKind::KimiCodeCli, Some("2.1.1")) => {
+            (AdapterKind::KimiCodeCli, Some([2, 1, 1])) => {
                 (Dialect::Kimi, "KIMI_CODE_HOME", ".kimi-code")
+            }
+            (AdapterKind::QoderCli, Some([1, 1, 64])) => {
+                (Dialect::Qoder, "QODER_CONFIG_DIR", ".qoder")
             }
             _ => return None,
         };
@@ -155,6 +164,10 @@ impl NativeJsonlUsageReader {
                 .join(kimi_workspace_key(&workspace))
                 .join(session_id)
                 .join("agents/main/wire.jsonl"),
+            Dialect::Qoder => root
+                .join("projects")
+                .join(qoder_workspace_key(&workspace))
+                .join(format!("{session_id}.jsonl")),
         };
         Self::baseline(dialect, root, path, workspace, session_id.to_string()).ok()
     }
@@ -301,23 +314,50 @@ impl NativeJsonlUsageReader {
                 self.skip_partial = false;
                 continue;
             }
-            let observation = match self.dialect {
-                Dialect::CodeBuddy => parse_codebuddy(&line, &self.session_id, &self.workspace),
-                Dialect::Kimi => parse_kimi(&line, &self.session_id),
+            let incoming = match self.dialect {
+                Dialect::CodeBuddy => parse_codebuddy(&line, &self.session_id, &self.workspace)
+                    .into_iter()
+                    .collect(),
+                Dialect::Kimi => parse_kimi(&line, &self.session_id).into_iter().collect(),
+                Dialect::Qoder => {
+                    let Some(record) = qoder_record(&line, &self.session_id, &self.workspace)
+                    else {
+                        continue;
+                    };
+                    // Qoder appends incomplete assistant snapshots before their
+                    // Usage. An old pending message must also belong to the
+                    // baseline, even if its final Usage arrives after this prompt.
+                    let baseline_id =
+                        format!("qoder-baseline:{}:{}", self.session_id, record.message.id);
+                    if baseline {
+                        if self.seen.len() >= MAX_IDENTITIES {
+                            self.disabled = true;
+                            break;
+                        }
+                        self.seen.insert(baseline_id);
+                        continue;
+                    }
+                    if self.seen.contains(&baseline_id) {
+                        continue;
+                    }
+                    parse_qoder(record, &self.session_id)
+                }
             };
-            let Some(observation) = observation else {
-                continue;
-            };
-            if self.seen.contains(&observation.source_identity) {
-                continue;
+            for observation in incoming {
+                if self.seen.contains(&observation.source_identity) {
+                    continue;
+                }
+                if self.seen.len() >= MAX_IDENTITIES {
+                    self.disabled = true;
+                    break;
+                }
+                self.seen.insert(observation.source_identity.clone());
+                if !baseline {
+                    observations.push(observation);
+                }
             }
-            if self.seen.len() >= MAX_IDENTITIES {
-                self.disabled = true;
+            if self.disabled {
                 break;
-            }
-            self.seen.insert(observation.source_identity.clone());
-            if !baseline {
-                observations.push(observation);
             }
         }
         Ok(observations)
@@ -482,9 +522,37 @@ impl OpenCodeUsageReader {
                 "opencode-native-message-usage-1.18.30",
                 None,
                 RuntimeInputSemantics::ExclusiveBuckets,
-                fields,
+                fields.clone(),
                 time,
             ));
+            // The installed ACPUsage.contextTokens() defines occupancy as the
+            // latest call's input + both cache buckets, excluding output. ACP
+            // supplies size from its effective Provider/Model catalog when
+            // known. Preserve used alone when the native catalog has no limit.
+            let used = fields
+                .input_tokens
+                .zip(fields.cache_read_input_tokens)
+                .zip(fields.cache_write_input_tokens)
+                .filter(|((input, read), write)| *input >= 0 && *read >= 0 && *write >= 0)
+                .and_then(|((input, read), write)| input.checked_add(read)?.checked_add(write));
+            if let Some(used) = used {
+                let mut gauge = observation(
+                    &self.session_id,
+                    format!("opencode-context:{}:{id}", self.session_id),
+                    "opencode-native-call-context-1.18.30",
+                    None,
+                    RuntimeInputSemantics::Unknown,
+                    RuntimeUsageFields {
+                        context_used_tokens: Some(used),
+                        ..Default::default()
+                    },
+                    time,
+                );
+                gauge.usage.scope = "session".into();
+                gauge.usage.counter_mode = RuntimeUsageCounterMode::Gauge;
+                gauge.usage.identity_suffix = "native_context".into();
+                result.push(gauge);
+            }
         }
         Ok(result)
     }
@@ -506,6 +574,13 @@ fn codebuddy_workspace_key(workspace: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+fn qoder_workspace_key(workspace: &str) -> String {
+    workspace
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
 }
 
 fn kimi_workspace_key(workspace: &str) -> String {
@@ -700,6 +775,112 @@ fn parse_kimi(line: &[u8], session_id: &str) -> Option<NativeUsageObservation> {
     ))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QoderRecord {
+    #[serde(rename = "type")]
+    kind: String,
+    session_id: String,
+    cwd: String,
+    is_sidechain: bool,
+    entrypoint: String,
+    model_source: Option<String>,
+    timestamp: String,
+    message: QoderMessage,
+}
+#[derive(Deserialize)]
+struct QoderMessage {
+    id: String,
+    role: String,
+    usage: Option<QoderUsage>,
+}
+#[derive(Deserialize)]
+struct QoderUsage {
+    input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+    cache_read_input_tokens: Option<i64>,
+    cache_creation_input_tokens: Option<i64>,
+    context_usage_ratio: Option<f64>,
+}
+
+fn qoder_record(line: &[u8], session_id: &str, workspace: &str) -> Option<QoderRecord> {
+    let record: QoderRecord = serde_json::from_slice(line).ok()?;
+    (record.kind == "assistant"
+        && record.message.role == "assistant"
+        && record.entrypoint == "acp"
+        && !record.is_sidechain
+        && record.session_id == session_id
+        && record.cwd == workspace
+        && safe_identity(&record.message.id)
+        && DateTime::parse_from_rfc3339(&record.timestamp).is_ok())
+    .then_some(record)
+}
+
+fn parse_qoder(record: QoderRecord, session_id: &str) -> Vec<NativeUsageObservation> {
+    let Some(raw) = record.message.usage else {
+        return Vec::new();
+    };
+    let mut result = Vec::new();
+    if record.model_source.as_deref() == Some("custom") {
+        // Installed custom-provider Ag() copies OpenAI prompt_tokens into
+        // input_tokens, including cache. The native redaction path for other
+        // model sources replaces counts with zeros; it cannot establish Usage.
+        let fields = RuntimeUsageFields {
+            input_tokens: nonnegative(raw.input_tokens),
+            output_tokens: nonnegative(raw.output_tokens),
+            // Native normalization can synthesize zero for missing buckets.
+            // Without original presence flags only positive caches are proven.
+            cache_read_input_tokens: nonnegative(raw.cache_read_input_tokens).filter(|n| *n > 0),
+            cache_write_input_tokens: nonnegative(raw.cache_creation_input_tokens)
+                .filter(|n| *n > 0),
+            ..Default::default()
+        };
+        if fields.input_tokens.is_some()
+            || fields.output_tokens.is_some()
+            || fields.cache_read_input_tokens.is_some()
+            || fields.cache_write_input_tokens.is_some()
+        {
+            let mut item = observation(
+                session_id,
+                format!("qoder-native:{session_id}:{}", record.message.id),
+                "qoder-custom-message-usage-1.1.64",
+                None,
+                RuntimeInputSemantics::CacheInclusiveTotal,
+                fields,
+                None,
+            );
+            item.usage.occurred_at = Some(record.timestamp.clone());
+            result.push(item);
+        }
+    }
+    if let Some(ratio) = raw
+        .context_usage_ratio
+        .filter(|n| n.is_finite() && (0.0..=1.0).contains(n))
+    {
+        let mut item = observation(
+            session_id,
+            format!(
+                "qoder-context:{session_id}:{}:{}",
+                record.message.id, record.timestamp
+            ),
+            "qoder-native-context-ratio-1.1.64",
+            None,
+            RuntimeInputSemantics::Unknown,
+            RuntimeUsageFields {
+                native_context_ratio: Some(ratio),
+                ..Default::default()
+            },
+            None,
+        );
+        item.usage.scope = "session".into();
+        item.usage.counter_mode = RuntimeUsageCounterMode::Gauge;
+        item.usage.identity_suffix = "native_context".into();
+        item.usage.occurred_at = Some(record.timestamp);
+        result.push(item);
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -714,6 +895,14 @@ mod tests {
         json!({"type":"context.append_loop_event","agentId":"main","event":{"type":"step.end","uuid":id,
             "turnId":"0","usage":{"inputOther":12,"output":3,"inputCacheRead":20,"inputCacheCreation":0}},
             "content":"NATIVE_PRIVATE_CANARY"})
+    }
+
+    fn qoder(id: &str) -> serde_json::Value {
+        json!({"type":"assistant","sessionId":"session-1","cwd":"/workspace",
+            "entrypoint":"acp","isSidechain":false,"modelSource":"custom",
+            "timestamp":"2026-10-01T00:00:00Z","message":{"id":id,"role":"assistant",
+            "content":"NATIVE_PRIVATE_CANARY","usage":{"input_tokens":123,"output_tokens":9,
+            "cache_read_input_tokens":20,"cache_creation_input_tokens":0}}})
     }
 
     // New owner: the private journal's exact source, root identity and sparse
@@ -822,6 +1011,61 @@ mod tests {
             codebuddy_workspace_key("/private/a---b/workspace/"),
             "private-a-b-workspace"
         );
+        assert_eq!(
+            qoder_workspace_key("/private/a_b/workspace"),
+            "-private-a-b-workspace"
+        );
+        let mut frame = qoder("call-1");
+        frame["message"]["usage"]["context_usage_ratio"] = json!(0.125);
+        let parse = |v: &serde_json::Value| {
+            qoder_record(&serde_json::to_vec(v).unwrap(), "session-1", "/workspace")
+                .map(|r| parse_qoder(r, "session-1"))
+                .unwrap_or_default()
+        };
+        let result = parse(&frame);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].usage.fields.input_tokens, Some(123));
+        assert_eq!(
+            result[0].usage.input_semantics,
+            RuntimeInputSemantics::CacheInclusiveTotal
+        );
+        assert_eq!(
+            result[0].usage.fields.cache_write_input_tokens, None,
+            "native default zero has no provider presence evidence"
+        );
+        assert_eq!(result[1].usage.fields.native_context_ratio, Some(0.125));
+        assert_eq!(result[1].usage.fields.context_used_tokens, None);
+        assert_eq!(result[1].usage.fields.context_size_tokens, None);
+        assert!(
+            !serde_json::to_string(&result[0].usage)
+                .unwrap()
+                .contains("NATIVE_PRIVATE_CANARY")
+        );
+        frame["modelSource"] = json!("native");
+        assert_eq!(
+            parse(&frame).len(),
+            1,
+            "redacted counts cannot establish zero Usage; ratio is independent"
+        );
+        for ratio in [json!(-0.01), json!(1.01), json!(null)] {
+            frame["message"]["usage"]["context_usage_ratio"] = ratio;
+            assert!(parse(&frame).is_empty());
+        }
+        frame["message"]["usage"]["context_usage_ratio"] = json!(0);
+        assert_eq!(
+            parse(&frame)[0].usage.fields.native_context_ratio,
+            Some(0.0)
+        );
+        for (key, value) in [
+            ("isSidechain", json!(true)),
+            ("sessionId", json!("other")),
+            ("cwd", json!("/other")),
+            ("entrypoint", json!("cli")),
+        ] {
+            let mut invalid = frame.clone();
+            invalid[key] = value;
+            assert!(parse(&invalid).is_empty());
+        }
         let witness: serde_json::Value = serde_json::from_str(include_str!(
             "../../../docs/research/runtime-monitoring/fixtures/round5-native-usage-context.json"
         ))
@@ -865,6 +1109,40 @@ mod tests {
                 }
             }
         }
+        let witness: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/research/runtime-monitoring/fixtures/round6-native-context-ratio.json"
+        ))
+        .unwrap();
+        let entry = witness["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["runtime"] == "qoder-cli")
+            .unwrap();
+        for run in entry["runs"].as_array().unwrap() {
+            for record in run["sourceRecords"].as_array().unwrap() {
+                let frame = serde_json::to_vec(&record["raw"]).unwrap();
+                let observations = parse_qoder(
+                    qoder_record(&frame, "session-1", "/workspace").unwrap(),
+                    "session-1",
+                );
+                let fields = &observations[0].usage.fields;
+                assert_eq!(
+                    json!({"promptInputTotalTokens":fields.input_tokens,
+                        "outputTokens":fields.output_tokens,
+                        "cacheReadTokens":fields.cache_read_input_tokens,
+                        "cacheWriteTokens":fields.cache_write_input_tokens}),
+                    record["expectedParsed"]
+                );
+                let context = &observations[1].usage.fields;
+                assert_eq!(
+                    json!({"usedTokens":context.context_used_tokens,
+                        "windowTokens":context.context_size_tokens,
+                        "nativeRatio":context.native_context_ratio}),
+                    record["expectedContext"]
+                );
+            }
+        }
     }
 
     // New filesystem owner: byte/identity baseline, torn lines and continuity.
@@ -873,7 +1151,7 @@ mod tests {
     #[test]
     fn native_cursor_excludes_history_replays_partial_lines_and_file_resets() {
         use std::io::Write;
-        for dialect in [Dialect::CodeBuddy, Dialect::Kimi] {
+        for dialect in [Dialect::CodeBuddy, Dialect::Kimi, Dialect::Qoder] {
             let root =
                 std::env::temp_dir().join(format!("rovai-native-usage-{}", uuid::Uuid::new_v4()));
             fs::create_dir_all(&root).unwrap();
@@ -881,9 +1159,17 @@ mod tests {
             let make = |id| match dialect {
                 Dialect::CodeBuddy => codebuddy(id),
                 Dialect::Kimi => kimi(id),
+                Dialect::Qoder => qoder(id),
             };
             let line = |id| format!("{}\n", make(id));
-            fs::write(&path, line("old")).unwrap();
+            let mut historical = make("old");
+            if matches!(dialect, Dialect::Qoder) {
+                historical["message"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("usage");
+            }
+            fs::write(&path, format!("{historical}\n")).unwrap();
             let mut reader = NativeJsonlUsageReader::baseline(
                 dialect,
                 root.clone(),
@@ -1020,7 +1306,13 @@ mod tests {
         insert("new-pending", "session-1", None);
         insert("new-call", "session-1", Some(3));
         let observations = reader.poll();
-        assert_eq!(observations.len(), 1);
+        assert_eq!(observations.len(), 2);
+        assert_eq!(observations[1].usage.fields.context_used_tokens, Some(32));
+        assert_eq!(observations[1].usage.fields.context_size_tokens, None);
+        assert_eq!(
+            observations[1].usage.counter_mode,
+            RuntimeUsageCounterMode::Gauge
+        );
         let fields = &observations[0].usage.fields;
         assert_eq!(fields.input_tokens, Some(12));
         assert_eq!(
@@ -1036,16 +1328,17 @@ mod tests {
         );
         assert!(reader.poll().is_empty());
         database.execute("UPDATE message SET data=json_set(data,'$.time.completed',4) WHERE id='new-pending'", []).unwrap();
-        assert_eq!(reader.poll().len(), 1);
+        assert_eq!(reader.poll().len(), 2);
         let mut next =
             OpenCodeUsageReader::baseline(path.clone(), "/workspace".into(), "session-1".into())
                 .unwrap();
         insert("next-call", "session-1", Some(5));
-        assert_eq!(next.poll().len(), 1);
-        let witness: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../docs/research/runtime-monitoring/fixtures/round5-native-usage-context.json"
-        ))
-        .unwrap();
+        assert_eq!(next.poll().len(), 2);
+        for (source_index, source) in [
+            include_str!("../../../docs/research/runtime-monitoring/fixtures/round5-native-usage-context.json"),
+            include_str!("../../../docs/research/runtime-monitoring/fixtures/round6-native-context-ratio.json"),
+        ].into_iter().enumerate() {
+        let witness: serde_json::Value = serde_json::from_str(source).unwrap();
         let entry = witness["entries"]
             .as_array()
             .unwrap()
@@ -1065,13 +1358,13 @@ mod tests {
                     .execute(
                         "INSERT INTO message VALUES(?1,'session-1',1,?2)",
                         rusqlite::params![
-                            format!("witness-{run_index}-{call_index}"),
+                            format!("witness-{source_index}-{run_index}-{call_index}"),
                             record["raw"].to_string()
                         ],
                     )
                     .unwrap();
                 let observations = replay.poll();
-                assert_eq!(observations.len(), 1);
+                assert_eq!(observations.len(), 2);
                 let fields = &observations[0].usage.fields;
                 let total = fields.input_tokens.and_then(|input| {
                     Some(input + fields.cache_read_input_tokens? + fields.cache_write_input_tokens?)
@@ -1083,8 +1376,17 @@ mod tests {
                     }),
                     record["expectedParsed"]
                 );
+                if let Some(context) = record.get("expectedContext") {
+                    assert_eq!(
+                        json!({"usedTokens":observations[1].usage.fields.context_used_tokens,
+                            "windowTokens":observations[1].usage.fields.context_size_tokens,
+                            "nativeRatio":observations[1].usage.fields.native_context_ratio}),
+                        *context
+                    );
+                }
                 assert!(replay.poll().is_empty());
             }
+        }
         }
         database
             .execute(

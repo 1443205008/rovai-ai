@@ -20363,6 +20363,14 @@ async fn process_agent_run_acp_message(
 
     let mut usage =
         parse_acp_usage_message(adapter_kind, runtime.reported_version(), &method, &params);
+    if adapter_kind == AdapterKind::GrokBuild {
+        let window = runtime.observed_context_window().await;
+        for item in &mut usage {
+            if item.dialect_id == "grok-acp-meta-context-1.0.44" {
+                item.fields.context_size_tokens = window;
+            }
+        }
+    }
     if runtime.native_usage_selected().await {
         // A prompt selects one billing source before dispatch. Restated ACP
         // totals cannot also claim the native journal's model calls.
@@ -20382,7 +20390,15 @@ async fn process_agent_run_acp_message(
             core,
             agent_run_id,
             execution_epoch,
-            &acp_usage_source_identity(adapter_kind, &method, &params)
+            &if usage
+                .iter()
+                .any(|item| item.dialect_id == "grok-acp-meta-context-1.0.44")
+            {
+                // Metadata rides on text/thought notifications. Its stable
+                // receipt identity must not hash their private content.
+                format!("grok-context:{host_instance_id}:{native_prompt_id}:{sequence}")
+            } else {
+                acp_usage_source_identity(adapter_kind, &method, &params)
                 .unwrap_or_else(|error| {
                     eprintln!(
                         "failed to derive {} Usage identity for AgentRun {agent_run_id}: {error:#}",
@@ -20394,7 +20410,8 @@ async fn process_agent_run_acp_message(
                     canonical_json_digest(&message).unwrap_or_else(|_| {
                         format!("acp:{method}:{agent_run_id}:{execution_epoch}")
                     })
-                }),
+                })
+            },
             &usage,
         )
         .await
@@ -20403,6 +20420,63 @@ async fn process_agent_run_acp_message(
             "failed to persist {} Usage for AgentRun {agent_run_id}: {error:#}",
             adapter_kind.as_str()
         );
+    }
+    if adapter_kind == AdapterKind::CopilotCli && method == "github.com/copilot/sessionEvent" {
+        // Drop private events before Evidence or Renderer IPC. Standard thought
+        // chunks also contain one-shot intent and therefore are not counted.
+        if usage
+            .iter()
+            .any(|item| item.dialect_id == "copilot-native-call-usage-1.0.83")
+            && let Some(model) = params.pointer("/data/model").and_then(Value::as_str)
+        {
+            // ACP's advertised default can differ from the model that actually
+            // served the root call. Use the validated native Usage observation.
+            let execution = {
+                let database = core.database.lock().await;
+                ExecutionRuntimeService::default().load_agent_run_execution(
+                    &database,
+                    agent_run_id,
+                    execution_epoch,
+                )
+            };
+            if let Ok(Some(execution)) = execution {
+                record_available_runtime_model(
+                    core,
+                    output,
+                    adapter_kind,
+                    &execution.camp_id,
+                    agent_run_id,
+                    execution_epoch,
+                    &execution.runtime.model.source,
+                    Some(model.to_string()),
+                )
+                .await;
+            }
+        }
+        if crate::monitoring::reported_version_is(runtime.reported_version(), [1, 0, 83])
+            && params["type"] == "assistant.reasoning_delta"
+            && params.get("agentId").is_none_or(Value::is_null)
+            && params.get("dataOmitted").is_none()
+        {
+            let payload = json!({
+                "sourceKind": "copilot-native-reasoning-delta-1.0.83",
+                "delta": params.pointer("/data/deltaContent"),
+                "itemId": params.pointer("/data/reasoningId"),
+            });
+            observe_runtime_output(
+                core,
+                agent_run_id,
+                execution_epoch,
+                Some(adapter_kind),
+                Some(sequence),
+                Some(native_prompt_id),
+                "agent.thought.delta",
+                &payload,
+                None,
+            )
+            .await;
+        }
+        return;
     }
     if let Some(images) = runtime.observe_images(native_prompt_id, &message).await {
         persist_runtime_images(
@@ -21140,6 +21214,21 @@ async fn observe_runtime_output(
         return;
     }
     let (kind, item_id, offset, sequence, text) = match event_type {
+        "agent.thought.delta"
+            if adapter_kind == Some(AdapterKind::CopilotCli)
+                && payload["sourceKind"] == "copilot-native-reasoning-delta-1.0.83" =>
+        {
+            (
+                OutputKind::ReasoningText,
+                payload
+                    .get("itemId")
+                    .and_then(Value::as_str)
+                    .or(fallback_item_id),
+                None,
+                source_sequence,
+                payload.get("delta").and_then(Value::as_str),
+            )
+        }
         "agent.text.delta"
             if evidence.is_some()
                 && payload.get("itemId").and_then(Value::as_str) != Some("claude-final") =>
@@ -22358,6 +22447,7 @@ async fn flush_runtime_usage(
         AdapterKind::CodebuddyCli,
         AdapterKind::KimiCodeCli,
         AdapterKind::OpencodeCli,
+        AdapterKind::QoderCli,
     ] {
         let Some(adapter) = core.acp_adapter(kind) else {
             continue;
@@ -22398,11 +22488,16 @@ async fn flush_runtime_usage(
     }
     let persistence = {
         let mut database = core.database.lock().await;
-        MonitoringService::record_usage_batches(&mut database, &batches)
+        MonitoringService::record_usage_batches_with_deferred_context(&mut database, &batches)
     };
     match persistence {
-        Ok(inserted) => {
+        Ok((inserted, deferred_context)) => {
             let mut usage = core.runtime_usage.lock().await;
+            if matches!(target, RuntimeUsageFlushTarget::Periodic) {
+                // Native Usage has already been persisted. Only one numeric
+                // Context per Run waits for the existing input acceptance gate.
+                usage.restore(deferred_context)?;
+            }
             usage.finish_idle_target_after_flush(&target);
             drop(usage);
             if inserted > 0 && notify_monitoring {

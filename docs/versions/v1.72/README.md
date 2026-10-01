@@ -75,7 +75,7 @@ Migration 177 从 v1.72/schema 126 升到 schema 127，只在 camp 增加摘要�
 
 ## 并行交付：执行指标
 
-执行台把当前可观测输出速度、每 Run 原生四项用量与当前原生 Session 上下文分别呈现。速度由 Core 临时数值计数与 Renderer 平滑估算；用量复用 Monitoring Run summary；Migration 178 增加当前 Session 上下文小投影，把 v1.72/schema 127 升至 schema 128。没有真实回包的 Runtime 字段维持未验证，不回填历史 Run 的结束上下文。字段与 UI 规则由 [Runtime Execution Metrics v1](../../contracts/runtime-execution-metrics-v1.md) 和 [Camp 会话工作区](../../ui/components/conversation-workspace.md#camp-执行过程) 拥有；原生用量和上下文核验见[第二轮记录](../../research/runtime-monitoring/execution-metrics-verification-2026-09-29.md)，速度来源资格见[v3 长回合验收](../../research/runtime-monitoring/observable-output-v3-verification-2026-09-30.md)。
+执行台把当前可观测输出速度、每 Run 原生四项用量与当前原生 Session 上下文分别呈现。速度由 Core 临时数值计数与 Renderer 平滑估算；用量复用 Monitoring Run summary；Migration 178 增加当前 Session 上下文小投影，把 v1.72/schema 127 升至 schema 128；Migration 179 以原子增量升级现有 schema 128 至 129，保留当前上下文数据并独立承接原生比例，不从比例反推数量。没有真实回包的 Runtime 字段维持未验证，不回填历史 Run 的结束上下文。字段与 UI 规则由 [Runtime Execution Metrics v1](../../contracts/runtime-execution-metrics-v1.md) 和 [Camp 会话工作区](../../ui/components/conversation-workspace.md#camp-执行过程) 拥有；原生用量和上下文核验见[第二轮记录](../../research/runtime-monitoring/execution-metrics-verification-2026-09-29.md)，速度来源资格见[v3 长回合验收](../../research/runtime-monitoring/observable-output-v3-verification-2026-09-30.md)。
 
 ## 并行交付：公开 Composer 队外 Mention
 
@@ -136,3 +136,5 @@ Claude Code 保留 `--print` 结构化输出，增加 stream-json 输入与 stdi
 | Runtime compatibility | 已更新 | Claude Code 使用 `--print` 双向 stream-json 与原生 ID 审批；真实 Runtime 与 Desktop 点击证据记录在[兼容性台账](../../runtime-compatibility.md)，平台资格不据此扩大。Agent 指令英文化保持 Binding 兼容轴，生效边界见[变更说明](model-context-change-agent-english.md) |
 | Documentation routing | 已更新 | 文档任务入口、合同索引、架构索引、当前决定导航与版本指针路由到 Lark v1、Feishu v17、Navigation Read v1、DingTalk v14 与 v1.72；版本内新增[Agent 指令变更说明](model-context-change-agent-english.md)及完整对照 |
 | Root README | 确认无需更新 | Lark 未完成真实租户验收，按 Lark Channel v1 第 8 节不得在根 README 宣称支持 |
+
+2026-10-01 的 Qoder／Grok／OpenCode Context 与 Copilot 重新核验见[字段与场景证据](../../research/runtime-monitoring/native-context-ratio-verification-2026-10-01.md)。schema 127 → 128 → 129 和已安装 schema 128 → 129 均有迁移 owner；179 失败时回滚字段、收据和 marker，旧数量保留且原生比例为空。

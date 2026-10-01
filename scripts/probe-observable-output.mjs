@@ -18,6 +18,7 @@ const commands = {
   'codex-cli': ['codex', 'ROVAI_CODEX_BIN'],
   'claude-code-cli': ['claude', 'ROVAI_CLAUDE_CODE_BIN'],
   'opencode-cli': ['opencode', 'ROVAI_OPENCODE_BIN'],
+  'copilot-cli': ['copilot', 'ROVAI_COPILOT_BIN'],
   'codebuddy-cli': ['codebuddy', 'ROVAI_CODEBUDDY_BIN'],
   'qwen-code': ['qwen', 'ROVAI_QWEN_BIN'],
   pi: ['pi', 'ROVAI_PI_BIN'],
@@ -39,6 +40,9 @@ const fixtureCore = join(fixture, 'rovai-core')
 await copyFile(coreSource, fixtureCore); await chmod(fixtureCore, 0o700)
 await copyFile(join(dirname(coreSource), 'rovai'), join(fixture, 'rovai'))
 await chmod(join(fixture, 'rovai'), 0o700)
+// Release Core resolves bundled Skills beside its owned executable. Copy the
+// source bundle; the installed library remains isolated under this fixture.
+await cp(join(repository, 'skills'), join(fixture, 'skills'), { recursive: true })
 const coreDigest = createHash('sha256').update(await readFile(fixtureCore)).digest('hex')
 await mkdir(data); await mkdir(workspacePath)
 await mkdir(join(data, 'managed-skill-library')); await writeFile(join(data, 'mcp.json'), '{}')
@@ -151,7 +155,7 @@ threading.Thread(target=forward_input,daemon=True).start()
 def discard_diagnostics():
     for line in child.stderr: pass
 threading.Thread(target=discard_diagnostics,daemon=True).start()
-numeric_keys={'input_tokens','output_tokens','prompt_tokens','completion_tokens','total_tokens','cached_tokens','cache_read_input_tokens','cache_creation_input_tokens','cache_write_input_tokens','reasoning_tokens','thinking_tokens','used','size','contextWindow','context_window','modelContextWindow','inputTokens','outputTokens','totalTokens','cachedInputTokens','cacheWriteInputTokens','input','output','cacheRead','cacheWrite'}
+numeric_keys={'input_tokens','output_tokens','prompt_tokens','completion_tokens','total_tokens','cached_tokens','cache_read_input_tokens','cache_creation_input_tokens','cache_write_input_tokens','reasoning_tokens','thinking_tokens','used','size','contextWindow','context_window','modelContextWindow','inputTokens','outputTokens','totalTokens','cachedInputTokens','cacheWriteInputTokens','cachedReadTokens','cachedWriteTokens','cacheReadTokens','cacheWriteTokens','thoughtTokens','cacheCreationTokens','reasoningTokens','context_usage_ratio','context_tokens','context_window_size','input','output','cacheRead','cacheWrite'}
 def numeric(v,path='',depth=0):
     if depth>6 or not isinstance(v,dict): return {}
     result={}
@@ -180,11 +184,11 @@ with open(${JSON.stringify(rawPath)},'a',buffering=1) as out:
         try:
             v=json.loads(line); p=v.get('params') or {}; u=p.get('update') or {}; a=v.get('assistantMessageEvent') or {}; e=v.get('event') or {}; d=v.get('delta') or {}
             if not isinstance(p,dict): p={}
-            text=p.get('delta') or u.get('content',{}).get('text') or a.get('delta') or d.get('thinking') or d.get('text') or ''
+            text=(p.get('data') or {}).get('deltaContent') or p.get('delta') or u.get('content',{}).get('text') or a.get('delta') or d.get('thinking') or d.get('text') or ''
             if isinstance(e,dict) and isinstance(e.get('delta'),dict): text=e['delta'].get('thinking') or e['delta'].get('text') or text
             if not isinstance(text,str): text=''
             item=p.get('item') or {}
-            out.write(json.dumps({'atMs':round(time.monotonic()*1000),'method':v.get('method'),'type':v.get('type'),'sessionUpdate':u.get('sessionUpdate'),'deltaType':a.get('type') or d.get('type') or (e.get('delta') or {}).get('type'),'keys':sorted(v.keys()),'paramsKeys':sorted(p.keys()),'updateKeys':sorted(u.keys()),'contentKeys':sorted((u.get('content') or {}).keys()),'eventKeys':sorted(e.keys()),'itemId':identity(p.get('itemId') or item.get('id') or u.get('messageId') or (e.get('message') or {}).get('id')),'turnId':identity(p.get('turnId')),'summaryIndex':p.get('summaryIndex'),'contentIndex':p.get('contentIndex',a.get('contentIndex')),'textOffset':p.get('textOffset',u.get('textOffset')),'parentPresent':any(u.get(k)!=None for k in ['agentId','sourceAgentId','subagentId','parentAgentId','parentSessionId']) or v.get('parent_tool_use_id')!=None,'usageFields':numeric(v),'managedContext':managed_context(v),'bytes':len(text.encode('utf-8')),'scalars':len(text)})+'\\n')
+            out.write(json.dumps({'atMs':round(time.monotonic()*1000),'method':v.get('method'),'type':v.get('type') or p.get('type'),'sessionUpdate':u.get('sessionUpdate'),'deltaType':a.get('type') or d.get('type') or (e.get('delta') or {}).get('type'),'keys':sorted(v.keys()),'paramsKeys':sorted(p.keys()),'dataKeys':sorted((p.get('data') or {}).keys()),'nativeModel':(p.get('data') or {}).get('model') if isinstance((p.get('data') or {}).get('model'),str) else None,'nativeTimestamp':p.get('timestamp') if isinstance(p.get('timestamp'),str) and len(p['timestamp'])<=40 else None,'updateKeys':sorted(u.keys()),'contentKeys':sorted((u.get('content') or {}).keys()),'eventKeys':sorted(e.keys()),'itemId':identity(p.get('itemId') or item.get('id') or u.get('messageId') or (e.get('message') or {}).get('id')),'turnId':identity(p.get('turnId')),'summaryIndex':p.get('summaryIndex'),'contentIndex':p.get('contentIndex',a.get('contentIndex')),'textOffset':p.get('textOffset',u.get('textOffset')),'parentPresent':any(u.get(k)!=None for k in ['agentId','sourceAgentId','subagentId','parentAgentId','parentSessionId']) or v.get('parent_tool_use_id')!=None,'usageFields':numeric(v),'managedContext':managed_context(v),'bytes':len(text.encode('utf-8')),'scalars':len(text)})+'\\n')
         except Exception: pass
         sys.stdout.buffer.write(line);sys.stdout.buffer.flush()
 sys.exit(child.wait())
@@ -309,6 +313,11 @@ try {
   report.runs = runs
   report.metrics = metrics
   report.failureDetail = failureDetail
+  report.meteringDiagnosticFlags = [
+    'failed to persist copilot-cli Usage', 'failed to persist qoder-cli Usage',
+    'Context observation has no time', 'Runtime Usage token field is outside the safe integer range',
+    'Runtime Usage cache buckets exceed prompt input total', 'dropped fenced ACP message',
+  ].filter(message => stopped.stderrTail.includes(message))
   await writeFile(join(fixture, 'evidence.json'), JSON.stringify({ report, samples, displays, events }, null, 2))
   console.log(JSON.stringify({ ...report, metrics: undefined }))
 }

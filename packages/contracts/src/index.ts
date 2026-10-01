@@ -666,6 +666,8 @@ export interface RuntimeExecutionMetricsSnapshot {
     modelKey: string | null
     usedTokens: number | null
     windowTokens: number | null
+    /** Independently observed native fraction; never used to infer token quantities. */
+    nativeRatio?: number | null
     source: string
     dialectId: string
     observedAt: string
