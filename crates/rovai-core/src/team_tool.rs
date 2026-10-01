@@ -3123,7 +3123,7 @@ mod tests {
 
         let mut mixed = fixture.public_send_invocation(
             "public-only-inline-principal",
-            "\u{3000}@爱丽丝\u{a0}@鲍勃 @Principal @Principal 谢谢",
+            "\u{3000}@爱丽丝\u{a0}@鲍勃 @User @Principal 谢谢",
             &[],
         );
         mixed.input.public_only = true;
@@ -3368,6 +3368,8 @@ mod tests {
             ("@Principal Please choose A or B", true, false),
             ("@Principal Please choose A or B", false, true),
             ("@Principal Please choose A or B", true, true),
+            ("@User Please choose A or B", false, false),
+            ("@User Please choose A or B", true, true),
         ] {
             let mut fixture = Fixture::new();
             let service = TeamToolService::default();

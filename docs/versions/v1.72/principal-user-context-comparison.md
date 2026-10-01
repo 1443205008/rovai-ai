@@ -7,8 +7,8 @@ last_updated: 2026-10-02
 
 # Principal 改为 User 的完整上下文前后对照
 
-本附录属于[变更说明 r2](model-context-change-principal-user.md)，状态为待审阅，尚未修改实现。
-“变更前”取自源码基线 `4aa0e9ede69b035952afa1e032ee82dbc4666ca7`；“变更后”是供确认的完整替换文本。
+本附录属于[变更说明 r2](model-context-change-principal-user.md)，r2 已确认并按本文实施；验收记录见主文。
+“变更前”取自源码基线 `4aa0e9ede69b035952afa1e032ee82dbc4666ca7`；“变更后”是已确认的完整替换文本。
 代码块完整保留正文；仅以文档代码块的末行换行排版，不把 Rust 字符串转义字符误当模型实际文本。
 
 r2 将新生成的公开 Bootstrap 收敛为同一份模板，Single Chat 保留自己的完整 Charter。

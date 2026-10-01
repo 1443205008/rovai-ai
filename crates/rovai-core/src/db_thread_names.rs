@@ -123,7 +123,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
         anyhow::ensure!(
             matches!(
                 classify_database_contract(&tx)?,
-                DatabaseContractClassification::Current(_)
+                DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 128
             ),
             "Thread migration failed current schema admission"
         );
@@ -139,6 +139,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 // Reverse only synthetic test fixtures; no product path downgrades stored evidence.
 #[cfg(test)]
 pub(super) fn downgrade_for_test(connection: &Connection) {
+    user_projection::downgrade_for_test(connection);
     if !connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=178)",
@@ -263,7 +264,7 @@ mod tests {
         );
         assert!(matches!(
             classify_database_contract(database.connection()).unwrap(),
-            DatabaseContractClassification::Current(_)
+            DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 128
         ));
         drop(database);
         std::fs::remove_dir_all(directory).unwrap();

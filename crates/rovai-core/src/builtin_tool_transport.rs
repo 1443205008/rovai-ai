@@ -12,13 +12,13 @@ use crate::{
     team_tool_catalog::builtin_tool_definitions,
 };
 
-pub const BUILTIN_TOOL_CONTRACT_VERSION: u32 = 33;
+pub const BUILTIN_TOOL_CONTRACT_VERSION: u32 = 34;
 pub const BUILTIN_TOOL_IPC_PROTOCOL_VERSION: u32 = 2;
 pub const BUILTIN_TOOL_ENVELOPE_VERSION: u32 = 1;
 pub const BUILTIN_TOOL_RECEIPT_VERSION: u32 = 1;
-pub const BUILTIN_TOOL_CLI_COMMAND_VERSION: u32 = 33;
-pub const BUILTIN_TOOL_AGENT_OUTPUT_CONTRACT_VERSION: u32 = 6;
-pub const BUILTIN_TOOL_RUNTIME_CAPABILITY: &str = "builtin_cli.transport.v33";
+pub const BUILTIN_TOOL_CLI_COMMAND_VERSION: u32 = 34;
+pub const BUILTIN_TOOL_AGENT_OUTPUT_CONTRACT_VERSION: u32 = 7;
+pub const BUILTIN_TOOL_RUNTIME_CAPABILITY: &str = "builtin_cli.transport.v34";
 pub const ROVAI_AGENT_CLI_ENV: &str = "ROVAI_AGENT_CLI";
 pub const ROVAI_CLI_CONTEXT_ENV: &str = "ROVAI_CLI_CONTEXT";
 pub const ROVAI_RUN_TMP_ENV: &str = "ROVAI_RUN_TMP";
@@ -721,11 +721,8 @@ fn direct_arguments(input_schema: &Value) -> Vec<BuiltinToolArgument> {
 
 fn direct_argument_flag(field: &str) -> String {
     match field {
-        // Principal attention is the canonical Agent-facing vocabulary. The
-        // legacy --to-user spelling is accepted only by the CLI parser and is
-        // deliberately absent from this discoverable operation catalog.
-        // name while keeping the Core input free of a user-selectable identity.
-        "mentionUser" => "--to-principal".to_string(),
+        // Keep the legacy --to-principal alias in the parser only.
+        "mentionUser" => "--to-user".to_string(),
         "files" => "--file".to_string(),
         _ => format!("--{}", camel_to_kebab(field)),
     }
@@ -1112,9 +1109,9 @@ mod tests {
 
     #[test]
     fn cli_mapping_is_complete_unique_and_contract_valid() {
-        assert_eq!(BUILTIN_TOOL_CONTRACT_VERSION, 33);
-        assert_eq!(BUILTIN_TOOL_CLI_COMMAND_VERSION, 33);
-        assert_eq!(BUILTIN_TOOL_RUNTIME_CAPABILITY, "builtin_cli.transport.v33");
+        assert_eq!(BUILTIN_TOOL_CONTRACT_VERSION, 34);
+        assert_eq!(BUILTIN_TOOL_CLI_COMMAND_VERSION, 34);
+        assert_eq!(BUILTIN_TOOL_RUNTIME_CAPABILITY, "builtin_cli.transport.v34");
         validate_builtin_tool_contract().unwrap();
         let operations = BUILTIN_TOOL_CLI_IDENTITIES
             .iter()
@@ -1308,7 +1305,7 @@ mod tests {
                 .iter()
                 .find(|argument| argument.field == "mentionUser")
                 .map(|argument| argument.flag.as_str()),
-            Some("--to-principal")
+            Some("--to-user")
         );
         assert!(send.input_schema["properties"].get("threadId").is_none());
         assert!(
@@ -1335,9 +1332,8 @@ mod tests {
             send.input_schema["properties"]["mentionUser"]["description"]
                 .as_str()
                 .is_some_and(|description| {
-                    description
-                        .contains("new unresolved decision, answer, or action for the Principal")
-                        && description.contains("Principal attention is message-local")
+                    description.contains("new unresolved decision, answer, or action for the User")
+                        && description.contains("User attention is message-local")
                 })
         );
     }

@@ -2366,8 +2366,8 @@ mod tests {
         assert!(description.summary.contains("effectiveRecipients"));
         assert!(description.summary.contains("deliveryIds"));
         assert!(description.summary.contains("public-only"));
-        assert!(description.summary.contains("--to-principal"));
-        assert!(!description.summary.contains("--to-user"));
+        assert!(description.summary.contains("--to-user"));
+        assert!(!description.summary.contains("--to-principal"));
         let body = description
             .arguments
             .iter()
@@ -2417,7 +2417,7 @@ mod tests {
             .iter()
             .find(|argument| argument.field == "mentionUser")
             .unwrap();
-        assert_eq!(to_principal.flag, "--to-principal");
+        assert_eq!(to_principal.flag, "--to-user");
         assert_eq!(to_principal.value_kind, "boolean");
         assert!(!to_principal.repeatable);
         assert!(!to_principal.required);
@@ -2425,7 +2425,7 @@ mod tests {
             parse_operation_input(
                 &description,
                 &[
-                    "--to-principal".to_string(),
+                    "--to-user".to_string(),
                     "--body".to_string(),
                     "Choose A or B".to_string(),
                 ]
@@ -2437,7 +2437,7 @@ mod tests {
             parse_operation_input(
                 &description,
                 &[
-                    "--to-user".to_string(),
+                    "--to-principal".to_string(),
                     "--body".to_string(),
                     "Legacy spelling".to_string(),
                 ]
@@ -2483,15 +2483,19 @@ mod tests {
   {"publicOnly":true,"body":"Result:\n\nUpdated `src/example.rs`."}
 rovai send --input-file request.json"#,
                 "rovai send --to agent_5 --body 'Please reproduce on the previous client build and return the version and result.'",
-                "rovai send --public-only --to-principal --body 'Please choose whether to roll back the client or continue the token investigation.'",
+                "rovai send --public-only --to-user --body 'Please choose whether to roll back the client or continue the token investigation.'",
             ]
         );
+        for flags in [
+            ["--to-user", "--to-principal"],
+            ["--to-principal", "--to-user"],
+        ] {
+            assert!(parse_operation_input(&description, &flags.map(str::to_string)).is_err());
+        }
         let help = operation_help_text(&description);
-        assert!(
-            help.contains("Ordinary public Thread messages are already visible to the Principal.")
-        );
-        assert!(help.contains("new unresolved decision, answer, or action for the Principal"));
-        assert!(help.contains("Principal attention is message-local"));
+        assert!(help.contains("Ordinary public Thread messages are already visible to the User."));
+        assert!(help.contains("new unresolved decision, answer, or action for the User"));
+        assert!(help.contains("User attention is message-local"));
         assert!(help.contains("does not represent approval"));
         assert!(help.contains("Agent addressing schedules concrete continuing work, not CC."));
         assert!(help.contains("This option is invalid with --public-only."));
@@ -2509,8 +2513,8 @@ rovai send --input-file request.json"#,
         ));
         assert!(help.contains(CAMP_MESSAGE_SEND_FILE_HELP));
         assert!(!help.contains("Rovai privately snapshots"));
-        assert!(help.contains("It may be combined with --to-principal."));
-        assert!(!help.contains("--to-user"));
+        assert!(help.contains("It may be combined with --to-user."));
+        assert!(!help.contains("--to-principal"));
         assert!(!help.contains("--to agent_5 --public-only"));
     }
 

@@ -13,7 +13,7 @@ last_updated: 2026-10-02
 
 本稿 r2 已于 2026-10-02 经用户确认实施。[完整前后对照](principal-user-context-comparison.md)包含 20 组替换文本，覆盖当前公开协作、
 单聊及历史公开单输入 Bootstrap、A2A 返回指导、结构化用户提及、CLI 教学与四项 Skill 的八份 Markdown；另列八段保持原文的相邻指令。
-实现按本稿推进；验收结果在收口时记录。
+实现与本地验收已完成；结果见末节。
 
 本次将人类用户的主要称呼统一为 **User**，命令主用法改为 `--to-user`，Agent 提及主投影改为 `@User`。
 **旧 Native Session 保持原绑定和冻结 Bootstrap，新绑定才生成新 Bootstrap；Skill 随新版程序同步原路径。**
@@ -30,8 +30,8 @@ r2 将公开 Bootstrap 收敛为同一份生成模板：已有冻结 Bootstrap �
 | 当前版本 | 由[版本索引](../README.md)解析为 v1.72 |
 | 分支 | `rovai/principal-user-context` |
 | Worktree | `/Users/murray.xue/VSCodeProjects/opensource/rovai-ai-principal-user-context` |
-| Governance | 用户已确认 r2；确认记录先于实现提交 |
-| 状态与下一步 | `active`；实施 r2，创建 PR 并合入 main；复用此 worktree |
+| Governance | `7429755a` 先记录用户对 r2 的确认；编码基线合入 `a49594fc`，未改变对照原文 |
+| 状态与下一步 | `ready`；实现与验证完成，创建 PR 并合入 main，随后清理此 worktree |
 
 本稿依据当前源码和有效合同；已合入的 Thread 改名与 Skill 英文化只提供已有机制的事实，不把其确认继承为本次确认。
 
@@ -166,7 +166,7 @@ Bootstrap、Session ID 与绑定 generation。未冻结上下文的新 preparati
 
 确认并实施时同步更新当前 ContextManifest、Built-in Transport、Camp Message Send、Agent 历史投影与用户注意力合同，
 以及拥有它们的架构说明和领域词汇。必要的已冻结版本读取规则明确保留；当前 UI 名称和个人资料行为不变。
-本提案阶段只在当前版本增加主文、完整对照与导航，未将待确认内容写成当前有效规范。
+提案阶段只新增文档；确认后同步 [User Naming v1](../../contracts/user-naming-v1.md)、[Built-in Transport v34](../../contracts/builtin-tool-transport-v34.md)及对应当前合同、架构和领域词汇。
 
 ## 二次确认
 
@@ -239,3 +239,26 @@ DOCS_BASE_REF=4aa0e9ede69b035952afa1e032ee82dbc4666ca7 node scripts/check-doc-de
 ```
 
 待审阅提案预期会被版本门禁要求补充二次确认；保留该结果，不改门禁、不伪填确认，也不把文档核对当作产品兼容验收。
+
+## 实施记录（2026-10-02）
+
+实现采用上表全部版本号，没有轮换 Native Binding 兼容身份，没有增加每轮迁移说明或 Skill 更新机制。
+公开 Charter 只保留一个生成分支；仍按原条件追加渠道、Adapter、Mission 尾段。恢复先读保存证据，
+Migration 179 复制 context_manifest 全部原列并保留索引和触发器，只扩展 audience CHECK。
+
+验证按最低成本 owner 分工：已有 parser 矩阵扩展新旧保留名；既有 Send 集成 owner 验证混合提及、
+PublicOnly、一次通知和幂等；既有搜索 owner 验证混合别名只匹配结构化位置、普通 Text 与 Unicode offset。
+既有 redelivery owner 构造旧 Charter／agent_v1 Manifest，在隔离 SQLite 内执行 128→129 迁移后恢复，
+断言原 payload、digest、绑定和补发规则不变。新增迁移事务 owner 专门验证 179 收据写入失败时的原子回滚；
+178 owner 不能替代这个新失败边界，最小命令为 `cargo test -p rovai-core --features extended-tests --lib db::user_projection::`。
+
+尚未运行真实供应商 Runtime 的跨二进制升级 smoke；恢复证据来自隔离的 Core／SQLite 回归，不把它报告为真实模型实测。
+上下文 Gate 模型评测按本次用户明确要求跳过。普通代码／合同检查的最终结果见下表。
+
+| 检查 | 结果 |
+| --- | --- |
+| 完整对照 | 18 段完整 Charter／A2A／帮助／Skill 文本逐字一致；提及与参数对象由 Rust owner 验证；八份 Skill description、路径不变 |
+| TypeScript／Vitest | typecheck 通过，225 文件／2,428 项通过 |
+| 文档与 Skill | docs:test 10/10、docs:check:ci、skills:test 3/3、12 项 Skill authoring 检查通过 |
+| Rust | fmt/check 通过；默认 workspace 439 通过／1 项既有 ignored；定向 owner 139/139；恢复及迁移补充 10/10、数据库准入 12/12 通过 |
+| 上下文 Gate | 用户明确免除，未运行，不计为通过 |

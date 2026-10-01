@@ -339,6 +339,8 @@ last_updated: 2026-09-25
 
 ### Session continuity 与 Bootstrap
 
+- User 命名沿用既有冻结证据优先原则：已有 Bootstrap 原字节恢复；尚无 Bootstrap 的公开执行共用当前模板，Single Chat 专用模板保持。`agent_v1`／`agent_v2` 分别验证旧／新投影，Skill 在原路径同步。精确规则见 [User Naming v1](../contracts/user-naming-v1.md)。
+
 - Conversation handoff 只在明确、可验证的 Native Session continuation 边界保持连续性。Camp 公共历史与 portable context 属于 Rovai 逻辑连续性；Runtime native thread/session 是外部 binding。跨 Runtime、身份、Camp、binding generation 或不兼容 contract 的“恢复”必须创建新 Session，不能把摘要、同一路径或版本当作原生连续性证明。
 - Native Session Bootstrap 是完整、不可变的交付 bytes/digest。新 Binding v5 按 `SESSION_CHARTER → MEMBER_IDENTITY → ROVAI_PLATFORM_SKILLS → MEMORY_ENTRYPOINT?` 组合；旧 Binding v4 继续使用冻结的原三段。`MEMBER_IDENTITY` 始终包含一个 six-field self aggregate 的最新值；Dynamic Context 中的 `COLLABORATION_STATE` 只包含当前 Camp peer routing/Lead，不泄露 peer persona、Presence、Runtime、Memory 或 busy 状态。新 Session/替换 Session 使用当时最新身份，既有 Session 不因编辑被热改写。
 - 按 Binding ID 和 generation 查到 Bootstrap Evidence 时，复用其冻结字节并校验 delivery mode、组件 Blob 与平台 Skills 摘要；证据损坏仍拒绝。查不到证据时走该 Binding 原有的首次准备路径，冻结一份证据；单凭 `native_session_id` 已存在不能拒绝首次准备，也不表示 Bootstrap 已被 Runtime 接受。是否随输入交付继续由原有 delivery mode、Charter digest、redelivery requirement 和 accepted Input 门禁决定，不因缺失证据默认重建 Session 或重复发送。

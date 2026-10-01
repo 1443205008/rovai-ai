@@ -10,8 +10,8 @@ use crate::{
     agent_identity::parse_agent_id,
     agent_profile::resolve_frozen_runtime,
     camp_content::{
-        AGENT_PRINCIPAL_DISPLAY_NAME, StructuredThreadMessageSegment, canonical_content_digest,
-        normalize_content, render_current_plain_text,
+        AGENT_USER_DISPLAY_NAME, LEGACY_AGENT_USER_DISPLAY_NAME, StructuredThreadMessageSegment,
+        canonical_content_digest, normalize_content, render_current_plain_text,
     },
     collaboration::{append_domain_event, build_effective_config},
     command::{ActorRef, CommandHandlerResult, EntityReference, canonical_json_digest},
@@ -2368,11 +2368,18 @@ fn parse_inline_addressing(body: &str, active_agents: &[ActiveThreadAgent]) -> I
             continue;
         }
 
-        // Principal is a reserved human identity, independent of member names.
-        if let Some(remainder) = body[index + 1..].strip_prefix(AGENT_PRINCIPAL_DISPLAY_NAME)
-            && (remainder.is_empty() || remainder.chars().next().is_some_and(char::is_whitespace))
+        // Both human aliases outrank member names, including homonymous members.
+        if let Some(alias) = [AGENT_USER_DISPLAY_NAME, LEGACY_AGENT_USER_DISPLAY_NAME]
+            .into_iter()
+            .find(|alias| {
+                body[index + 1..]
+                    .strip_prefix(alias)
+                    .is_some_and(|remainder| {
+                        remainder.chars().next().is_none_or(char::is_whitespace)
+                    })
+            })
         {
-            let end_byte = index + 1 + AGENT_PRINCIPAL_DISPLAY_NAME.len();
+            let end_byte = index + 1 + alias.len();
             principal_occurrences.push(index..end_byte);
             line_cluster_end = Some(end_byte);
             index = end_byte;
@@ -2707,7 +2714,7 @@ mod tests {
     // Parser/normalization owns the syntax matrix; the Send integration owner
     // separately verifies the atomic notification, routing and replay effects.
     #[test]
-    fn principal_alias_uses_leading_clusters_and_merges_explicit_attention() {
+    fn user_aliases_use_leading_clusters_and_merge_explicit_attention() {
         let agents = vec![
             ActiveThreadAgent {
                 agent_id: "agent_2".into(),
@@ -2717,73 +2724,87 @@ mod tests {
                 agent_id: "agent_3".into(),
                 display_name: "Principal".into(),
             },
+            ActiveThreadAgent {
+                agent_id: "agent_4".into(),
+                display_name: "User".into(),
+            },
         ];
-        for (body, principal_count, member_count) in [
-            ("@Principal 请确认", 1, 0),
-            ("  @Principal 请确认", 1, 0),
-            ("\u{3000}@Principal 请确认", 1, 0),
-            ("@Principal\u{a0}@Principal 请确认", 2, 0),
-            ("\t@Principal 请确认", 1, 0),
-            ("    @Principal 请确认", 1, 0),
-            ("开头\n@Principal 请确认\n末行", 1, 0),
-            ("开头\n\t@Principal", 1, 0),
-            ("@爱丽丝 @Principal 请确认", 1, 1),
-            ("@Principal @爱丽丝 请确认", 1, 1),
-            ("@agent_2 @Principal 请确认", 1, 1),
-            ("@Principal @Principal 请确认", 2, 0),
-            ("讨论 @Principal 的含义", 0, 0),
-            ("@爱丽丝 请问 @Principal", 0, 1),
-            ("@不存在 @Principal 请确认", 0, 0),
-            ("@principal 请确认", 0, 0),
-            ("@PrincipalExtra 请确认", 0, 0),
-            ("@Principal，请确认", 0, 0),
-            ("\\@Principal 请确认", 0, 0),
-            ("> @Principal 请确认", 0, 0),
-            ("- @Principal 请确认", 0, 0),
-            ("https://example.test/@Principal", 0, 0),
-            ("`@Principal 请确认`", 0, 0),
-            ("```text\n@Principal 请确认\n```", 0, 0),
-        ] {
-            let parsed = parse_inline_addressing(body, &agents);
-            assert_eq!(
-                parsed.principal_occurrences.len(),
-                principal_count,
-                "{body}"
-            );
-            assert_eq!(parsed.occurrences.len(), member_count, "{body}");
-            for range in &parsed.principal_occurrences {
-                assert_eq!(&body[range.clone()], "@Principal");
+        for alias in ["Principal", "User"] {
+            for (body, principal_count, member_count) in [
+                ("@Principal 请确认", 1, 0),
+                ("  @Principal 请确认", 1, 0),
+                ("\u{3000}@Principal 请确认", 1, 0),
+                ("@Principal\u{a0}@Principal 请确认", 2, 0),
+                ("\t@Principal 请确认", 1, 0),
+                ("    @Principal 请确认", 1, 0),
+                ("开头\n@Principal 请确认\n末行", 1, 0),
+                ("开头\n\t@Principal", 1, 0),
+                ("@爱丽丝 @Principal 请确认", 1, 1),
+                ("@Principal @爱丽丝 请确认", 1, 1),
+                ("@agent_2 @Principal 请确认", 1, 1),
+                ("@Principal @Principal 请确认", 2, 0),
+                ("讨论 @Principal 的含义", 0, 0),
+                ("@爱丽丝 请问 @Principal", 0, 1),
+                ("@不存在 @Principal 请确认", 0, 0),
+                ("@principal 请确认", 0, 0),
+                ("@PrincipalExtra 请确认", 0, 0),
+                ("@Principal，请确认", 0, 0),
+                ("\\@Principal 请确认", 0, 0),
+                ("> @Principal 请确认", 0, 0),
+                ("- @Principal 请确认", 0, 0),
+                ("https://example.test/@Principal", 0, 0),
+                ("`@Principal 请确认`", 0, 0),
+                ("```text\n@Principal 请确认\n```", 0, 0),
+            ] {
+                let body = body
+                    .replace("Principal", alias)
+                    .replace("principal", &alias.to_lowercase());
+                let body = body.as_str();
+                let parsed = parse_inline_addressing(body, &agents);
+                assert_eq!(
+                    parsed.principal_occurrences.len(),
+                    principal_count,
+                    "{body}"
+                );
+                assert_eq!(parsed.occurrences.len(), member_count, "{body}");
+                for range in &parsed.principal_occurrences {
+                    assert_eq!(&body[range.clone()], format!("@{alias}"));
+                }
             }
-        }
-        for explicit in [false, true] {
-            let body = "@Principal 请确认";
-            let parsed = parse_inline_addressing(body, &agents);
-            let content = structured_content_from_inline_addressing(
-                body,
-                &parsed.occurrences,
-                &parsed.principal_occurrences,
-                explicit,
-            );
-            assert_eq!(
-                content,
-                vec![
-                    StructuredThreadMessageSegment::CurrentUserMention {
-                        user_id: CURRENT_USER_ID.into()
-                    },
-                    StructuredThreadMessageSegment::Text {
-                        text: "请确认".into()
-                    },
-                ]
-            );
-            assert_eq!(
-                crate::camp_content::render_plain_text_with_current_user(
-                    &content,
-                    |_| None,
-                    "Murray✨"
-                )
-                .unwrap(),
-                "@Murray✨ 请确认"
-            );
+            for explicit in [false, true] {
+                let body = "@Principal 请确认";
+                let body = body
+                    .replace("Principal", alias)
+                    .replace("principal", &alias.to_lowercase());
+                let body = body.as_str();
+                let parsed = parse_inline_addressing(body, &agents);
+                let content = structured_content_from_inline_addressing(
+                    body,
+                    &parsed.occurrences,
+                    &parsed.principal_occurrences,
+                    explicit,
+                );
+                assert_eq!(
+                    content,
+                    vec![
+                        StructuredThreadMessageSegment::CurrentUserMention {
+                            user_id: CURRENT_USER_ID.into()
+                        },
+                        StructuredThreadMessageSegment::Text {
+                            text: "请确认".into()
+                        },
+                    ]
+                );
+                assert_eq!(
+                    crate::camp_content::render_plain_text_with_current_user(
+                        &content,
+                        |_| None,
+                        "Murray✨"
+                    )
+                    .unwrap(),
+                    "@Murray✨ 请确认"
+                );
+            }
         }
     }
 
