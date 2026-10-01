@@ -1,20 +1,23 @@
 ---
 document_type: model-context-change
 version: v1.72
-revision: 1
+revision: 2
 confirmation_status: pending
 last_updated: 2026-10-02
 ---
 
 # Principal 改为 User 的上下文变更说明
 
-本稿 r1 待审阅。[完整前后对照](principal-user-context-comparison.md)包含 20 组替换文本，覆盖当前公开协作、
+本稿 r2 待审阅。[完整前后对照](principal-user-context-comparison.md)包含 20 组替换文本，覆盖当前公开协作、
 单聊及历史公开单输入 Bootstrap、A2A 返回指导、结构化用户提及、CLI 教学与四项 Skill 的八份 Markdown；另列八段保持原文的相邻指令。
 当前没有修改产品实现、Schema 或当前合同。
 
 本次将人类用户的主要称呼统一为 **User**，命令主用法改为 `--to-user`，Agent 提及主投影改为 `@User`。
 **旧 Native Session 保持原绑定和冻结 Bootstrap，新绑定才生成新 Bootstrap；Skill 随新版程序同步原路径。**
 旧命令和提及写法继续进入同一处理逻辑，不给每轮上下文增加迁移说明。
+
+r2 将公开 Bootstrap 收敛为同一份生成模板：已有冻结 Bootstrap 直接复用；尚未生成时使用统一的当前
+公开模板，包括通过既有准入的历史执行。Single Chat 保留专用模板。无需先关闭旧执行恢复入口。
 
 ## 基线与工作目录
 
@@ -25,7 +28,7 @@ last_updated: 2026-10-02
 | 分支 | `rovai/principal-user-context` |
 | Worktree | `/Users/murray.xue/VSCodeProjects/opensource/rovai-ai-principal-user-context` |
 | Governance | 当前仅准备独立提案，没有本次已确认治理提交 |
-| 状态与下一步 | `active`；审阅 r1，后续继续复用此 worktree |
+| 状态与下一步 | `active`；审阅 r2，后续继续复用此 worktree |
 
 本稿依据当前源码和有效合同；已合入的 Thread 改名与 Skill 英文化只提供已有机制的事实，不把其确认继承为本次确认。
 
@@ -52,6 +55,7 @@ last_updated: 2026-10-02
 | --- | --- |
 | 新 Native Binding | 首次生成 User 文案的 Bootstrap |
 | 已有 Native Binding | 原 Session ID、generation 与兼容身份保持；恢复继续读取旧 Bootstrap |
+| 历史公开执行尚无 Bootstrap | 通过既有准入后使用同一份当前公开模板；不再按 direct/a2a/batch 选择不同公开正文 |
 | 压缩补发 | 使用该绑定冻结的 Charter、平台索引和 Memory Entrypoint；既有 MEMBER_IDENTITY 刷新规则照常 |
 | 旧对话中的新队员或首次单聊 | 以是否新建 Native Binding 为准，新绑定使用新版；不按 Thread 创建日期分流 |
 | 新准备的上下文 | 新 A2A 返回句子和 `@User` 投影；section、字段、选择与预算保持 |
@@ -64,8 +68,13 @@ last_updated: 2026-10-02
 
 ### 上下文文字
 
-当前公开批次和历史公开单输入分支的新 Charter 统一用一行定义；历史分支的可达条件见
-[完整对照中的入口核对](principal-user-context-comparison.md#历史公开单输入-bootstrap遗留路径)：
+公开 Charter 只保留一份生成模板，删除历史公开单输入专用的正文分支。当前输入说明改为通用的
+“依次处理当前输入中的所有工作项”，历史说明改为“历史边界只是参考点”；不再假定输入一定包含
+`RUN_INPUT.messages`、`CURRENT_INPUT` 或 `RUN_FACTS.historyHint` 中的某个字段。实际 Dynamic Context
+继续使用自身版本的原有格式，不转换旧输入，也不增加格式兼容说明。历史分支的现状见
+[完整对照中的入口核对](principal-user-context-comparison.md#历史公开单输入-bootstrap遗留路径)。
+
+人类用户统一用一行定义：
 
 ```text
 The User is the human who owns the Thread objective. --to-user requests their attention.
@@ -158,14 +167,15 @@ Bootstrap、Session ID 与绑定 generation。未冻结上下文的新 preparati
 
 ## 二次确认
 
-当前为 `pending`。用户已要求完整前后对照并开启 worktree，但尚未审阅本稿的完整 r1；该指令不记作 r1 的实施确认。
+当前为 `pending`。r2 根据用户关于跨版本恢复共用当前 Bootstrap 的意见更新；本轮方案核对不记作整份
+称呼、命令、投影和 Skill 变更的实施确认。
 依据[核心模型上下文变更治理](../../development/model-context-change-governance.md#二次确认门槛)：
 “未取得确认时可以继续调查和编辑提案文档，但不得修改实现、Schema、当前合同或执行 clean break。”
 后续明确确认本稿后，再记录确认人、实际时间和相等的 `confirmed_revision`；不继承其他命名或英文化任务的确认。
 
 ## 验证
 
-### 本轮文档核对
+### r1 文档核对
 
 本轮只验证提案原文、覆盖范围、链接和治理记录，不启动 App 或 Runtime，不改日常数据。
 
@@ -178,8 +188,16 @@ Bootstrap、Session ID 与绑定 generation。未冻结上下文的新 preparati
 | `pnpm docs:check` / `pnpm docs:check:ci` | 未通过，仅缺 r1 的确认状态、confirmed revision、确认人和确认时间四项；保留 pending |
 | 工作区 | 仅新增主文和完整对照，并增加当前版本导航；`git diff --check` 通过 |
 
-20 组对照文本合计由 29,668 变为 29,233 UTF-8 字节，包含两种公开 Bootstrap 中重复展开的 CLI。
-该数字只说明对照文本没有膨胀，不是实际每轮 token、性能或模型行为评测。
+### r2 文案核对
+
+20 组“变更前”逐字保持；仅两组公开 Bootstrap 的“变更后”收敛为相同全文，其余 18 组及八段不变文字
+保持 r1。附录仍为 48 个代码块；实施时由同一个公开 Charter 生成分支拥有新正文。
+
+r2 对照文本合计由 29,668 变为 27,544 UTF-8 字节。统计为逐组前后对照而重复计入统一公开模板，
+不代表实际每轮 token、性能或模型行为评测。本轮未修改 Runtime、输入格式、Schema、Session evidence 或 Skill 实现。
+
+2026-10-02：`pnpm docs:test` 10/10、固定基线的通用决策／链接检查及 `git diff --check` 通过。
+`pnpm docs:check` 与 `docs:check:ci` 仍只因 r2 待确认的四项记录未通过；未伪填确认或修改门禁。
 
 ### 实施验收
 
@@ -188,6 +206,7 @@ Bootstrap、Session ID 与绑定 generation。未冻结上下文的新 preparati
 | 范围 | 必须证明的行为 | 现有 owner |
 | --- | --- | --- |
 | Session | 所有 Adapter 绑定摘要不变；旧绑定 resume、原 Charter 补发；新绑定用 User；身份原刷新规则保持 | `context_contract`、`agent_runtime_adapter`、`context::slow_tests` |
+| 公开模板收敛 | 在相同渠道、Adapter 与 Mission 条件下，新生成的 batch/direct/a2a Charter 字节相同；旧 evidence 优先返回且不重写；Single Chat 仍用专用 Charter；两种公开输入格式均可按通用说明处理 | 扩展既有 `context::slow_tests::session_charter_publishes_one_cli_only_builtin_contract` 与 Bootstrap evidence 复用 owner |
 | 冻结恢复 | 旧 audience / A2A 1、2 / 成功 receipt 原字节及摘要可验证；新旧混标、缺证据和未知版本拒绝 | context recovery、Builtin receipt、数据库迁移 owner |
 | CLI 与寻址 | 新旧 flag 同语义，重复参数拒绝；两种保留提及、同名队员、代码排除、PublicOnly、一次通知和幂等重放 | `bin/rovai`、`message_delivery`、Send fixtures |
 | 历史投影 | 新旧 query 找到结构化提及；字面旧文本仍可查；返回正文、摘要位置与新投影一致；历史正文未重写 | `camp_history`、`camp_content`、引用 fixtures |
