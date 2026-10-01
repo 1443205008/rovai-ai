@@ -72,6 +72,11 @@ pub(super) fn downgrade_for_test(connection: &Connection) {
         .execute_batch("PRAGMA foreign_keys=OFF;")
         .unwrap();
     let tx = connection.unchecked_transaction().unwrap();
+    // Synthetic legacy fixtures must satisfy the old audience constraint before rebuilding.
+    tx.execute(
+        "UPDATE context_manifest SET message_projection_audience='agent_v1' WHERE message_projection_audience='agent_v2'",
+        [],
+    ).unwrap();
     let target = replacement_table_schema_v171(manifest_schema(&tx).unwrap(), "context_manifest")
         .replace(CURRENT_CHECK, LEGACY_CHECK);
     rebuild_table_v171(&tx, "context_manifest", &target, &[], &[]).unwrap();

@@ -512,5 +512,10 @@ Renderer 的纯函数覆盖可用性优先、回退和过滤后排序；Electron
   无可用协助者手动降级、手机原生触摸拖拽、英文 starter/Return 换行与明暗卡片。
 - 人工检查生产 fixture 的桌面入队卡、390px 英文名册及手机夜间入队卡，未见水平溢出或头像遮挡。
 
-完整 Node 回归、DB 扩展组、构建与文档门禁在收口时更新结果。真实模型执行及实体手机软键盘尚未在本切片验收；
+合并主线 `63225393` 后，本切片顺延为 Migration 180/schema 130、V1.72-D09；新旧 Migration 的完成准入逐级衔接。
+`pnpm test` 全通过：226 个 Vitest 文件/2,431 项，Node 回归 328 通过、2 项平台跳过。`pnpm build:desktop`、
+Typecheck、Rust format 与基于 `63225393` 的文档门禁通过。Open 的 3 项慢测试证明零 event-log 读取、
+标题分页稳定与无关会话规模不扩大读取。最终 `cargo test --workspace` 为 439 通过、1 项人工 Runtime smoke 保持忽略。DB 扩展组 96 项中 95 项首轮通过；
+旧 v99 fixture 降级时遇到主线新增的 `agent_v2` 约束，修复 test-only downgrade 后该用例单独复跑通过。
+真实模型执行及实体手机软键盘尚未在本切片验收；
 隔离 fixture 只证明交互和投影，不宣称模型端到端或发布安装完成。

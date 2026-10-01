@@ -14,7 +14,7 @@ last_updated: 2026-10-01
 身份点，不表示运行、权限、审批、Presence、Lead、Capability 或选中状态。
 
 一个受控 `avatarRef` 同时解析完整 portrait 与紧凑 icon，不增加第二个 Profile 字段。portrait
-只用于队员详情、身份编辑和外观预设；圆形 icon 用于名册、详情标题、队员选择、Mention 候选和
+只用于队员详情、身份编辑、外观预设和静态入队回执；圆形 icon 用于名册、详情标题、队员选择、Mention 候选和
 消息身份位。两种 rendition 必须来自同一内置或受管复合资产。
 
 未知引用、缺文件、完整性失败或图片加载失败统一回退到由队员名称派生的可读首字母；不能显示
