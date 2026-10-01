@@ -154,3 +154,15 @@ Claude Code 保留 `--print` 结构化输出，增加 stream-json 输入与 stdi
 | Runtime compatibility | 已更新 | Claude Code 使用 `--print` 双向 stream-json 与原生 ID 审批；真实 Runtime 与 Desktop 点击证据记录在[兼容性台账](../../runtime-compatibility.md)，平台资格不据此扩大。Agent 指令英文化保持 Binding 兼容轴，生效边界见[变更说明](model-context-change-agent-english.md)；Thread 更名保留 Charter compatibility 16 与 Antigravity 原绑定工具身份 |
 | Documentation routing | 已更新 | 文档任务入口、合同索引、架构索引、当前决定导航与版本指针路由到 Lark v1、Feishu v17、Navigation Read v1、DingTalk v14 与 v1.72；版本内新增[Agent 指令变更说明](model-context-change-agent-english.md)及完整对照；新增 Thread r2、前后对照、验收记录及上述当前合同入口 |
 | Root README | 确认无需更新 | Lark 未完成真实租户验收，按 Lark Channel v1 第 8 节不得在根 README 宣称支持 |
+
+## 并行交付：AI 优先添加队员
+
+按 Principal 确认稿，名册只保留 AI/手动分段添加入口，列表直接拖拽排序并保留可调分隔线。
+AI 创建使用一位可用协助者的普通草稿会话；三个起步提示可编辑，输入后出现窗口内侧栏草稿。
+成功 `member.create` 产生静态入队回执，配置链接进入已有队员设置，右侧表单及离队资料行为保持。
+Desktop/Mobile、中文/英文共用生产组件。
+
+[Member Creation Flow v1](../../contracts/member-creation-flow-v1.md)拥有当前行为，
+[V1.72-D09](decisions.md#v1-72-d09)记录取舍；Migration 180 将 schema 129 升为 **130**。
+[实施验收](implementation-plan.md#2026-10-02-ai-优先添加队员)区分自动化与真实模型/实体手机边界。
+本切片不改变模型 Bootstrap、Tool Schema、上下文格式或发布 Skill。

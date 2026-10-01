@@ -236,7 +236,9 @@ mod tests {
     use super::*;
     #[test]
     fn thread_upgrade_preserves_existing_tables_and_rolls_back_on_receipt_failure() {
-        let (mut database, directory) = crate::test_support::fresh_schema_database();
+        let directory =
+            std::env::temp_dir().join(format!("rovai-thread-upgrade-{}", Uuid::new_v4()));
+        let mut database = crate::test_support::fresh_schema_database_at(&directory);
         downgrade_for_test(database.connection());
         let before = public_history_claim_preserved_evidence_digest(database.connection()).unwrap();
         database.connection().execute_batch("CREATE TEMP TRIGGER reject_thread_receipt BEFORE INSERT ON schema_migration WHEN NEW.version=178 BEGIN SELECT RAISE(ABORT,'thread receipt failure'); END;").unwrap();

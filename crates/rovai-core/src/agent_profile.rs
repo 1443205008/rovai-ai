@@ -2360,6 +2360,15 @@ impl AgentProfileService {
         database: &mut Database,
         envelope: &CommandEnvelope<CreateAgentProfileCommand>,
     ) -> Result<CommandExecution> {
+        self.create_profile_with_creation_source(database, envelope, None)
+    }
+
+    pub(crate) fn create_profile_with_creation_source(
+        &self,
+        database: &mut Database,
+        envelope: &CommandEnvelope<CreateAgentProfileCommand>,
+        source: Option<&crate::team_tool::AuthenticatedTeamToolRun>,
+    ) -> Result<CommandExecution> {
         let identity = normalize_member_identity(
             &envelope.payload.display_name,
             &envelope.payload.team_role,
@@ -2413,6 +2422,31 @@ impl AgentProfileService {
                     envelope.payload.avatar_ref,
                 ],
             )?;
+            if let Some(source) = source {
+                let creator_display_name = transaction.query_row(
+                    "SELECT display_name FROM agent_profile WHERE id=?1",
+                    [&source.agent_id],
+                    |row| row.get(0),
+                )?;
+                crate::member_studio::record_member_creation(
+                    transaction,
+                    source,
+                    &crate::member_studio::MemberCreationView {
+                        creation_id: envelope.command_id.clone(),
+                        agent_id: id.clone(),
+                        display_name: identity.display_name.clone(),
+                        avatar_ref: envelope.payload.avatar_ref.clone(),
+                        team_role: identity.team_role.clone(),
+                        professional_responsibilities: identity
+                            .professional_responsibilities
+                            .clone(),
+                        personality_traits: identity.personality_traits.clone(),
+                        creator_agent_id: source.agent_id.clone(),
+                        creator_display_name,
+                        created_at: now.clone(),
+                    },
+                )?;
+            }
             Ok(CommandHandlerResult::applied(
                 "agent_profile.created",
                 json!({ "agentId": id, "version": 1 }),

@@ -90,7 +90,7 @@ completion 的协调循环。
 人类执行台读取与 Agent-facing 上下文隔离不同：Camp Open 把未 tombstone 消息关联的当前
 `camp_message_delivery` 全部投影到 `messageDeliveries`，不按消息作者过滤。用户消息没有 `sourceAgentRunId` 仍是
 同一 waiting 队列事实；Renderer 可在 claim 前显示只读排队卡。完整字段与 coverage 边界见
-[Camp Open Projection v24](../contracts/camp-open-projection-v24.md)，展示见
+[Camp Open Projection v25](../contracts/camp-open-projection-v25.md)，展示见
 [Run Process Detail Surface v42](../contracts/run-process-detail-surface-v42.md)。
 
 `RUN_INPUT` 与 quote-source 沿用冻结输入可见性；显式 read/search 使用 Camp History v10 的主动查询可见性。公共 Camp 历史对所有受认证

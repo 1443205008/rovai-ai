@@ -1,3 +1,6 @@
+import { memberCreationStarters } from './member-creation-flow'
+import { MemberJoinedCard } from './MemberJoinedCard'
+import type { MemberCreationView } from '@contracts'
 import { CopyIcon } from './CopyIcon'
 import { newCommandId } from '../../shared/command-id'
 import { useMobileLayout } from './MobileLayout'
@@ -1168,6 +1171,7 @@ export async function loadExecutionNarrationBodies(
 }
 
 export type ThreadConversationTimelineItem =
+  | { kind: 'member_joined'; id: string; createdAt: string; receipt: MemberCreationView }
   | {
       kind: 'task_card'
       id: string
@@ -1213,6 +1217,7 @@ export type ThreadConversationTimelineItem =
 const TIMELINE_KIND_RANK: Record<ThreadConversationTimelineItem['kind'], number> = {
   camp_message: 0,
   task_card: 1,
+  member_joined: 1,
   stop_event: 2,
   run_images: 3,
   run_artifacts: 3,
@@ -1234,7 +1239,8 @@ export function campConversationTimeline(
   agentRuns: ThreadSnapshot['agentRuns'] = [],
   tasks: ThreadSnapshot['tasks'] = [],
   agentRunFileChanges: ThreadSnapshot['agentRunFileChanges'] = [],
-  agentRunImages: AgentRunImagesView[] = []
+  agentRunImages: AgentRunImagesView[] = [],
+  memberCreations: MemberCreationView[] = []
 ): ThreadConversationTimelineItem[] {
   const taskCards: ThreadConversationTimelineItem[] = tasks.map((task) => ({
     kind: 'task_card',
@@ -1301,7 +1307,10 @@ export function campConversationTimeline(
     return left.message.sequence - right.message.sequence
       || compareTimelinePresentationOrder(left, right)
   })
-  const sortedCards = [...taskCards, ...stopEvents, ...runImageCards, ...runFileChangeCards]
+  const joinedCards: ThreadConversationTimelineItem[] = memberCreations.map((receipt) => ({
+    kind: 'member_joined', id: receipt.creationId, createdAt: receipt.createdAt, receipt
+  }))
+  const sortedCards = [...taskCards, ...stopEvents, ...runImageCards, ...runFileChangeCards, ...joinedCards]
     .sort(compareTimelinePresentationOrder)
   const sortedItems: ThreadConversationTimelineItem[] = []
   let messageIndex = 0
@@ -1585,6 +1594,8 @@ export function ThreadWorkspace({
   previewTabsInPane = false,
   suppressExecutionAutoOpen = false,
   initialComposerDraft = null,
+  memberCreation = false,
+  onPendingDraftChange,
   onInitialComposerDraftConsumed,
   openCoverage = null,
   messageHistory = null,
@@ -1642,6 +1653,8 @@ export function ThreadWorkspace({
   previewTabsInPane?: boolean
   suppressExecutionAutoOpen?: boolean
   initialComposerDraft?: ThreadComposerDraftView | null
+  memberCreation?: boolean
+  onPendingDraftChange?(draft: ThreadComposerDraftView): void
   onInitialComposerDraftConsumed?(draft: ThreadComposerDraftView): void
   openCoverage?: ThreadOpenProjection['coverage'] | null
   messageHistory?: ThreadOpenMessageCoverage | null
@@ -1771,6 +1784,8 @@ export function ThreadWorkspace({
   const initialComposerDraftRef = useRef(initialComposerDraft)
   const activationStateRef = useRef(snapshot.thread.activationState)
   const pendingThreadLeaveRef = useRef(onPendingThreadLeave)
+  const pendingDraftChangeRef = useRef(onPendingDraftChange)
+  pendingDraftChangeRef.current = onPendingDraftChange
   activeThreadIdRef.current = snapshot.thread.id
   activeSnapshotRef.current = snapshot
   initialComposerDraftRef.current = initialComposerDraft
@@ -1841,6 +1856,7 @@ export function ThreadWorkspace({
         return mutateComposerDraft(client, draft, mutation, activeSnapshotRef.current)
       },
       onChange: (draft, _epoch, kind) => {
+        if (draft && activationStateRef.current === 'pending') pendingDraftChangeRef.current?.(draft)
         if (draft && activationStateRef.current === 'active') {
           try {
             saveLocalThreadComposerDraft(draft)
@@ -2415,7 +2431,8 @@ export function ThreadWorkspace({
       snapshot.agentRuns,
       snapshot.tasks,
       snapshot.agentRunFileChanges,
-      snapshot.agentRunImages
+      snapshot.agentRunImages,
+      snapshot.memberCreations
     ),
     [
       snapshot.agentRuns,
@@ -2423,6 +2440,7 @@ export function ThreadWorkspace({
       snapshot.turns,
       snapshot.agentRunFileChanges,
       snapshot.agentRunImages,
+      snapshot.memberCreations,
       visibleThreadMessages
     ]
   )
@@ -4859,6 +4877,11 @@ export function ThreadWorkspace({
                       </div>
                     )
                   }
+                  if (timelineItem.kind === 'member_joined') {
+                    previousMessageAuthorKey = null
+                    items.push(<MemberJoinedCard key={timelineItem.id} receipt={timelineItem.receipt} onConfigure={onConfigureRuntime} />)
+                    continue
+                  }
                   if (timelineItem.kind === 'task_card') {
                     previousMessageAuthorKey = null
                     items.push(
@@ -5367,6 +5390,7 @@ export function ThreadWorkspace({
                   projectName={projectName}
                   agents={agents}
                   firstRunThread={firstRunThread}
+                  memberCreation={memberCreation}
                   starterNotice={starterNotice}
                   starterDisabled={composerInteractionDisabled || composerDraft?.threadId !== snapshot.thread.id}
                   onChoosePrompt={chooseStarterPrompt}
@@ -8770,6 +8794,7 @@ function ApprovalReason({ reason, expanded, onToggle }: {
 
 function EmptyThreadWelcome({
   snapshot,
+  memberCreation,
   projectName,
   agents,
   firstRunThread,
@@ -8778,6 +8803,7 @@ function EmptyThreadWelcome({
   onChoosePrompt
 }: {
   snapshot: ThreadSnapshot
+  memberCreation: boolean
   projectName: string | null
   agents: AgentProfile[]
   firstRunThread: FirstRunThreadContext | null
@@ -8820,6 +8846,7 @@ function EmptyThreadWelcome({
   if (mobile) {
     return (
       <MobileEmptyThreadWelcome
+        memberCreation={memberCreation}
         pending={snapshot.thread.activationState === 'pending'}
         starterDisabled={starterDisabled}
         onChoosePrompt={onChoosePrompt}
@@ -8830,7 +8857,7 @@ function EmptyThreadWelcome({
   const runtimeSummary = emptyThreadRuntimeSummary(snapshot.members, agents)
   return (
     <section className="empty-camp-welcome camp-home-welcome" aria-labelledby="empty-camp-title">
-      <h2 id="empty-camp-title"><UiText zh={"想先做些什么？"} /></h2>
+      <h2 id="empty-camp-title">{memberCreation ? uiAttribute("想添加怎样的队友？") : uiAttribute("想先做些什么？")}</h2>
       <p className="camp-home-context">
         <span className="sr-only"><UiText zh={"当前协作配置："} /></span>
         <span className="camp-home-project" title={projectLabel}>{projectLabel}</span>
@@ -8840,7 +8867,7 @@ function EmptyThreadWelcome({
         <span>{activeMembers.length}<UiText zh={" 位队员"} /></span>
       </p>
       <div className="camp-home-actions" aria-label={uiAttribute("起步建议")}>
-        {emptyThreadStarters().map((starter) => (
+        {(memberCreation ? memberCreationStarters() : emptyThreadStarters()).map((starter) => (
           <button type="button" key={starter.title} disabled={starterDisabled} onClick={() => onChoosePrompt(starter.prompt)}>
             {starter.title}
           </button>
@@ -8855,10 +8882,12 @@ function EmptyThreadWelcome({
 
 function MobileEmptyThreadWelcome({
   pending,
+  memberCreation,
   starterDisabled,
   onChoosePrompt
 }: {
   pending: boolean
+  memberCreation: boolean
   starterDisabled: boolean
   onChoosePrompt(prompt: string, announceDraft?: boolean): void
 }): JSX.Element {
@@ -8867,7 +8896,7 @@ function MobileEmptyThreadWelcome({
   const suggestionsId = useId()
   return (
     <section className="empty-camp-welcome mobile-empty-camp-welcome" aria-labelledby={titleId}>
-      <h2 id={titleId}>{pending ? uiAttribute("开始一段新对话") : uiAttribute("开始这段协作")}</h2>
+      <h2 id={titleId}>{memberCreation ? uiAttribute("想添加怎样的队友？") : pending ? uiAttribute("开始一段新对话") : uiAttribute("开始这段协作")}</h2>
       <div className="mobile-starter-panel">
         <button
           type="button"
@@ -8883,7 +8912,7 @@ function MobileEmptyThreadWelcome({
         </button>
         {open && (
           <div className="mobile-starter-list" id={suggestionsId} aria-label={uiAttribute("起步建议")}>
-            {emptyThreadStarters().map((starter) => (
+            {(memberCreation ? memberCreationStarters() : emptyThreadStarters()).map((starter) => (
               <button
                 type="button"
                 key={starter.title}

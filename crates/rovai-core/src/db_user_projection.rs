@@ -48,7 +48,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
         anyhow::ensure!(
             matches!(
                 classify_database_contract(&tx)?,
-                DatabaseContractClassification::Current(_)
+                DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 129
             ),
             "User projection migration failed schema admission"
         );
@@ -64,6 +64,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 // Synthetic migration fixtures only; the product never downgrades an audience.
 #[cfg(test)]
 pub(super) fn downgrade_for_test(connection: &Connection) {
+    super::member_creation::downgrade_for_test(connection);
     if !schema_matches(connection).unwrap() {
         return;
     }
@@ -71,6 +72,11 @@ pub(super) fn downgrade_for_test(connection: &Connection) {
         .execute_batch("PRAGMA foreign_keys=OFF;")
         .unwrap();
     let tx = connection.unchecked_transaction().unwrap();
+    // Synthetic legacy fixtures must satisfy the old audience constraint before rebuilding.
+    tx.execute(
+        "UPDATE context_manifest SET message_projection_audience='agent_v1' WHERE message_projection_audience='agent_v2'",
+        [],
+    ).unwrap();
     let target = replacement_table_schema_v171(manifest_schema(&tx).unwrap(), "context_manifest")
         .replace(CURRENT_CHECK, LEGACY_CHECK);
     rebuild_table_v171(&tx, "context_manifest", &target, &[], &[]).unwrap();
@@ -89,7 +95,8 @@ mod tests {
 
     #[test]
     fn user_projection_upgrade_preserves_evidence_and_rolls_back_on_receipt_failure() {
-        let (mut database, directory) = crate::test_support::fresh_schema_database();
+        let directory = std::env::temp_dir().join(format!("rovai-user-upgrade-{}", Uuid::new_v4()));
+        let mut database = crate::test_support::fresh_schema_database_at(&directory);
         downgrade_for_test(database.connection());
         let before = public_history_claim_preserved_evidence_digest(database.connection()).unwrap();
         database.connection().execute_batch("CREATE TEMP TRIGGER reject_user_receipt BEFORE INSERT ON schema_migration WHEN NEW.version=179 BEGIN SELECT RAISE(ABORT,'user receipt failure'); END;").unwrap();
@@ -118,7 +125,7 @@ mod tests {
         );
         assert!(matches!(
             classify_database_contract(database.connection()).unwrap(),
-            DatabaseContractClassification::Current(_)
+            DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 129
         ));
         drop(database);
         std::fs::remove_dir_all(directory).unwrap();

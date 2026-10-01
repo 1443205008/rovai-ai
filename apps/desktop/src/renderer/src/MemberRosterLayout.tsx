@@ -210,7 +210,7 @@ function MemberRosterSeparator({ dragging, setDragging }: {
       }}
     >
       <span className="member-roster-resize-hint" aria-hidden="true">{collapsed ? uiAttribute("已折叠") : `${width} px`}</span>
-      <span id={helpId} className="member-roster-sr-only"><UiText zh={"左右方向键调整；最窄时按左方向键折叠，右方向键展开，回车切换折叠，Home 恢复默认。也可使用名册选项和展开折叠按钮。"} /></span>
+      <span id={helpId} className="member-roster-sr-only"><UiText zh={"左右方向键调整；最窄时按左方向键折叠，右方向键展开，回车切换折叠，Home 恢复默认。"} /></span>
     </div>
   )
 }
