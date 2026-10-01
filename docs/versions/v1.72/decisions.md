@@ -174,3 +174,18 @@ Principal 希望在公开 Camp 正文中直接 `@` 队外成员，同时保留�
 队员仍在 Camp，重试需按最新名册重新判定。未采用扩展 Core 发送命令并在一笔事务中写入成员关系与消息：
 这会改变现有发送、成员权限和幂等合同，超出本次交互目标。Pending Camp 首条输入没有先加成员的命令资格，
 继续使用原激活路径。
+
+<a id="v1-72-d07"></a>
+## V1.72-D07：Thread 是公开命名，兼容入口与冻结 Session 身份保持
+
+- 状态：accepted
+- 日期：2026-10-01
+- 当前权威：[Thread Naming v1](../../contracts/thread-naming-v1.md)、[ContextManifest v32](../../contracts/context-manifest-evidence-v32.md)、[Built-in Tool Transport v33](../../contracts/builtin-tool-transport-v33.md)
+
+### 背景与选择
+
+用户要求用简短标准名称替换 Camp，同时旧会话可 resume，新会话使用新 Bootstrap，升级即可获得新版 Skill。采用 Thread／threadId；reply chain 单独命名；内部 Conversation 保持私有。兼容入口只归一化已知别名，幂等身份保留旧表示；Bootstrap 按 Binding 使用已有冻结证据，Skill 复用现有原路径同步。
+
+### 后果与替代方案
+
+不采用 Conversation 作为公开名称，不重命名 SQL 或路径、不重写旧上下文，不以换 Session 规避兼容。上下文与工具新版本单独留证，旧版严格恢复。Migration 178 仅扩展新格式准入，保留失败回滚。完整前后对照及升级矩阵见[确认稿 r2](model-context-change-thread-rename.md)。

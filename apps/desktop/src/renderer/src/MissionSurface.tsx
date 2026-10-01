@@ -130,7 +130,7 @@ export function MissionSurface({ enabled = true, full, onExpand, onClose, childr
     onKeyDown={event => {
       if (full || event.key !== 'Escape' || event.defaultPrevented) return
       // Let the focused conversation tool consume Escape before closing its owner.
-      if (root.current?.querySelector('.camp-detail-entry[aria-expanded="true"]')) return
+      if (root.current?.querySelector('.thread-detail-entry[aria-expanded="true"]')) return
       event.preventDefault()
       onClose()
     }}>

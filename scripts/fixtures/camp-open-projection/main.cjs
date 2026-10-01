@@ -9,7 +9,7 @@ const attachmentReview = mode === '--attachment-review'
 mkdirSync(userData, { recursive: true })
 app.setPath('userData', userData)
 app.setPath('sessionData', join(userData, 'session'))
-// Production CampWorkspace + adapter, with a closed draft/Skill API. No Core or daily data.
+// Production ThreadWorkspace + adapter, with a closed draft/Skill API. No Core or daily data.
 app.whenReady().then(async () => {
   const window = new BrowserWindow({
     show: attachmentReview || process.platform === 'linux',

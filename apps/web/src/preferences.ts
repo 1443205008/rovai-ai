@@ -84,7 +84,7 @@ export function browserPreferences(scope: string, transport: ConsoleClient): {
           if (name === null) delete names[key]; else names[key] = normalizeProjectDisplayName(name)
           return commitNavigation({ projectNames: names })
         },
-        removeProject: (key, campIds) => commitNavigation({ pins: navigation.pins.filter(pin => !(pin.kind === 'project' ? pin.targetKey === key : campIds.includes(pin.targetKey))), removedProjects: [...navigation.removedProjects.filter(p => p.targetKey !== key), { targetKey: key, removedAt: new Date().toISOString() }] }),
+        removeProject: (key, threadIds) => commitNavigation({ pins: navigation.pins.filter(pin => !(pin.kind === 'project' ? pin.targetKey === key : threadIds.includes(pin.targetKey))), removedProjects: [...navigation.removedProjects.filter(p => p.targetKey !== key), { targetKey: key, removedAt: new Date().toISOString() }] }),
         restoreProject: key => commitNavigation({ removedProjects: navigation.removedProjects.filter(p => p.targetKey !== key) })
       }
     }

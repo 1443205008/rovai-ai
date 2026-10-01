@@ -8,9 +8,9 @@ import { UiText, uiAttribute } from './interface-language'
 export function HtmlPreviewSource({ file, theme, tab }: {
   file: ResolvedFilePreview; theme: ResolvedTheme; tab: FilePreviewTabModel
 }): React.JSX.Element {
-  const { loadHtmlSource, isCurrentCamp, activeTabId, paneVisible } = useFilePreview()
+  const { loadHtmlSource, isCurrentThread, activeTabId, paneVisible } = useFilePreview()
   const source = tab.htmlSource
-  const visible = isCurrentCamp !== false && paneVisible && activeTabId === tab.id
+  const visible = isCurrentThread !== false && paneVisible && activeTabId === tab.id
   useEffect(() => { if (visible && !source) void loadHtmlSource(tab.id).catch(() => undefined) }, [visible, tab.id, file.handleId, file.contentGeneration, source, loadHtmlSource])
   if (!source) return <div className="file-preview-loading" role="status"><UiText zh={"正在读取源码…"} /></div>
   return <div className="file-preview-html-source">

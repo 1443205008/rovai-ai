@@ -104,20 +104,22 @@ use rovai_core::{
         builtin_tool_catalog_digest, builtin_tool_description, recovery_for_operation_error,
     },
     camp_attachment::{
-        CampAttachmentStore, desktop_target_for_source_attachment,
+        ThreadAttachmentStore, desktop_target_for_source_attachment,
         legacy_attachment_belongs_to_owner, preview_source_attachment,
     },
     camp_attachment_publication::unresolved_publication_camp_ids,
-    camp_attachment_view::{CampAttachmentViewStore, PreparedCampAttachmentCleanup},
+    camp_attachment_view::{PreparedThreadAttachmentCleanup, ThreadAttachmentViewStore},
     camp_content::ComposerDocument,
-    camp_deletion::{CampDeletionService, RetryCampDeletionCommand, workspace_cleanup_scheduled},
-    camp_history::{
-        CAMP_LIST_TOOL_NAME, CAMP_READ_TOOL_NAME, CAMP_SEARCH_TOOL_NAME, CampHistoryService,
-        CampListInput, CampReadInput, CampSearchInput, HISTORY_SEARCH_TOOL_NAME,
-        HistorySearchInput, invalid_input_error,
+    camp_deletion::{
+        RetryThreadDeletionCommand, ThreadDeletionService, workspace_cleanup_scheduled,
     },
-    camp_id::CampId,
-    camp_open::CampOpenService,
+    camp_history::{
+        CAMP_LIST_TOOL_NAME, CAMP_READ_TOOL_NAME, CAMP_SEARCH_TOOL_NAME, HISTORY_SEARCH_TOOL_NAME,
+        HistorySearchInput, ThreadHistoryService, ThreadListInput, ThreadReadInput,
+        ThreadSearchInput, invalid_input_error,
+    },
+    camp_id::ThreadId,
+    camp_open::ThreadOpenService,
     channel::{
         AdvanceDingTalkPublicationIntentCommand, AdvanceMemberBotPublicationIntentCommand,
         AuthorizeChannelExecutionConsolePageCommand, AuthorizeChannelExecutionRecentOutputCommand,
@@ -130,20 +132,19 @@ use rovai_core::{
         FinalizeChannelInboundCommand, GetChannelCredentialParams,
         GetChannelDeveloperSessionParams, ObserveChannelInboundCommand,
         ReconcileFeishuGroupRosterCommand, ReplaceChannelDeveloperSessionCommand,
-        ResolvePendingCampBindingCommand, SettleChannelDeliveryCommand, StartNewFeishuDmCommand,
+        ResolvePendingThreadBindingCommand, SettleChannelDeliveryCommand, StartNewFeishuDmCommand,
         StorePublicationCredentialCommand, UpsertDingTalkAccountCommand,
         UpsertDingTalkMemberBotCommand, UpsertFeishuAccountCommand, UpsertFeishuMemberBotCommand,
         VerifyFeishuOwnerCommand,
     },
     claude_permission::{self, CLAUDE_PERMISSION_NATIVE_METHOD},
     collaboration::{
-        AddCampMemberCommand, CampActivationState, CampCollaborationMode, ChangeDefaultLeadCommand,
-        CollaborationService, CreateCampCommand, CreateTaskCommand, DeleteCampCommand,
-        DiscardPendingCampCommand, ExecutionRequest, ProjectBindingKind,
-        ReconcileDefaultLeadCommand, RemoveCampMemberCommand, RenameCampCommand,
-        SendUserAutomationCampMessageCommand, SendUserCampMessageCommand, TaskAssigneeFilter,
-        TaskAssigneeUpdate, TaskListQuery, TaskStatus, UpdateTaskCommand,
-        WithdrawCampMessageCommand,
+        AddThreadMemberCommand, ChangeDefaultLeadCommand, CollaborationService, CreateTaskCommand,
+        CreateThreadCommand, DeleteThreadCommand, DiscardPendingThreadCommand, ExecutionRequest,
+        ProjectBindingKind, ReconcileDefaultLeadCommand, RemoveThreadMemberCommand,
+        RenameThreadCommand, SendUserAutomationThreadMessageCommand, SendUserThreadMessageCommand,
+        TaskAssigneeFilter, TaskAssigneeUpdate, TaskListQuery, TaskStatus, ThreadActivationState,
+        ThreadCollaborationMode, UpdateTaskCommand, WithdrawThreadMessageCommand,
     },
     command::{
         ActorRef, CommandEnvelope, CommandExecution, CommandGatewayError, CommandHandlerResult,
@@ -240,18 +241,17 @@ use rovai_core::{
         local_ipc::{LocalIpcListener, LocalIpcStream},
         prepare_windows_data_root,
     },
-    read_model::{CampOpenProjection, READ_MODEL_SCHEMA_VERSION, ReadModelService},
+    read_model::{READ_MODEL_SCHEMA_VERSION, ReadModelService, ThreadOpenProjection},
     runtime::{
         AgentRunCancellationCandidate, AgentRunExecution, AgentRunWorkspace,
-        ArmAgentRunNetworkRecoveryCommand, BindNativeSessionCommand, CampRuntimeCleanupTarget,
-        CancelAgentRunCommand, ClaimAgentRunCommand, CompleteAgentRunNetworkRecoveryCommand,
-        ExecutionRuntimeService, FailAgentRunCommand, MarkAgentRunForNetworkRecoveryCommand,
-        MissingSendRecoveryBoundary, MissingSendRecoveryCandidate, NativeSessionResumeDisposition,
-        NativeSessionResumeFailure, PermissionSemantics, PlannedShutdownAbortiveTerminal,
-        RebindAgentRunRuntimeCommand, RecordCancelledAgentRunEndingGitObservationCommand,
-        RecordObservedRuntimeModelCommand, RejectAgentRunDispatchCommand,
-        RestartNativeSessionCommand, SucceedAgentRunCommand, maintain_execution_text,
-        recover_legacy_pending_cancellations,
+        ArmAgentRunNetworkRecoveryCommand, BindNativeSessionCommand, CancelAgentRunCommand,
+        ClaimAgentRunCommand, CompleteAgentRunNetworkRecoveryCommand, ExecutionRuntimeService,
+        FailAgentRunCommand, MarkAgentRunForNetworkRecoveryCommand, MissingSendRecoveryBoundary,
+        MissingSendRecoveryCandidate, NativeSessionResumeDisposition, NativeSessionResumeFailure,
+        PermissionSemantics, PlannedShutdownAbortiveTerminal, RebindAgentRunRuntimeCommand,
+        RecordCancelledAgentRunEndingGitObservationCommand, RecordObservedRuntimeModelCommand,
+        RejectAgentRunDispatchCommand, RestartNativeSessionCommand, SucceedAgentRunCommand,
+        ThreadRuntimeCleanupTarget, maintain_execution_text, recover_legacy_pending_cancellations,
     },
     runtime_compaction_display::{
         RUNTIME_COMPACTION_DISPLAY_EVENT, RuntimeCompactionCompletionEvidence,
@@ -283,13 +283,13 @@ use rovai_core::{
         CleanupLegacySkillEntriesCommand, PreparedSkillExposure, ReconcileSkillProjectionsCommand,
         SkillProjectionGateBusy, SkillProjectionReconciler,
     },
-    storage_layout::CampOutputDirectory,
+    storage_layout::ThreadOutputDirectory,
     team_tool::{
-        AuthenticatedTeamToolRun, BuiltinToolBindingCredential, CampMessageSendInput,
-        CampMessageSendInvocation, TEAM_CREATE_TASK_TOOL_NAME, TEAM_GET_TASK_TOOL_NAME,
-        TEAM_LIST_TASKS_TOOL_NAME, TEAM_UPDATE_TASK_TOOL_NAME, TeamCreateTaskInput,
-        TeamGetTaskInput, TeamListTasksInput, TeamTaskToolInvocation, TeamToolInvocationError,
-        TeamToolService, TeamUpdateTaskInput,
+        AuthenticatedTeamToolRun, BuiltinToolBindingCredential, TEAM_CREATE_TASK_TOOL_NAME,
+        TEAM_GET_TASK_TOOL_NAME, TEAM_LIST_TASKS_TOOL_NAME, TEAM_UPDATE_TASK_TOOL_NAME,
+        TeamCreateTaskInput, TeamGetTaskInput, TeamListTasksInput, TeamTaskToolInvocation,
+        TeamToolInvocationError, TeamToolService, TeamUpdateTaskInput, ThreadMessageSendInput,
+        ThreadMessageSendInvocation,
     },
     team_tool_catalog::validate_builtin_tool_input,
 };
@@ -334,11 +334,11 @@ enum RuntimeCancellationIngressFence {
     Unproven,
 }
 
-struct CampAttachmentReadAdmission {
+struct ThreadAttachmentReadAdmission {
     camp_id: String,
 }
 
-impl CampAttachmentReadAdmission {
+impl ThreadAttachmentReadAdmission {
     fn for_camp(camp_id: &str) -> Self {
         Self {
             camp_id: camp_id.to_string(),
@@ -354,7 +354,7 @@ impl CampAttachmentReadAdmission {
 }
 
 fn release_agent_run_attachment_admission(
-    admission: CampAttachmentReadAdmission,
+    admission: ThreadAttachmentReadAdmission,
     projection_requests: &mpsc::UnboundedSender<String>,
 ) -> bool {
     let camp_id = admission.camp_id.clone();
@@ -446,6 +446,7 @@ struct Request {
     #[serde(skip)]
     client: rovai_core::draft_client::DraftClient,
     id: Value,
+    #[serde(deserialize_with = "rovai_core::thread_compat::deserialize_host_method")]
     method: String,
     #[serde(default)]
     params: Value,
@@ -872,7 +873,7 @@ fn log_execution_window_request_stage(
     }
     let camp_id = request
         .params
-        .get("campId")
+        .get("threadId")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
     let agent_run_id = request
@@ -1175,12 +1176,16 @@ fn navigation_mutation_was_rejected(result: &Value) -> bool {
 }
 
 fn navigation_request_camp_id(params: &Value) -> Option<&str> {
-    params.get("campId").and_then(Value::as_str).or_else(|| {
-        params
-            .get("command")
-            .and_then(|command| command.get("campId"))
-            .and_then(Value::as_str)
-    })
+    params
+        .get("threadId")
+        .or_else(|| params.get("campId"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            params
+                .get("command")
+                .and_then(|command| command.get("threadId").or_else(|| command.get("campId")))
+                .and_then(Value::as_str)
+        })
 }
 
 fn enqueue_response(output: &mpsc::UnboundedSender<String>, response: &Response) -> Result<()> {
@@ -1292,20 +1297,20 @@ struct SelectedWorkspaceParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CreateCampParams {
+struct CreateThreadParams {
     command_id: String,
     name: Option<String>,
     workspace: Option<SelectedWorkspaceParams>,
     member_agent_ids: Vec<String>,
     default_lead_agent_id: String,
-    collaboration_mode: CampCollaborationMode,
+    collaboration_mode: ThreadCollaborationMode,
     #[serde(default)]
-    activation_state: CampActivationState,
+    activation_state: ThreadActivationState,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CampCreationMember {
+struct ThreadCreationMember {
     agent_id: String,
     display_name: String,
     member_order: i64,
@@ -1315,8 +1320,9 @@ struct CampCreationMember {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CampIdParams {
-    camp_id: CampId,
+struct ThreadIdParams {
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1346,7 +1352,8 @@ struct RemoveSingleChatSourceAttachmentParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AgentRunFileChangesParams {
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     agent_run_id: String,
     execution_epoch: i64,
 }
@@ -1354,20 +1361,22 @@ struct AgentRunFileChangesParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AgentRunImageParams {
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     image_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CampMemberRemovalPreviewParams {
-    camp_id: CampId,
+struct ThreadMemberRemovalPreviewParams {
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     agent_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CampEnterParams {
+struct ThreadEnterParams {
     trace_id: String,
     command_id: String,
     command: ReconcileDefaultLeadCommand,
@@ -1375,15 +1384,17 @@ struct CampEnterParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CampOpenParams {
+struct ThreadOpenParams {
     trace_id: String,
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CampMessagePageParams {
-    camp_id: CampId,
+struct ThreadMessagePageParams {
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     before_sequence: i64,
     through_global_sequence: i64,
     #[serde(default = "default_camp_message_page_limit")]
@@ -1400,7 +1411,7 @@ fn normalized_camp_open_trace_id(trace_id: &str) -> Result<String> {
         .context("Camp open traceId must be a UUID")
 }
 
-struct CampOpenLogMetrics {
+struct ThreadOpenLogMetrics {
     db_lock_ms: u128,
     database_ms: u128,
     reconcile_ms: u128,
@@ -1412,10 +1423,10 @@ struct CampOpenLogMetrics {
 fn log_camp_open_projection(
     trace_id: &str,
     method: &str,
-    metrics: &CampOpenLogMetrics,
-    projection: &CampOpenProjection,
+    metrics: &ThreadOpenLogMetrics,
+    projection: &ThreadOpenProjection,
 ) {
-    let CampOpenLogMetrics {
+    let ThreadOpenLogMetrics {
         db_lock_ms,
         database_ms,
         reconcile_ms,
@@ -1438,15 +1449,17 @@ fn log_camp_open_projection(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CampMessageAroundParams {
-    camp_id: CampId,
+struct ThreadMessageAroundParams {
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     message_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CampMessageFindParams {
-    camp_id: CampId,
+struct ThreadMessageFindParams {
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     query: String,
     selected_match_index: Option<i64>,
     anchor_message_id: Option<String>,
@@ -1455,14 +1468,16 @@ struct CampMessageFindParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ExecutionEvidenceContentParams {
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     evidence_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ExecutionEvidenceListParams {
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     agent_run_id: String,
     #[serde(default)]
     after_sequence: i64,
@@ -1473,7 +1488,8 @@ struct ExecutionEvidenceListParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ExecutionWindowParams {
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     agent_run_id: String,
     before_sequence: Option<i64>,
     limit: Option<i64>,
@@ -1483,7 +1499,8 @@ struct ExecutionWindowParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ExecutionChangesParams {
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     agent_run_id: String,
     after_change_sequence: i64,
     #[serde(default)]
@@ -1532,7 +1549,8 @@ struct NativeSkillsListParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CampSkillCandidatesParams {
+struct ThreadSkillCandidatesParams {
+    #[serde(rename = "threadId", alias = "campId")]
     camp_id: String,
     #[serde(default)]
     refresh: bool,
@@ -1583,7 +1601,8 @@ struct InspectGithubSkillImportParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreateTaskParams {
     command_id: String,
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     title: String,
     #[serde(default)]
     description: String,
@@ -1594,7 +1613,8 @@ struct CreateTaskParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct UpdateTaskParams {
     command_id: String,
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     task_id: String,
     title: Option<String>,
     description: Option<String>,
@@ -1609,7 +1629,8 @@ struct UpdateTaskParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ListTasksParams {
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     statuses: Option<Vec<TaskStatus>>,
     #[serde(default)]
     assignee: TaskAssigneeFilter,
@@ -1621,13 +1642,14 @@ struct ListTasksParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GetTaskParams {
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     task_id: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct NavigationGroupCampsParams {
+struct NavigationGroupThreadsParams {
     project_path: Option<String>,
     offset: Option<usize>,
     limit: Option<usize>,
@@ -1643,33 +1665,37 @@ struct NavigationSnapshotParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct NavigationCampsParams {
+struct NavigationThreadsParams {
+    #[serde(rename = "threadIds", alias = "campIds")]
     camp_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AcknowledgeCampViewedParams {
-    camp_id: CampId,
+struct AcknowledgeThreadViewedParams {
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     through_global_sequence: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SendCampMessageParams {
+struct SendThreadMessageParams {
     command_id: String,
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     content: ComposerDocument,
     #[serde(default)]
     source_attachments: Vec<rovai_core::local_attachment_source::LocalAttachmentSourceRef>,
     #[serde(default)]
     quotes: Vec<rovai_core::message_quote::MessageQuoteSnapshot>,
+    #[serde(rename = "replyToThreadMessageId", alias = "replyToCampMessageId")]
     reply_to_camp_message_id: Option<String>,
     execution: Option<ExecutionRequest>,
 }
 
-impl SendCampMessageParams {
-    fn envelope(&self) -> CommandEnvelope<SendUserCampMessageCommand> {
+impl SendThreadMessageParams {
+    fn envelope(&self) -> CommandEnvelope<SendUserThreadMessageCommand> {
         let params = self;
         CommandEnvelope {
             command_id: params.command_id.clone(),
@@ -1679,7 +1705,7 @@ impl SendCampMessageParams {
             camp_id: Some(params.camp_id.to_string()),
             expected_versions: Vec::new(),
             execution_epoch: None,
-            payload: SendUserCampMessageCommand {
+            payload: SendUserThreadMessageCommand {
                 camp_id: params.camp_id.to_string(),
                 content: params.content.clone(),
                 source_attachments: params.source_attachments.clone(),
@@ -1693,9 +1719,10 @@ impl SendCampMessageParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SendUserAutomationCampMessageParams {
+struct SendUserAutomationThreadMessageParams {
     command_id: String,
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     agent_id: String,
     body: String,
     execution: Option<ExecutionRequest>,
@@ -1739,15 +1766,17 @@ struct AutomationMutationParams<T> {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CaptureCampMessageQuoteParams {
-    camp_id: CampId,
+struct CaptureThreadMessageQuoteParams {
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     selection: rovai_core::message_quote::QuoteSelection,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AddSingleChatPendingSourceAttachmentFromPathParams {
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     conversation_id: String,
     pending_input_id: String,
     expected_revision: i64,
@@ -1787,7 +1816,7 @@ async fn add_single_chat_source_attachment_from_path(
         output,
         "single_chat.changed",
         json!({
-            "campId": snapshot.conversation.camp_id.clone(),
+            "threadId": snapshot.conversation.camp_id.clone(),
             "conversationId": params.conversation_id,
         }),
     );
@@ -1827,7 +1856,7 @@ async fn add_single_chat_pending_source_attachment_from_path(
         output,
         "single_chat.changed",
         json!({
-            "campId": params.camp_id,
+            "threadId": params.camp_id,
             "conversationId": params.conversation_id,
         }),
     );
@@ -1837,7 +1866,8 @@ async fn add_single_chat_pending_source_attachment_from_path(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LegacyDesktopAttachmentTargetParams {
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     attachment_id: String,
 }
 
@@ -1857,7 +1887,8 @@ struct CancelPendingExecutionParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SubscribeEventsParams {
-    camp_id: Option<CampId>,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: Option<ThreadId>,
     after_global_sequence: i64,
     limit: Option<i64>,
 }
@@ -1888,7 +1919,8 @@ struct NotificationChangesSinceParams {
 #[serde(rename_all = "camelCase")]
 struct ResolveActionApprovalParams {
     command_id: String,
-    camp_id: CampId,
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
     approval_id: String,
     expected_version: i64,
     option_id: String,
@@ -2129,7 +2161,7 @@ struct RuntimeCheckActivity {
 struct RuntimeCheckRequest {
     search: Arc<RuntimeSearchEnvironment>,
     startup_preview: Option<Arc<startup_settings::StartupPreview>>,
-    fast_target: Option<rovai_core::camp_fast::CampMemberFastTarget>,
+    fast_target: Option<rovai_core::camp_fast::ThreadMemberFastTarget>,
     runtime_kind: AdapterKind,
     purpose: RuntimeLaunchPurpose,
     trigger: RuntimeCheckTrigger,
@@ -2140,7 +2172,7 @@ struct RuntimeCheckRequest {
 struct RuntimeCheckAttempt {
     search: Arc<RuntimeSearchEnvironment>,
     startup_preview: Option<Arc<startup_settings::StartupPreview>>,
-    fast_target: Option<rovai_core::camp_fast::CampMemberFastTarget>,
+    fast_target: Option<rovai_core::camp_fast::ThreadMemberFastTarget>,
     attempt_id: String,
     runtime_kind: AdapterKind,
     purpose: RuntimeLaunchPurpose,
@@ -2347,7 +2379,7 @@ struct Core {
     antigravity_app: AntigravityAppRuntimeAdapter,
     planned_shutdown: Arc<PlannedShutdownCoordinator>,
     agent_run_tasks: Mutex<tokio::task::JoinSet<()>>,
-    attachment_views: CampAttachmentViewStore,
+    attachment_views: ThreadAttachmentViewStore,
     attachment_view_gates: Mutex<HashMap<String, Arc<RwLock<()>>>>,
     data_dir: PathBuf,
 }
@@ -2357,8 +2389,8 @@ struct PreparedRuntimeLaunch<'a> {
     resume_disposition: NativeSessionResumeDisposition,
     skill_exposure: &'a PreparedSkillExposure,
     mcp_projection: &'a PreparedMcpProjection,
-    attachment_admission: &'a CampAttachmentReadAdmission,
-    attachment_authorization: &'a CampOutputDirectory,
+    attachment_admission: &'a ThreadAttachmentReadAdmission,
+    attachment_authorization: &'a ThreadOutputDirectory,
     output: &'a mpsc::UnboundedSender<String>,
     launch_permit: &'a mut ExecutionLaunchPermit,
 }
@@ -2367,16 +2399,16 @@ struct PreparedPiRuntimeLaunch<'a> {
     execution: &'a AgentRunExecution,
     resume_disposition: NativeSessionResumeDisposition,
     skill_exposure: &'a PreparedSkillExposure,
-    attachment_admission: &'a CampAttachmentReadAdmission,
-    attachment_authorization: &'a CampOutputDirectory,
+    attachment_admission: &'a ThreadAttachmentReadAdmission,
+    attachment_authorization: &'a ThreadOutputDirectory,
     output: &'a mpsc::UnboundedSender<String>,
     launch_permit: &'a mut ExecutionLaunchPermit,
 }
 
 #[derive(Clone, Copy)]
-struct CampAttachmentRunAccess<'a> {
-    admission: &'a CampAttachmentReadAdmission,
-    authorization: &'a CampOutputDirectory,
+struct ThreadAttachmentRunAccess<'a> {
+    admission: &'a ThreadAttachmentReadAdmission,
+    authorization: &'a ThreadOutputDirectory,
 }
 
 struct RuntimeInputPreparationRequest<'a> {
@@ -2384,7 +2416,7 @@ struct RuntimeInputPreparationRequest<'a> {
     proposed_delivery_id: Option<&'a str>,
 }
 
-impl CampAttachmentRunAccess<'_> {
+impl ThreadAttachmentRunAccess<'_> {
     fn prove(&self, execution: &AgentRunExecution) -> Result<()> {
         self.admission.prove(&execution.camp_id)?;
         if self.authorization.camp_id != execution.camp_id {
@@ -2764,14 +2796,14 @@ impl Core {
     ) -> Result<()> {
         if execution.replayed
             || execution.result.status == CommandResultStatus::Rejected
-            || execution.result.payload["campCreated"].as_bool() != Some(true)
+            || execution.result.payload["threadCreated"].as_bool() != Some(true)
         {
             return Ok(());
         }
-        let camp_id = execution.result.payload["campId"]
+        let camp_id = execution.result.payload["threadId"]
             .as_str()
             .context("new Channel Camp result omitted campId")?;
-        CampOutputDirectory::prepare(database, camp_id).map(|_| ())
+        ThreadOutputDirectory::prepare(database, camp_id).map(|_| ())
     }
 
     fn notify_delivery_batch_scheduler_if_pending(&self, database: &Database) {
@@ -2803,12 +2835,12 @@ impl Core {
         &self,
         camp_id: &str,
         workspace: &Path,
-    ) -> Result<(CampAttachmentReadAdmission, CampOutputDirectory)> {
+    ) -> Result<(ThreadAttachmentReadAdmission, ThreadOutputDirectory)> {
         let authorization = self
             .verified_camp_runtime_authorization(camp_id, workspace)
             .await?;
         Ok((
-            CampAttachmentReadAdmission::for_camp(camp_id),
+            ThreadAttachmentReadAdmission::for_camp(camp_id),
             authorization,
         ))
     }
@@ -2842,7 +2874,7 @@ impl Core {
 
     async fn finish_camp_attachment_cleanup(
         &self,
-        cleanup: Option<&PreparedCampAttachmentCleanup>,
+        cleanup: Option<&PreparedThreadAttachmentCleanup>,
     ) -> Result<()> {
         let Some(cleanup) = cleanup else {
             return Ok(());
@@ -2852,14 +2884,14 @@ impl Core {
             .commit_camp_delete_cleanup(&mut database, cleanup)?;
         self.attachment_views.complete_camp_delete_cleanup(
             &mut database,
-            &CampAttachmentStore::new(&self.data_dir),
+            &ThreadAttachmentStore::new(&self.data_dir),
             cleanup,
         )
     }
 
     async fn finish_background_camp_deletion_cleanup(
         &self,
-        cleanup: &PreparedCampAttachmentCleanup,
+        cleanup: &PreparedThreadAttachmentCleanup,
     ) -> Result<bool> {
         let completion = {
             let database = self.database.lock().await;
@@ -2869,11 +2901,11 @@ impl Core {
         let Some(completion) = completion else {
             return Ok(true);
         };
-        let attachment_store = CampAttachmentStore::new(&self.data_dir);
+        let attachment_store = ThreadAttachmentStore::new(&self.data_dir);
         let view_root = self.attachment_views.root().to_path_buf();
         let cleanup_files = completion.clone();
         tokio::task::spawn_blocking(move || {
-            CampAttachmentViewStore::apply_camp_delete_cleanup_files_at_root(
+            ThreadAttachmentViewStore::apply_camp_delete_cleanup_files_at_root(
                 &view_root,
                 &attachment_store,
                 &cleanup_files,
@@ -2985,7 +3017,7 @@ impl Core {
 
     async fn stop_deleted_camp_runtimes(
         self: &Arc<Self>,
-        targets: &[CampRuntimeCleanupTarget],
+        targets: &[ThreadRuntimeCleanupTarget],
     ) -> Result<()> {
         let mut confirmed = true;
         // Bound fan-out so deleting a large historical Camp cannot saturate
@@ -3043,7 +3075,7 @@ impl Core {
     }
 
     async fn process_camp_deletions_locked(self: &Arc<Self>) -> Result<()> {
-        let service = CampDeletionService::default();
+        let service = ThreadDeletionService::default();
         let candidates = {
             let database = self.database.lock().await;
             service.due_camps(&database, 4)?
@@ -3192,13 +3224,13 @@ impl Core {
 
     async fn record_camp_deletion_failure(
         &self,
-        candidate: &rovai_core::camp_deletion::CampDeletionCandidate,
+        candidate: &rovai_core::camp_deletion::ThreadDeletionCandidate,
         error_code: &str,
         error: &anyhow::Error,
     ) {
         let attention = {
             let database = self.database.lock().await;
-            CampDeletionService::default().record_camp_failure(&database, candidate, error_code)
+            ThreadDeletionService::default().record_camp_failure(&database, candidate, error_code)
         };
         match attention {
             Ok(attention) => {
@@ -3223,12 +3255,12 @@ impl Core {
 
     async fn record_camp_cleanup_failure(
         &self,
-        cleanup: &PreparedCampAttachmentCleanup,
+        cleanup: &PreparedThreadAttachmentCleanup,
         error: &anyhow::Error,
     ) {
         let attention = {
             let mut database = self.database.lock().await;
-            CampDeletionService::default().record_cleanup_failure(
+            ThreadDeletionService::default().record_cleanup_failure(
                 &mut database,
                 cleanup,
                 "resource_cleanup_failed",
@@ -3924,7 +3956,7 @@ impl Core {
         kind: AdapterKind,
         purpose: RuntimeLaunchPurpose,
         trigger: RuntimeCheckTrigger,
-        fast_target: Option<rovai_core::camp_fast::CampMemberFastTarget>,
+        fast_target: Option<rovai_core::camp_fast::ThreadMemberFastTarget>,
     ) -> Result<RuntimeCheckOutcome> {
         if let Some(blocker) = current_runtime_platform_blocker(kind) {
             anyhow::bail!("{}: {}", blocker.code, blocker.payload);
@@ -5069,7 +5101,7 @@ impl Core {
         for intent in intents {
             let result: Result<Value> = match intent.request_method.as_str() {
                 "camp.messages.send" => {
-                    match serde_json::from_str::<SendCampMessageParams>(&intent.payload_json) {
+                    match serde_json::from_str::<SendThreadMessageParams>(&intent.payload_json) {
                         Ok(params) => self.send_test_camp_message_request(params).await,
                         Err(error) => {
                             Err(error).context("persisted pending send request is invalid")
@@ -5421,6 +5453,20 @@ impl Core {
                 operation,
                 input,
             } => {
+                let operation =
+                    rovai_core::thread_compat::canonical_operation(&operation).to_string();
+                let input =
+                    match rovai_core::thread_compat::normalize_builtin_input(&operation, input) {
+                        Ok(input) => input,
+                        Err(_) => {
+                            return builtin_tool_rejection(
+                                &operation,
+                                &request_id,
+                                "builtin_tool.invalid_input",
+                                "Command input does not match the accepted arguments.",
+                            );
+                        }
+                    };
                 if uuid::Uuid::parse_str(&request_id).is_err() {
                     return BuiltinToolIpcResponse::ipc_error(
                         "builtin_tool.invalid_request_id",
@@ -5499,7 +5545,7 @@ impl Core {
                 }
                 let mut source_files = Vec::new();
                 if operation == CAMP_MESSAGE_SEND_TOOL_NAME {
-                    let send_input: CampMessageSendInput =
+                    let send_input: ThreadMessageSendInput =
                         serde_json::from_value(input.clone()).expect("validated send input");
                     let scoped_tool_call_id = scoped_runtime_tool_call_id(
                         &authorized.agent_run_id,
@@ -5913,6 +5959,9 @@ impl Core {
         let mut delivery_batch_state_changed = false;
         let mut member_roster_changed = false;
         let result: Result<Value> = async {
+            request.tool_name = rovai_core::thread_compat::canonical_operation(&request.tool_name).to_string();
+            request.input = rovai_core::thread_compat::normalize_builtin_input(&request.tool_name, request.input)
+                .map_err(|_| invalid_input_error("Command input does not match the accepted arguments."))?;
             let mut database = self.database.lock().await;
             let service = TeamToolService::default();
             let authenticated_run = if request.tool_name == CAMP_MESSAGE_SEND_TOOL_NAME {
@@ -6009,9 +6058,9 @@ impl Core {
                 .context("Built-in Tool start evidence was not durably admitted")?;
             let operation_result = match request.tool_name.as_str() {
                 CAMP_MESSAGE_SEND_TOOL_NAME => {
-                    let input = serde_json::from_value::<CampMessageSendInput>(request.input)
+                    let input = serde_json::from_value::<ThreadMessageSendInput>(request.input)
                         .context("camp.message.send input is invalid")?;
-                    let invocation = CampMessageSendInvocation {
+                    let invocation = ThreadMessageSendInvocation {
                         native_binding_id: request.native_binding_id,
                         binding_credential: request.binding_credential,
                         runtime_tool_call_id: request.runtime_tool_call_id,
@@ -6493,7 +6542,7 @@ impl Core {
                     delivery_batch_state_changed |= execution
                         .result
                         .payload
-                        .get("campId")
+                        .get("threadId")
                         .and_then(Value::as_str)
                         .is_some();
                     evidence_replayed = execution.replayed;
@@ -6506,9 +6555,9 @@ impl Core {
                         execution
                             .result
                             .payload
-                            .get("campId")
+                            .get("threadId")
                             .and_then(Value::as_str),
-                    ) && let Err(error) = CampOutputDirectory::prepare(&database, camp_id)
+                    ) && let Err(error) = ThreadOutputDirectory::prepare(&database, camp_id)
                     {
                         automation_service
                             .interrupt_before_runtime(&mut database, run_id)
@@ -6659,24 +6708,24 @@ impl Core {
                     command_execution_payload(execution)
                 }
                 CAMP_LIST_TOOL_NAME => {
-                    let input = serde_json::from_value::<CampListInput>(request.input)
+                    let input = serde_json::from_value::<ThreadListInput>(request.input)
                         .map_err(|_| invalid_input_error("camp.list input is invalid"))?;
-                    CampHistoryService.list_camps(&mut database, &authenticated_run, &input)
+                    ThreadHistoryService.list_camps(&mut database, &authenticated_run, &input)
                 }
                 CAMP_SEARCH_TOOL_NAME => {
-                    let input = serde_json::from_value::<CampSearchInput>(request.input)
+                    let input = serde_json::from_value::<ThreadSearchInput>(request.input)
                         .map_err(|_| invalid_input_error("camp.search input is invalid"))?;
-                    CampHistoryService.search_camp(&mut database, &authenticated_run, &input)
+                    ThreadHistoryService.search_camp(&mut database, &authenticated_run, &input)
                 }
                 HISTORY_SEARCH_TOOL_NAME => {
                     let input = serde_json::from_value::<HistorySearchInput>(request.input)
                         .map_err(|_| invalid_input_error("history.search input is invalid"))?;
-                    CampHistoryService.search_history(&mut database, &authenticated_run, &input)
+                    ThreadHistoryService.search_history(&mut database, &authenticated_run, &input)
                 }
                 CAMP_READ_TOOL_NAME => {
-                    let input = serde_json::from_value::<CampReadInput>(request.input)
+                    let input = serde_json::from_value::<ThreadReadInput>(request.input)
                         .map_err(|_| invalid_input_error("camp.read input is invalid"))?;
-                    CampHistoryService.read(&mut database, &authenticated_run, &input)
+                    ThreadHistoryService.read(&mut database, &authenticated_run, &input)
                 }
                 SINGLE_CHAT_HISTORY_TOOL_NAME => {
                     let input = serde_json::from_value::<SingleChatHistoryInput>(request.input)
@@ -6828,14 +6877,14 @@ impl Core {
     }
 
     async fn try_handle_camp_enter_read_only(&self, request: &Request) -> Result<Option<Value>> {
-        let params: CampEnterParams = serde_json::from_value(request.params.clone())?;
+        let params: ThreadEnterParams = serde_json::from_value(request.params.clone())?;
         let trace_id = normalized_camp_open_trace_id(&params.trace_id)?;
         let camp_id = params.command.camp_id.clone();
         let lock_started_at = Instant::now();
         let mut database = self.database.lock().await;
         let db_lock_ms = lock_started_at.elapsed().as_millis();
         let database_started_at = Instant::now();
-        let outcome = CampOpenService.try_enter_read_only(
+        let outcome = ThreadOpenService.try_enter_read_only(
             &mut database,
             &user_camp_command_envelope(params.command_id, camp_id, params.command),
         )?;
@@ -6853,7 +6902,7 @@ impl Core {
         log_camp_open_projection(
             &trace_id,
             "camps.enter",
-            &CampOpenLogMetrics {
+            &ThreadOpenLogMetrics {
                 db_lock_ms,
                 database_ms,
                 reconcile_ms: 0,
@@ -7101,9 +7150,9 @@ impl Core {
                     execution
                         .result
                         .payload
-                        .get("campId")
+                        .get("threadId")
                         .and_then(Value::as_str),
-                ) && let Err(error) = CampOutputDirectory::prepare(&database, camp_id)
+                ) && let Err(error) = ThreadOutputDirectory::prepare(&database, camp_id)
                 {
                     automation_service
                         .interrupt_before_runtime(&mut database, run_id)
@@ -7121,7 +7170,7 @@ impl Core {
                 if execution
                     .result
                     .payload
-                    .get("campId")
+                    .get("threadId")
                     .and_then(Value::as_str)
                     .is_some()
                 {
@@ -7374,7 +7423,7 @@ impl Core {
                 Ok(serde_json::to_value(execution.result)?)
             }
             "channels.dingtalk.pendingBinding.resolve" => {
-                let params: UserCommandParams<ResolvePendingCampBindingCommand> =
+                let params: UserCommandParams<ResolvePendingThreadBindingCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let quick_chat_path = self.data_dir.join("quick-chat");
                 std::fs::create_dir_all(&quick_chat_path).with_context(|| {
@@ -7723,7 +7772,7 @@ impl Core {
                 Ok(serde_json::to_value(execution.result)?)
             }
             "channels.feishu.pendingBinding.resolve" => {
-                let params: UserCommandParams<ResolvePendingCampBindingCommand> =
+                let params: UserCommandParams<ResolvePendingThreadBindingCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let quick_chat_path = self.data_dir.join("quick-chat");
                 if params.command.action == "quick_chat" {
@@ -7746,7 +7795,7 @@ impl Core {
                 Ok(serde_json::to_value(execution.result)?)
             }
             "channels.lark.pendingBinding.resolve" => {
-                let params: UserCommandParams<ResolvePendingCampBindingCommand> =
+                let params: UserCommandParams<ResolvePendingThreadBindingCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let quick_chat_path = self.data_dir.join("quick-chat");
                 if params.command.action == "quick_chat" {
@@ -7770,7 +7819,7 @@ impl Core {
                 Ok(serde_json::to_value(execution.result)?)
             }
             "channels.membership.add" => {
-                let params: UserCommandParams<AddCampMemberCommand> =
+                let params: UserCommandParams<AddThreadMemberCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let camp_id = params.command.camp_id.clone();
                 let mut database = self.database.lock().await;
@@ -7786,7 +7835,7 @@ impl Core {
                 Ok(serde_json::to_value(execution.result)?)
             }
             "channels.membership.remove" => {
-                let params: UserCommandParams<RemoveCampMemberCommand> =
+                let params: UserCommandParams<RemoveThreadMemberCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let camp_id = params.command.camp_id.clone();
                 let mut database = self.database.lock().await;
@@ -8105,7 +8154,7 @@ impl Core {
                 let camp_id = execution
                     .result
                     .payload
-                    .get("campId")
+                    .get("threadId")
                     .and_then(Value::as_str)
                     .map(str::to_string);
                 drop(database);
@@ -8114,7 +8163,7 @@ impl Core {
                     emit_agent_run_terminal(
                         &self.output,
                         camp_id.as_deref(),
-                        json!({ "campId": camp_id, "result": execution.result }),
+                        json!({ "threadId": camp_id, "result": execution.result }),
                     );
                     self.delivery_batch_scheduler_notify.notify_one();
                 }
@@ -8139,7 +8188,7 @@ impl Core {
                 let camp_id = execution
                     .result
                     .payload
-                    .get("campId")
+                    .get("threadId")
                     .and_then(Value::as_str)
                     .map(str::to_string);
                 drop(database);
@@ -8148,7 +8197,7 @@ impl Core {
                     emit_agent_run_terminal(
                         &self.output,
                         camp_id.as_deref(),
-                        json!({ "campId": camp_id, "result": execution.result }),
+                        json!({ "threadId": camp_id, "result": execution.result }),
                     );
                     self.delivery_batch_scheduler_notify.notify_one();
                 }
@@ -8770,7 +8819,7 @@ impl Core {
                 Ok(serde_json::to_value(content)?)
             }
             "skills.candidates" => {
-                let params: CampSkillCandidatesParams =
+                let params: ThreadSkillCandidatesParams =
                     serde_json::from_value(request.params.clone())?;
                 let (project_path, roster, toolbox_rows, old_projection_paths) = {
                     let database = self.database.lock().await;
@@ -9202,7 +9251,7 @@ impl Core {
                 let present_members = profiles
                     .into_iter()
                     .filter(|profile| profile.presence == "present")
-                    .map(|profile| CampCreationMember {
+                    .map(|profile| ThreadCreationMember {
                         agent_id: profile.agent_id,
                         display_name: profile.display_name,
                         member_order: profile.member_order,
@@ -9274,7 +9323,8 @@ impl Core {
                 )?)
             }
             "navigation.camps" => {
-                let params: NavigationCampsParams = serde_json::from_value(request.params.clone())?;
+                let params: NavigationThreadsParams =
+                    serde_json::from_value(request.params.clone())?;
                 let mut database = self.database.lock().await;
                 Ok(serde_json::to_value(ReadModelService.navigation_camps(
                     &mut database,
@@ -9283,7 +9333,7 @@ impl Core {
                 )?)?)
             }
             "navigation.groupCamps" => {
-                let params: NavigationGroupCampsParams =
+                let params: NavigationGroupThreadsParams =
                     serde_json::from_value(request.params.clone())?;
                 let mut database = self.database.lock().await;
                 Ok(serde_json::to_value(
@@ -9297,14 +9347,14 @@ impl Core {
                 )?)
             }
             "navigation.findCamp" => {
-                let params: CampIdParams = serde_json::from_value(request.params.clone())?;
+                let params: ThreadIdParams = serde_json::from_value(request.params.clone())?;
                 let database = self.database.lock().await;
                 Ok(serde_json::to_value(
                     ReadModelService.find_navigation_camp(&database, &params.camp_id)?,
                 )?)
             }
             "navigation.campViewed" => {
-                let params: AcknowledgeCampViewedParams =
+                let params: AcknowledgeThreadViewedParams =
                     serde_json::from_value(request.params.clone())?;
                 let mut database = self.database.lock().await;
                 Ok(serde_json::to_value(
@@ -9334,7 +9384,7 @@ impl Core {
             | "missions.start"
             | "missions.linkPr" => self.handle_mission(request).await,
             "camps.create" => {
-                let params: CreateCampParams = serde_json::from_value(request.params.clone())?;
+                let params: CreateThreadParams = serde_json::from_value(request.params.clone())?;
                 let (project_binding_kind, requested_path) = match &params.workspace {
                     Some(workspace) => (
                         ProjectBindingKind::Directory,
@@ -9368,7 +9418,7 @@ impl Core {
                         "Authorized workspace changed before Camp creation"
                     );
                 }
-                let command = CreateCampCommand {
+                let command = CreateThreadCommand {
                     name: params.name,
                     project_binding_kind,
                     project_path: selection.project_path,
@@ -9383,15 +9433,15 @@ impl Core {
                     &user_command_envelope(params.command_id, command),
                 )?;
                 if execution.result.status == CommandResultStatus::Applied
-                    && let Some(camp_id) = execution.result.payload["campId"].as_str()
+                    && let Some(camp_id) = execution.result.payload["threadId"].as_str()
                 {
                     emit_navigation_invalidated(&self.output, "camps.create", Some(camp_id));
-                    CampOutputDirectory::prepare(&database, camp_id)?;
+                    ThreadOutputDirectory::prepare(&database, camp_id)?;
                 }
                 Ok(serde_json::to_value(execution.result)?)
             }
             "camps.rename" => {
-                let params: UserCommandParams<RenameCampCommand> =
+                let params: UserCommandParams<RenameThreadCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let camp_id = params.command.camp_id.clone();
                 let mut database = self.database.lock().await;
@@ -9402,7 +9452,7 @@ impl Core {
                 Ok(serde_json::to_value(execution.result)?)
             }
             "camps.members.fast.check" => {
-                let params: CampMemberRemovalPreviewParams =
+                let params: ThreadMemberRemovalPreviewParams =
                     serde_json::from_value(request.params.clone())?;
                 let target = {
                     let database = self.database.lock().await;
@@ -9430,7 +9480,7 @@ impl Core {
                 )?)?)
             }
             "camps.members.fast.set" => {
-                let params: UserCommandParams<rovai_core::camp_fast::SetCampMemberFastCommand> =
+                let params: UserCommandParams<rovai_core::camp_fast::SetThreadMemberFastCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let camp_id = params.command.camp_id.clone();
                 let mut database = self.database.lock().await;
@@ -9441,12 +9491,12 @@ impl Core {
                 emit(
                     &self.output,
                     "camp.member.fast.updated",
-                    json!({"campId": camp_id}),
+                    json!({"threadId": camp_id}),
                 );
                 Ok(serde_json::to_value(execution.result)?)
             }
             "camps.members.add" => {
-                let params: UserCommandParams<AddCampMemberCommand> =
+                let params: UserCommandParams<AddThreadMemberCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let camp_id = params.command.camp_id.clone();
                 let mut database = self.database.lock().await;
@@ -9457,7 +9507,7 @@ impl Core {
                 Ok(serde_json::to_value(execution.result)?)
             }
             "camps.members.removalPreview" => {
-                let params: CampMemberRemovalPreviewParams =
+                let params: ThreadMemberRemovalPreviewParams =
                     serde_json::from_value(request.params.clone())?;
                 let database = self.database.lock().await;
                 Ok(serde_json::to_value(
@@ -9469,7 +9519,7 @@ impl Core {
                 )?)
             }
             "camps.members.remove" => {
-                let params: UserCommandParams<RemoveCampMemberCommand> =
+                let params: UserCommandParams<RemoveThreadMemberCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let camp_id = params.command.camp_id.clone();
                 let mut database = self.database.lock().await;
@@ -9514,14 +9564,14 @@ impl Core {
                 Ok(serde_json::to_value(execution.result)?)
             }
             "camps.exists" => {
-                let params: CampIdParams = serde_json::from_value(request.params.clone())?;
+                let params: ThreadIdParams = serde_json::from_value(request.params.clone())?;
                 let database = self.database.lock().await;
                 Ok(serde_json::to_value(
                     ReadModelService.camp_exists(&database, params.camp_id.as_str())?,
                 )?)
             }
             "singleChat.list" => {
-                let params: CampIdParams = serde_json::from_value(request.params.clone())?;
+                let params: ThreadIdParams = serde_json::from_value(request.params.clone())?;
                 let database = self.database.lock().await;
                 Ok(serde_json::to_value(
                     SingleChatService::for_client(request.client.clone())
@@ -9559,7 +9609,7 @@ impl Core {
                     &self.output,
                     "single_chat.changed",
                     json!({
-                        "campId": snapshot.conversation.camp_id.clone(),
+                        "threadId": snapshot.conversation.camp_id.clone(),
                         "conversationId": params.conversation_id,
                     }),
                 );
@@ -9597,7 +9647,7 @@ impl Core {
                         &self.output,
                         "single_chat.changed",
                         json!({
-                            "campId": camp_id,
+                            "threadId": camp_id,
                             "conversationId": conversation_id,
                             "result": execution.result,
                         }),
@@ -9621,7 +9671,7 @@ impl Core {
                     emit(
                         &self.output,
                         "single_chat.changed",
-                        json!({ "campId": camp_id, "result": execution.result }),
+                        json!({ "threadId": camp_id, "result": execution.result }),
                     );
                 }
                 Ok(serde_json::to_value(execution.result)?)
@@ -9642,7 +9692,7 @@ impl Core {
                     emit(
                         &self.output,
                         "single_chat.changed",
-                        json!({ "campId": camp_id, "result": execution.result }),
+                        json!({ "threadId": camp_id, "result": execution.result }),
                     );
                 }
                 Ok(serde_json::to_value(execution.result)?)
@@ -9670,20 +9720,20 @@ impl Core {
                     emit(
                         &self.output,
                         "single_chat.changed",
-                        json!({ "campId": camp_id, "result": execution.result }),
+                        json!({ "threadId": camp_id, "result": execution.result }),
                     );
                 }
                 Ok(serde_json::to_value(execution.result)?)
             }
             "camps.enter" => {
-                let params: CampEnterParams = serde_json::from_value(request.params.clone())?;
+                let params: ThreadEnterParams = serde_json::from_value(request.params.clone())?;
                 let trace_id = normalized_camp_open_trace_id(&params.trace_id)?;
                 let camp_id = params.command.camp_id.clone();
                 let lock_started_at = std::time::Instant::now();
                 let mut database = self.database.lock().await;
                 let db_lock_ms = lock_started_at.elapsed().as_millis();
                 let database_started_at = std::time::Instant::now();
-                let outcome = CampOpenService.enter(
+                let outcome = ThreadOpenService.enter(
                     &mut database,
                     &user_camp_command_envelope(params.command_id, camp_id, params.command),
                 )?;
@@ -9709,7 +9759,7 @@ impl Core {
                 log_camp_open_projection(
                     &trace_id,
                     "camps.enter",
-                    &CampOpenLogMetrics {
+                    &ThreadOpenLogMetrics {
                         db_lock_ms,
                         database_ms,
                         reconcile_ms,
@@ -9722,13 +9772,13 @@ impl Core {
                 Ok(value)
             }
             "camps.open" => {
-                let params: CampOpenParams = serde_json::from_value(request.params.clone())?;
+                let params: ThreadOpenParams = serde_json::from_value(request.params.clone())?;
                 let trace_id = normalized_camp_open_trace_id(&params.trace_id)?;
                 let lock_started_at = std::time::Instant::now();
                 let mut database = self.database.lock().await;
                 let db_lock_ms = lock_started_at.elapsed().as_millis();
                 let database_started_at = std::time::Instant::now();
-                let outcome = CampOpenService.open(&mut database, params.camp_id.as_str())?;
+                let outcome = ThreadOpenService.open(&mut database, params.camp_id.as_str())?;
                 let projection = outcome.projection;
                 let database_ms = database_started_at.elapsed().as_millis();
                 drop(database);
@@ -9740,7 +9790,7 @@ impl Core {
                 log_camp_open_projection(
                     &trace_id,
                     "camps.open",
-                    &CampOpenLogMetrics {
+                    &ThreadOpenLogMetrics {
                         db_lock_ms,
                         database_ms,
                         reconcile_ms: 0,
@@ -9754,7 +9804,7 @@ impl Core {
             }
             "camps.delete" => {
                 let started_at = Instant::now();
-                let params: UserCommandParams<DeleteCampCommand> =
+                let params: UserCommandParams<DeleteThreadCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let camp_id = params.command.camp_id.clone();
                 let envelope =
@@ -9765,7 +9815,7 @@ impl Core {
                     .runtime_fleet
                     .install_camp_deletion_cutover(&camp_id, || {
                         let execution =
-                            CampDeletionService::default().accept(&mut database, &envelope)?;
+                            ThreadDeletionService::default().accept(&mut database, &envelope)?;
                         let accepted = execution.result.status == CommandResultStatus::Accepted;
                         Ok((execution, accepted))
                     })
@@ -9800,16 +9850,16 @@ impl Core {
             "camps.deletionIssues" => {
                 let database = self.database.lock().await;
                 Ok(serde_json::to_value(
-                    CampDeletionService::default().issues(&database)?,
+                    ThreadDeletionService::default().issues(&database)?,
                 )?)
             }
             "camps.retryDeletion" => {
-                let params: UserCommandParams<RetryCampDeletionCommand> =
+                let params: UserCommandParams<RetryThreadDeletionCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let operation_id = params.command.operation_id.clone();
                 let execution = {
                     let mut database = self.database.lock().await;
-                    CampDeletionService::default().retry(
+                    ThreadDeletionService::default().retry(
                         &mut database,
                         &user_command_envelope(params.command_id, params.command),
                     )?
@@ -9825,7 +9875,7 @@ impl Core {
                 Ok(serde_json::to_value(execution.result)?)
             }
             "camps.discardPending" => {
-                let params: UserCommandParams<DiscardPendingCampCommand> =
+                let params: UserCommandParams<DiscardPendingThreadCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let camp_id = params.command.camp_id.clone();
                 let command_id = params.command_id.clone();
@@ -9879,7 +9929,7 @@ impl Core {
                 let discarded_camp_id = execution
                     .result
                     .payload
-                    .get("campId")
+                    .get("threadId")
                     .and_then(Value::as_str)
                     .map(str::to_string);
                 if !discarded && let Some(cleanup) = cleanup.as_ref() {
@@ -9898,7 +9948,7 @@ impl Core {
                 if discarded && let Some(camp_id) = discarded_camp_id {
                     self.finish_camp_attachment_cleanup(cleanup.as_ref())
                         .await?;
-                    CampAttachmentStore::for_client(&self.data_dir, request.client.clone())
+                    ThreadAttachmentStore::for_client(&self.data_dir, request.client.clone())
                         .remove_camp(&camp_id)?;
                 }
                 Ok(serde_json::to_value(execution.result)?)
@@ -9919,14 +9969,14 @@ impl Core {
                     emit_agent_run_terminal(
                         &self.output,
                         Some(&camp_id),
-                        json!({ "campId": camp_id, "result": execution.result }),
+                        json!({ "threadId": camp_id, "result": execution.result }),
                     );
                     self.delivery_batch_scheduler_notify.notify_one();
                 }
                 Ok(serde_json::to_value(execution.result)?)
             }
             "camps.snapshot" => {
-                let params: CampIdParams = serde_json::from_value(request.params.clone())?;
+                let params: ThreadIdParams = serde_json::from_value(request.params.clone())?;
                 let mut database = self.database.lock().await;
                 Ok(serde_json::to_value(
                     ReadModelService.camp_snapshot(&mut database, params.camp_id.as_str())?,
@@ -9983,7 +10033,8 @@ impl Core {
                 )?)
             }
             "camp.messages.page" => {
-                let params: CampMessagePageParams = serde_json::from_value(request.params.clone())?;
+                let params: ThreadMessagePageParams =
+                    serde_json::from_value(request.params.clone())?;
                 let mut database = self.database.lock().await;
                 Ok(serde_json::to_value(ReadModelService.camp_messages_page(
                     &mut database,
@@ -9994,7 +10045,7 @@ impl Core {
                 )?)?)
             }
             "camp.messages.around" => {
-                let params: CampMessageAroundParams =
+                let params: ThreadMessageAroundParams =
                     serde_json::from_value(request.params.clone())?;
                 let mut database = self.database.lock().await;
                 Ok(serde_json::to_value(
@@ -10006,7 +10057,8 @@ impl Core {
                 )?)
             }
             "camp.messages.find" => {
-                let params: CampMessageFindParams = serde_json::from_value(request.params.clone())?;
+                let params: ThreadMessageFindParams =
+                    serde_json::from_value(request.params.clone())?;
                 let mut database = self.database.lock().await;
                 Ok(serde_json::to_value(ReadModelService.camp_messages_find(
                     &mut database,
@@ -10259,18 +10311,18 @@ impl Core {
                     emit(
                         &self.output,
                         "single_chat.changed",
-                        json!({"campId":camp_id,"conversationId":conversation_id}),
+                        json!({"threadId":camp_id,"conversationId":conversation_id}),
                     );
                     Ok(serde_json::to_value(snapshot)?)
                 } else {
                     Ok(serde_json::to_value(
-                        CampAttachmentStore::for_client(&self.data_dir, request.client.clone())
+                        ThreadAttachmentStore::for_client(&self.data_dir, request.client.clone())
                             .load_draft(&database, &camp_id)?,
                     )?)
                 }
             }
             "messageQuotes.capture" => {
-                let params: CaptureCampMessageQuoteParams =
+                let params: CaptureThreadMessageQuoteParams =
                     serde_json::from_value(request.params.clone())?;
                 let mut database = self.database.lock().await;
                 let transaction = database.connection_mut().transaction()?;
@@ -10286,7 +10338,8 @@ impl Core {
             "camp.attachments.previewSource" => {
                 let locator: LocalAttachmentOwnerLocator =
                     serde_json::from_value(request.params.clone())?;
-                let store = CampAttachmentStore::for_client(&self.data_dir, request.client.clone());
+                let store =
+                    ThreadAttachmentStore::for_client(&self.data_dir, request.client.clone());
                 let (source_ref, legacy_allowed) = {
                     let database = self.database.lock().await;
                     (
@@ -10334,7 +10387,8 @@ impl Core {
                 let locator: LocalAttachmentOwnerLocator =
                     serde_json::from_value(request.params.clone())?;
                 let database = self.database.lock().await;
-                let store = CampAttachmentStore::for_client(&self.data_dir, request.client.clone());
+                let store =
+                    ThreadAttachmentStore::for_client(&self.data_dir, request.client.clone());
                 Ok(json!(rovai_core::camp_attachment::attachment_location(
                     &database,
                     &store,
@@ -10350,7 +10404,8 @@ impl Core {
                         || matches!(params, DesktopAttachmentTargetParams::Owner(_)),
                     "Web file access requires an exact owner locator"
                 );
-                let store = CampAttachmentStore::for_client(&self.data_dir, request.client.clone());
+                let store =
+                    ThreadAttachmentStore::for_client(&self.data_dir, request.client.clone());
                 if let DesktopAttachmentTargetParams::Owner(locator) = &params {
                     let (source_ref, legacy_allowed) = {
                         let database = self.database.lock().await;
@@ -10418,11 +10473,12 @@ impl Core {
                 Ok(serde_json::to_value(resolved)?)
             }
             "camp.messages.send" => {
-                let params: SendCampMessageParams = serde_json::from_value(request.params.clone())?;
+                let params: SendThreadMessageParams =
+                    serde_json::from_value(request.params.clone())?;
                 self.send_test_camp_message_request(params).await
             }
             "camp.messages.withdraw" => {
-                let params: UserCommandParams<WithdrawCampMessageCommand> =
+                let params: UserCommandParams<WithdrawThreadMessageCommand> =
                     serde_json::from_value(request.params.clone())?;
                 let camp_id = params.command.camp_id.clone();
                 let mut database = self.database.lock().await;
@@ -10433,7 +10489,7 @@ impl Core {
                 Ok(serde_json::to_value(execution.result)?)
             }
             "userAutomation.camp.send" => {
-                let params: SendUserAutomationCampMessageParams =
+                let params: SendUserAutomationThreadMessageParams =
                     serde_json::from_value(request.params.clone())?;
                 self.send_user_automation_camp_message_request(params).await
             }
@@ -10563,7 +10619,7 @@ impl Core {
                 let mut database = self.database.lock().await;
                 Ok(serde_json::to_value(ReadModelService.events_since(
                     &mut database,
-                    params.camp_id.as_ref().map(CampId::as_str),
+                    params.camp_id.as_ref().map(ThreadId::as_str),
                     params.after_global_sequence,
                     params.limit.unwrap_or(500),
                 )?)?)
@@ -10719,7 +10775,10 @@ impl Core {
         }
     }
 
-    async fn send_test_camp_message_request(&self, params: SendCampMessageParams) -> Result<Value> {
+    async fn send_test_camp_message_request(
+        &self,
+        params: SendThreadMessageParams,
+    ) -> Result<Value> {
         let envelope = params.envelope();
         if let Some(replay) = {
             let database = self.database.lock().await;
@@ -10759,7 +10818,7 @@ impl Core {
 
     async fn send_user_automation_camp_message_request(
         &self,
-        params: SendUserAutomationCampMessageParams,
+        params: SendUserAutomationThreadMessageParams,
     ) -> Result<Value> {
         let camp_id = params.camp_id.to_string();
         let envelope = CommandEnvelope {
@@ -10770,7 +10829,7 @@ impl Core {
             camp_id: Some(camp_id.clone()),
             expected_versions: Vec::new(),
             execution_epoch: None,
-            payload: SendUserAutomationCampMessageCommand {
+            payload: SendUserAutomationThreadMessageCommand {
                 camp_id: camp_id.clone(),
                 agent_id: params.agent_id,
                 body: params.body,
@@ -10819,9 +10878,9 @@ impl Core {
                 return Ok(());
             };
             let operation_id = plan.operation_id().to_string();
-            let attachment_store = CampAttachmentStore::new(&self.data_dir);
+            let attachment_store = ThreadAttachmentStore::new(&self.data_dir);
             let copied = match tokio::task::spawn_blocking(move || {
-                CampAttachmentViewStore::copy_publication(&attachment_store, plan)
+                ThreadAttachmentViewStore::copy_publication(&attachment_store, plan)
             })
             .await
             {
@@ -10919,7 +10978,7 @@ impl Core {
 
     async fn run_camp_member_fast_check(
         &self,
-        target: rovai_core::camp_fast::CampMemberFastTarget,
+        target: rovai_core::camp_fast::ThreadMemberFastTarget,
         deadline: tokio::time::Instant,
     ) -> Result<RuntimeCheckOutcome> {
         use rovai_core::camp_fast;
@@ -11275,8 +11334,8 @@ impl Core {
                     &self.output,
                     "agent_run.network_recovery_waiting",
                     json!({
-                        "campId": execution.camp_id,
-                        "campTurnId": execution.camp_turn_id,
+                        "threadId": execution.camp_id,
+                        "threadTurnId": execution.camp_turn_id,
                         "agentRunId": execution.agent_run_id,
                         "executionEpoch": execution.execution_epoch,
                         "adapterKind": execution.runtime.adapter_kind,
@@ -11523,8 +11582,8 @@ impl Core {
                     output,
                     "agent_run.recovering",
                     json!({
-                        "campId": registration.camp_id,
-                        "campTurnId": registration.camp_turn_id,
+                        "threadId": registration.camp_id,
+                        "threadTurnId": registration.camp_turn_id,
                         "agentRunId": registration.agent_run_id,
                         "executionEpoch": registration.execution_epoch,
                         "adapterKind": registration.adapter_kind,
@@ -11758,7 +11817,7 @@ impl Core {
                 let claimed = !dispatches.is_empty();
                 let mut ready = Vec::with_capacity(dispatches.len());
                 for dispatch in dispatches {
-                    match CampOutputDirectory::prepare(&database, &dispatch.camp_id).map(|_| ()) {
+                    match ThreadOutputDirectory::prepare(&database, &dispatch.camp_id).map(|_| ()) {
                         Ok(()) => ready.push(dispatch),
                         Err(error) => {
                             eprintln!(
@@ -12281,8 +12340,8 @@ impl Core {
                                     &output,
                                     Some(&execution.camp_id),
                                     json!({
-                                        "campId": execution.camp_id,
-                                        "campTurnId": execution.camp_turn_id,
+                                        "threadId": execution.camp_id,
+                                        "threadTurnId": execution.camp_turn_id,
                                         "agentRunId": execution.agent_run_id,
                                         "executionEpoch": execution.execution_epoch,
                                         "adapterKind": execution.runtime.adapter_kind,
@@ -12386,8 +12445,8 @@ impl Core {
                     output,
                     Some(&candidate.camp_id),
                     json!({
-                        "campId": candidate.camp_id,
-                        "campTurnId": candidate.camp_turn_id,
+                        "threadId": candidate.camp_id,
+                        "threadTurnId": candidate.camp_turn_id,
                         "agentRunId": candidate.agent_run_id,
                         "reasonCode": error_code,
                         "result": execution.result,
@@ -12510,7 +12569,7 @@ impl Core {
             output,
             "agent_run.runtime_cleanup_completed",
             json!({
-                "campId": candidate.camp_id, "agentRunId": candidate.agent_run_id,
+                "threadId": candidate.camp_id, "agentRunId": candidate.agent_run_id,
                 "executionEpoch": candidate.execution_epoch,
             }),
         );
@@ -13095,7 +13154,7 @@ impl Core {
     async fn materialize_agent_run_context(
         &self,
         execution: &AgentRunExecution,
-        attachment_access: CampAttachmentRunAccess<'_>,
+        attachment_access: ThreadAttachmentRunAccess<'_>,
         skill_exposure: &PreparedSkillExposure,
         mcp_projection: &PreparedMcpProjection,
         request: RuntimeInputPreparationRequest<'_>,
@@ -13128,8 +13187,8 @@ impl Core {
                     output,
                     "agent_run.context_waiting",
                     json!({
-                        "campId": execution.camp_id,
-                        "campTurnId": execution.camp_turn_id,
+                        "threadId": execution.camp_id,
+                        "threadTurnId": execution.camp_turn_id,
                         "agentRunId": execution.agent_run_id,
                         "executionEpoch": execution.execution_epoch,
                         "reason": wait.reason,
@@ -13143,7 +13202,7 @@ impl Core {
     async fn materialize_and_prepare_agent_run_input(
         &self,
         execution: &AgentRunExecution,
-        attachment_access: CampAttachmentRunAccess<'_>,
+        attachment_access: ThreadAttachmentRunAccess<'_>,
         skill_exposure: &PreparedSkillExposure,
         mcp_projection: Option<&PreparedMcpProjection>,
         request: RuntimeInputPreparationRequest<'_>,
@@ -13212,8 +13271,8 @@ impl Core {
                     output,
                     "agent_run.context_waiting",
                     json!({
-                        "campId": execution.camp_id,
-                        "campTurnId": execution.camp_turn_id,
+                        "threadId": execution.camp_id,
+                        "threadTurnId": execution.camp_turn_id,
                         "agentRunId": execution.agent_run_id,
                         "executionEpoch": execution.execution_epoch,
                         "reason": wait.reason,
@@ -14188,16 +14247,16 @@ impl Core {
         &self,
         camp_id: &str,
         _workspace: &Path,
-    ) -> Result<CampOutputDirectory> {
+    ) -> Result<ThreadOutputDirectory> {
         let database = self.database.lock().await;
-        CampOutputDirectory::prepare(&database, camp_id)
+        ThreadOutputDirectory::prepare(&database, camp_id)
     }
 
     async fn launch_agent_run(
         self: &Arc<Self>,
         execution: &AgentRunExecution,
-        attachment_admission: &CampAttachmentReadAdmission,
-        attachment_authorization: &CampOutputDirectory,
+        attachment_admission: &ThreadAttachmentReadAdmission,
+        attachment_authorization: &ThreadOutputDirectory,
         output: &mpsc::UnboundedSender<String>,
         launch_permit: &mut ExecutionLaunchPermit,
     ) -> Result<()> {
@@ -14246,7 +14305,7 @@ impl Core {
             .prepare_agent_run_mcp_projection(execution)
             .await
             .context("failed to prepare AgentRun MCP projection")?;
-        let attachment_access = CampAttachmentRunAccess {
+        let attachment_access = ThreadAttachmentRunAccess {
             admission: attachment_admission,
             authorization: attachment_authorization,
         };
@@ -14545,7 +14604,7 @@ impl Core {
         emit(
             output,
             "camp.member.fast.updated",
-            json!({"campId": execution.camp_id, "agentId": execution.agent_id}),
+            json!({"threadId": execution.camp_id, "agentId": execution.agent_id}),
         );
         let reasoning_effort = execution.runtime.model.options["reasoning_effort"].as_str();
         let delivery = {
@@ -14603,8 +14662,8 @@ impl Core {
             output,
             "agent_run.started",
             json!({
-                "campId": execution.camp_id,
-                "campTurnId": execution.camp_turn_id,
+                "threadId": execution.camp_id,
+                "threadTurnId": execution.camp_turn_id,
                 "agentRunId": execution.agent_run_id,
                 "agentId": execution.agent_id,
                 "executionEpoch": execution.execution_epoch,
@@ -14643,7 +14702,7 @@ impl Core {
             output,
             launch_permit,
         } = launch;
-        CampAttachmentRunAccess {
+        ThreadAttachmentRunAccess {
             admission: attachment_admission,
             authorization: attachment_authorization,
         }
@@ -14795,7 +14854,7 @@ impl Core {
         let prepared = self
             .materialize_and_prepare_agent_run_input(
                 execution,
-                CampAttachmentRunAccess {
+                ThreadAttachmentRunAccess {
                     admission: attachment_admission,
                     authorization: attachment_authorization,
                 },
@@ -14918,7 +14977,7 @@ impl Core {
             output,
             launch_permit,
         } = launch;
-        let attachment_access = CampAttachmentRunAccess {
+        let attachment_access = ThreadAttachmentRunAccess {
             admission: attachment_admission,
             authorization: attachment_authorization,
         };
@@ -15027,8 +15086,8 @@ impl Core {
             output,
             "agent_run.started",
             json!({
-                "campId": execution.camp_id,
-                "campTurnId": execution.camp_turn_id,
+                "threadId": execution.camp_id,
+                "threadTurnId": execution.camp_turn_id,
                 "agentRunId": execution.agent_run_id,
                 "agentId": execution.agent_id,
                 "executionEpoch": execution.execution_epoch,
@@ -15626,7 +15685,7 @@ impl Core {
             output,
             launch_permit,
         } = launch;
-        let attachment_access = CampAttachmentRunAccess {
+        let attachment_access = ThreadAttachmentRunAccess {
             admission: attachment_admission,
             authorization: attachment_authorization,
         };
@@ -15722,8 +15781,8 @@ impl Core {
             output,
             "agent_run.started",
             json!({
-                "campId": execution.camp_id,
-                "campTurnId": execution.camp_turn_id,
+                "threadId": execution.camp_id,
+                "threadTurnId": execution.camp_turn_id,
                 "agentRunId": execution.agent_run_id,
                 "agentId": execution.agent_id,
                 "executionEpoch": execution.execution_epoch,
@@ -16038,7 +16097,7 @@ impl Core {
             output,
             launch_permit,
         } = launch;
-        let attachment_access = CampAttachmentRunAccess {
+        let attachment_access = ThreadAttachmentRunAccess {
             admission: attachment_admission,
             authorization: attachment_authorization,
         };
@@ -16341,8 +16400,8 @@ impl Core {
             output,
             "agent_run.started",
             json!({
-                "campId": execution.camp_id,
-                "campTurnId": execution.camp_turn_id,
+                "threadId": execution.camp_id,
+                "threadTurnId": execution.camp_turn_id,
                 "agentRunId": execution.agent_run_id,
                 "agentId": execution.agent_id,
                 "executionEpoch": execution.execution_epoch,
@@ -16439,8 +16498,8 @@ impl Core {
                 output,
                 Some(&execution.camp_id),
                 json!({
-                    "campId": execution.camp_id,
-                    "campTurnId": execution.camp_turn_id,
+                    "threadId": execution.camp_id,
+                    "threadTurnId": execution.camp_turn_id,
                     "agentRunId": execution.agent_run_id,
                     "executionEpoch": execution.execution_epoch,
                     "adapterKind": execution.runtime.adapter_kind,
@@ -16634,8 +16693,8 @@ impl Core {
                 output,
                 Some(&candidate.camp_id),
                 json!({
-                    "campId": candidate.camp_id,
-                    "campTurnId": candidate.camp_turn_id,
+                    "threadId": candidate.camp_id,
+                    "threadTurnId": candidate.camp_turn_id,
                     "agentRunId": candidate.agent_run_id,
                     "executionEpoch": execution_epoch,
                     "reasonCode": "runtime_configuration_invalid",
@@ -17254,7 +17313,7 @@ async fn run_core(
         None,
         None,
     )?;
-    let attachment_views = match CampAttachmentViewStore::admit(
+    let attachment_views = match ThreadAttachmentViewStore::admit(
         &runtime_camp_files_root,
         &data_dir,
         std::slice::from_ref(&skill_library_root),
@@ -17640,7 +17699,7 @@ async fn run_core(
     // itself remains asynchronous and does not delay the ready frame.
     let deleting_camp_ids = {
         let database = core.database.lock().await;
-        CampDeletionService::default().deleting_camp_ids(&database)?
+        ThreadDeletionService::default().deleting_camp_ids(&database)?
     };
     for camp_id in deleting_camp_ids {
         core.runtime_fleet.mark_camp_deleting(&camp_id).await;
@@ -18934,8 +18993,8 @@ async fn process_agent_run_pi_message(
             output,
             "agent_run.started",
             json!({
-                "campId": execution.camp_id,
-                "campTurnId": execution.camp_turn_id,
+                "threadId": execution.camp_id,
+                "threadTurnId": execution.camp_turn_id,
                 "agentRunId": execution.agent_run_id,
                 "agentId": execution.agent_id,
                 "executionEpoch": execution.execution_epoch,
@@ -20664,7 +20723,7 @@ async fn record_runtime_model_observation(
             output,
             "agent_run.runtime_model_observed",
             json!({
-                "campId": camp_id,
+                "threadId": camp_id,
                 "agentRunId": agent_run_id,
                 "executionEpoch": execution_epoch,
                 "adapterKind": adapter_kind,
@@ -20778,7 +20837,7 @@ async fn process_runtime_event(
                 emit(
                     output,
                     "camp.member.fast.updated",
-                    json!({"campId": execution.camp_id, "agentId": execution.agent_id}),
+                    json!({"threadId": execution.camp_id, "agentId": execution.agent_id}),
                 );
             }
             return Ok(());
@@ -20874,7 +20933,7 @@ async fn persist_runtime_images(
                     output,
                     "agent_run.images.updated",
                     json!({
-                        "campId": execution.camp_id,
+                        "threadId": execution.camp_id,
                         "agentRunId": agent_run_id,
                         "executionEpoch": execution_epoch,
                     }),
@@ -23338,7 +23397,7 @@ async fn dispatch_pending_single_chat_inputs(core: &Core) {
                 &core.output,
                 "single_chat.changed",
                 json!({
-                    "campId": camp_id,
+                    "threadId": camp_id,
                     "conversationId": conversation_id,
                     "reason": "pending_input_published",
                 }),
@@ -23347,7 +23406,7 @@ async fn dispatch_pending_single_chat_inputs(core: &Core) {
                 &core.output,
                 "single_chat.changed",
                 json!({
-                    "campId": camp_id,
+                    "threadId": camp_id,
                     "conversationId": conversation_id,
                     "reason": "pending_input_publication_deferred",
                 }),
@@ -23372,7 +23431,7 @@ async fn dispatch_pending_single_chat_inputs(core: &Core) {
                     &core.output,
                     "single_chat.changed",
                     json!({
-                        "campId": camp_id,
+                        "threadId": camp_id,
                         "conversationId": conversation_id,
                         "reason": "pending_input_needs_repair",
                     }),
@@ -24010,7 +24069,7 @@ async fn finalize_runtime_check(
         emit(
             &core.output,
             "camp.member.fast.updated",
-            json!({"campId": target.camp_id, "agentId": target.agent_id}),
+            json!({"threadId": target.camp_id, "agentId": target.agent_id}),
         );
         for waiter in attempt.waiters {
             let _ = waiter.send(result.clone());
@@ -24243,7 +24302,8 @@ fn runtime_check_writes_diagnostic(finalization: RuntimeCheckFinalization) -> bo
 }
 
 fn emit(output: &mpsc::UnboundedSender<String>, method: &str, params: Value) {
-    let message = json!({"method": method, "params": params});
+    let message =
+        json!({"method": rovai_core::thread_compat::public_host_method(method), "params": params});
     if let Ok(serialized) = serde_json::to_string(&message) {
         let _ = output.send(serialized);
     }
@@ -24257,7 +24317,7 @@ fn emit_missions_invalidated(
     emit(
         output,
         "missions.invalidated",
-        json!({ "reason": reason, "campId": camp_id }),
+        json!({ "reason": reason, "threadId": camp_id }),
     );
 }
 
@@ -24277,7 +24337,7 @@ fn emit_navigation_group_invalidated(
         emit(
             output,
             "navigation.invalidated",
-            json!({ "reason": reason, "campId": camp_id, "scope": "group", "groupKeys": [key] }),
+            json!({ "reason": reason, "threadId": camp_id, "scope": "group", "groupKeys": [key] }),
         );
     } else {
         emit_navigation_invalidated(output, reason, camp_id);
@@ -24298,7 +24358,7 @@ fn emit_navigation_invalidated(
         "navigation.invalidated",
         match camp_id {
             Some(camp_id) => json!({
-                "reason": reason, "campId": camp_id,
+                "reason": reason, "threadId": camp_id,
                 "scope": if reason.starts_with("agent_run.") || matches!(reason,
                     "navigation.campViewed" | "delivery_batch.claimed" | "camps.rename" | "camps.members.add" | "camps.members.remove"
                     | "camps.changeDefaultLead" | "camps.reconcileDefaultLead" | "agentRuns.cancel") { "camp" } else { "group" }
@@ -25235,7 +25295,7 @@ mod tests {
         assert!(!data_dir.join("camp-attachments").exists());
         drop(locked);
 
-        CampAttachmentStore::new(&data_dir)
+        ThreadAttachmentStore::new(&data_dir)
             .remove_camp(camp_id)
             .unwrap();
         drop(database);
@@ -25357,7 +25417,7 @@ mod tests {
         std::fs::create_dir_all(&data_dir)?;
         rovai_core::platform::prepare_private_directory(&skill_library_root)?;
         let attachment_views =
-            CampAttachmentViewStore::for_isolated_test_root(&runtime_camp_files_root)?;
+            ThreadAttachmentViewStore::for_isolated_test_root(&runtime_camp_files_root)?;
         let database = Database::open_with_runtime_camp_files_root(
             &data_dir,
             attachment_views.root(),
@@ -26408,20 +26468,20 @@ done
                         camp_id: None,
                         expected_versions: Vec::new(),
                         execution_epoch: None,
-                        payload: CreateCampCommand {
+                        payload: CreateThreadCommand {
                             name: Some("Feishu DM".to_string()),
                             project_binding_kind: ProjectBindingKind::QuickChat,
                             project_path: workspace.display().to_string(),
                             member_agent_ids: vec![agent_id.clone()],
                             default_lead_agent_id: agent_id,
-                            collaboration_mode: CampCollaborationMode::Peer,
-                            activation_state: CampActivationState::Active,
+                            collaboration_mode: ThreadCollaborationMode::Peer,
+                            activation_state: ThreadActivationState::Active,
                         },
                     },
                 )
                 .unwrap();
-            execution.result.payload["campCreated"] = Value::Bool(true);
-            let camp_id = execution.result.payload["campId"]
+            execution.result.payload["threadCreated"] = Value::Bool(true);
+            let camp_id = execution.result.payload["threadId"]
                 .as_str()
                 .unwrap()
                 .to_string();
@@ -26490,19 +26550,19 @@ done
                         camp_id: None,
                         expected_versions: Vec::new(),
                         execution_epoch: None,
-                        payload: CreateCampCommand {
+                        payload: CreateThreadCommand {
                             name: None,
                             project_binding_kind: ProjectBindingKind::Directory,
                             project_path: workspace.display().to_string(),
                             member_agent_ids: vec![agent_id.clone()],
                             default_lead_agent_id: agent_id,
-                            collaboration_mode: CampCollaborationMode::Peer,
-                            activation_state: CampActivationState::Active,
+                            collaboration_mode: ThreadCollaborationMode::Peer,
+                            activation_state: ThreadActivationState::Active,
                         },
                     },
                 )
                 .unwrap();
-            let camp_id = created.result.payload["campId"]
+            let camp_id = created.result.payload["threadId"]
                 .as_str()
                 .unwrap()
                 .to_string();
@@ -26515,9 +26575,9 @@ done
             observe_source_attachment(&source, "published.txt", Some("text/plain")).unwrap();
         let attachment_id = source_attachment.id.clone();
         let sent = core
-            .send_test_camp_message_request(SendCampMessageParams {
+            .send_test_camp_message_request(SendThreadMessageParams {
                 command_id: uuid::Uuid::new_v4().to_string(),
-                camp_id: CampId::parse(&camp_id).unwrap(),
+                camp_id: ThreadId::parse(&camp_id).unwrap(),
                 content: text_composer_document("Use the published attachment"),
                 source_attachments: vec![source_attachment],
                 quotes: Vec::new(),
@@ -26526,7 +26586,7 @@ done
             })
             .await
             .unwrap();
-        let message_id = sent["commandResult"]["payload"]["campMessageId"]
+        let message_id = sent["commandResult"]["payload"]["threadMessageId"]
             .as_str()
             .unwrap()
             .to_string();
@@ -26585,7 +26645,7 @@ done
             .join("camps")
             .join(&camp_id)
             .join("attachments");
-        CampAttachmentStore::new(&core.data_dir)
+        ThreadAttachmentStore::new(&core.data_dir)
             .remove_camp(&camp_id)
             .unwrap();
         drop(core);
@@ -26640,19 +26700,19 @@ done
                         camp_id: None,
                         expected_versions: Vec::new(),
                         execution_epoch: None,
-                        payload: CreateCampCommand {
+                        payload: CreateThreadCommand {
                             name: None,
                             project_binding_kind: ProjectBindingKind::Directory,
                             project_path: workspace.display().to_string(),
                             member_agent_ids: vec![agent_id.clone()],
                             default_lead_agent_id: agent_id,
-                            collaboration_mode: CampCollaborationMode::Peer,
-                            activation_state: CampActivationState::Active,
+                            collaboration_mode: ThreadCollaborationMode::Peer,
+                            activation_state: ThreadActivationState::Active,
                         },
                     },
                 )
                 .unwrap();
-            let camp_id = created.result.payload["campId"]
+            let camp_id = created.result.payload["threadId"]
                 .as_str()
                 .unwrap()
                 .to_string();
@@ -26663,9 +26723,9 @@ done
         };
         let source_attachment =
             observe_source_attachment(&source, "published.txt", Some("text/plain")).unwrap();
-        core.send_test_camp_message_request(SendCampMessageParams {
+        core.send_test_camp_message_request(SendThreadMessageParams {
             command_id: uuid::Uuid::new_v4().to_string(),
-            camp_id: CampId::parse(&camp_id).unwrap(),
+            camp_id: ThreadId::parse(&camp_id).unwrap(),
             content: text_composer_document("Use the published attachment"),
             source_attachments: vec![source_attachment],
             quotes: Vec::new(),
@@ -26710,7 +26770,7 @@ done
             .join(&camp_id)
             .join("attachments");
         drop(admission);
-        CampAttachmentStore::new(&core.data_dir)
+        ThreadAttachmentStore::new(&core.data_dir)
             .remove_camp(&camp_id)
             .unwrap();
         drop(core);
@@ -26730,7 +26790,7 @@ done
 
     #[test]
     fn agent_run_attachment_admission_is_camp_scoped_without_a_generation_gate() {
-        let admission = CampAttachmentReadAdmission::for_camp("rvcamp_test");
+        let admission = ThreadAttachmentReadAdmission::for_camp("rvcamp_test");
         admission.prove("rvcamp_test").unwrap();
         assert!(admission.prove("rvcamp_other").is_err());
         let (projection_tx, mut projection_rx) = mpsc::unbounded_channel();
@@ -28107,7 +28167,7 @@ done
             rovai_core::storage_layout::server_runtime_root(&data_dir).unwrap();
         let (camp_ids, repair_camp_id) = {
             let attachment_views =
-                CampAttachmentViewStore::admit(&runtime_camp_files_root, &data_dir, &[]).unwrap();
+                ThreadAttachmentViewStore::admit(&runtime_camp_files_root, &data_dir, &[]).unwrap();
             let mut database = Database::open_with_runtime_camp_files_root(
                 &data_dir,
                 attachment_views.root(),
@@ -28115,7 +28175,7 @@ done
             )
             .unwrap();
             let mut create = |index: usize, members: &[&str], lead: &str| {
-                let mut command = CreateCampCommand::for_test_with_members(
+                let mut command = CreateThreadCommand::for_test_with_members(
                     workspace_dir.to_string_lossy().into_owned(),
                     members,
                     lead,
@@ -28127,11 +28187,11 @@ done
                         &user_command_envelope(format!("dispatch-create-{index}"), command),
                     )
                     .unwrap();
-                let camp_id = created.result.payload["campId"]
+                let camp_id = created.result.payload["threadId"]
                     .as_str()
                     .unwrap()
                     .to_string();
-                CampOutputDirectory::prepare(&database, &camp_id).unwrap();
+                ThreadOutputDirectory::prepare(&database, &camp_id).unwrap();
                 attachment_views
                     .ensure_empty_camp_ready(&mut database, &camp_id)
                     .unwrap();
@@ -28185,7 +28245,7 @@ done
                 .request(
                     "agentRunExecution.page",
                     json!({
-                        "campId": "rvcamp_dispatch_test",
+                        "threadId": "rvcamp_dispatch_test",
                         "agentRunId": "run-dispatch-test",
                         "beforeSequence": null,
                         "limit": 24
@@ -28217,7 +28277,7 @@ done
                             json!({
                                 "traceId": uuid::Uuid::new_v4().to_string(),
                                 "commandId": format!("dispatch-enter-{index}"),
-                                "command": { "campId": camp_id }
+                                "command": { "threadId": camp_id }
                             }),
                         )
                         .await
@@ -28232,7 +28292,7 @@ done
                     "camps.open",
                     json!({
                         "traceId": uuid::Uuid::new_v4().to_string(),
-                        "campId": open_camp_id
+                        "threadId": open_camp_id
                     }),
                 )
                 .await
@@ -28255,7 +28315,7 @@ done
                     json!({
                         "traceId": uuid::Uuid::new_v4().to_string(),
                         "commandId": "dispatch-repair-enter",
-                        "command": { "campId": repair_target }
+                        "command": { "threadId": repair_target }
                     }),
                 )
                 .await
@@ -28327,7 +28387,7 @@ done
             Ok(completed) => completed.unwrap().unwrap(),
             Err(_) => repair_request.await.unwrap().unwrap(),
         };
-        let first_camp_version = camp_replies[0].result.as_ref().unwrap()["camp"]["version"]
+        let first_camp_version = camp_replies[0].result.as_ref().unwrap()["thread"]["version"]
             .as_i64()
             .unwrap();
         let renamed = service
@@ -28336,7 +28396,7 @@ done
                 json!({
                     "commandId": "dispatch-rename-after-enter",
                     "command": {
-                        "campId": camp_ids[0],
+                        "threadId": camp_ids[0],
                         "title": "Renamed after enter",
                         "expectedVersion": first_camp_version
                     }
@@ -28349,7 +28409,7 @@ done
                 "camps.open",
                 json!({
                     "traceId": uuid::Uuid::new_v4().to_string(),
-                    "campId": camp_ids[0]
+                    "threadId": camp_ids[0]
                 }),
             )
             .await
@@ -28364,7 +28424,7 @@ done
         }
         drop(installed_barrier);
         for camp_id in camp_ids.iter().chain(std::iter::once(&repair_camp_id)) {
-            CampAttachmentStore::new(&data_dir)
+            ThreadAttachmentStore::new(&data_dir)
                 .remove_camp(camp_id)
                 .unwrap();
         }
@@ -28453,7 +28513,7 @@ done
             repair_reply.error
         );
         assert_eq!(
-            repair_reply.result.unwrap()["camp"]["defaultLeadAgentId"],
+            repair_reply.result.unwrap()["thread"]["defaultLeadAgentId"],
             "agent_4"
         );
         assert!(
@@ -28462,7 +28522,7 @@ done
             renamed.error
         );
         assert_eq!(
-            opened_after_write.result.unwrap()["camp"]["title"],
+            opened_after_write.result.unwrap()["thread"]["title"],
             "Renamed after enter"
         );
     }
@@ -28567,13 +28627,13 @@ done
                             "camps.open",
                             json!({
                                 "traceId": uuid::Uuid::new_v4().to_string(),
-                                "campId": camp_id_for_open,
+                                "threadId": camp_id_for_open,
                             }),
                         ),
                         event_service.request(
                             "events.subscribe",
                             json!({
-                                "campId": camp_id_for_events,
+                                "threadId": camp_id_for_events,
                                 "afterGlobalSequence": 0,
                                 "limit": 50,
                             }),
@@ -28581,7 +28641,7 @@ done
                         page_service.request(
                             "agentRunExecution.page",
                             json!({
-                                "campId": camp_id_for_page,
+                                "threadId": camp_id_for_page,
                                 "agentRunId": run_id,
                                 "beforeSequence": null,
                                 "afterSequence": null,
@@ -28591,7 +28651,7 @@ done
                         content_service.request(
                             "agentRunEvidence.getContent",
                             json!({
-                                "campId": camp_id_for_content,
+                                "threadId": camp_id_for_content,
                                 "evidenceId": evidence_id,
                             }),
                         ),
@@ -28665,7 +28725,7 @@ done
         let runtime_camp_files_root =
             rovai_core::storage_layout::server_runtime_root(&data_dir).unwrap();
         let attachment_views =
-            CampAttachmentViewStore::admit(&runtime_camp_files_root, &data_dir, &[]).unwrap();
+            ThreadAttachmentViewStore::admit(&runtime_camp_files_root, &data_dir, &[]).unwrap();
         let mut database = Database::open_with_runtime_camp_files_root(
             &data_dir,
             attachment_views.root(),
@@ -28708,7 +28768,7 @@ done
             .as_str()
             .unwrap()
             .to_string();
-        let camp_id = created.result.payload["campId"]
+        let camp_id = created.result.payload["threadId"]
             .as_str()
             .unwrap()
             .to_string();
@@ -28734,12 +28794,12 @@ done
                     camp_id: Some(camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: rovai_core::collaboration::TestCampMessageCommand {
+                    payload: rovai_core::collaboration::TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "Create a real execution window".into(),
                         prepared_attachment_ids: Vec::new(),
-                        address: rovai_core::collaboration::TestCampMessageAddress::Default,
+                        address: rovai_core::collaboration::TestThreadMessageAddress::Default,
                         reply_to_camp_message_id: None,
                         execution: Some(ExecutionRequest {
                             task_id: None,
@@ -29098,7 +29158,7 @@ done
             runner_task.abort();
             let _ = runner_task.await;
         }
-        CampAttachmentStore::new(&data_dir)
+        ThreadAttachmentStore::new(&data_dir)
             .remove_camp(&camp_id)
             .unwrap();
         #[cfg(unix)]
@@ -29176,12 +29236,14 @@ done
         assert!(!navigation_mutation_was_rejected(
             &json!({ "status": "applied" })
         ));
-        assert_eq!(
-            navigation_request_camp_id(&json!({
-                "command": { "campId": "rvcamp_test" }
-            })),
-            Some("rvcamp_test")
-        );
+        for params in [
+            json!({ "threadId": "rvcamp_test" }),
+            json!({ "campId": "rvcamp_test" }),
+            json!({ "command": { "threadId": "rvcamp_test" } }),
+            json!({ "command": { "campId": "rvcamp_test" } }),
+        ] {
+            assert_eq!(navigation_request_camp_id(&params), Some("rvcamp_test"));
+        }
 
         let (output, mut receiver) = mpsc::unbounded_channel();
         emit_agent_run_terminal(
@@ -29195,7 +29257,7 @@ done
         let invalidation: Value = serde_json::from_str(&receiver.try_recv().unwrap()).unwrap();
         assert_eq!(invalidation["method"], "navigation.invalidated");
         assert_eq!(invalidation["params"]["reason"], "agent_run.terminal");
-        assert_eq!(invalidation["params"]["campId"], "rvcamp_test");
+        assert_eq!(invalidation["params"]["threadId"], "rvcamp_test");
         assert_eq!(invalidation["params"]["scope"], "camp");
         emit_navigation_group_invalidated(
             &output,
@@ -29292,7 +29354,7 @@ done
                 .as_str()
                 .unwrap()
                 .to_string();
-            let camp_id = created.result.payload["campId"]
+            let camp_id = created.result.payload["threadId"]
                 .as_str()
                 .unwrap()
                 .to_string();
@@ -29378,7 +29440,7 @@ done
                     row.get::<_, i64>(0)
                 })
                 .unwrap();
-            let accepted = CampDeletionService::default()
+            let accepted = ThreadDeletionService::default()
                 .accept(
                     &mut database,
                     &CommandEnvelope {
@@ -29389,7 +29451,7 @@ done
                         camp_id: Some(camp_id.clone()),
                         expected_versions: Vec::new(),
                         execution_epoch: None,
-                        payload: DeleteCampCommand {
+                        payload: DeleteThreadCommand {
                             camp_id: camp_id.clone(),
                             expected_version: version,
                             force: true,
@@ -29406,13 +29468,13 @@ done
                 .prepare_camp_delete_cleanup(&mut database, &camp_id, &operation_id)
                 .unwrap()
                 .expect("Camp deletion should prepare its resource handoff");
-            let deletion = CampDeletionService::default()
+            let deletion = ThreadDeletionService::default()
                 .due_camps(&database, 1)
                 .unwrap()
                 .into_iter()
                 .next()
                 .expect("accepted Camp deletion should be due");
-            CampDeletionService::default()
+            ThreadDeletionService::default()
                 .commit_business_delete(&mut database, &core.attachment_views, &deletion, &cleanup)
                 .unwrap();
             cleanup
@@ -29559,19 +29621,19 @@ done
                         camp_id: None,
                         expected_versions: Vec::new(),
                         execution_epoch: None,
-                        payload: CreateCampCommand {
+                        payload: CreateThreadCommand {
                             name: Some("Runtime cleanup dispatch".to_string()),
                             project_binding_kind: ProjectBindingKind::Directory,
                             project_path: workspace.display().to_string(),
                             member_agent_ids: vec![agent_id.clone()],
                             default_lead_agent_id: agent_id,
-                            collaboration_mode: CampCollaborationMode::Peer,
-                            activation_state: CampActivationState::Active,
+                            collaboration_mode: ThreadCollaborationMode::Peer,
+                            activation_state: ThreadActivationState::Active,
                         },
                     },
                 )
                 .unwrap();
-            let camp_id = created.result.payload["campId"]
+            let camp_id = created.result.payload["threadId"]
                 .as_str()
                 .unwrap()
                 .to_string();
@@ -29581,9 +29643,9 @@ done
             camp_id
         };
         let sent = core
-            .send_test_camp_message_request(SendCampMessageParams {
+            .send_test_camp_message_request(SendThreadMessageParams {
                 command_id: uuid::Uuid::new_v4().to_string(),
-                camp_id: CampId::parse(&camp_id).unwrap(),
+                camp_id: ThreadId::parse(&camp_id).unwrap(),
                 content: text_composer_document("Keep cleanup busy"),
                 source_attachments: Vec::new(),
                 quotes: Vec::new(),
@@ -29737,7 +29799,7 @@ done
         .expect("background cleanup should acknowledge and release its de-duplication key");
 
         tokio::time::sleep(Duration::from_millis(100)).await;
-        CampAttachmentStore::new(&core.data_dir)
+        ThreadAttachmentStore::new(&core.data_dir)
             .remove_camp(&camp_id)
             .unwrap();
         let view_attachment_root = core.attachment_views.root().join("camps").join(&camp_id);

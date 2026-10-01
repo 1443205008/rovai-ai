@@ -5,14 +5,14 @@ use serde_json::json;
 use std::collections::HashSet;
 
 use crate::{
-    camp_content::{StructuredCampMessageContent, render_current_plain_text, validate_content},
+    camp_content::{StructuredThreadMessageContent, render_current_plain_text, validate_content},
     command::{
         ActorRef, CommandEnvelope, CommandExecution, CommandHandlerResult, DomainCommand,
         DomainCommandGateway, EntityReference, sealed,
     },
     current_user::CURRENT_USER_ID,
     db::Database,
-    read_model::{CampChannelSource, camp_channel_source_from_row},
+    read_model::{ThreadChannelSource, camp_channel_source_from_row},
 };
 
 #[path = "notification_sources.rs"]
@@ -297,11 +297,11 @@ impl NotificationChangeCause {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NotificationCampView {
+pub struct NotificationThreadView {
     pub id: String,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub channel_source: Option<CampChannelSource>,
+    pub channel_source: Option<ThreadChannelSource>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -350,7 +350,9 @@ pub struct NotificationActionView {
     pub action_id: String,
     pub kind: NotificationActionKind,
     pub available: bool,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
+    #[serde(rename = "threadTurnId", alias = "campTurnId")]
     pub camp_turn_id: Option<String>,
     pub agent_run_id: Option<String>,
     pub message_id: Option<String>,
@@ -370,7 +372,9 @@ pub struct NotificationEpisodeView {
     pub episode_version: i64,
     pub attention_revision: i64,
     pub change_sequence: i64,
-    pub camp: NotificationCampView,
+    #[serde(rename = "thread", alias = "camp")]
+    pub camp: NotificationThreadView,
+    #[serde(rename = "threadTurnId", alias = "campTurnId")]
     pub camp_turn_id: Option<String>,
     pub agent_run_id: Option<String>,
     pub primary_semantic: NotificationSemantic,
@@ -485,9 +489,11 @@ impl DomainCommand for AcknowledgeNotificationEpisodeCommand {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AcknowledgeVisibleNotificationSourcesCommand {
     #[serde(deserialize_with = "crate::camp_id::deserialize_camp_id_string")]
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub observed_through_change_sequence: i64,
     pub visible_message_ids: Vec<String>,
+    #[serde(rename = "visibleThreadTurnIds", alias = "visibleCampTurnIds")]
     pub visible_camp_turn_ids: Vec<String>,
     pub visible_agent_run_ids: Vec<String>,
     pub visible_approval_ids: Vec<String>,
@@ -965,7 +971,7 @@ impl NotificationEpisodeService {
                 "notification_episode.visible_sources_acknowledged",
                 changed,
                 json!({
-                    "campId": payload.camp_id,
+                    "threadId": payload.camp_id,
                     "observedThroughChangeSequence": payload.observed_through_change_sequence,
                     "resultingChangeSequence": change_clock(transaction)?.0,
                 }),
@@ -1175,7 +1181,7 @@ struct RawEpisode {
     kind: String,
     camp_id: String,
     camp_title: String,
-    camp_channel_source: Option<CampChannelSource>,
+    camp_channel_source: Option<ThreadChannelSource>,
     camp_turn_id: Option<String>,
     agent_run_id: Option<String>,
     version: i64,
@@ -1998,7 +2004,7 @@ fn hydrate_episode(
         episode_version: raw.version,
         attention_revision: raw.attention_revision,
         change_sequence: raw.last_change_sequence,
-        camp: NotificationCampView {
+        camp: NotificationThreadView {
             id: raw.camp_id.clone(),
             title: raw.camp_title,
             channel_source: raw.camp_channel_source,
@@ -2106,7 +2112,7 @@ fn message_summary(
     if !occurrence.source_available {
         return None;
     }
-    let content: StructuredCampMessageContent =
+    let content: StructuredThreadMessageContent =
         serde_json::from_str(occurrence.structured_content_json.as_deref()?).ok()?;
     validate_content(&content).ok()?;
     let body = render_current_plain_text(connection, &content).ok()?;

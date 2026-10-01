@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { newCommandId } from '../../shared/command-id'
 import { readErrorMessage } from './error-message'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -72,7 +72,7 @@ const STATUS_OPTIONS: Record<FilterKey, readonly { value: string; label: string 
 }
 
 export function NotificationSettings(): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const [preference, setPreference] = useState<NotificationPreference | null>(null)
   const [loading, setLoading] = useState(true)
   const [savingKey, setSavingKey] = useState<SettingKey | null>(null)

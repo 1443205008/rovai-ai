@@ -112,7 +112,7 @@ it('does no Core queries or writes until configured; freezes installation and ma
   } finally { await f.close() }
 }, 20000)
 
-it('binds an existing Automation and consumes each accepted run once, exposing only the matching Camp receipt', async () => {
+it('binds an existing Automation and consumes each accepted run once, exposing only the matching Thread receipt', async () => {
   const f = await fixture()
   try {
     await f.service.configure({ source: f.source, node: process.execPath })
@@ -123,13 +123,13 @@ it('binds an existing Automation and consumes each accepted run once, exposing o
     expect(binding.automationVersion).toBe(2)
     expect(f.calls).toContain('automations.configureTimeLimit')
     const now = new Date(Date.now() + 1000)
-    f.setRuns([{ runId: 'auto-run-1', campId: 'camp-1', status: 'running', createdAt: now.toISOString() }])
+    f.setRuns([{ runId: 'auto-run-1', threadId: 'camp-1', status: 'running', createdAt: now.toISOString() }])
     f.consumeOnce() // Core consumes once schedules without an owner version change.
     await f.service.tick(now)
     await expect.poll(async () => (await f.service.status({ jobId: 'auto-run-1' }) as { state: string }).state).toBe('completed')
     await f.service.tick(new Date(now.getTime() + 6000))
     const receipt = JSON.parse(await readFile(join(output, 'automation/camp-1.json'), 'utf8'))
-    expect(receipt).toMatchObject({ jobId: 'auto-run-1', campId: 'camp-1', state: 'completed', reportStatus: 'insufficient' })
+    expect(receipt).toMatchObject({ jobId: 'auto-run-1', threadId: 'camp-1', state: 'completed', reportStatus: 'insufficient' })
     expect(receipt).not.toHaveProperty('engine')
     await expect(access(join(output, 'automation/camp-2.json'))).rejects.toThrow()
     await expect(f.service.schedule({ automationId: 'automation-1', plan: await f.plan('weekly', { budget: { wallSeconds: 3000 } }), output })).rejects.toThrow('2700')
@@ -163,7 +163,7 @@ it('publishes configuration drift as a terminal failure and never relaunches a j
     await f.service.schedule({ automationId: 'automation-1', plan: await f.plan(), output })
     await writeFile(join(f.source, 'scripts/eval-wait.mjs'), '// changed')
     const now = new Date(Date.now() + 1000)
-    f.setRuns([{ runId: 'drift-1', campId: 'camp-drift', status: 'running', createdAt: now.toISOString() }])
+    f.setRuns([{ runId: 'drift-1', threadId: 'camp-drift', status: 'running', createdAt: now.toISOString() }])
     await f.service.tick(now)
     expect(await f.service.status({ jobId: 'drift-1' })).toMatchObject({ state: 'failed', reportStatus: null })
     const jobFile = join(f.root, 'owner/evaluation/jobs/drift-1/job.json')

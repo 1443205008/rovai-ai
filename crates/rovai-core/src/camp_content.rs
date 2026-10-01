@@ -10,7 +10,7 @@ use crate::current_user::{CURRENT_USER_ID, CurrentUserResolver};
 pub const AGENT_MESSAGE_PROJECTION_AUDIENCE: &str = "agent_v1";
 pub const AGENT_PRINCIPAL_DISPLAY_NAME: &str = "Principal";
 
-pub type StructuredCampMessageContent = Vec<StructuredCampMessageSegment>;
+pub type StructuredThreadMessageContent = Vec<StructuredThreadMessageSegment>;
 
 pub const COMPOSER_DOCUMENT_VERSION: u32 = 2;
 pub const EMPTY_COMPOSER_DOCUMENT_JSON: &str = r#"{"version":2,"segments":[]}"#;
@@ -58,7 +58,7 @@ pub enum ComposerAtom {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum StructuredCampMessageSegment {
+pub enum StructuredThreadMessageSegment {
     Text {
         text: String,
     },
@@ -188,7 +188,7 @@ pub fn normalize_composer_document(mut document: ComposerDocument) -> ComposerDo
 
 pub fn composer_document_to_content(
     document: &ComposerDocument,
-) -> Result<StructuredCampMessageContent> {
+) -> Result<StructuredThreadMessageContent> {
     validate_composer_document(document)?;
     Ok(normalize_content(
         document
@@ -196,23 +196,23 @@ pub fn composer_document_to_content(
             .iter()
             .map(|segment| match segment {
                 ComposerSegment::Text { text } => {
-                    StructuredCampMessageSegment::Text { text: text.clone() }
+                    StructuredThreadMessageSegment::Text { text: text.clone() }
                 }
                 ComposerSegment::Atom {
                     atom: ComposerAtom::Member { agent_id, .. },
-                } => StructuredCampMessageSegment::MemberMention {
+                } => StructuredThreadMessageSegment::MemberMention {
                     agent_id: agent_id.clone(),
                 },
                 ComposerSegment::Atom {
                     atom: ComposerAtom::AllMembers,
-                } => StructuredCampMessageSegment::AllMembersMention,
+                } => StructuredThreadMessageSegment::AllMembersMention,
                 ComposerSegment::Atom {
                     atom:
                         ComposerAtom::Skill {
                             skill_id,
                             name_at_send,
                         },
-                } => StructuredCampMessageSegment::SkillMention {
+                } => StructuredThreadMessageSegment::SkillMention {
                     skill_id: skill_id.clone(),
                     name_at_send: name_at_send.clone(),
                 },
@@ -222,23 +222,23 @@ pub fn composer_document_to_content(
 }
 
 pub fn composer_document_from_content(
-    content: &[StructuredCampMessageSegment],
+    content: &[StructuredThreadMessageSegment],
 ) -> Result<ComposerDocument> {
     validate_user_authored_content(content)?;
     let mut segments = Vec::with_capacity(content.len());
     for segment in normalize_content(content.to_vec()) {
         segments.push(match segment {
-            StructuredCampMessageSegment::Text { text } => ComposerSegment::Text { text },
-            StructuredCampMessageSegment::MemberMention { agent_id } => ComposerSegment::Atom {
+            StructuredThreadMessageSegment::Text { text } => ComposerSegment::Text { text },
+            StructuredThreadMessageSegment::MemberMention { agent_id } => ComposerSegment::Atom {
                 atom: ComposerAtom::Member {
                     agent_id,
                     label_fallback: None,
                 },
             },
-            StructuredCampMessageSegment::AllMembersMention => ComposerSegment::Atom {
+            StructuredThreadMessageSegment::AllMembersMention => ComposerSegment::Atom {
                 atom: ComposerAtom::AllMembers,
             },
-            StructuredCampMessageSegment::SkillMention {
+            StructuredThreadMessageSegment::SkillMention {
                 skill_id,
                 name_at_send,
             } => ComposerSegment::Atom {
@@ -247,8 +247,8 @@ pub fn composer_document_from_content(
                     name_at_send,
                 },
             },
-            StructuredCampMessageSegment::CurrentUserMention { .. }
-            | StructuredCampMessageSegment::ExternalQuote { .. } => {
+            StructuredThreadMessageSegment::CurrentUserMention { .. }
+            | StructuredThreadMessageSegment::ExternalQuote { .. } => {
                 anyhow::bail!("Composer Document cannot contain Core-owned message segments")
             }
         });
@@ -264,7 +264,7 @@ pub fn composer_document_from_content(
 pub fn parse_composer_document_json(value: &str) -> Result<ComposerDocument> {
     let json: serde_json::Value = serde_json::from_str(value)?;
     let document = if json.is_array() {
-        let legacy: StructuredCampMessageContent =
+        let legacy: StructuredThreadMessageContent =
             serde_json::from_value(json).context("Legacy Composer content is invalid")?;
         composer_document_from_content(&legacy)?
     } else {
@@ -319,30 +319,30 @@ pub fn render_composer_plain_text(
     Ok(rendered)
 }
 
-pub fn validate_content(content: &[StructuredCampMessageSegment]) -> Result<()> {
+pub fn validate_content(content: &[StructuredThreadMessageSegment]) -> Result<()> {
     if content.len() > MAX_CONTENT_SEGMENTS {
         anyhow::bail!("Structured Camp Message Content has too many segments");
     }
     let mut text_bytes = 0_usize;
     for segment in content {
         match segment {
-            StructuredCampMessageSegment::Text { text } => {
+            StructuredThreadMessageSegment::Text { text } => {
                 text_bytes = text_bytes
                     .checked_add(text.len())
                     .context("Structured Camp Message Content size overflow")?;
             }
-            StructuredCampMessageSegment::MemberMention { agent_id } => {
+            StructuredThreadMessageSegment::MemberMention { agent_id } => {
                 if agent_id.is_empty() || agent_id.trim() != agent_id || agent_id.len() > 256 {
                     anyhow::bail!("Member Mention requires a canonical Agent ID");
                 }
             }
-            StructuredCampMessageSegment::AllMembersMention => {}
-            StructuredCampMessageSegment::CurrentUserMention { user_id } => {
+            StructuredThreadMessageSegment::AllMembersMention => {}
+            StructuredThreadMessageSegment::CurrentUserMention { user_id } => {
                 if user_id != CURRENT_USER_ID {
                     anyhow::bail!("Current User Mention requires the canonical local user ID");
                 }
             }
-            StructuredCampMessageSegment::SkillMention {
+            StructuredThreadMessageSegment::SkillMention {
                 skill_id,
                 name_at_send,
             } => {
@@ -351,7 +351,7 @@ pub fn validate_content(content: &[StructuredCampMessageSegment]) -> Result<()> 
                 }
                 crate::skill::validate_skill_name(name_at_send)?;
             }
-            StructuredCampMessageSegment::ExternalQuote {
+            StructuredThreadMessageSegment::ExternalQuote {
                 sender_display_name,
                 body,
                 attachment_summaries,
@@ -434,32 +434,36 @@ pub fn validate_content(content: &[StructuredCampMessageSegment]) -> Result<()> 
 /// accepting an Agent message. They are deliberately not an authoring token:
 /// accepting one from a Composer client would let handwritten or pasted
 /// content impersonate that Core-owned signal.
-pub fn validate_user_authored_content(content: &[StructuredCampMessageSegment]) -> Result<()> {
+pub fn validate_user_authored_content(content: &[StructuredThreadMessageSegment]) -> Result<()> {
     validate_content(content)?;
     if mentions_current_user(content) {
         anyhow::bail!("Current User Mention can only be generated by Core");
     }
-    if content
-        .iter()
-        .any(|segment| matches!(segment, StructuredCampMessageSegment::ExternalQuote { .. }))
-    {
+    if content.iter().any(|segment| {
+        matches!(
+            segment,
+            StructuredThreadMessageSegment::ExternalQuote { .. }
+        )
+    }) {
         anyhow::bail!("External Quote can only be generated by trusted channel ingress");
     }
     Ok(())
 }
 
-pub fn normalize_content(content: StructuredCampMessageContent) -> StructuredCampMessageContent {
-    let mut normalized: StructuredCampMessageContent = Vec::with_capacity(content.len());
+pub fn normalize_content(
+    content: StructuredThreadMessageContent,
+) -> StructuredThreadMessageContent {
+    let mut normalized: StructuredThreadMessageContent = Vec::with_capacity(content.len());
     for segment in content {
         match segment {
-            StructuredCampMessageSegment::Text { text } if text.is_empty() => {}
-            StructuredCampMessageSegment::Text { text } => {
-                if let Some(StructuredCampMessageSegment::Text { text: previous }) =
+            StructuredThreadMessageSegment::Text { text } if text.is_empty() => {}
+            StructuredThreadMessageSegment::Text { text } => {
+                if let Some(StructuredThreadMessageSegment::Text { text: previous }) =
                     normalized.last_mut()
                 {
                     previous.push_str(&text);
                 } else {
-                    normalized.push(StructuredCampMessageSegment::Text { text });
+                    normalized.push(StructuredThreadMessageSegment::Text { text });
                 }
             }
             mention => normalized.push(mention),
@@ -468,12 +472,12 @@ pub fn normalize_content(content: StructuredCampMessageContent) -> StructuredCam
     normalized
 }
 
-pub fn member_mention_ids(content: &[StructuredCampMessageSegment]) -> Vec<String> {
+pub fn member_mention_ids(content: &[StructuredThreadMessageSegment]) -> Vec<String> {
     let mut seen = HashSet::new();
     content
         .iter()
         .filter_map(|segment| match segment {
-            StructuredCampMessageSegment::MemberMention { agent_id }
+            StructuredThreadMessageSegment::MemberMention { agent_id }
                 if seen.insert(agent_id.as_str()) =>
             {
                 Some(agent_id.clone())
@@ -483,24 +487,24 @@ pub fn member_mention_ids(content: &[StructuredCampMessageSegment]) -> Vec<Strin
         .collect()
 }
 
-pub fn has_all_members_mention(content: &[StructuredCampMessageSegment]) -> bool {
+pub fn has_all_members_mention(content: &[StructuredThreadMessageSegment]) -> bool {
     content
         .iter()
-        .any(|segment| matches!(segment, StructuredCampMessageSegment::AllMembersMention))
+        .any(|segment| matches!(segment, StructuredThreadMessageSegment::AllMembersMention))
 }
 
-pub fn mentions_current_user(content: &[StructuredCampMessageSegment]) -> bool {
+pub fn mentions_current_user(content: &[StructuredThreadMessageSegment]) -> bool {
     content.iter().any(|segment| {
         matches!(
             segment,
-            StructuredCampMessageSegment::CurrentUserMention { user_id }
+            StructuredThreadMessageSegment::CurrentUserMention { user_id }
                 if user_id == CURRENT_USER_ID
         )
     })
 }
 
 pub fn render_plain_text(
-    content: &[StructuredCampMessageSegment],
+    content: &[StructuredThreadMessageSegment],
     mut member_name: impl FnMut(&str) -> Option<String>,
 ) -> Result<String> {
     let current_user = CurrentUserResolver::resolve("zh-CN");
@@ -508,7 +512,7 @@ pub fn render_plain_text(
 }
 
 pub fn render_plain_text_with_current_user(
-    content: &[StructuredCampMessageSegment],
+    content: &[StructuredThreadMessageSegment],
     mut member_name: impl FnMut(&str) -> Option<String>,
     current_user_display_name: &str,
 ) -> Result<String> {
@@ -518,14 +522,14 @@ pub fn render_plain_text_with_current_user(
     let mut rendered = String::new();
     for (index, segment) in content.iter().enumerate() {
         match segment {
-            StructuredCampMessageSegment::Text { text } => rendered.push_str(text),
-            StructuredCampMessageSegment::MemberMention { agent_id } => {
+            StructuredThreadMessageSegment::Text { text } => rendered.push_str(text),
+            StructuredThreadMessageSegment::MemberMention { agent_id } => {
                 let name = member_name(agent_id)
                     .ok_or_else(|| anyhow!("Member Mention identity does not exist"))?;
                 rendered.push_str(&render_member_mention_plain_text(&name));
             }
-            StructuredCampMessageSegment::AllMembersMention => rendered.push_str("@所有队员"),
-            StructuredCampMessageSegment::CurrentUserMention { user_id } => {
+            StructuredThreadMessageSegment::AllMembersMention => rendered.push_str("@所有队员"),
+            StructuredThreadMessageSegment::CurrentUserMention { user_id } => {
                 if user_id != CURRENT_USER_ID {
                     anyhow::bail!("Current User Mention identity does not exist");
                 }
@@ -535,11 +539,11 @@ pub fn render_plain_text_with_current_user(
                     rendered.push(' ');
                 }
             }
-            StructuredCampMessageSegment::SkillMention { name_at_send, .. } => {
+            StructuredThreadMessageSegment::SkillMention { name_at_send, .. } => {
                 rendered.push('/');
                 rendered.push_str(name_at_send);
             }
-            StructuredCampMessageSegment::ExternalQuote {
+            StructuredThreadMessageSegment::ExternalQuote {
                 sender_display_name,
                 body,
                 attachment_summaries,
@@ -577,20 +581,20 @@ pub(crate) fn render_member_mention_plain_text(display_name: &str) -> String {
     format!("@{display_name}")
 }
 
-fn segment_projects_nonempty(segment: &StructuredCampMessageSegment) -> bool {
+fn segment_projects_nonempty(segment: &StructuredThreadMessageSegment) -> bool {
     match segment {
-        StructuredCampMessageSegment::Text { text } => !text.is_empty(),
-        StructuredCampMessageSegment::MemberMention { .. }
-        | StructuredCampMessageSegment::AllMembersMention
-        | StructuredCampMessageSegment::CurrentUserMention { .. }
-        | StructuredCampMessageSegment::SkillMention { .. }
-        | StructuredCampMessageSegment::ExternalQuote { .. } => true,
+        StructuredThreadMessageSegment::Text { text } => !text.is_empty(),
+        StructuredThreadMessageSegment::MemberMention { .. }
+        | StructuredThreadMessageSegment::AllMembersMention
+        | StructuredThreadMessageSegment::CurrentUserMention { .. }
+        | StructuredThreadMessageSegment::SkillMention { .. }
+        | StructuredThreadMessageSegment::ExternalQuote { .. } => true,
     }
 }
 
 pub fn render_current_plain_text(
     connection: &Connection,
-    content: &[StructuredCampMessageSegment],
+    content: &[StructuredThreadMessageSegment],
 ) -> Result<String> {
     let current_user = CurrentUserResolver::resolve("zh-CN");
     render_plain_text_for_connection_with_current_user(
@@ -607,7 +611,7 @@ pub fn render_current_plain_text(
 /// projections continue to use the localized current-user display name.
 pub fn render_agent_plain_text(
     connection: &Connection,
-    content: &[StructuredCampMessageSegment],
+    content: &[StructuredThreadMessageSegment],
 ) -> Result<String> {
     render_plain_text_for_connection_with_current_user(
         connection,
@@ -618,7 +622,7 @@ pub fn render_agent_plain_text(
 
 fn render_plain_text_for_connection_with_current_user(
     connection: &Connection,
-    content: &[StructuredCampMessageSegment],
+    content: &[StructuredThreadMessageSegment],
     current_user_display_name: &str,
 ) -> Result<String> {
     let mut names = BTreeMap::new();
@@ -666,7 +670,7 @@ pub fn reproject_current_user_messages(
 
     let mut updated = 0_usize;
     for (message_id, content_json) in messages {
-        let content: StructuredCampMessageContent = serde_json::from_str(&content_json)
+        let content: StructuredThreadMessageContent = serde_json::from_str(&content_json)
             .with_context(|| format!("Camp Message {message_id} has invalid structured content"))?;
         validate_content(&content)?;
         if !mentions_current_user(&content) {
@@ -685,7 +689,7 @@ pub fn reproject_current_user_messages(
     Ok(updated)
 }
 
-pub fn canonical_content_digest(content: &[StructuredCampMessageSegment]) -> Result<String> {
+pub fn canonical_content_digest(content: &[StructuredThreadMessageSegment]) -> Result<String> {
     let value = serde_json::to_value(content)?;
     Ok(format!("sha256:{}", canonical_json_digest(&value)?))
 }
@@ -694,7 +698,7 @@ pub fn canonical_content_digest(content: &[StructuredCampMessageSegment]) -> Res
 mod tests {
     use super::{
         ComposerAtom, ComposerDocument, ComposerSegment, ExternalQuoteAttachmentSummary,
-        StructuredCampMessageSegment as Segment, canonical_content_digest,
+        StructuredThreadMessageSegment as Segment, canonical_content_digest,
         composer_document_from_content, composer_document_to_content, member_mention_ids,
         mentions_current_user, normalize_content, parse_composer_document_json,
         render_agent_plain_text, render_composer_plain_text, render_plain_text,

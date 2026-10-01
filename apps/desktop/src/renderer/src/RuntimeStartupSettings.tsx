@@ -1,5 +1,5 @@
 import { newCommandId } from '../../shared/command-id'
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { useEffect, useId, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import type { AdapterKind, HealthStatus, RuntimeStartupConfiguration, RuntimeStartupInspection, RuntimeStartupSettings as StartupSettings } from '@contracts'
@@ -18,7 +18,7 @@ const INSPECTION_LABELS: Record<RuntimeStartupInspection['status'], string> = {
 export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }: {
   runtimeKind: AdapterKind; health: HealthStatus | null; onBack(): void; onReload(): Promise<void>
 }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const [saved, setSaved] = useState<StartupSettings | null>(null)
   const [draft, setDraft] = useState<RuntimeStartupConfiguration>(EMPTY)
   const [rowIds, setRowIds] = useState<string[]>([])

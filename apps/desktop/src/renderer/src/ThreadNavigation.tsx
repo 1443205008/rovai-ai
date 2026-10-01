@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { useMobileLayout } from './MobileLayout'
 import { useNavigationPressMenu } from './useNavigationPressMenu'
 import {
@@ -14,8 +14,8 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type {
   AppUpdateSnapshot,
   NavigationPin,
-  NavigationCampItem,
-  NavigationCampTarget,
+  NavigationThreadItem,
+  NavigationThreadTarget,
   NavigationSnapshot,
   ProjectNavigationGroup,
   SettingsSection
@@ -37,9 +37,9 @@ import {
   primaryShortcutLabel,
   shouldHandlePrimaryShortcut
 } from './renderer-platform'
-import { allNavigationCamps } from './ui-model'
-import { navigationCampSearch, startNavigationCampLookup, type NavigationCampLookup } from './camp-navigation-search'
-import { formatCampTitle } from './camp-title'
+import { allNavigationThreads } from './ui-model'
+import { navigationThreadSearch, startNavigationThreadLookup, type NavigationThreadLookup } from './camp-navigation-search'
+import { formatThreadTitle } from './camp-title'
 import { ProjectRenameDialog } from './ProjectRenameDialog'
 import { useNavigationCollapsed } from './NavigationShell'
 import {
@@ -53,7 +53,7 @@ export type NavigationSettingsSection = SettingsSection
 
 type NavigationAction = {
   kind: 'rename' | 'delete'
-  camp: NavigationCampItem
+  thread: NavigationThreadItem
 } | {
   kind: 'remove_project'
   project: ProjectNavigationGroup
@@ -63,13 +63,13 @@ export function campNavigationMenuLabels(pinned: boolean): string[] {
   return [pinned ? uiAttribute('取消置顶') : uiAttribute('置顶'), uiAttribute('重命名'), uiAttribute('复制会话 ID'), uiAttribute('删除')]
 }
 
-export async function copyCampIdToClipboard(
-  campId: string,
+export async function copyThreadIdToClipboard(
+  threadId: string,
   writeText: (text: string) => Promise<boolean> = writeClipboardText
 ): Promise<void> {
   let copied = false
   try {
-    copied = await writeText(campId)
+    copied = await writeText(threadId)
   } catch {
     copied = false
   }
@@ -105,7 +105,7 @@ export function navigationPaginationControls(
   }
 }
 
-export function CampNavigation({
+export function ThreadNavigation({
   navigationId = 'global-navigation',
   settingsNavigation,
   footer,
@@ -115,14 +115,14 @@ export function CampNavigation({
   navigation,
   groupLimits = {},
   onGroupLimitChange = async () => undefined,
-  activeCampId,
-  firstRunCampId = null,
-  openingCampId = null,
+  activeThreadId,
+  firstRunThreadId = null,
+  openingThreadId = null,
   currentProjectKey = 'quick-chat',
   shellOnlyProjectPath = null,
   creatingConversation = false,
   pins = [],
-  pinnedCampItems = [],
+  pinnedThreadItems = [],
   platform = 'darwin',
   settingsSection = 'general',
   updateSnapshot = null,
@@ -140,11 +140,11 @@ export function CampNavigation({
   onOpenProject,
   onSelectProject = () => undefined,
   onCreateInProject = () => undefined,
-  onCamp,
+  onThread,
   onTogglePin = () => undefined,
   onRemoveProject,
   onRenameProject,
-  onCampIdCopied = () => undefined,
+  onThreadIdCopied = () => undefined,
   onRename,
   onDelete,
   onDeleteError,
@@ -159,14 +159,14 @@ export function CampNavigation({
   navigation: NavigationSnapshot | null
   groupLimits?: NavigationGroupLimits
   onGroupLimitChange?(groupKey: string, limit: number): Promise<void>
-  activeCampId: string | null
-  firstRunCampId?: string | null
-  openingCampId?: string | null
+  activeThreadId: string | null
+  firstRunThreadId?: string | null
+  openingThreadId?: string | null
   currentProjectKey?: string
   shellOnlyProjectPath?: string | null
   creatingConversation?: boolean
   pins?: NavigationPin[]
-  pinnedCampItems?: NavigationCampItem[]
+  pinnedThreadItems?: NavigationThreadItem[]
   platform?: NodeJS.Platform
   settingsSection?: NavigationSettingsSection
   updateSnapshot?: AppUpdateSnapshot | null
@@ -184,17 +184,17 @@ export function CampNavigation({
   onOpenProject(): void
   onSelectProject?(project: ProjectNavigationGroup | null): void
   onCreateInProject?(project: ProjectNavigationGroup | null): void
-  onCamp(camp: NavigationCampTarget): void
-  onTogglePin?(kind: NavigationPin['kind'], targetKey: string, camp?: NavigationCampItem): void | Promise<void>
+  onThread(thread: NavigationThreadTarget): void
+  onTogglePin?(kind: NavigationPin['kind'], targetKey: string, thread?: NavigationThreadItem): void | Promise<void>
   onRenameProject?(project: ProjectNavigationGroup, name: string | null): Promise<void>
   onRemoveProject(project: ProjectNavigationGroup): Promise<void>
-  onCampIdCopied?(): void
-  onRename(camp: NavigationCampItem, title: string): Promise<void>
-  onDelete(camp: NavigationCampItem): Promise<void>
+  onThreadIdCopied?(): void
+  onRename(thread: NavigationThreadItem, title: string): Promise<void>
+  onDelete(thread: NavigationThreadItem): Promise<void>
   onDeleteError?(error: unknown): void
   onError(error: unknown): void
 }): JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const mobile = useMobileLayout()
   const collapsed = useNavigationCollapsed()
   const navigationCollapsed = !mobile && collapsed
@@ -206,34 +206,34 @@ export function CampNavigation({
   const [actionBusy, setActionBusy] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const loadingGroupsRef = useRef<Set<string>>(new Set())
-  const navigationCamps = useMemo(
-    () => navigation ? allNavigationCamps(navigation) : [],
+  const navigationThreads = useMemo(
+    () => navigation ? allNavigationThreads(navigation) : [],
     [navigation]
   )
   const campById = useMemo(() => new Map(
-    [...pinnedCampItems, ...navigationCamps].map((camp) => [camp.id, camp])
-  ), [navigationCamps, pinnedCampItems])
+    [...pinnedThreadItems, ...navigationThreads].map((thread) => [thread.id, thread])
+  ), [navigationThreads, pinnedThreadItems])
   const projectByKey = useMemo(
     () => new Map((navigation?.projects ?? []).map((project) => [project.projectKey, project])),
     [navigation]
   )
-  const pinnedCampIds = useMemo(
+  const pinnedThreadIds = useMemo(
     () => new Set(pins.filter((pin) => pin.kind === 'camp').map((pin) => pin.targetKey)),
     [pins]
   )
-  const pinnedCamps = pins
+  const pinnedThreads = pins
     .filter((pin) => pin.kind === 'camp')
     .flatMap((pin) => campById.get(pin.targetKey) ?? [])
   const pinnedProjects = pins
     .filter((pin) => pin.kind === 'project')
     .flatMap((pin) => projectByKey.get(pin.targetKey) ?? [])
-  const quickChatRecentCamps = navigation?.quickChat.recentCamps ?? []
+  const quickChatRecentThreads = navigation?.quickChat.recentThreads ?? []
   const quickChatTotalCount = navigation?.quickChat.totalCount ?? 0
-  const visibleCount = (groupKey: string, camps: readonly NavigationCampItem[]): number => Math.min(
-    camps.length,
+  const visibleCount = (groupKey: string, threads: readonly NavigationThreadItem[]): number => Math.min(
+    threads.length,
     groupLimits[groupKey] ?? NAVIGATION_INITIAL_VISIBLE_CAMPS
   )
-  const quickChatVisibleCount = visibleCount('quick-chat', quickChatRecentCamps)
+  const quickChatVisibleCount = visibleCount('quick-chat', quickChatRecentThreads)
   const updateBadge = appUpdateBadgePresentation(updateSnapshot)
 
   useEffect(() => {
@@ -267,7 +267,7 @@ export function CampNavigation({
     }
   }
 
-  const collapseGroupCamps = (groupKey: string): void => {
+  const collapseGroupThreads = (groupKey: string): void => {
     void onGroupLimitChange(groupKey, NAVIGATION_INITIAL_VISIBLE_CAMPS).catch(onError)
   }
 
@@ -278,23 +278,23 @@ export function CampNavigation({
   const togglePin = async (
     kind: NavigationPin['kind'],
     targetKey: string,
-    camp?: NavigationCampItem
+    thread?: NavigationThreadItem
   ): Promise<void> => {
-    await onTogglePin(kind, targetKey, camp)
+    await onTogglePin(kind, targetKey, thread)
   }
 
-  const copyCampId = async (camp: NavigationCampItem): Promise<void> => {
+  const copyThreadId = async (thread: NavigationThreadItem): Promise<void> => {
     try {
-      await copyCampIdToClipboard(camp.id)
-      onCampIdCopied()
+      await copyThreadIdToClipboard(thread.id)
+      onThreadIdCopied()
     } catch (error) {
       onError(error)
     }
   }
 
-  const openAction = (kind: 'rename' | 'delete', camp: NavigationCampItem): void => {
-    setAction({ kind, camp })
-    setRenameTitle(camp.title)
+  const openAction = (kind: 'rename' | 'delete', thread: NavigationThreadItem): void => {
+    setAction({ kind, thread })
+    setRenameTitle(thread.title)
   }
 
   const openProjectRemoval = (project: ProjectNavigationGroup): void => {
@@ -311,7 +311,7 @@ export function CampNavigation({
     if (!action || action.kind !== 'rename' || !renameTitle.trim() || actionBusy) return
     setActionBusy(true)
     try {
-      await onRename(action.camp, renameTitle)
+      await onRename(action.thread, renameTitle)
       setAction(null)
     } catch (error) {
       onError(error)
@@ -324,7 +324,7 @@ export function CampNavigation({
     if (!action || action.kind !== 'delete' || actionBusy) return
     setActionBusy(true)
     try {
-      await onDelete(action.camp)
+      await onDelete(action.thread)
       setAction(null)
     } catch (error) {
       ;(onDeleteError ?? onError)(error)
@@ -422,47 +422,47 @@ export function CampNavigation({
           <button className="mobile-icon-button" type="button" aria-label={uiAttribute("选择工作目录")} disabled={state !== 'ready'} onClick={onOpenProject}><NavigationIcon name="folder-open" /></button>
           <button className="mobile-icon-button" type="button" aria-label={uiAttribute("搜索对话")} onClick={() => setPaletteOpen(true)}><NavigationIcon name="search" /></button>
         </div></header>}
-        {(pinnedCamps.length > 0 || pinnedProjects.length > 0) && (
+        {(pinnedThreads.length > 0 || pinnedProjects.length > 0) && (
           <section className="pinned-navigation" aria-labelledby="pinned-heading">
             <div className="sidebar-group-title navigation-section-title">
               <span id="pinned-heading"><UiText zh={"置顶"} /></span>
             </div>
-            {pinnedCamps.map((camp) => (
-              <CampRow
-                key={camp.id}
-                camp={camp}
-                firstRunCampId={firstRunCampId}
-                active={camp.id === activeCampId}
-                opening={camp.id === openingCampId}
+            {pinnedThreads.map((thread) => (
+              <ThreadRow
+                key={thread.id}
+                thread={thread}
+                firstRunThreadId={firstRunThreadId}
+                active={thread.id === activeThreadId}
+                opening={thread.id === openingThreadId}
                 pinned
-                onTogglePin={() => void togglePin('camp', camp.id, camp)}
-                onCopyCampId={() => void copyCampId(camp)}
-                onCamp={onCamp}
+                onTogglePin={() => void togglePin('camp', thread.id, thread)}
+                onCopyThreadId={() => void copyThreadId(thread)}
+                onThread={onThread}
                 onAction={openAction}
               />
             ))}
             {pinnedProjects.map((project) => {
               const groupKey = projectKey(project)
-              const count = visibleCount(groupKey, project.recentCamps)
-              return <CampGroup
+              const count = visibleCount(groupKey, project.recentThreads)
+              return <ThreadGroup
                 key={`pinned-${project.projectKey}`}
                 groupKey={groupKey}
                 pinTargetKey={project.projectKey}
                 label={project.name}
                 totalCount={project.totalCount}
                 visibleCount={count}
-                camps={project.recentCamps.slice(0, count)
-                  .filter((camp) => !pinnedCampIds.has(camp.id))}
+                threads={project.recentThreads.slice(0, count)
+                  .filter((thread) => !pinnedThreadIds.has(thread.id))}
                 projectExpanded={!collapsedProjectGroups.has(groupKey)}
                 loadingMore={loadingGroups.has(groupKey)}
-                activeCampId={activeCampId}
-                firstRunCampId={firstRunCampId}
-                openingCampId={openingCampId}
+                activeThreadId={activeThreadId}
+                firstRunThreadId={firstRunThreadId}
+                openingThreadId={openingThreadId}
                 currentProject={currentProjectKey === project.projectKey}
                 createDisabled={creatingConversation}
                 pinned
                 onShowMore={() => void showMore(groupKey, count)}
-                onCollapseCamps={() => collapseGroupCamps(groupKey)}
+                onCollapseThreads={() => collapseGroupThreads(groupKey)}
                 onToggleExpanded={() => toggleProjectGroup(groupKey)}
                 onSelectProject={() => onSelectProject(project)}
                 onCreate={() => onCreateInProject(project)}
@@ -471,9 +471,9 @@ export function CampNavigation({
                   : () => void togglePin('project', project.projectKey)}
                 onRenameProject={onRenameProject ? () => setRenameProject(project) : undefined}
                 onRemoveProject={() => openProjectRemoval(project)}
-                onToggleCampPin={(camp) => void togglePin('camp', camp.id, camp)}
-                onCopyCampId={(camp) => void copyCampId(camp)}
-                onCamp={onCamp}
+                onToggleThreadPin={(thread) => void togglePin('camp', thread.id, thread)}
+                onCopyThreadId={(thread) => void copyThreadId(thread)}
+                onThread={onThread}
                 onAction={openAction}
               />
             })}
@@ -484,27 +484,27 @@ export function CampNavigation({
           {navigation?.projects.map((project) => {
             const groupKey = projectKey(project)
             if (pins.some((pin) => pin.kind === 'project' && pin.targetKey === project.projectKey)) return null
-            const count = visibleCount(groupKey, project.recentCamps)
+            const count = visibleCount(groupKey, project.recentThreads)
             return (
-              <CampGroup
+              <ThreadGroup
                 key={project.projectKey}
                 groupKey={groupKey}
                 pinTargetKey={project.projectKey}
                 label={project.name}
                 totalCount={project.totalCount}
                 visibleCount={count}
-                camps={project.recentCamps.slice(0, count)
-                  .filter((camp) => !pinnedCampIds.has(camp.id))}
+                threads={project.recentThreads.slice(0, count)
+                  .filter((thread) => !pinnedThreadIds.has(thread.id))}
                 projectExpanded={!collapsedProjectGroups.has(groupKey)}
                 loadingMore={loadingGroups.has(groupKey)}
-                activeCampId={activeCampId}
-                firstRunCampId={firstRunCampId}
-                openingCampId={openingCampId}
+                activeThreadId={activeThreadId}
+                firstRunThreadId={firstRunThreadId}
+                openingThreadId={openingThreadId}
                 currentProject={currentProjectKey === project.projectKey}
                 createDisabled={creatingConversation}
                 pinned={pins.some((pin) => pin.kind === 'project' && pin.targetKey === project.projectKey)}
                 onShowMore={() => void showMore(groupKey, count)}
-                onCollapseCamps={() => collapseGroupCamps(groupKey)}
+                onCollapseThreads={() => collapseGroupThreads(groupKey)}
                 onToggleExpanded={() => toggleProjectGroup(groupKey)}
                 onSelectProject={() => onSelectProject(project)}
                 onCreate={() => onCreateInProject(project)}
@@ -513,36 +513,36 @@ export function CampNavigation({
                   : () => void togglePin('project', project.projectKey)}
                 onRenameProject={onRenameProject ? () => setRenameProject(project) : undefined}
                 onRemoveProject={() => openProjectRemoval(project)}
-                onToggleCampPin={(camp) => void togglePin('camp', camp.id, camp)}
-                onCopyCampId={(camp) => void copyCampId(camp)}
-                onCamp={onCamp}
+                onToggleThreadPin={(thread) => void togglePin('camp', thread.id, thread)}
+                onCopyThreadId={(thread) => void copyThreadId(thread)}
+                onThread={onThread}
                 onAction={openAction}
               />
             )
           })}
           {navigation && navigation.projects.length === 0 && <p className="sidebar-empty"><UiText zh={"选择工作目录后，对话会在这里成组显示。"} /></p>}
-          {navigation && <CampGroup
+          {navigation && <ThreadGroup
             groupKey="quick-chat"
             label={uiAttribute("快速对话")}
             totalCount={quickChatTotalCount}
             visibleCount={quickChatVisibleCount}
-            camps={quickChatRecentCamps.slice(0, quickChatVisibleCount)
-              .filter((camp) => !pinnedCampIds.has(camp.id))}
+            threads={quickChatRecentThreads.slice(0, quickChatVisibleCount)
+              .filter((thread) => !pinnedThreadIds.has(thread.id))}
             projectExpanded={!collapsedProjectGroups.has('quick-chat')}
             loadingMore={loadingGroups.has('quick-chat')}
-            activeCampId={activeCampId}
-            firstRunCampId={firstRunCampId}
-            openingCampId={openingCampId}
+            activeThreadId={activeThreadId}
+            firstRunThreadId={firstRunThreadId}
+            openingThreadId={openingThreadId}
             currentProject={currentProjectKey === 'quick-chat'}
             createDisabled={creatingConversation}
             onShowMore={() => void showMore('quick-chat', quickChatVisibleCount)}
-            onCollapseCamps={() => collapseGroupCamps('quick-chat')}
+            onCollapseThreads={() => collapseGroupThreads('quick-chat')}
             onToggleExpanded={() => toggleProjectGroup('quick-chat')}
             onSelectProject={() => onSelectProject(null)}
             onCreate={() => onCreateInProject(null)}
-            onToggleCampPin={(camp) => void togglePin('camp', camp.id, camp)}
-            onCopyCampId={(camp) => void copyCampId(camp)}
-            onCamp={onCamp}
+            onToggleThreadPin={(thread) => void togglePin('camp', thread.id, thread)}
+            onCopyThreadId={(thread) => void copyThreadId(thread)}
+            onThread={onThread}
             onAction={openAction}
           />}
         </section>
@@ -587,10 +587,10 @@ export function CampNavigation({
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
         navigation={navigation}
-        firstRunCampId={firstRunCampId}
-        onCamp={(camp) => {
+        firstRunThreadId={firstRunThreadId}
+        onThread={(thread) => {
           setPaletteOpen(false)
-          onCamp(camp)
+          onThread(thread)
         }}
       />
 
@@ -783,14 +783,14 @@ function CommandPalette({
   open,
   onOpenChange,
   navigation,
-  firstRunCampId,
-  onCamp
+  firstRunThreadId,
+  onThread
 }: {
   open: boolean
   onOpenChange(open: boolean): void
   navigation: NavigationSnapshot | null
-  firstRunCampId: string | null
-  onCamp(camp: NavigationCampTarget): void
+  firstRunThreadId: string | null
+  onThread(thread: NavigationThreadTarget): void
 }): JSX.Element {
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
@@ -798,22 +798,22 @@ function CommandPalette({
     () => new Map((navigation?.projects ?? []).map((project) => [project.projectPath, project.name])),
     [navigation]
   )
-  const camps = useMemo(() => navigation ? allNavigationCamps(navigation) : [], [navigation])
-  const search = navigationCampSearch(query, camps, projectNameByPath, firstRunCampId)
-  const campId = search.kind === 'id' ? search.campId : null
-  const [lookup, setLookup] = useState<NavigationCampLookup | null>(null)
-  const currentLookup = lookup?.campId === campId ? lookup : null
-  const loading = campId !== null && currentLookup === null
-  const error = campId !== null ? currentLookup?.error : null
+  const threads = useMemo(() => navigation ? allNavigationThreads(navigation) : [], [navigation])
+  const search = navigationThreadSearch(query, threads, projectNameByPath, firstRunThreadId)
+  const threadId = search.kind === 'id' ? search.threadId : null
+  const [lookup, setLookup] = useState<NavigationThreadLookup | null>(null)
+  const currentLookup = lookup?.threadId === threadId ? lookup : null
+  const loading = threadId !== null && currentLookup === null
+  const error = threadId !== null ? currentLookup?.error : null
   const visible = search.kind === 'text'
-    ? search.camps
-    : currentLookup?.camp ? [currentLookup.camp] : []
+    ? search.threads
+    : currentLookup?.thread ? [currentLookup.thread] : []
 
   useEffect(() => {
     setLookup(null)
-    if (!open || campId === null) return
-    return startNavigationCampLookup(campId, setLookup)
-  }, [open, campId])
+    if (!open || threadId === null) return
+    return startNavigationThreadLookup(threadId, setLookup)
+  }, [open, threadId])
 
   const selectedIndex = Math.min(activeIndex, Math.max(visible.length - 1, 0))
 
@@ -851,21 +851,21 @@ function CommandPalette({
                 setActiveIndex((index) => Math.max(index - 1, 0))
               } else if (event.key === 'Enter' && visible[selectedIndex]) {
                 event.preventDefault()
-                onCamp(visible[selectedIndex])
+                onThread(visible[selectedIndex])
               }
             }}
           />
           <div className="command-palette-list" aria-label={uiAttribute("匹配的对话")} aria-busy={loading}>
-            {visible.map((camp, index) => (
+            {visible.map((thread, index) => (
               <button
                 className={`command-palette-item ${index === selectedIndex ? 'active' : ''}`}
                 type="button"
-                key={camp.id}
-                onClick={() => onCamp(camp)}
+                key={thread.id}
+                onClick={() => onThread(thread)}
                 onMouseEnter={() => setActiveIndex(index)}
               >
-                <span className="truncate" title={formatCampTitle(camp, firstRunCampId)}>{formatCampTitle(camp, firstRunCampId)}</span>
-                <small>{camp.projectBindingKind === 'directory' ? projectNameByPath.get(camp.projectPath) ?? uiAttribute('项目') : uiAttribute("快速对话")}</small>
+                <span className="truncate" title={formatThreadTitle(thread, firstRunThreadId)}>{formatThreadTitle(thread, firstRunThreadId)}</span>
+                <small>{thread.projectBindingKind === 'directory' ? projectNameByPath.get(thread.projectPath) ?? uiAttribute('项目') : uiAttribute("快速对话")}</small>
               </button>
             ))}
             {visible.length === 0 && (
@@ -881,60 +881,60 @@ function CommandPalette({
   )
 }
 
-function CampGroup({
+function ThreadGroup({
   groupKey,
   pinTargetKey,
   label,
   totalCount,
-  camps,
+  threads,
   visibleCount,
   projectExpanded,
   loadingMore,
-  activeCampId,
-  firstRunCampId,
-  openingCampId,
+  activeThreadId,
+  firstRunThreadId,
+  openingThreadId,
   currentProject,
   createDisabled,
   pinned = false,
   onShowMore,
-  onCollapseCamps,
+  onCollapseThreads,
   onToggleExpanded,
   onSelectProject,
   onCreate,
   onTogglePin,
   onRemoveProject,
   onRenameProject,
-  onToggleCampPin,
-  onCopyCampId,
-  onCamp,
+  onToggleThreadPin,
+  onCopyThreadId,
+  onThread,
   onAction
 }: {
   groupKey: string
   pinTargetKey?: string
   label: string
   totalCount: number
-  camps: NavigationCampItem[]
+  threads: NavigationThreadItem[]
   visibleCount: number
   projectExpanded: boolean
   loadingMore: boolean
-  activeCampId: string | null
-  firstRunCampId: string | null
-  openingCampId: string | null
+  activeThreadId: string | null
+  firstRunThreadId: string | null
+  openingThreadId: string | null
   currentProject: boolean
   createDisabled: boolean
   pinned?: boolean
   onShowMore(): void
-  onCollapseCamps(): void
+  onCollapseThreads(): void
   onToggleExpanded(): void
   onSelectProject(): void
   onCreate(): void
   onTogglePin?(): void
   onRenameProject?(): void
   onRemoveProject?(): void
-  onToggleCampPin(camp: NavigationCampItem): void
-  onCopyCampId(camp: NavigationCampItem): void
-  onCamp(camp: NavigationCampItem): void
-  onAction(kind: 'rename' | 'delete', camp: NavigationCampItem): void
+  onToggleThreadPin(thread: NavigationThreadItem): void
+  onCopyThreadId(thread: NavigationThreadItem): void
+  onThread(thread: NavigationThreadItem): void
+  onAction(kind: 'rename' | 'delete', thread: NavigationThreadItem): void
 }): JSX.Element {
   const mobile = useMobileLayout()
   const projectMenuLabels = projectNavigationMenuLabels(pinned)
@@ -1002,25 +1002,25 @@ function CampGroup({
         <button className="group-create-button" type="button" aria-label={uiAttribute("在“{0}”中新建对话", String(label))} title={uiAttribute("新建对话")} disabled={createDisabled} onClick={onCreate}>{mobile ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg> : '＋'}</button>
       </div>
       <div id={contentId} className="camp-group-children" hidden={!projectExpanded}>
-        {projectExpanded && camps.map((camp) => (
-          <CampRow
-            key={camp.id}
-            camp={camp}
-            firstRunCampId={firstRunCampId}
-            active={camp.id === activeCampId}
-            opening={camp.id === openingCampId}
+        {projectExpanded && threads.map((thread) => (
+          <ThreadRow
+            key={thread.id}
+            thread={thread}
+            firstRunThreadId={firstRunThreadId}
+            active={thread.id === activeThreadId}
+            opening={thread.id === openingThreadId}
             pinned={false}
-            onTogglePin={() => onToggleCampPin(camp)}
-            onCopyCampId={() => onCopyCampId(camp)}
-            onCamp={onCamp}
+            onTogglePin={() => onToggleThreadPin(thread)}
+            onCopyThreadId={() => onCopyThreadId(thread)}
+            onThread={onThread}
             onAction={onAction}
           />
         ))}
-        {projectExpanded && camps.length === 0 && totalCount === 0 && <p className="sidebar-empty"><UiText zh={"还没有对话"} /></p>}
+        {projectExpanded && threads.length === 0 && totalCount === 0 && <p className="sidebar-empty"><UiText zh={"还没有对话"} /></p>}
         {projectExpanded && (paginationControls.showMore || paginationControls.showCollapse) && (
           <div className="camp-pagination-actions">
             {paginationControls.showMore && <button className="show-more-camps" type="button" onClick={onShowMore} disabled={loadingMore}>{loadingMore ? uiAttribute("正在读取…") : uiAttribute("查看更多")}</button>}
-            {paginationControls.showCollapse && <button className="collapse-camps" type="button" onClick={onCollapseCamps} disabled={loadingMore}><UiText zh={"收起"} /></button>}
+            {paginationControls.showCollapse && <button className="collapse-camps" type="button" onClick={onCollapseThreads} disabled={loadingMore}><UiText zh={"收起"} /></button>}
           </div>
         )}
       </div>
@@ -1028,35 +1028,35 @@ function CampGroup({
   )
 }
 
-function CampRow({
-  camp,
-  firstRunCampId,
+function ThreadRow({
+  thread,
+  firstRunThreadId,
   active,
   opening,
   pinned,
   onTogglePin,
-  onCopyCampId,
-  onCamp,
+  onCopyThreadId,
+  onThread,
   onAction
 }: {
-  camp: NavigationCampItem
-  firstRunCampId: string | null
+  thread: NavigationThreadItem
+  firstRunThreadId: string | null
   active: boolean
   opening: boolean
   pinned: boolean
   onTogglePin(): void
-  onCopyCampId(): void
-  onCamp(camp: NavigationCampItem): void
-  onAction(kind: 'rename' | 'delete', camp: NavigationCampItem): void
+  onCopyThreadId(): void
+  onThread(thread: NavigationThreadItem): void
+  onAction(kind: 'rename' | 'delete', thread: NavigationThreadItem): void
 }): JSX.Element {
   const mobile = useMobileLayout()
   const pressMenu = useNavigationPressMenu(mobile)
-  const title = formatCampTitle(camp, firstRunCampId)
-  const hasNewReply = camp.marker === 'unread_completed'
-  const loadingStatus = opening ? 'opening' : camp.marker === 'loading' ? 'loading' : null
+  const title = formatThreadTitle(thread, firstRunThreadId)
+  const hasNewReply = thread.marker === 'unread_completed'
+  const loadingStatus = opening ? 'opening' : thread.marker === 'loading' ? 'loading' : null
   const status = loadingStatus ?? (hasNewReply ? 'unread' : 'none')
   const menuLabels = campNavigationMenuLabels(pinned)
-  const menuItems: SidebarActionMenuItem[] = camp.activationState === 'pending'
+  const menuItems: SidebarActionMenuItem[] = thread.activationState === 'pending'
     ? []
     : [{
         key: 'toggle-pin',
@@ -1068,13 +1068,13 @@ function CampRow({
         key: 'rename',
         label: menuLabels[1],
         icon: 'edit',
-        onSelect: () => onAction('rename', camp)
+        onSelect: () => onAction('rename', thread)
       }]
   menuItems.push({
     key: 'copy-id',
     label: menuLabels[2],
     icon: 'copy',
-    onSelect: onCopyCampId
+    onSelect: onCopyThreadId
   })
   menuItems.push({
     key: 'delete',
@@ -1082,7 +1082,7 @@ function CampRow({
     icon: 'trash',
     danger: true,
     separatorBefore: true,
-    onSelect: () => onAction('delete', camp)
+    onSelect: () => onAction('delete', thread)
   })
   return (
     <div className={`camp-nav-row${active ? ' selected' : ''}${opening ? ' opening' : ''}`}>
@@ -1092,13 +1092,13 @@ function CampRow({
         type="button"
         aria-current={active ? 'page' : undefined}
         aria-busy={opening || undefined}
-        aria-label={`${title}${hasNewReply ? uiAttribute("，有新回复") : ''}${opening ? uiAttribute("，正在打开") : camp.marker === 'loading' ? uiAttribute("，正在运行") : ''}`}
+        aria-label={`${title}${hasNewReply ? uiAttribute("，有新回复") : ''}${opening ? uiAttribute("，正在打开") : thread.marker === 'loading' ? uiAttribute("，正在运行") : ''}`}
         title={hasNewReply ? uiAttribute("{0} · 有新回复", String(title)) : title}
-        onClick={() => onCamp(camp)}
+        onClick={() => onThread(thread)}
       >
         {pinned && <span className="pinned-camp-icon" aria-hidden="true"><NavigationIcon name="messages" /></span>}
         <span className="truncate">{title}</span>
-        {camp.activationState === 'pending' && <span className="camp-draft-badge"><UiText zh={"草稿"} /></span>}
+        {thread.activationState === 'pending' && <span className="camp-draft-badge"><UiText zh={"草稿"} /></span>}
         <span className="camp-status-slot" data-status={status} aria-hidden="true">
           {loadingStatus
             ? <span className={`camp-loading-spinner ${opening ? 'camp-open-spinner' : 'camp-marker-loading'}`} />
@@ -1106,7 +1106,7 @@ function CampRow({
         </span>
       </button>
       <SidebarActionMenu
-        target={`camp:${camp.id}`}
+        target={`thread:${thread.id}`}
         label={uiAttribute("管理“{0}”", String(title))}
         triggerClassName="camp-menu-trigger"
         items={menuItems}

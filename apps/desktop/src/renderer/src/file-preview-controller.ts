@@ -44,7 +44,7 @@ export interface FilePreviewTabModel {
 export interface FileChangesPreviewTabModel {
   kind: 'file_change'
   id: string
-  campId: string
+  threadId: string
   changes: AgentRunFileChangesView
   selectedEvidenceFileId: string | null
   reading?: FilePreviewReadingState
@@ -81,7 +81,7 @@ export interface FilePreviewOpenOptions {
 }
 
 export interface FilePreviewContextValue {
-  isCurrentCamp?: boolean
+  isCurrentThread?: boolean
   tabs: PreviewTabModel[]
   activeTab: PreviewTabModel | null
   activeTabId: string | null
@@ -94,8 +94,8 @@ export interface FilePreviewContextValue {
     presentation?: FilePreviewPresentationHint,
     options?: FilePreviewOpenOptions
   ): Promise<FilePreviewOpenOutcome>
-  openFileChanges(campId: string, changes: AgentRunFileChangesView, evidenceFileId?: string): string | undefined
-  syncFileChanges(campId: string, changes: readonly AgentRunFileChangesView[]): void
+  openFileChanges(threadId: string, changes: AgentRunFileChangesView, evidenceFileId?: string): string | undefined
+  syncFileChanges(threadId: string, changes: readonly AgentRunFileChangesView[]): void
   openMissionActivity(missionId: string): void
   openExecution(): void
   loadChanges(tabId: string, read: () => Promise<AgentRunFileChangesDetailView>, retry?: boolean): Promise<void>
@@ -215,18 +215,18 @@ export interface PreviewSessionOwner {
   admit(session: FilePreviewSession): boolean
   changed(): void
   touch(session: FilePreviewSession, tabId?: string): void
-  isCurrent(campId: string): boolean
+  isCurrent(threadId: string): boolean
   sync(): Promise<void>
   reserveHtml(session: FilePreviewSession, tabId: string): Promise<(() => void) | null>
 }
 export type FilePreviewSession = ReturnType<typeof createFilePreviewSession>
-export function createFilePreviewSession(api: FilePreviewApi, campId: string, owner: PreviewSessionOwner) {
+export function createFilePreviewSession(api: FilePreviewApi, threadId: string, owner: PreviewSessionOwner) {
   const id = newCommandId()
-  const initial = filePreviewSessionStore.get(campId)
+  const initial = filePreviewSessionStore.get(threadId)
   const tabsRef = { current: initial?.tabs.map(restoredTab) ?? [] as PreviewTabModel[] }
   const activeTabIdRef = { current: initial?.activeTabId ?? null as string | null }
   const paneVisibleRef = { current: initial?.paneVisible ?? false }
-  const campIdRef = { current: campId }
+  const campIdRef = { current: threadId }
   const scopeGenerationRef = { current: 0 }
   const bindingPromiseRef = { current: Promise.resolve() }
   const objectUrls = { current: new Set<string>() }
@@ -239,7 +239,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
   const notify = (): void => {
     if (disposed) return
     snapshot = { tabs: tabsRef.current, activeTabId: activeTabIdRef.current, paneVisible: paneVisibleRef.current, openFeedback }
-    saveSession(campId)
+    saveSession(threadId)
     owner.changed()
   }
   const setTabs = (update: (tabs: PreviewTabModel[]) => PreviewTabModel[]): void => { tabsRef.current = update(tabsRef.current); notify() }
@@ -253,10 +253,10 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
     objectUrls.current.delete(content.url)
   }
 
-  const saveSession = (targetCampId: string) => {
+  const saveSession = (targetThreadId: string) => {
     const snapshot: FilePreviewSessionSnapshot = {
       tabs: tabsRef.current.map((tab) => tab.kind === 'mission_activity' || tab.kind === 'execution' ? { ...tab } : tab.kind === 'file_change'
-        ? { kind: 'file_change', id: tab.id, campId: tab.campId, changes: tab.changes, selectedEvidenceFileId: tab.selectedEvidenceFileId, reading: tab.reading }
+        ? { kind: 'file_change', id: tab.id, threadId: tab.threadId, changes: tab.changes, selectedEvidenceFileId: tab.selectedEvidenceFileId, reading: tab.reading }
         : {
           kind: 'file',
           id: tab.id,
@@ -269,7 +269,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
       activeTabId: activeTabIdRef.current,
       paneVisible: paneVisibleRef.current
     }
-    filePreviewSessionStore.set(targetCampId, snapshot)
+    filePreviewSessionStore.set(targetThreadId, snapshot)
   }
 
   const loadContent = async (file: ResolvedFilePreview, reading?: FilePreviewReadingState): Promise<
@@ -397,19 +397,19 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
   }
 
   const showOpenedTab = (tabId: string, isNew: boolean, focusTab = false) => {
-    if (!owner.isCurrent(campId)) return
+    if (!owner.isCurrent(threadId)) return
     setActiveTabId(tabId)
     setPaneVisible(true)
     setOpenFeedback((previous) => ({ tabId, sequence: (previous?.sequence ?? 0) + 1, isNew, focusTab }))
   }
 
   const openFileChanges = (
-    targetCampId: string,
+    targetThreadId: string,
     changes: AgentRunFileChangesView,
     evidenceFileId?: string
   ) => {
-    if (targetCampId !== campIdRef.current) return
-    const id = `file-change:${encodeURIComponent(targetCampId)}:${encodeURIComponent(changes.agentRunId)}:${changes.executionEpoch}`
+    if (targetThreadId !== campIdRef.current) return
+    const id = `file-change:${encodeURIComponent(targetThreadId)}:${encodeURIComponent(changes.agentRunId)}:${changes.executionEpoch}`
     const existing = tabsRef.current.find((tab) => tab.id === id)
     if (existing?.kind === 'file_change'
       && ((changes.revision ?? 0) < (existing.changes.revision ?? 0)
@@ -430,7 +430,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
     const selectedEvidenceFileId = selectedFile?.evidenceFileId ?? null
     const tab: FileChangesPreviewTabModel = {
       ...(existing?.kind === 'file_change' ? existing : {}),
-      kind: 'file_change', id, campId: targetCampId, changes, selectedEvidenceFileId,
+      kind: 'file_change', id, threadId: targetThreadId, changes, selectedEvidenceFileId,
       ...(projectionChanged ? { detail: undefined, detailBytes: undefined, detailStatus: undefined } : {})
     }
     setTabs((current) => existing ? current.map((entry) => entry.id === id ? tab : entry) : [...current, tab])
@@ -446,13 +446,13 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
       : tab))
   }
 
-  const syncFileChanges = (targetCampId: string, changes: readonly AgentRunFileChangesView[]): void => {
-    if (targetCampId !== campIdRef.current) return
+  const syncFileChanges = (targetThreadId: string, changes: readonly AgentRunFileChangesView[]): void => {
+    if (targetThreadId !== campIdRef.current) return
     const byRun = new Map(changes.map(item => [`${item.agentRunId}:${item.executionEpoch}`, item]))
     setTabs(current => {
       let changed = false
       const nextTabs = current.map(tab => {
-      if (tab.kind !== 'file_change' || tab.campId !== targetCampId) return tab
+      if (tab.kind !== 'file_change' || tab.threadId !== targetThreadId) return tab
       const next = byRun.get(`${tab.changes.agentRunId}:${tab.changes.executionEpoch}`)
       if (!next
         || (next.revision ?? 0) < (tab.changes.revision ?? 0)
@@ -786,7 +786,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
         pageIndex: 0
       }
       setTabs((entries) => [...entries, tab])
-      if (owner.isCurrent(campId) && session.lastUsed === interaction) showOpenedTab(tabId, true)
+      if (owner.isCurrent(threadId) && session.lastUsed === interaction) showOpenedTab(tabId, true)
       return installResolvedFile(
         tabId,
         request,
@@ -795,7 +795,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
         0,
         true,
         Boolean(document.activeElement?.closest('.file-preview-pane')),
-        owner.isCurrent(campId) && session.lastUsed === interaction,
+        owner.isCurrent(threadId) && session.lastUsed === interaction,
         loaded
       )
     } catch {
@@ -811,7 +811,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
     options?: FilePreviewOpenOptions
   ): Promise<FilePreviewOpenOutcome> => {
     target ??= 'rawReference' in request ? parseFileReference(request.rawReference)?.target : undefined
-    if (!campId || !owner.isCurrent(campId)) return { kind: 'error', error: unavailableSourceError() }
+    if (!threadId || !owner.isCurrent(threadId)) return { kind: 'error', error: unavailableSourceError() }
     const cached = tabsRef.current.find(tab => tab.kind === 'file' && (tab.sourceKey === filePreviewSourceKey(request) || tab.sourceAliases?.includes(filePreviewSourceKey(request))))
     owner.touch(session, cached?.id)
     if (cached?.kind === 'file' && (cached.content || cached.loadState === 'opening')) {
@@ -938,7 +938,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
   const hidePane = () => setPaneVisible(false)
 
   const openMissionActivity = (missionId: string): void => {
-    if (disposed || !campId) return
+    if (disposed || !threadId) return
     const existing = tabsRef.current.find(tab => tab.kind === 'mission_activity')
     const tabId = existing?.id ?? newCommandId()
     if (!existing) setTabs(tabs => [{ kind: 'mission_activity', id: tabId, missionId }, ...tabs])
@@ -947,7 +947,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
   }
 
   const openExecution = (): void => {
-    if (disposed || !campId) return
+    if (disposed || !threadId) return
     const existing = tabsRef.current.find(tab => tab.kind === 'execution')
     const tabId = existing?.id ?? newCommandId()
     if (!existing) setTabs(tabs => [{ kind: 'execution', id: tabId }, ...tabs])
@@ -995,7 +995,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
         void api.release({ handleId: tab.file.handleId })
       }
     }
-    if (nextActiveTabId && owner.isCurrent(campId) && paneVisibleRef.current) restoreTab(nextActiveTabId, true)
+    if (nextActiveTabId && owner.isCurrent(threadId) && paneVisibleRef.current) restoreTab(nextActiveTabId, true)
   }
 
   const close = (tabId: string) => closeMany([tabId])
@@ -1171,7 +1171,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
   const saveReading = (tabId: string, state: Partial<FilePreviewReadingState>): void => {
     // Scroll samples update the lightweight snapshot without causing a Renderer render or touching LRU.
     const tab = tabsRef.current.find(tab => tab.id === tabId)
-    if (tab) { tab.reading = { ...tab.reading, ...state }; saveSession(campId) }
+    if (tab) { tab.reading = { ...tab.reading, ...state }; saveSession(threadId) }
   }
   const saveHtmlSource = (tabId: string, value: FilePreviewTabModel['htmlSource']): void => {
     setTabs(tabs => tabs.map(tab => tab.kind === 'file' && tab.id === tabId ? { ...tab, htmlSource: value } : tab))
@@ -1259,7 +1259,7 @@ export function createFilePreviewSession(api: FilePreviewApi, campId: string, ow
     return operation
   }
   const session = {
-    id, campId, lastUsed: 0, get pendingOpens() { return committedLoads.size }, tabUsage: new Map<string, number>(),
+    id, threadId, lastUsed: 0, get pendingOpens() { return committedLoads.size }, tabUsage: new Map<string, number>(),
     getSnapshot: () => snapshot,
     retired,
     cool: () => { scopeGenerationRef.current += 1; committedLoads.clear(); for (const tab of tabsRef.current) session.evict(tab.id); session.id = newCommandId(); bindingPromiseRef.current = owner.sync() },

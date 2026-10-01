@@ -2,12 +2,12 @@ import { UiText, uiAttribute } from './interface-language'
 import { useEffect, useRef, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { LocalAttachmentOwnerLocator } from '@contracts'
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { writeClipboardText } from './clipboard'
 
 /** Resolve only an explicitly inspected attachment; never read content for a path label. */
 export function useAttachmentLocation(locator?: LocalAttachmentOwnerLocator) {
-  const client = useCampClient()
+  const client = useThreadClient()
   const key = JSON.stringify(locator)
   const latest = useRef(locator)
   latest.current = locator

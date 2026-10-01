@@ -1,15 +1,15 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { AgentProfile, AgentRunView, CampMessageView, CampSnapshot } from '@contracts'
-import { CampWorkspace, campConversationTimeline } from './CampWorkspace'
+import type { AgentProfile, AgentRunView, ThreadMessageView, ThreadSnapshot } from '@contracts'
+import { ThreadWorkspace, campConversationTimeline } from './ThreadWorkspace'
 
 const createdAt = '2026-09-06T06:00:00Z'
 const endedAt = '2026-09-06T06:01:00Z'
 
 function run(overrides: Partial<AgentRunView> = {}): AgentRunView {
   return {
-    id: 'run-1', campTurnId: 'turn-1', conversationId: 'conversation-1', agentId: 'agent_1',
+    id: 'run-1', threadTurnId: 'turn-1', conversationId: 'conversation-1', agentId: 'agent_1',
     taskId: null, responsibilityKey: 'root', responsibilityGeneration: 1, purpose: '制作页面',
     completionRole: 'required', status: 'failed', waitReason: null, cancelRequestedAt: null,
     cancelReasonCode: null, cancelAcknowledgedAt: null, terminalResolutionSource: null,
@@ -23,10 +23,10 @@ function run(overrides: Partial<AgentRunView> = {}): AgentRunView {
   }
 }
 
-function snapshot(runs: AgentRunView[] = [run()], images = true, files = true): CampSnapshot {
+function snapshot(runs: AgentRunView[] = [run()], images = true, files = true): ThreadSnapshot {
   return {
     schemaVersion: 34, throughGlobalSequence: 1,
-    camp: { id: 'camp-artifacts', title: '运行产物', activationState: 'active',
+    thread: { id: 'camp-artifacts', title: '运行产物', activationState: 'active',
       projectBindingKind: 'quick_chat', projectPath: '/quick-chat', defaultLeadAgentId: 'agent_1',
       membershipGeneration: 1, version: 1, createdAt, updatedAt: endedAt },
     members: [...new Set(runs.map(item => item.agentId))].map((agentId, index) => ({
@@ -51,7 +51,7 @@ function snapshot(runs: AgentRunView[] = [run()], images = true, files = true): 
   }
 }
 
-function renderTimeline(candidate: CampSnapshot): string {
+function renderTimeline(candidate: ThreadSnapshot): string {
   const agents: AgentProfile[] = candidate.members.map(member => ({
     agentId: member.agentId, displayName: member.displayName, avatarRef: member.avatarRef,
     accent: member.accent, teamRole: '', professionalResponsibilities: '', personalityTraits: [],
@@ -59,7 +59,7 @@ function renderTimeline(candidate: CampSnapshot): string {
     runtimeConfiguration: null, runtimeReadiness: { status: 'runtime_not_configured', blockers: [] },
     memberOrder: member.memberOrder, version: 1, createdAt, updatedAt: endedAt, removedAt: null
   }))
-  const markup = renderToStaticMarkup(createElement(CampWorkspace, {
+  const markup = renderToStaticMarkup(createElement(ThreadWorkspace, {
     snapshot: candidate, projectName: null, agents, busy: false,
     onSend: async () => undefined, onChangeLead: async () => undefined,
     onTasksChanged: async () => undefined, onResolveApproval: () => undefined,
@@ -77,13 +77,13 @@ function renderTimeline(candidate: CampSnapshot): string {
   throw new Error('timeline-track is unclosed')
 }
 
-function publicMessage(source: AgentRunView): CampMessageView {
+function publicMessage(source: AgentRunView): ThreadMessageView {
   return {
     quotes: [], withdrawn: false, canWithdraw: false, version: 1,
     id: 'public-message', sequence: 1, timelineGlobalSequence: null, authorType: 'agent',
     authorId: source.agentId, sourceAgentRunId: source.id, body: '已完成部分修改。',
     content: [{ kind: 'text', text: '已完成部分修改。' }], attachments: [], addressMode: 'default',
-    addressedAgentIds: [], replyToCampMessageId: null, campTurnId: source.campTurnId,
+    addressedAgentIds: [], replyToThreadMessageId: null, threadTurnId: source.threadTurnId,
     presentation: null, createdAt }
 }
 

@@ -12,10 +12,10 @@ use uuid::Uuid;
 
 use crate::{
     camp_content::{
-        StructuredCampMessageContent, mentions_current_user, normalize_content,
+        StructuredThreadMessageContent, mentions_current_user, normalize_content,
         render_agent_plain_text, validate_content,
     },
-    camp_id::{CAMP_ID_PATTERN, CampId},
+    camp_id::{CAMP_ID_PATTERN, ThreadId},
     camp_message_publication::public_camp_message_publication_cte,
     db::Database,
     local_attachment_snapshot::DIRECTORY_MEDIA_TYPE,
@@ -24,10 +24,10 @@ use crate::{
     team_tool::{AuthenticatedTeamToolRun, TeamToolInvocationError},
 };
 
-pub const CAMP_LIST_TOOL_NAME: &str = "camp.list";
-pub const CAMP_SEARCH_TOOL_NAME: &str = "camp.search";
+pub const CAMP_LIST_TOOL_NAME: &str = "thread.list";
+pub const CAMP_SEARCH_TOOL_NAME: &str = "thread.search";
 pub const HISTORY_SEARCH_TOOL_NAME: &str = "history.search";
-pub const CAMP_READ_TOOL_NAME: &str = "camp.read";
+pub const CAMP_READ_TOOL_NAME: &str = "thread.read";
 pub const CAMP_HISTORY_CONTRACT_VERSION: u32 = 10;
 
 const CAMP_LIST_DEFAULT_LIMIT: usize = 20;
@@ -48,14 +48,15 @@ const MAX_RESPONSE_CHARS: usize = 80_000;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CampListInput {
+pub struct ThreadListInput {
     pub query: Option<String>,
     pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CampSearchInput {
+pub struct ThreadSearchInput {
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: Option<String>,
     pub query: String,
     pub limit: Option<usize>,
@@ -65,6 +66,7 @@ pub struct CampSearchInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HistorySearchInput {
     pub query: String,
+    #[serde(rename = "threadIds", alias = "campIds")]
     pub camp_ids: Option<Vec<String>>,
     pub date_from: Option<String>,
     pub date_to: Option<String>,
@@ -89,9 +91,11 @@ impl ReadDirection {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CampReadInput {
+pub struct ThreadReadInput {
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: Option<String>,
     pub message_id: Option<String>,
+    #[serde(rename = "replyChain", alias = "thread")]
     pub thread: Option<String>,
     pub before: Option<i64>,
     pub limit: Option<usize>,
@@ -106,7 +110,7 @@ struct RunFence {
 }
 
 #[derive(Debug, Clone)]
-struct HistoryCamp {
+struct HistoryThread {
     camp_id: String,
     camp_title: String,
     last_visible_activity_at: String,
@@ -119,7 +123,7 @@ enum MessageFence {
 }
 
 #[derive(Debug, Clone)]
-struct CampTarget {
+struct ThreadTarget {
     camp_id: String,
     fence: MessageFence,
     viewer_agent_id: String,
@@ -177,9 +181,9 @@ struct HistorySearchScope<'a> {
 }
 
 #[derive(Debug, Default)]
-pub struct CampHistoryService;
+pub struct ThreadHistoryService;
 
-impl CampHistoryService {
+impl ThreadHistoryService {
     pub fn camp_list_input_schema() -> Value {
         json!({
             "type": "object",
@@ -198,7 +202,7 @@ impl CampHistoryService {
             "required": ["query"],
             "properties": {
                 "query": {"type": "string", "minLength": 1, "maxLength": MAX_QUERY_CHARS},
-                "campId": {"type": "string", "pattern": CAMP_ID_PATTERN},
+                "threadId": {"type": "string", "pattern": CAMP_ID_PATTERN},
                 "limit": {"type": "integer", "minimum": 1, "maximum": CAMP_SEARCH_MAX_LIMIT}
             }
         })
@@ -211,7 +215,7 @@ impl CampHistoryService {
             "required": ["query"],
             "properties": {
                 "query": {"type": "string", "minLength": 1, "maxLength": MAX_QUERY_CHARS},
-                "campIds": {
+                "threadIds": {
                     "type": "array", "minItems": 1, "maxItems": MAX_HISTORY_CAMP_IDS,
                     "uniqueItems": true,
                     "items": {"type": "string", "pattern": CAMP_ID_PATTERN}
@@ -231,16 +235,16 @@ impl CampHistoryService {
                     "additionalProperties": false,
                     "required": ["messageId"],
                     "properties": {
-                        "campId": {"type": "string", "pattern": CAMP_ID_PATTERN},
+                        "threadId": {"type": "string", "pattern": CAMP_ID_PATTERN},
                         "messageId": {"type": "string", "minLength": 1}
                     }
                 },
                 {
                     "additionalProperties": false,
-                    "required": ["thread"],
+                    "required": ["replyChain"],
                     "properties": {
-                        "campId": {"type": "string", "pattern": CAMP_ID_PATTERN},
-                        "thread": {"type": "string", "minLength": 1},
+                        "threadId": {"type": "string", "pattern": CAMP_ID_PATTERN},
+                        "replyChain": {"type": "string", "minLength": 1},
                         "before": {"type": "integer", "minimum": 1},
                         "limit": {"type": "integer", "minimum": 1, "maximum": MAX_PAGE_LIMIT}
                     }
@@ -248,7 +252,7 @@ impl CampHistoryService {
                 {
                     "additionalProperties": false,
                     "properties": {
-                        "campId": {"type": "string", "pattern": CAMP_ID_PATTERN},
+                        "threadId": {"type": "string", "pattern": CAMP_ID_PATTERN},
                         "before": {"type": "integer", "minimum": 1},
                         "limit": {"type": "integer", "minimum": 1, "maximum": MAX_PAGE_LIMIT}
                     }
@@ -261,7 +265,7 @@ impl CampHistoryService {
         &self,
         database: &mut Database,
         run: &AuthenticatedTeamToolRun,
-        input: &CampListInput,
+        input: &ThreadListInput,
     ) -> Result<Value> {
         let limit = effective_limit(input.limit, CAMP_LIST_DEFAULT_LIMIT, CAMP_LIST_MAX_LIMIT)?;
         let query = optional_trimmed_query(input.query.as_deref(), MAX_CAMP_QUERY_CHARS)?;
@@ -297,13 +301,16 @@ impl CampHistoryService {
             .into_iter()
             .map(|camp| {
                 json!({
-                    "campId": camp.camp_id,
+                    "threadId": camp.camp_id,
                     "title": camp.camp_title,
                     "lastVisibleActivityAt": camp.last_visible_activity_at,
                 })
             })
             .collect::<Vec<_>>();
-        let result = cap_top_k_response(json!({"camps": values, "truncated": truncated}), "camps")?;
+        let result = cap_top_k_response(
+            json!({"threads": values, "truncated": truncated}),
+            "threads",
+        )?;
         transaction.commit()?;
         Ok(result)
     }
@@ -312,7 +319,7 @@ impl CampHistoryService {
         &self,
         database: &mut Database,
         run: &AuthenticatedTeamToolRun,
-        input: &CampSearchInput,
+        input: &ThreadSearchInput,
     ) -> Result<Value> {
         let query = required_query(&input.query)?;
         let requested_camp_id = validate_requested_camp_id(input.camp_id.as_deref())?;
@@ -428,7 +435,7 @@ impl CampHistoryService {
         &self,
         database: &mut Database,
         run: &AuthenticatedTeamToolRun,
-        input: &CampReadInput,
+        input: &ThreadReadInput,
     ) -> Result<Value> {
         let requested_camp_id = validate_requested_camp_id(input.camp_id.as_deref())?;
         let transaction = database
@@ -491,15 +498,15 @@ fn invalid_argument(message: &str) -> anyhow::Error {
 
 fn read_unavailable() -> anyhow::Error {
     tool_error(
-        "camp.read_unavailable",
-        "Camp history item is unavailable to this AgentRun",
+        "thread.read_unavailable",
+        "Thread history item is unavailable to this AgentRun",
     )
 }
 
 fn search_unavailable() -> anyhow::Error {
     tool_error(
-        "camp.search_unavailable",
-        "Camp search target is unavailable to this AgentRun",
+        "thread.search_unavailable",
+        "Thread search target is unavailable to this AgentRun",
     )
 }
 
@@ -543,7 +550,9 @@ fn optional_trimmed_query(value: Option<&str>, maximum: usize) -> Result<Option<
 
 fn validate_cursor(cursor: Option<i64>) -> Result<()> {
     if cursor.is_some_and(|cursor| cursor < 1) {
-        return Err(invalid_argument("cursor must be a positive Camp sequence"));
+        return Err(invalid_argument(
+            "cursor must be a positive Thread sequence",
+        ));
     }
     Ok(())
 }
@@ -553,13 +562,15 @@ fn validate_requested_camps(values: Option<&[String]>) -> Result<Option<Vec<Stri
         return Ok(None);
     };
     if values.is_empty() || values.len() > MAX_HISTORY_CAMP_IDS {
-        return Err(invalid_argument("campIds must contain 1 to 20 unique IDs"));
+        return Err(invalid_argument(
+            "threadIds must contain 1 to 20 unique IDs",
+        ));
     }
     let mut unique = HashSet::new();
     for value in values {
-        if CampId::parse(value).is_err() || !unique.insert(value.clone()) {
+        if ThreadId::parse(value).is_err() || !unique.insert(value.clone()) {
             return Err(invalid_argument(
-                "campIds must contain 1 to 20 unique Rovai Camp IDs",
+                "threadIds must contain 1 to 20 unique Rovai Thread IDs",
             ));
         }
     }
@@ -569,9 +580,9 @@ fn validate_requested_camps(values: Option<&[String]>) -> Result<Option<Vec<Stri
 fn validate_requested_camp_id(value: Option<&str>) -> Result<Option<String>> {
     value
         .map(|value| {
-            CampId::parse(value)
+            ThreadId::parse(value)
                 .map(|camp_id| camp_id.to_string())
-                .map_err(|_| invalid_argument("campId must be a Rovai Camp ID"))
+                .map_err(|_| invalid_argument("threadId must be a Rovai Thread ID"))
         })
         .transpose()
 }
@@ -637,12 +648,15 @@ fn load_run_fence(
         .ok_or_else(|| {
             tool_error(
                 "camp.manifest_unavailable",
-                "Camp history tools require the current AgentRun ContextManifest",
+                "Thread history tools require the current AgentRun ContextManifest",
             )
         })
 }
 
-fn load_history_camps(transaction: &Transaction<'_>, fence: &RunFence) -> Result<Vec<HistoryCamp>> {
+fn load_history_camps(
+    transaction: &Transaction<'_>,
+    fence: &RunFence,
+) -> Result<Vec<HistoryThread>> {
     let publication_cte = public_camp_message_publication_cte();
     let sql = format!(
         r#"
@@ -682,7 +696,7 @@ fn load_history_camps(transaction: &Transaction<'_>, fence: &RunFence) -> Result
                 fence.current_camp_id,
             ],
             |row| {
-                Ok(HistoryCamp {
+                Ok(HistoryThread {
                     camp_id: row.get(0)?,
                     camp_title: row.get(1)?,
                     last_visible_activity_at: row.get(2)?,
@@ -698,10 +712,10 @@ fn resolve_camp_target(
     run: &AuthenticatedTeamToolRun,
     fence: &RunFence,
     requested_camp_id: Option<&str>,
-) -> Result<Option<CampTarget>> {
+) -> Result<Option<ThreadTarget>> {
     let camp_id = requested_camp_id.unwrap_or(&fence.current_camp_id);
     if camp_id == fence.current_camp_id {
-        return Ok(Some(CampTarget {
+        return Ok(Some(ThreadTarget {
             camp_id: camp_id.to_string(),
             fence: MessageFence::Current {
                 boundary: fence.current_boundary,
@@ -724,7 +738,7 @@ fn resolve_camp_target(
     if available.is_none() {
         return Ok(None);
     }
-    Ok(Some(CampTarget {
+    Ok(Some(ThreadTarget {
         camp_id: camp_id.to_string(),
         fence: MessageFence::History {
             global_boundary: fence.global_boundary,
@@ -738,7 +752,7 @@ fn resolve_live_read_target(
     run: &AuthenticatedTeamToolRun,
     fence: &RunFence,
     requested_camp_id: Option<&str>,
-) -> Result<Option<CampTarget>> {
+) -> Result<Option<ThreadTarget>> {
     let camp_id = requested_camp_id.unwrap_or(&fence.current_camp_id);
     let boundary = transaction
         .query_row(
@@ -747,7 +761,7 @@ fn resolve_live_read_target(
             |row| row.get::<_, i64>(0),
         )
         .optional()?;
-    Ok(boundary.map(|boundary| CampTarget {
+    Ok(boundary.map(|boundary| ThreadTarget {
         camp_id: camp_id.to_string(),
         fence: MessageFence::Current { boundary },
         viewer_agent_id: run.agent_id.clone(),
@@ -779,7 +793,7 @@ fn literal_fts_query(query: &str) -> String {
 
 fn target_history_scope<'a>(
     fence: &'a RunFence,
-    target: &'a CampTarget,
+    target: &'a ThreadTarget,
 ) -> Option<HistorySearchScope<'a>> {
     matches!(target.fence, MessageFence::History { .. }).then(|| HistorySearchScope {
         fence,
@@ -794,7 +808,7 @@ fn target_history_scope<'a>(
 fn load_target_body_candidates(
     transaction: &Transaction<'_>,
     fence: &RunFence,
-    target: &CampTarget,
+    target: &ThreadTarget,
     query: &str,
     budget: usize,
 ) -> Result<CandidatePage> {
@@ -1167,7 +1181,7 @@ fn merge_current_reference_candidates(
 fn merge_target_reference_candidates(
     transaction: &Transaction<'_>,
     fence: &RunFence,
-    target: &CampTarget,
+    target: &ThreadTarget,
     query: &str,
     limit: usize,
     candidates: &mut CandidateMap,
@@ -1393,7 +1407,7 @@ fn ranked_search_response(
         .into_iter()
         .map(|candidate| {
             let mut value = json!({
-                "campId": candidate.message.camp_id,
+                "threadId": candidate.message.camp_id,
                 "messageId": candidate.message.id,
                 "sequence": candidate.message.sequence,
                 "authorType": candidate.message.author_type,
@@ -1407,7 +1421,7 @@ fn ranked_search_response(
                 ),
             });
             if include_camp_title {
-                value["campTitle"] = json!(candidate.message.camp_title);
+                value["threadTitle"] = json!(candidate.message.camp_title);
             }
             value
         })
@@ -1448,16 +1462,16 @@ fn snippet(body: &str, first_match: Option<usize>) -> String {
 
 fn attach_message_quotes(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     message_id: &str,
     value: &mut Value,
 ) -> Result<()> {
     let fence = match target.fence {
         MessageFence::Current { boundary } => {
-            crate::message_quote::CampQuoteFence::CampSequence(boundary)
+            crate::message_quote::ThreadQuoteFence::CampSequence(boundary)
         }
         MessageFence::History { global_boundary } => {
-            crate::message_quote::CampQuoteFence::GlobalPublicationSequence(global_boundary)
+            crate::message_quote::ThreadQuoteFence::GlobalPublicationSequence(global_boundary)
         }
     };
     let quotes = crate::message_quote::load_agent_visible_camp_quotes(
@@ -1475,7 +1489,7 @@ fn attach_message_quotes(
 
 fn attach_search_quotes(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     mut response: Value,
 ) -> Result<Value> {
     for value in response["results"]
@@ -1505,11 +1519,11 @@ fn attach_history_search_quotes(
             .as_str()
             .context("search result has no message")?
             .to_owned();
-        let camp_id = value["campId"]
+        let camp_id = value["threadId"]
             .as_str()
-            .context("history search result has no Camp")?
+            .context("history search result has no Thread")?
             .to_owned();
-        let target = CampTarget {
+        let target = ThreadTarget {
             camp_id,
             fence: MessageFence::History { global_boundary },
             viewer_agent_id: viewer_agent_id.to_owned(),
@@ -1527,13 +1541,13 @@ fn cap_top_k_response(mut response: Value, key: &str) -> Result<Value> {
         let Some(items) = response.get_mut(key).and_then(Value::as_array_mut) else {
             return Err(tool_error(
                 "camp.response_overloaded",
-                "Camp history response metadata exceeds the hard limit",
+                "Thread history response metadata exceeds the hard limit",
             ));
         };
         if items.pop().is_none() {
             return Err(tool_error(
                 "camp.response_overloaded",
-                "Camp history response metadata exceeds the hard limit",
+                "Thread history response metadata exceeds the hard limit",
             ));
         }
         response["truncated"] = Value::Bool(true);
@@ -1542,7 +1556,7 @@ fn cap_top_k_response(mut response: Value, key: &str) -> Result<Value> {
 
 fn read_item(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     run: &AuthenticatedTeamToolRun,
     message_id: &str,
 ) -> Result<Value> {
@@ -1550,7 +1564,7 @@ fn read_item(
         load_item_message(transaction, target, run, message_id)?.ok_or_else(read_unavailable)?;
     if message.withdrawn {
         return Ok(json!({
-            "campId": target.camp_id,
+            "threadId": target.camp_id,
             "mode": "item",
             "items": [withdrawn_item(&message)],
         }));
@@ -1558,7 +1572,7 @@ fn read_item(
     let (attachments, attachment_count) = load_attachments(transaction, message_id)?;
     let addressing = load_exact_addressing(transaction, message_id)?;
     let mut value = json!({
-        "campId": target.camp_id,
+        "threadId": target.camp_id,
         "mode": "item",
         "items": [{
             "messageId": message.id,
@@ -1581,7 +1595,7 @@ fn read_item(
 
 fn load_item_message(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     run: &AuthenticatedTeamToolRun,
     message_id: &str,
 ) -> Result<Option<MessageRow>> {
@@ -1599,7 +1613,7 @@ fn load_item_message(
 /// content.
 fn load_committed_self_written_message(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     run: &AuthenticatedTeamToolRun,
     message_id: &str,
 ) -> Result<Option<MessageRow>> {
@@ -1674,7 +1688,7 @@ fn load_exact_addressing(transaction: &Transaction<'_>, message_id: &str) -> Res
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     let recipients: Vec<String> = serde_json::from_str(&recipients_json)?;
-    let content: StructuredCampMessageContent = serde_json::from_str(&content_json)?;
+    let content: StructuredThreadMessageContent = serde_json::from_str(&content_json)?;
     validate_content(&content)?;
     Ok(json!({
         "effectiveAgentRecipients": recipients,
@@ -1684,7 +1698,7 @@ fn load_exact_addressing(transaction: &Transaction<'_>, message_id: &str) -> Res
 
 fn read_thread(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     message_id: &str,
     direction: ReadDirection,
     cursor: Option<i64>,
@@ -1721,10 +1735,10 @@ fn read_thread(
         target,
         rows,
         json!({
-            "campId": target.camp_id,
-            "mode": "thread",
+            "threadId": target.camp_id,
+            "mode": "reply_chain",
             "anchorMessageId": message_id,
-            "threadRootMessageId": root.id,
+            "replyChainRootMessageId": root.id,
             "direction": direction.as_str(),
             "items": [],
             "nextCursor": next_cursor,
@@ -1735,14 +1749,14 @@ fn read_thread(
 
 fn load_anchor_message(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     message_id: &str,
 ) -> Result<MessageRow> {
     if let Some(message) = load_visible_message(transaction, target, message_id)? {
         if message.withdrawn {
             return Err(tool_error(
                 "message.withdrawn",
-                "The Camp message has been withdrawn",
+                "The Thread message has been withdrawn",
             ));
         }
         return Ok(message);
@@ -1752,7 +1766,7 @@ fn load_anchor_message(
 
 fn read_timeline(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     direction: ReadDirection,
     cursor: Option<i64>,
     limit: usize,
@@ -1776,7 +1790,7 @@ fn read_timeline(
         target,
         rows,
         json!({
-            "campId": target.camp_id,
+            "threadId": target.camp_id,
             "mode": "timeline",
             "direction": direction.as_str(),
             "items": [],
@@ -1788,7 +1802,7 @@ fn read_timeline(
 
 fn load_visible_message(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     message_id: &str,
 ) -> Result<Option<MessageRow>> {
     let publication_cte = public_camp_message_publication_cte();
@@ -1845,7 +1859,7 @@ fn projected_message_body(transaction: &Transaction<'_>, message_id: &str) -> Re
         [message_id],
         |row| row.get(0),
     )?;
-    let content = normalize_content(serde_json::from_str::<StructuredCampMessageContent>(
+    let content = normalize_content(serde_json::from_str::<StructuredThreadMessageContent>(
         &content_json,
     )?);
     validate_content(&content)?;
@@ -1854,7 +1868,7 @@ fn projected_message_body(transaction: &Transaction<'_>, message_id: &str) -> Re
 
 fn load_timeline_page(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     direction: ReadDirection,
     cursor: Option<i64>,
     limit: usize,
@@ -1864,7 +1878,7 @@ fn load_timeline_page(
 
 fn load_ordered_messages(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     direction: ReadDirection,
     cursor: Option<i64>,
     inclusive: bool,
@@ -1955,7 +1969,7 @@ fn load_ordered_messages(
 
 fn resolve_thread_root(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     mut message: MessageRow,
 ) -> Result<MessageRow> {
     let mut seen = HashSet::new();
@@ -1974,7 +1988,7 @@ fn resolve_thread_root(
 
 fn load_thread_page(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     root_message_id: &str,
     direction: ReadDirection,
     boundary: i64,
@@ -2146,7 +2160,7 @@ fn attachment_count(transaction: &Transaction<'_>, message_id: &str) -> Result<u
 
 fn fit_collection_response(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     rows: Vec<MessageRow>,
     mut response: Value,
 ) -> Result<Value> {
@@ -2160,7 +2174,7 @@ fn fit_collection_response(
 
 fn collection_item(
     transaction: &Transaction<'_>,
-    target: &CampTarget,
+    target: &ThreadTarget,
     row: &MessageRow,
 ) -> Result<Value> {
     if row.withdrawn {
@@ -2338,7 +2352,7 @@ mod slow_tests {
             body: body.to_string(),
             created_at: "2026-08-01T00:00:00Z".to_string(),
             recency,
-            camp_title: Some("Camp".to_string()),
+            camp_title: Some("Thread".to_string()),
             withdrawn: false,
         };
         let mut candidates = CandidateMap::new();
@@ -2464,7 +2478,7 @@ mod slow_tests {
 
         let rows = load_ordered_messages(
             &transaction,
-            &CampTarget {
+            &ThreadTarget {
                 camp_id: "rvcamp_01h47kvsy5fk1shh6w1g60eecf".to_string(),
                 fence: MessageFence::Current { boundary: 1 },
                 viewer_agent_id: "agent_1".to_string(),
@@ -2602,28 +2616,28 @@ mod slow_tests {
                     result_payload_json, result_entity_type, result_entity_id, camp_id,
                     actor_type, actor_id, source_agent_run_id, execution_epoch
                 ) VALUES
-                    ('command.result', 'operation-self', 'camp.message.send', 'accepted',
+                    ('command.result', 'operation-self', 'thread.message.send', 'accepted',
                      'camp_message.send_accepted', '{"messageId":"self-send"}',
                      'camp_message', 'self-send', 'rvcamp_01h47kvsy5fk1shh6w1g60eecf', 'agent', 'agent-1', 'run-1', 7),
-                    ('command.result', 'operation-other-run', 'camp.message.send', 'accepted',
+                    ('command.result', 'operation-other-run', 'thread.message.send', 'accepted',
                      'camp_message.send_accepted', '{"messageId":"other-run"}',
                      'camp_message', 'other-run', 'rvcamp_01h47kvsy5fk1shh6w1g60eecf', 'agent', 'agent-2', 'run-2', 7),
-                    ('command.result', 'operation-user-message', 'camp.message.send', 'accepted',
+                    ('command.result', 'operation-user-message', 'thread.message.send', 'accepted',
                      'camp_message.send_accepted', '{"messageId":"user-message"}',
                      'camp_message', 'user-message', 'rvcamp_01h47kvsy5fk1shh6w1g60eecf', 'agent', 'agent-1', 'run-1', 7),
-                    ('command.result', 'operation-outcome-other-run', 'camp.message.send', 'accepted',
+                    ('command.result', 'operation-outcome-other-run', 'thread.message.send', 'accepted',
                      'camp_message.send_accepted', '{"messageId":"outcome-other-run"}',
                      'camp_message', 'outcome-other-run', 'rvcamp_01h47kvsy5fk1shh6w1g60eecf', 'agent', 'agent-1', 'run-2', 7),
-                    ('command.result', 'operation-wrong-epoch', 'camp.message.send', 'accepted',
+                    ('command.result', 'operation-wrong-epoch', 'thread.message.send', 'accepted',
                      'camp_message.send_accepted', '{"messageId":"wrong-epoch"}',
                      'camp_message', 'wrong-epoch', 'rvcamp_01h47kvsy5fk1shh6w1g60eecf', 'agent', 'agent-1', 'run-1', 8),
                     ('command.result', 'operation-wrong-command', 'team.create_task', 'accepted',
                      'camp_message.send_accepted', '{"messageId":"wrong-command"}',
                      'camp_message', 'wrong-command', 'rvcamp_01h47kvsy5fk1shh6w1g60eecf', 'agent', 'agent-1', 'run-1', 7),
-                    ('command.result', 'operation-tombstoned', 'camp.message.send', 'accepted',
+                    ('command.result', 'operation-tombstoned', 'thread.message.send', 'accepted',
                      'camp_message.send_accepted', '{"messageId":"tombstoned-self-send"}',
                      'camp_message', 'tombstoned-self-send', 'rvcamp_01h47kvsy5fk1shh6w1g60eecf', 'agent', 'agent-1', 'run-1', 7),
-                    ('command.result', 'operation-other-camp', 'camp.message.send', 'accepted',
+                    ('command.result', 'operation-other-camp', 'thread.message.send', 'accepted',
                      'camp_message.send_accepted', '{"messageId":"other-camp"}',
                      'camp_message', 'other-camp', 'rvcamp_01h47kvsy5fk1shh6w1g60eec0', 'agent', 'agent-1', 'run-1', 7);
                 "#,
@@ -2637,7 +2651,7 @@ mod slow_tests {
             agent_run_id: "run-1".to_string(),
             execution_epoch: 7,
         };
-        let target = CampTarget {
+        let target = ThreadTarget {
             camp_id: "rvcamp_01h47kvsy5fk1shh6w1g60eecf".to_string(),
             fence: MessageFence::Current { boundary: 1 },
             viewer_agent_id: "agent-1".to_string(),
@@ -2663,12 +2677,12 @@ mod slow_tests {
                 error
                     .downcast_ref::<TeamToolInvocationError>()
                     .map(|error| error.code.as_str()),
-                Some("camp.read_unavailable"),
+                Some("thread.read_unavailable"),
                 "unexpected error for {message_id}: {error:#}",
             );
         }
 
-        let other_camp_target = CampTarget {
+        let other_camp_target = ThreadTarget {
             camp_id: "rvcamp_01h47kvsy5fk1shh6w1g60eec0".to_string(),
             fence: MessageFence::Current { boundary: 1 },
             viewer_agent_id: "agent-1".to_string(),
@@ -2800,7 +2814,7 @@ mod slow_tests {
         }
 
         let transaction = connection.transaction().unwrap();
-        let target = CampTarget {
+        let target = ThreadTarget {
             camp_id: "rvcamp_01h47kvsy5fk1shh6w1g60eecf".to_string(),
             fence: MessageFence::Current { boundary: 1 },
             viewer_agent_id: "agent_1".to_string(),
@@ -2848,7 +2862,7 @@ mod slow_tests {
                 })
         );
 
-        let latest_target = CampTarget {
+        let latest_target = ThreadTarget {
             camp_id: target.camp_id.clone(),
             fence: MessageFence::Current { boundary: 3 },
             viewer_agent_id: target.viewer_agent_id.clone(),
@@ -2927,7 +2941,7 @@ mod slow_tests {
                 )
                 .unwrap();
         }
-        let paged_target = CampTarget {
+        let paged_target = ThreadTarget {
             camp_id: target.camp_id.clone(),
             fence: MessageFence::Current { boundary: 230 },
             viewer_agent_id: target.viewer_agent_id.clone(),
@@ -3003,7 +3017,7 @@ mod slow_tests {
             &target,
             rows,
             json!({
-                "campId": "rvcamp_01h47kvsy5fk1shh6w1g60eecf",
+                "threadId": "rvcamp_01h47kvsy5fk1shh6w1g60eecf",
                 "mode": "timeline",
                 "direction": "after",
                 "items": [],

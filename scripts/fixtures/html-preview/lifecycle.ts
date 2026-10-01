@@ -23,7 +23,7 @@ export async function lifecycleAcceptance(window: BrowserWindow, userData: strin
     return Reflect.apply(writeHead, this, args)
   } as typeof writeHead
   try {
-    await run(`window.previewAcceptance.open({kind:'camp_workspace',campId:'preview-test',rawReference:'history.html'})`)
+    await run(`window.previewAcceptance.open({kind:'camp_workspace',threadId:'preview-test',rawReference:'history.html'})`)
     await wait(`${stage}?.dataset.documentState==='loaded' && ${stage}?.dataset.serverDiagnosticsState==='connected'`)
   } finally { ServerResponse.prototype.writeHead = writeHead }
   if (!streams.size) throw new Error('Fixture did not observe the diagnostic stream')

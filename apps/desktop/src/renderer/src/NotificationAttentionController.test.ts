@@ -31,18 +31,18 @@ it('localizes the identified first-run notification title while retaining the ep
     setInterfaceLanguage: async (interfaceLanguage: 'zh-CN' | 'en') =>
       ({ ...DEFAULT_GENERAL_PREFERENCES, interfaceLanguage })
   } as GeneralPreferencesApi
-  const current = episode('turn_completed', { camp: { id: 'camp-1', title: '初次集结' } })
+  const current = episode('turn_completed', { thread: { id: 'camp-1', title: '初次集结' } })
   const entry = { episode: current, signal: headsUpSignal(current, 'turn_completed'), changeSequence: 1 }
-  const render = (firstRunCampId: string | null) => renderToStaticMarkup(createElement(NotificationHeadsUp, {
-    entry, firstRunCampId, busy: false, onOpen() {}, onDismiss() {}
+  const render = (firstRunThreadId: string | null) => renderToStaticMarkup(createElement(NotificationHeadsUp, {
+    entry, firstRunThreadId, busy: false, onOpen() {}, onDismiss() {}
   }))
   await changeInterfaceLanguage(languageApi, 'en')
   try {
     expect(render('camp-1')).toContain('title="First Chat"')
     expect(render('camp-1')).not.toContain('初次集结')
     expect(render(null)).toContain('title="初次集结"')
-    expect(current.camp.title).toBe('初次集结')
-    expect(entry.signal.action.campId).toBe('camp-1')
+    expect(current.thread.title).toBe('初次集结')
+    expect(entry.signal.action.threadId).toBe('camp-1')
   } finally {
     await changeInterfaceLanguage(languageApi, 'zh-CN')
   }
@@ -51,7 +51,7 @@ it('localizes the identified first-run notification title while retaining the ep
 it('does not create visible ack commands for global cursor churn, and freezes uncertain retries', () => {
   let ids = 0
   const newId = (): string => `command-${++ids}`
-  const sources = { campId: 'camp-1', snapshotSequence: 20,
+  const sources = { threadId: 'camp-1', snapshotSequence: 20,
     messageIds: ['m1'], campTurnIds: ['t1'], agentRunIds: [], approvalIds: [] }
   const first = visibleAcknowledgementIntent(sources, 10, 20, null, newId)
   const retry = visibleAcknowledgementIntent({ ...sources, snapshotSequence: 900 }, 10, 900, first, newId)
@@ -67,12 +67,12 @@ it('does not create visible ack commands for global cursor churn, and freezes un
   expect(first.request.command.visibleMessageIds).toEqual(['m1'])
 })
 
-it('keeps the acknowledgement identity independently for each Camp across A/B/A navigation', () => {
+it('keeps the acknowledgement identity independently for each Thread across A/B/A navigation', () => {
   let ids = 0
   const newId = (): string => `command-${++ids}`
   const commands = new Map<string, ReturnType<typeof visibleAcknowledgementIntent>>()
-  const source = (campId: string) => ({ campId, snapshotSequence: 20,
-    messageIds: [`message-${campId}`], campTurnIds: [], agentRunIds: [], approvalIds: [] })
+  const source = (threadId: string) => ({ threadId, snapshotSequence: 20,
+    messageIds: [`message-${threadId}`], campTurnIds: [], agentRunIds: [], approvalIds: [] })
   const a = visibleAcknowledgementIntent(source('camp-a'), 10, 20, null, newId)
   commands.set('camp-a', a)
   const b = visibleAcknowledgementIntent(source('camp-b'), 11, 20, null, newId)
@@ -93,8 +93,8 @@ function action(
     actionId: `${episodeId}:${kind}`,
     kind,
     available: true,
-    campId: 'camp-1',
-    campTurnId: kind === 'open_camp_turn' ? 'turn-1' : null,
+    threadId: 'camp-1',
+    threadTurnId: kind === 'open_camp_turn' ? 'turn-1' : null,
     agentRunId: kind === 'open_agent_run' ? 'run-1' : null,
     messageId: kind === 'open_camp_message' ? 'message-1' : null,
     approvalId: kind === 'open_approval' ? 'approval-1' : null,
@@ -114,8 +114,8 @@ function episode(
     episodeVersion: 1,
     attentionRevision: 1,
     changeSequence: 1,
-    camp: { id: 'camp-1', title: 'Current title' },
-    campTurnId: semantic === 'approval_pending' ? null : 'turn-1',
+    thread: { id: 'camp-1', title: 'Current title' },
+    threadTurnId: semantic === 'approval_pending' ? null : 'turn-1',
     agentRunId: null,
     primarySemantic: semantic,
     unread: true,
@@ -458,7 +458,7 @@ it('suppresses completion only on its exact reading surface, without changing un
   const privateChange = change(episode('turn_completed'), 1)
   privateChange.headsUpSignal!.action.singleChat = { conversationId: 'private-1', agentId: 'agent-1', agentDisplayName: '洛克', agentRunId: 'run-1' }
   const state = applyNotificationHeadsUpChanges({ entries: [], overflowEntries: [] }, [privateChange])
-  const publicSource = { campId: 'camp-1', snapshotSequence: 1, messageIds: [], campTurnIds: [], agentRunIds: [], approvalIds: [], surfaceVisible: true }
+  const publicSource = { threadId: 'camp-1', snapshotSequence: 1, messageIds: [], campTurnIds: [], agentRunIds: [], approvalIds: [], surfaceVisible: true }
   for (const conversationId of [undefined, 'private-2', 'successor-1']) {
     expect(filterVisibleNotificationHeadsUp(state, [{ ...publicSource, conversationId }], true)).toBe(state)
   }
@@ -473,7 +473,7 @@ it('suppresses completion only on its exact reading surface, without changing un
   expect(filterVisibleNotificationHeadsUp(failedState, [{ ...publicSource, campTurnIds: ['turn-1'] }], true).entries).toEqual([])
 
   const agentRun = change(episode('turn_completed', {
-    campTurnId: null,
+    threadTurnId: null,
     agentRunId: 'run-1'
   }), 3)
   agentRun.headsUpSignal!.action = action('episode-1', 'open_agent_run')
@@ -493,7 +493,7 @@ it('suppresses completion only on its exact reading surface, without changing un
   ).entries).toEqual([])
 })
 
-it('suppresses every transient reminder from the attentive current Camp without marking it read', () => {
+it('suppresses every transient reminder from the attentive current Thread without marking it read', () => {
   const semantics: NotificationSemantic[] = [
     'approval_pending',
     'turn_failed',

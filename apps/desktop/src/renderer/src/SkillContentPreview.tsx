@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { useEffect, useRef, useState } from 'react'
 import type { ResolvedTheme, SkillContentRequest, SkillContentView } from '@contracts'
 import { CapabilityError } from './CapabilityWorkspace'
@@ -23,7 +23,7 @@ export function SkillContentPreview({
 
 function SkillContentPreviewSession({ target, theme }: { target: SkillContentRequest; theme: ResolvedTheme }): React.JSX.Element {
   const preview = useRef<HTMLDivElement>(null)
-  const client = useCampClient()
+  const client = useThreadClient()
   const [path, setPath] = useState('SKILL.md')
   const [raw, setRaw] = useState(false)
   const [view, setView] = useState<SkillContentView | null>(null)

@@ -69,7 +69,7 @@ describe('AdaptiveChannelHostPump', () => {
     await vi.advanceTimersByTimeAsync(0)
     pump.handleCoreEvent({
       method: 'navigation.invalidated',
-      params: { reason: 'delivery_batch.claimed', campId: 'bound-camp' }
+      params: { reason: 'delivery_batch.claimed', threadId: 'bound-camp' }
     })
     await vi.advanceTimersByTimeAsync(0)
     expect(run).toHaveBeenCalledTimes(2)

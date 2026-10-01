@@ -423,12 +423,12 @@ function FilePreviewDocument({ tab }: { tab: FilePreviewTabModel }): React.JSX.E
 
 function ReadingPanel({ tab, children }: { tab: import('./FilePreviewContext').PreviewTabModel; children: React.ReactNode }): React.JSX.Element {
   const root = useRef<HTMLDivElement>(null)
-  const { saveReading, isCurrentCamp } = useFilePreview()
+  const { saveReading, isCurrentThread } = useFilePreview()
   const content = tab.kind === 'file'
     ? tab.content
     : tab.kind === 'file_change'
       ? tab.detail
-      : tab.kind === 'mission_activity' && isCurrentCamp
+      : tab.kind === 'mission_activity' && isCurrentThread
         ? tab.missionId
         : null
   const restoring = useRef(false)

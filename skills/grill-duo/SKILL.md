@@ -1,11 +1,11 @@
 ---
 name: grill-duo
-description: Clarify or stress-test a plan, requirement, design or decision through user questions and one fixed Camp partner's independent review. Applies to the initiator and invited reviewer during that exchange; use grill-duo-with-docs when confirmed project documentation must also be maintained.
+description: Clarify or stress-test a plan, requirement, design or decision through user questions and one fixed Thread partner's independent review. Applies to the initiator and invited reviewer during that exchange; use grill-duo-with-docs when confirmed project documentation must also be maintained.
 ---
 
 # Grill Duo
 
-The initiator asks questions; one fixed partner reviews independently. Investigate facts available in code, authoritative documents, tools, current input or Camp history. Ask the user for genuine choices. Use the user's language.
+The initiator asks questions; one fixed partner reviews independently. Investigate facts available in code, authoritative documents, tools, current input or Thread history. Ask the user for genuine choices. Use the user's language.
 
 ## Roles and partner
 
@@ -15,7 +15,7 @@ Use trusted sender identity, the triggering request and direct replies:
 - A direct Grill Duo review request makes you the partner for that request only.
 - Old, invalid or late replies are supplementary; they cannot advance, roll back or reopen the exchange.
 
-Choose a relevant partner who is not you, remains in the Camp and can receive work. Address a trusted Agent ID. Keep that partner unless the user requests a change, they leave or become unavailable, or the topic moves beyond their useful expertise; explain a change. With none available, disclose solo questioning and keep the same round rules.
+Choose a relevant partner who is not you, remains in the Thread and can receive work. Address a trusted Agent ID. Keep that partner unless the user requests a change, they leave or become unavailable, or the topic moves beyond their useful expertise; explain a change. With none available, disclose solo questioning and keep the same round rules.
 
 ## One open round
 

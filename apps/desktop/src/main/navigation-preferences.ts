@@ -1,4 +1,4 @@
-import { isCampId } from '@contracts'
+import { isThreadId } from '@contracts'
 import { EMPTY_SNAPSHOT, sanitizeSnapshot, isProjectTargetKey, isStableId, isTimestamp, isRecord } from '../shared/navigation-preferences-model'
 import { readFile } from 'node:fs/promises'
 import type {
@@ -172,16 +172,16 @@ export class NavigationPreferencesStore {
 
   removeProject(
     targetKey: string,
-    relatedCampIds: string[]
+    relatedThreadIds: string[]
   ): Promise<NavigationPreferencesSnapshot> {
     if (!isProjectTargetKey(targetKey)) {
       return Promise.reject(new Error('Unsupported Project navigation key'))
     }
-    if (!Array.isArray(relatedCampIds) || !relatedCampIds.every(isCampId)) {
-      return Promise.reject(new Error('Related Camp IDs are invalid'))
+    if (!Array.isArray(relatedThreadIds) || !relatedThreadIds.every(isThreadId)) {
+      return Promise.reject(new Error('Related Thread IDs are invalid'))
     }
     return this.#enqueue(async () => {
-      const relatedCampIdSet = new Set(relatedCampIds)
+      const relatedThreadIdSet = new Set(relatedThreadIds)
       const existing = this.#snapshot.removedProjects.find(
         (project) => project.targetKey === targetKey
       )
@@ -189,7 +189,7 @@ export class NavigationPreferencesStore {
         ...this.#snapshot,
         pins: this.#snapshot.pins.filter((pin) => !(
           (pin.kind === 'project' && pin.targetKey === targetKey)
-          || (pin.kind === 'camp' && relatedCampIdSet.has(pin.targetKey))
+          || (pin.kind === 'camp' && relatedThreadIdSet.has(pin.targetKey))
         )),
         removedProjects: [
           ...this.#snapshot.removedProjects.filter(

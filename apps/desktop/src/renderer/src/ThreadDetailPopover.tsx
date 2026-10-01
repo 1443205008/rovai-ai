@@ -5,12 +5,12 @@ import { useMobileLayout } from './MobileLayout'
 import { MemberAvatar, type MemberAvatarProps } from './MemberAvatar'
 import { ExecutionIcon } from './ExecutionIcons'
 import { UiText, uiAttribute } from './interface-language'
-import { useCampDetailCopy } from './camp-detail-copy'
+import { useThreadDetailCopy } from './camp-detail-copy'
 
-export type CampDetailTab = 'execution' | 'tasks' | 'members'
-export type RunningCampMember = Pick<MemberAvatarProps, 'agentId' | 'avatarRef' | 'displayName'>
+export type ThreadDetailTab = 'execution' | 'tasks' | 'members'
+export type RunningThreadMember = Pick<MemberAvatarProps, 'agentId' | 'avatarRef' | 'displayName'>
 
-function CampDetailIcon({ tab }: { tab: CampDetailTab }): React.JSX.Element {
+function ThreadDetailIcon({ tab }: { tab: ThreadDetailTab }): React.JSX.Element {
   if (tab === 'execution') return <ExecutionIcon />
   return <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round">
     {tab === 'tasks' && <><rect x="6" y="4" width="15" height="17" rx="2" /><path d="M3 7h5M3 12h5M3 17h5M12 8h5M12 12h5M12 16h3" /></>}
@@ -18,13 +18,13 @@ function CampDetailIcon({ tab }: { tab: CampDetailTab }): React.JSX.Element {
   </svg>
 }
 
-function CampExecutionEntry({ members, executionCount, expanded, panelId, mobile = false, onSelect }: {
-  members: readonly RunningCampMember[]
+function ThreadExecutionEntry({ members, executionCount, expanded, panelId, mobile = false, onSelect }: {
+  members: readonly RunningThreadMember[]
   executionCount: number
   expanded: boolean
   panelId: string
   mobile?: boolean
-  onSelect(tab: CampDetailTab, trigger: HTMLButtonElement, keyboard: boolean): void
+  onSelect(tab: ThreadDetailTab, trigger: HTMLButtonElement, keyboard: boolean): void
 }): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement>(null)
   const tooltipRef = useRef<HTMLSpanElement>(null)
@@ -66,7 +66,7 @@ function CampExecutionEntry({ members, executionCount, expanded, panelId, mobile
   }, [showNames, members.length, names])
 
   const face = <>
-    {!mobile && <CampDetailIcon tab="execution" />}
+    {!mobile && <ThreadDetailIcon tab="execution" />}
     {mobile
       ? <span><UiText zh={"执行"} /></span>
       : <span className="camp-detail-entry-copy">
@@ -121,7 +121,7 @@ function CampExecutionEntry({ members, executionCount, expanded, panelId, mobile
   </>
 }
 
-export function CampDetailEntries({
+export function ThreadDetailEntries({
   activeTab,
   visible,
   panelId,
@@ -133,25 +133,25 @@ export function CampDetailEntries({
   memberCount,
   onSelect
 }: {
-  activeTab: CampDetailTab
+  activeTab: ThreadDetailTab
   visible: boolean
   panelId: string
   showExecution: boolean
   executionExpanded?: boolean
-  runningMembers: readonly RunningCampMember[]
+  runningMembers: readonly RunningThreadMember[]
   executionCount: number
   taskCount: number
   memberCount: number
-  onSelect(tab: CampDetailTab, trigger: HTMLButtonElement, keyboard: boolean): void
+  onSelect(tab: ThreadDetailTab, trigger: HTMLButtonElement, keyboard: boolean): void
 }): React.JSX.Element {
-  const copy = useCampDetailCopy()
-  const entries: Array<{ tab: CampDetailTab; count: number }> = [
+  const copy = useThreadDetailCopy()
+  const entries: Array<{ tab: ThreadDetailTab; count: number }> = [
     { tab: 'tasks', count: taskCount },
     { tab: 'members', count: memberCount }
   ]
   return (
     <div className="camp-detail-entries" role="group" aria-label={uiAttribute("当前会话详情入口")}>
-      {showExecution && <CampExecutionEntry
+      {showExecution && <ThreadExecutionEntry
         members={runningMembers}
         executionCount={executionCount}
         expanded={executionExpanded}
@@ -169,7 +169,7 @@ export function CampDetailEntries({
           aria-haspopup="dialog"
           onClick={(event) => onSelect(tab, event.currentTarget, event.detail === 0)}
         >
-          <CampDetailIcon tab={tab} />
+          <ThreadDetailIcon tab={tab} />
           <span className="camp-detail-entry-copy">
             <span>{copy[tab]}</span>
             <small>{count}</small>
@@ -180,7 +180,7 @@ export function CampDetailEntries({
   )
 }
 
-export function CampDetailPopover({
+export function ThreadDetailPopover({
   entryHost,
   activeTab,
   visible,
@@ -200,17 +200,17 @@ export function CampDetailPopover({
   children
 }: {
   entryHost?: HTMLElement | null
-  activeTab: CampDetailTab
+  activeTab: ThreadDetailTab
   visible: boolean
   showExecution: boolean
   executionExpanded?: boolean
   mobileExecutionMaximized?: boolean
   onToggleMobileExecutionMaximized?(): void
-  runningMembers: readonly RunningCampMember[]
+  runningMembers: readonly RunningThreadMember[]
   executionCount: number
   taskCount: number
   memberCount: number
-  onOpen(tab: CampDetailTab): void
+  onOpen(tab: ThreadDetailTab): void
   onClose(): void
   singleChatVisible?: boolean
   onOpenSingleChat?(): void
@@ -218,7 +218,7 @@ export function CampDetailPopover({
   children: ReactNode
 }): React.JSX.Element {
   const mobile = useMobileLayout()
-  const copy = useCampDetailCopy()
+  const copy = useThreadDetailCopy()
   const panelId = useId()
   const panelRef = useRef<HTMLElement>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -254,7 +254,7 @@ export function CampDetailPopover({
   const entries = mobile ? <>
     <div className="mobile-camp-tabs" role="group" aria-label={uiAttribute("当前会话视图")} hidden={secondary}>
       <button type="button" aria-pressed={!visible} onClick={onClose}><UiText zh={"对话"} /></button>
-      <CampExecutionEntry mobile members={runningMembers} executionCount={executionCount} expanded={executionExpanded} panelId={panelId}
+      <ThreadExecutionEntry mobile members={runningMembers} executionCount={executionCount} expanded={executionExpanded} panelId={panelId}
         onSelect={(tab, trigger) => { triggerRef.current = trigger; if (visible && activeTab === tab) onClose(); else onOpen(tab) }} />
     </div>
     <DropdownMenu.Root modal={false}>
@@ -271,7 +271,7 @@ export function CampDetailPopover({
             triggerRef.current = entryHost?.querySelector<HTMLButtonElement>('.mobile-camp-more') ?? null
             focusPanelRef.current = true
             onOpen(tab)
-          }}><CampDetailIcon tab={tab} /><span>{copy[tab]}</span></DropdownMenu.Item>)}
+          }}><ThreadDetailIcon tab={tab} /><span>{copy[tab]}</span></DropdownMenu.Item>)}
           <DropdownMenu.Item onSelect={() => { menuSelected.current = true; onOpenSingleChat() }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6A8.4 8.4 0 0 1 12.5 3h.5a8.5 8.5 0 0 1 8 8v.5Z" /></svg>
             <span>{copy.singleChatTitle}</span>
@@ -282,7 +282,7 @@ export function CampDetailPopover({
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
-  </> : <CampDetailEntries
+  </> : <ThreadDetailEntries
     activeTab={activeTab}
     visible={visible}
     panelId={panelId}
@@ -329,7 +329,7 @@ export function CampDetailPopover({
       }}
     >
       <header className="camp-detail-heading">
-        <CampDetailIcon tab={activeTab} />
+        <ThreadDetailIcon tab={activeTab} />
         <strong id={`${panelId}-title`}>{copy[activeTab]}</strong>
         {mobile && activeTab === 'execution' && onToggleMobileExecutionMaximized && <button
           className="mobile-execution-expand"

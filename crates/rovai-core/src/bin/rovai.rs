@@ -442,7 +442,7 @@ fn invocation_identity(args: &[String]) -> Option<BuiltinToolCliIdentity> {
 }
 
 fn is_family_help(args: &[String]) -> bool {
-    matches!(args, [family, help] if help == "--help" && matches!(family.as_str(), "member" | "camp" | "history" | "memory" | "single-chat" | "automation" | "mission"))
+    matches!(args, [family, help] if help == "--help" && matches!(family.as_str(), "member" | "thread" | "camp" | "history" | "memory" | "single-chat" | "automation" | "mission"))
 }
 
 fn load_context() -> Result<BuiltinToolCliContext> {
@@ -556,6 +556,8 @@ fn parse_and_validate_operation_input(
     args: &[String],
 ) -> std::result::Result<Value, CliInputFailure> {
     let input = parse_operation_input(description, args).map_err(|_| CliInputFailure::generic())?;
+    let input = rovai_core::thread_compat::normalize_builtin_input(&description.name, input)
+        .map_err(|_| CliInputFailure::generic())?;
     if validate_schema(&input, &description.input_schema).is_err() {
         return Err(explain_input_validation_failure(description, &input));
     }
@@ -1123,6 +1125,7 @@ fn parse_operation_input(description: &BuiltinToolDescription, args: &[String]) 
         .map(|argument| (argument.flag.as_str(), argument))
         .collect::<BTreeMap<_, _>>();
     let mut direct = Map::new();
+    let mut used_flags = BTreeMap::new();
     let mut input_file = None::<String>;
     let mut index = 0usize;
     while index < args.len() {
@@ -1143,11 +1146,12 @@ fn parse_operation_input(description: &BuiltinToolDescription, args: &[String]) 
         let (flag, inline_value) = raw
             .split_once('=')
             .map_or((raw.as_str(), None), |(flag, value)| (flag, Some(value)));
-        let canonical_flag = if description.name == "camp.message.send" && flag == "--to-user" {
-            "--to-principal"
-        } else {
-            flag
-        };
+        let canonical_flag = rovai_core::thread_compat::canonical_flag(&description.name, flag);
+        if let Some(previous) = used_flags.insert(canonical_flag.to_string(), flag.to_string())
+            && previous != flag
+        {
+            bail!("{previous} and {flag} cannot be supplied together");
+        }
         let argument = argument_by_flag
             .get(canonical_flag)
             .with_context(|| format!("unknown argument for {}: {flag}", description.name))?;
@@ -1367,7 +1371,7 @@ fn print_root_help() {
 }
 
 fn root_help_text(managed_runtime: bool) -> String {
-    let mut text = "Rovai CLI\n\nAgent operations:\n  rovai send\n  rovai member create\n  rovai task create|get|list|update\n  rovai camp list|search|read\n  rovai history search\n  rovai memory view|search|read|write\n  rovai automation list|get|create|run|close|update|delete\n  rovai mission list|get|update|status\n\nRun an Agent operation's exact `--help` for its closed inputs. Each Agent operation supports direct flags, JSON stdin/heredoc, or --input-file <path>.\n".to_string();
+    let mut text = "Rovai CLI\n\nAgent operations:\n  rovai send\n  rovai member create\n  rovai task create|get|list|update\n  rovai thread list|search|read\n  rovai history search\n  rovai memory view|search|read|write\n  rovai automation list|get|create|run|close|update|delete\n  rovai mission list|get|update|status\n\nRun an Agent operation's exact `--help` for its closed inputs. Each Agent operation supports direct flags, JSON stdin/heredoc, or --input-file <path>.\n".to_string();
     if !managed_runtime {
         text.push_str("\nUser Automation:\n  rovai app --help\n\nAgent operations keep their process-private transport. `rovai app` uses the running Desktop App's separate User Automation transport.\n");
     }
@@ -1548,19 +1552,19 @@ fn render_flat_input_help(output: &mut String, description: &BuiltinToolDescript
             if argument.required { " required" } else { "" },
         )
         .expect("writing help to a String cannot fail");
-        if description.name == "camp.message.send" && argument.field == "body" {
+        if description.name == "thread.message.send" && argument.field == "body" {
             write_indented_help(output, CAMP_MESSAGE_SEND_BODY_HELP);
         }
-        if description.name == "camp.message.send" && argument.field == "to" {
+        if description.name == "thread.message.send" && argument.field == "to" {
             write_indented_help(output, CAMP_MESSAGE_SEND_TO_HELP);
         }
-        if description.name == "camp.message.send" && argument.field == "publicOnly" {
+        if description.name == "thread.message.send" && argument.field == "publicOnly" {
             write_indented_help(output, CAMP_MESSAGE_SEND_PUBLIC_ONLY_HELP);
         }
-        if description.name == "camp.message.send" && argument.field == "mentionUser" {
+        if description.name == "thread.message.send" && argument.field == "mentionUser" {
             write_indented_help(output, CAMP_MESSAGE_SEND_TO_PRINCIPAL_HELP);
         }
-        if description.name == "camp.message.send" && argument.field == "files" {
+        if description.name == "thread.message.send" && argument.field == "files" {
             write_indented_help(output, CAMP_MESSAGE_SEND_FILE_HELP);
         }
         if description.name == "memory.view" && argument.field == "scope" {
@@ -1596,12 +1600,12 @@ fn render_flat_input_help(output: &mut String, description: &BuiltinToolDescript
             writeln!(output, "      Task scope and requirements.")
                 .expect("writing help to a String cannot fail");
         }
-        if matches!(description.name.as_str(), "camp.search" | "camp.read")
-            && argument.field == "campId"
+        if matches!(description.name.as_str(), "thread.search" | "thread.read")
+            && argument.field == "threadId"
         {
             writeln!(
                 output,
-                "      Optional. Omit for the current Camp; pass any extant public Camp ID to target that Camp only."
+                "      Optional. Omit for the current Thread; pass any extant public Thread ID to target that Thread only."
             )
             .expect("writing help to a String cannot fail");
         }
@@ -1688,7 +1692,7 @@ fn render_discriminated_input_help(
         writeln!(output).expect("writing help to a String cannot fail");
     }
 
-    if description.name == "camp.read" {
+    if description.name == "thread.read" {
         writeln!(
             output,
             "Direction semantics:\n  before = move toward lower sequence numbers / older messages.\n           Without a cursor, begin with the newest visible page.\n  after  = move toward higher sequence numbers / newer messages.\n           Without a cursor, begin with the oldest visible page.\n\nDo not use older, newer, backward, or forward as direction values."
@@ -1782,14 +1786,16 @@ fn render_cli_input_field(
         writeln!(output, "        Repeat the flag for multiple values.")
             .expect("writing help to a String cannot fail");
     }
-    if matches!(description.name.as_str(), "camp.search" | "camp.read") && field.field == "campId" {
+    if matches!(description.name.as_str(), "thread.search" | "thread.read")
+        && field.field == "threadId"
+    {
         writeln!(
             output,
-            "        Omit for the current Camp; pass any extant public Camp ID to target that Camp only."
+            "        Omit for the current Thread; pass any extant public Thread ID to target that Thread only."
         )
         .expect("writing help to a String cannot fail");
     }
-    if description.name == "camp.read" && field.field == "before" {
+    if description.name == "thread.read" && field.field == "before" {
         writeln!(
             output,
             "        Pass the nextCursor returned by the previous page."
@@ -1855,7 +1861,7 @@ fn operation_help_examples(operation: &str) -> &'static [&'static str] {
         ],
         "mission.update" => &["rovai mission update --title \"Directory navigation\""],
         "mission.status" => &["rovai mission status --status needs_you"],
-        "camp.message.send" => &CAMP_MESSAGE_SEND_HELP_EXAMPLES,
+        "thread.message.send" => &CAMP_MESSAGE_SEND_HELP_EXAMPLES,
         "member.create" => &[
             "rovai member create --creation-key 2b945f3f-4b45-4ae5-92b2-739fce600338 --display-name 'Nova' --team-role 'Researcher'",
             "rovai member create --input-file confirmed-member.json",
@@ -1866,17 +1872,17 @@ fn operation_help_examples(operation: &str) -> &'static [&'static str] {
         "team.get_task" => &["rovai task get --task-id task_123"],
         "team.list_tasks" => &["rovai task list --limit 10"],
         "team.update_task" => &["rovai task update --task-id task_123 --status in_progress"],
-        "camp.list" => &["rovai camp list --limit 10"],
-        "camp.search" => &[
-            "rovai camp search --query 'amount'",
-            "rovai camp search --camp-id '<camp-id>' --query 'amount'",
+        "thread.list" => &["rovai thread list --limit 10"],
+        "thread.search" => &[
+            "rovai thread search --query 'amount'",
+            "rovai thread search --thread-id '<thread-id>' --query 'amount'",
         ],
-        "camp.read" => &[
-            "rovai camp read",
-            "rovai camp read --limit 20",
-            "rovai camp read --before 123",
-            "rovai camp read --message-id '<message-id>'",
-            "rovai camp read --thread '<message-id>' --limit 20",
+        "thread.read" => &[
+            "rovai thread read",
+            "rovai thread read --limit 20",
+            "rovai thread read --before 123",
+            "rovai thread read --message-id '<message-id>'",
+            "rovai thread read --reply-chain '<message-id>' --limit 20",
         ],
         "history.search" => &["rovai history search --query 'amount'"],
         "single_chat.history" => &[
@@ -1914,7 +1920,7 @@ mod tests {
             },
             body: BuiltinToolIpcRequestBody::Invoke {
                 request_id: Uuid::new_v4().to_string(),
-                operation: "camp.list".to_string(),
+                operation: "thread.list".to_string(),
                 input: json!({}),
             },
         }
@@ -1975,6 +1981,30 @@ mod tests {
         insert_direct_value(&mut direct, argument, Value::String("m1".to_string())).unwrap();
         insert_direct_value(&mut direct, argument, Value::String("m2".to_string())).unwrap();
         assert_eq!(direct["memoryIds"], json!(["m1", "m2"]));
+        let read = builtin_tool_description("thread.read").unwrap();
+        for flags in [
+            ["--thread-id", "scope", "--reply-chain", "message"],
+            ["--camp-id", "scope", "--thread", "message"],
+        ] {
+            assert_eq!(
+                parse_operation_input(&read, &flags.map(str::to_string)).unwrap(),
+                json!({"threadId":"scope", "replyChain":"message"})
+            );
+        }
+        for flags in [
+            ["--thread-id", "same", "--camp-id", "same"],
+            ["--reply-chain", "same", "--thread", "same"],
+        ] {
+            assert!(parse_operation_input(&read, &flags.map(str::to_string)).is_err());
+        }
+        let history = builtin_tool_description("history.search").unwrap();
+        assert!(
+            parse_operation_input(
+                &history,
+                &["--thread-ids", "same", "--camp-ids", "same"].map(str::to_string)
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -2016,7 +2046,7 @@ mod tests {
         assert!(!source_message.required);
         assert_eq!(
             description.input_schema["properties"]["sourceMessageId"]["description"],
-            "Optional reference to an existing public message in this Camp."
+            "Optional reference to an existing public message in this Thread."
         );
         let help = operation_help_text(&description);
         assert!(help.contains("rovai mission status --status needs_you"));
@@ -2054,7 +2084,7 @@ mod tests {
         );
         assert!(description.arguments.iter().all(|argument| !matches!(
             argument.field.as_str(),
-            "conversationId" | "campId" | "agentId"
+            "conversationId" | "threadId" | "agentId"
         )));
     }
 
@@ -2081,7 +2111,7 @@ mod tests {
             builtin_tool_identity_by_command("send", "")
                 .unwrap()
                 .operation,
-            "camp.message.send"
+            "thread.message.send"
         );
         assert!(builtin_tool_identity_by_command("gather", "").is_none());
         assert!(builtin_tool_identity_by_command("memory", "propose-hearth").is_none());
@@ -2173,15 +2203,15 @@ mod tests {
 
     #[test]
     fn camp_help_teaches_default_and_explicit_single_camp_targets() {
-        let search = builtin_tool_description("camp.search").unwrap();
+        let search = builtin_tool_description("thread.search").unwrap();
         let search_help = operation_help_text(&search);
-        assert!(search_help.contains("Omit for the current Camp"));
-        assert!(search_help.contains("any extant public Camp ID"));
+        assert!(search_help.contains("Omit for the current Thread"));
+        assert!(search_help.contains("any extant public Thread ID"));
         assert!(
             search
                 .arguments
                 .iter()
-                .find(|argument| argument.field == "campId")
+                .find(|argument| argument.field == "threadId")
                 .is_some_and(|argument| !argument.required)
         );
         assert_eq!(
@@ -2189,31 +2219,31 @@ mod tests {
             json!({"query": "amount"})
         );
         assert_eq!(
-            operation_help_examples("camp.search"),
+            operation_help_examples("thread.search"),
             [
-                "rovai camp search --query 'amount'",
-                "rovai camp search --camp-id '<camp-id>' --query 'amount'",
+                "rovai thread search --query 'amount'",
+                "rovai thread search --thread-id '<thread-id>' --query 'amount'",
             ]
         );
 
-        let read = builtin_tool_description("camp.read").unwrap();
+        let read = builtin_tool_description("thread.read").unwrap();
         let read_help = operation_help_text(&read);
-        for flag in ["--limit", "--before", "--message-id", "--thread"] {
+        for flag in ["--limit", "--before", "--message-id", "--reply-chain"] {
             assert!(read_help.contains(flag), "missing {flag} from help");
         }
         for removed in ["--mode", "--direction", "--cursor", "--after"] {
             assert!(!read_help.contains(removed), "stale {removed} in help");
         }
-        assert!(read_help.contains("Omit for the current Camp"));
-        assert_eq!(read_help.matches("--camp-id").count(), 1);
+        assert!(read_help.contains("Omit for the current Thread"));
+        assert_eq!(read_help.matches("--thread-id").count(), 1);
         assert_eq!(
-            operation_help_examples("camp.read"),
+            operation_help_examples("thread.read"),
             [
-                "rovai camp read",
-                "rovai camp read --limit 20",
-                "rovai camp read --before 123",
-                "rovai camp read --message-id '<message-id>'",
-                "rovai camp read --thread '<message-id>' --limit 20",
+                "rovai thread read",
+                "rovai thread read --limit 20",
+                "rovai thread read --before 123",
+                "rovai thread read --message-id '<message-id>'",
+                "rovai thread read --reply-chain '<message-id>' --limit 20",
             ]
         );
         for (args, expected) in [
@@ -2224,8 +2254,8 @@ mod tests {
                 json!({"messageId": "msg_123"}),
             ),
             (
-                vec!["--thread", "msg_123", "--limit", "20"],
-                json!({"thread": "msg_123", "limit": 20}),
+                vec!["--reply-chain", "msg_123", "--limit", "20"],
+                json!({"replyChain": "msg_123", "limit": 20}),
             ),
         ] {
             let args = args.into_iter().map(str::to_string).collect::<Vec<_>>();
@@ -2257,7 +2287,7 @@ mod tests {
                 &[
                     "--message-id".to_string(),
                     "msg_123".to_string(),
-                    "--thread".to_string(),
+                    "--reply-chain".to_string(),
                     "msg_456".to_string(),
                 ],
             )
@@ -2277,13 +2307,13 @@ mod tests {
         ));
         fs::create_dir(&directory).unwrap();
         let source_error =
-            anyhow::anyhow!("camp.read attachments[0] is missing required property fileCount");
+            anyhow::anyhow!("thread.read attachments[0] is missing required property fileCount");
         let path =
-            write_output_contract_mismatch_diagnostic(&directory, "camp.read", &source_error)
+            write_output_contract_mismatch_diagnostic(&directory, "thread.read", &source_error)
                 .unwrap();
         let diagnostic: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(diagnostic["code"], "builtin_tool.output_contract_mismatch");
-        assert_eq!(diagnostic["operation"], "camp.read");
+        assert_eq!(diagnostic["operation"], "thread.read");
         assert!(
             diagnostic["diagnostic"]
                 .as_str()
@@ -2308,15 +2338,15 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(description.arguments.iter().all(|argument| {
-            argument.field != "campId"
-                && argument.flag != "--camp-id"
-                && argument.field != "replyToCampMessageId"
+            argument.field != "threadId"
+                && argument.flag != "--thread-id"
+                && argument.field != "replyToThreadMessageId"
                 && argument.flag != "--reply-to-camp-message-id"
         }));
         assert!(
             parse_operation_input(
                 &description,
-                &["--camp-id".to_string(), "camp-legacy".to_string()]
+                &["--thread-id".to_string(), "camp-legacy".to_string()]
             )
             .is_err()
         );
@@ -2447,7 +2477,7 @@ mod tests {
         std::fs::remove_file(input_file).unwrap();
         assert!(parse_operation_input(&description, &["--mention-user".to_string()]).is_err());
         assert_eq!(
-            operation_help_examples("camp.message.send"),
+            operation_help_examples("thread.message.send"),
             [
                 r#"Write request.json with a file-write tool:
   {"publicOnly":true,"body":"Result:\n\nUpdated `src/example.rs`."}
@@ -2458,7 +2488,7 @@ rovai send --input-file request.json"#,
         );
         let help = operation_help_text(&description);
         assert!(
-            help.contains("Ordinary public Camp messages are already visible to the Principal.")
+            help.contains("Ordinary public Thread messages are already visible to the Principal.")
         );
         assert!(help.contains("new unresolved decision, answer, or action for the Principal"));
         assert!(help.contains("Principal attention is message-local"));
@@ -2695,7 +2725,7 @@ rovai send --input-file request.json"#,
     #[test]
     fn authoritative_indeterminate_envelope_uses_exit_three() {
         let envelope = rovai_core::builtin_tool_transport::BuiltinToolInvocationEnvelope::rejected(
-            "camp.message.send",
+            "thread.message.send",
             &Uuid::new_v4().to_string(),
             rovai_core::builtin_tool_transport::BuiltinToolError {
                 code: "builtin_tool.outcome_indeterminate".to_string(),

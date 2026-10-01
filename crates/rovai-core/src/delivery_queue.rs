@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     agent_profile::{FrozenAgentRuntimeConfig, resolve_frozen_runtime},
-    camp_content::StructuredCampMessageContent,
+    camp_content::StructuredThreadMessageContent,
     collaboration::build_effective_config,
     context::{
         project_batch_run_input_for_claim, public_history_hint, runtime_max_context_payload_bytes,
@@ -514,7 +514,7 @@ fn select_batch_prefix(
     let mut previous_selection = None;
     for count in 1..=waiting.len() {
         if let Some(content_json) = waiting[count - 1].structured_content_json.as_deref() {
-            let mut content = serde_json::from_str::<StructuredCampMessageContent>(content_json)
+            let mut content = serde_json::from_str::<StructuredThreadMessageContent>(content_json)
                 .context("CampMessage Structured Content is invalid during Delivery claim")?;
             batch_message_indices.extend(std::iter::repeat_n(count - 1, content.len()));
             batch_content.append(&mut content);
@@ -796,8 +796,8 @@ mod tests {
     use super::*;
     use crate::{
         agent_profile::{ModelDescriptor, ModelOptionDescriptor, RuntimeOptionScope, ValueChoice},
-        camp_content::{StructuredCampMessageSegment, canonical_content_digest},
-        collaboration::{CollaborationService, CreateCampCommand},
+        camp_content::{StructuredThreadMessageSegment, canonical_content_digest},
+        collaboration::{CollaborationService, CreateThreadCommand},
         command::{ActorRef, CommandEnvelope},
         current_input_skill::{CurrentInputSkillLink, parse_skill_selection_snapshot},
         message_quote::{QuoteSelection, QuoteStorage, capture_quote, store_quotes},
@@ -827,7 +827,7 @@ mod tests {
                         camp_id: None,
                         expected_versions: Vec::new(),
                         execution_epoch: None,
-                        payload: CreateCampCommand::for_test_with_members(
+                        payload: CreateThreadCommand::for_test_with_members(
                             workspace.to_string_lossy().into_owned(),
                             &["agent_1"],
                             "agent_1",
@@ -835,7 +835,7 @@ mod tests {
                     },
                 )
                 .unwrap();
-            let camp_id = created.result.payload["campId"]
+            let camp_id = created.result.payload["threadId"]
                 .as_str()
                 .unwrap()
                 .to_string();
@@ -880,7 +880,7 @@ mod tests {
                         camp_id: None,
                         expected_versions: Vec::new(),
                         execution_epoch: None,
-                        payload: CreateCampCommand::for_test_with_members(
+                        payload: CreateThreadCommand::for_test_with_members(
                             workspace.to_string_lossy().into_owned(),
                             &["agent_1"],
                             "agent_1",
@@ -888,7 +888,7 @@ mod tests {
                     },
                 )
                 .unwrap();
-            let camp_id = created.result.payload["campId"]
+            let camp_id = created.result.payload["threadId"]
                 .as_str()
                 .unwrap()
                 .to_string();
@@ -2017,7 +2017,7 @@ mod tests {
         let mut fixture = Fixture::new();
         fixture.enqueue("message-1", "$review-code first");
         fixture.enqueue("message-2", "$review-code second");
-        let content = vec![StructuredCampMessageSegment::SkillMention {
+        let content = vec![StructuredThreadMessageSegment::SkillMention {
             skill_id: "missing-skill".to_string(),
             name_at_send: "review-code".to_string(),
         }];
@@ -2217,10 +2217,10 @@ mod tests {
             "observedByteSize": 11
         }]);
         let second_content = vec![
-            StructuredCampMessageSegment::Text {
+            StructuredThreadMessageSegment::Text {
                 text: "review this ".to_string(),
             },
-            StructuredCampMessageSegment::SkillMention {
+            StructuredThreadMessageSegment::SkillMention {
                 skill_id: "skill-review".to_string(),
                 name_at_send: "review-code".to_string(),
             },

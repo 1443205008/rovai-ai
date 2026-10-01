@@ -6,6 +6,8 @@ last_updated: 2026-09-24
 
 # 长期系统架构
 
+公开会话名称为 Thread；接口别名、存储不迁移与旧 Session 恢复边界见 [Thread Naming v1](../contracts/thread-naming-v1.md)。
+
 本目录保存跨版本长期存在的组件结构、职责和权威边界。字段级 wire shape 归
 [`docs/contracts/`](../contracts/README.md)，决策理由归[版本决策](../decisions/README.md)，实施状态归当前 Version 文档。[当前基础架构不变量](foundational-invariants.md)收敛跨多个主题的长期边界，专题 Architecture 在此基础上说明组件组合。
 

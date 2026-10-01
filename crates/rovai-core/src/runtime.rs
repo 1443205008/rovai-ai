@@ -14,7 +14,7 @@ use crate::{
         AdapterKind, AgentProfileService, FrozenAgentRuntimeConfig, MissingSendRecoveryMode,
         PublicOutputMode,
     },
-    camp_content::{StructuredCampMessageSegment, canonical_content_digest},
+    camp_content::{StructuredThreadMessageSegment, canonical_content_digest},
     collaboration::exhaust_camp_turn_execution_budget,
     command::{
         ActorRef, CommandEnvelope, CommandExecution, CommandHandlerResult, DomainCommand,
@@ -23,7 +23,7 @@ use crate::{
     context_index::index_camp_message,
     db::Database,
     delivery_queue::settle_run_deliveries,
-    execution_budget::{CampTurnExecutionBudgetExhaustionReason, camp_turn_execution_budget_now},
+    execution_budget::{ThreadTurnExecutionBudgetExhaustionReason, camp_turn_execution_budget_now},
     execution_evidence::AgentRunExecutionEvidence,
     git::GitObservation,
     message_delivery::{
@@ -172,6 +172,7 @@ impl DomainCommand for CompleteAgentRunNetworkRecoveryCommand {
 #[serde(rename_all = "camelCase")]
 pub struct ResolveAcceptedInputRecoveryBlockerCommand {
     #[serde(deserialize_with = "crate::camp_id::deserialize_camp_id_string")]
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub agent_run_id: String,
     pub expected_version: i64,
@@ -184,15 +185,17 @@ impl DomainCommand for ResolveAcceptedInputRecoveryBlockerCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CancelCampTurnCommand {
+pub struct CancelThreadTurnCommand {
     #[serde(deserialize_with = "crate::camp_id::deserialize_camp_id_string")]
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
+    #[serde(rename = "threadTurnId", alias = "campTurnId")]
     pub camp_turn_id: String,
     pub expected_version: i64,
 }
 
-impl sealed::Sealed for CancelCampTurnCommand {}
-impl DomainCommand for CancelCampTurnCommand {
+impl sealed::Sealed for CancelThreadTurnCommand {}
+impl DomainCommand for CancelThreadTurnCommand {
     const TYPE: &'static str = "camp_turn.cancel";
 }
 
@@ -200,6 +203,7 @@ impl DomainCommand for CancelCampTurnCommand {
 #[serde(rename_all = "camelCase")]
 pub struct CancelAgentRunCommand {
     #[serde(deserialize_with = "crate::camp_id::deserialize_camp_id_string")]
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub agent_run_id: String,
     pub expected_version: i64,
@@ -357,8 +361,10 @@ pub struct PlannedShutdownAbortiveTerminal {
 #[serde(rename_all = "camelCase")]
 pub struct PlannedShutdownTerminalSettlement {
     pub agent_run_id: String,
+    #[serde(rename = "threadTurnId", alias = "campTurnId")]
     pub camp_turn_id: String,
     pub agent_run_status: String,
+    #[serde(rename = "threadTurnStatus", alias = "campTurnStatus")]
     pub camp_turn_status: String,
     pub terminal_reason_code: String,
     pub already_settled: bool,
@@ -425,7 +431,9 @@ impl DomainCommand for RebindAgentRunRuntimeCommand {
 #[serde(rename_all = "camelCase")]
 pub struct QueuedAgentRunCandidate {
     pub agent_run_id: String,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
+    #[serde(rename = "threadTurnId", alias = "campTurnId")]
     pub camp_turn_id: String,
     pub conversation_id: String,
     pub agent_id: String,
@@ -442,7 +450,9 @@ pub struct QueuedAgentRunCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct AgentRunCancellationCandidate {
     pub agent_run_id: String,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
+    #[serde(rename = "threadTurnId", alias = "campTurnId")]
     pub camp_turn_id: String,
     pub project_binding_kind: String,
     pub project_path: String,
@@ -455,7 +465,7 @@ pub struct AgentRunCancellationCandidate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CampRuntimeCleanupTarget {
+pub struct ThreadRuntimeCleanupTarget {
     pub agent_run_id: String,
     pub execution_epoch: i64,
     pub adapter_kind: AdapterKind,
@@ -463,8 +473,10 @@ pub struct CampRuntimeCleanupTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CampTurnExecutionBudgetExpiry {
+pub struct ThreadTurnExecutionBudgetExpiry {
+    #[serde(rename = "threadTurnId", alias = "campTurnId")]
     pub camp_turn_id: String,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub deadline_at: String,
     pub agent_runs_fenced: i64,
@@ -506,7 +518,9 @@ impl QueuedAgentRunCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct AgentRunExecution {
     pub agent_run_id: String,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
+    #[serde(rename = "threadTurnId", alias = "campTurnId")]
     pub camp_turn_id: String,
     pub conversation_id: String,
     pub conversation_version: i64,
@@ -800,7 +814,7 @@ impl ExecutionRuntimeService {
                     "agent_run.runtime_model_observation_fenced",
                     json!({
                         "agentRunId": envelope.payload.agent_run_id,
-                        "campId": camp_id,
+                        "threadId": camp_id,
                         "changed": false,
                         "reason": "cancellation_requested",
                     }),
@@ -812,7 +826,7 @@ impl ExecutionRuntimeService {
                     "agent_run.runtime_model_not_recorded",
                     json!({
                         "agentRunId": envelope.payload.agent_run_id,
-                        "campId": camp_id,
+                        "threadId": camp_id,
                         "changed": false,
                         "reason": if existing_model_id.is_some() {
                             "already_observed"
@@ -848,7 +862,7 @@ impl ExecutionRuntimeService {
                     "agent_run.runtime_model_observation_fenced",
                     json!({
                         "agentRunId": envelope.payload.agent_run_id,
-                        "campId": camp_id,
+                        "threadId": camp_id,
                         "changed": false,
                         "reason": "concurrent_change",
                     }),
@@ -872,7 +886,7 @@ impl ExecutionRuntimeService {
                 "agent_run.runtime_model_observed",
                 json!({
                     "agentRunId": envelope.payload.agent_run_id,
-                    "campId": camp_id,
+                    "threadId": camp_id,
                     "changed": true,
                     "modelId": model_id,
                 }),
@@ -1066,7 +1080,7 @@ impl ExecutionRuntimeService {
         observed_budget_now: chrono::DateTime<chrono::Utc>,
         audit_now: chrono::DateTime<chrono::Utc>,
         limit: i64,
-    ) -> Result<Vec<CampTurnExecutionBudgetExpiry>> {
+    ) -> Result<Vec<ThreadTurnExecutionBudgetExpiry>> {
         if !(1..=100).contains(&limit) {
             anyhow::bail!("CampTurn Execution Budget expiry limit must be between 1 and 100");
         }
@@ -1106,14 +1120,14 @@ impl ExecutionRuntimeService {
             let exhaustion = exhaust_camp_turn_execution_budget(
                 &transaction,
                 &camp_turn_id,
-                CampTurnExecutionBudgetExhaustionReason::Elapsed,
+                ThreadTurnExecutionBudgetExhaustionReason::Elapsed,
                 &command_id,
                 &audit_now,
                 &actor,
                 None,
             )?;
             if exhaustion.newly_exhausted {
-                expired.push(CampTurnExecutionBudgetExpiry {
+                expired.push(ThreadTurnExecutionBudgetExpiry {
                     camp_turn_id,
                     camp_id,
                     deadline_at,
@@ -1231,7 +1245,7 @@ impl ExecutionRuntimeService {
         &self,
         database: &Database,
         camp_id: &str,
-    ) -> Result<Vec<CampRuntimeCleanupTarget>> {
+    ) -> Result<Vec<ThreadRuntimeCleanupTarget>> {
         let mut statement = database.connection().prepare(
             r#"
             SELECT target.id, target.execution_epoch, target.runtime_adapter_kind
@@ -1274,7 +1288,7 @@ impl ExecutionRuntimeService {
         Ok(rows
             .into_iter()
             .filter_map(|(agent_run_id, execution_epoch, adapter_kind)| {
-                Some(CampRuntimeCleanupTarget {
+                Some(ThreadRuntimeCleanupTarget {
                     agent_run_id,
                     execution_epoch,
                     adapter_kind: adapter_kind?.parse::<AdapterKind>().ok()?,
@@ -2172,8 +2186,8 @@ impl ExecutionRuntimeService {
                 "agent_run.network_recovery_waiting",
                 json!({
                     "agentRunId": run.id,
-                    "campTurnId": run.camp_turn_id,
-                    "campTurnStatus": camp_turn_status,
+                    "threadTurnId": run.camp_turn_id,
+                    "threadTurnStatus": camp_turn_status,
                     "executionEpoch": run.execution_epoch,
                     "version": run.version + 1,
                 }),
@@ -2622,8 +2636,8 @@ impl ExecutionRuntimeService {
                 "agent_run.accepted_input_outcome_unknown",
                 json!({
                     "agentRunId": envelope.payload.agent_run_id,
-                    "campTurnId": (!camp_turn_id.is_empty()).then_some(camp_turn_id),
-                    "campTurnStatus": camp_turn_status,
+                    "threadTurnId": (!camp_turn_id.is_empty()).then_some(camp_turn_id),
+                    "threadTurnStatus": camp_turn_status,
                     "acceptedInputPreserved": true,
                 }),
                 Some(entity_ref("agent_run", &envelope.payload.agent_run_id)),
@@ -2640,7 +2654,7 @@ impl ExecutionRuntimeService {
     pub fn request_camp_turn_cancellation(
         &self,
         database: &mut Database,
-        envelope: &CommandEnvelope<CancelCampTurnCommand>,
+        envelope: &CommandEnvelope<CancelThreadTurnCommand>,
     ) -> Result<CommandExecution> {
         self.gateway.execute(database, envelope, |transaction| {
             if !matches!(envelope.actor, ActorRef::User { .. }) {
@@ -2679,8 +2693,8 @@ impl ExecutionRuntimeService {
                 return Ok(CommandHandlerResult::applied(
                     "camp_turn.already_terminal",
                     json!({
-                        "campTurnId": envelope.payload.camp_turn_id,
-                        "campTurnStatus": status,
+                        "threadTurnId": envelope.payload.camp_turn_id,
+                        "threadTurnStatus": status,
                         "status": status,
                     }),
                     Some(entity_ref("camp_turn", &envelope.payload.camp_turn_id)),
@@ -2720,8 +2734,8 @@ impl ExecutionRuntimeService {
             Ok(CommandHandlerResult::applied(
                 "camp_turn.cancelled",
                 json!({
-                    "campTurnId": envelope.payload.camp_turn_id,
-                    "campTurnStatus": settlement.terminal_status,
+                    "threadTurnId": envelope.payload.camp_turn_id,
+                    "threadTurnStatus": settlement.terminal_status,
                     "agentRunCount": settlement.runs.len(),
                     "runs": settlement.runs,
                     "messageDeliveriesCancelled": settlement.message_deliveries_cancelled,
@@ -2847,8 +2861,8 @@ impl ExecutionRuntimeService {
                 settlement.terminal_code,
                 json!({
                     "agentRunId": envelope.payload.agent_run_id,
-                    "campTurnId": (!camp_turn_id.is_empty()).then_some(camp_turn_id),
-                    "campTurnStatus": camp_turn_status,
+                    "threadTurnId": (!camp_turn_id.is_empty()).then_some(camp_turn_id),
+                    "threadTurnStatus": camp_turn_status,
                     "status": settlement.terminal_status,
                 }),
                 Some(entity_ref("agent_run", &envelope.payload.agent_run_id)),
@@ -3611,7 +3625,7 @@ impl ExecutionRuntimeService {
                 .unwrap_or(PublicOutputMode::ExplicitSendOnly);
             let publication_allowed = terminal_publication_allowed(transaction, &target)?;
             let final_output_digest =
-                canonical_content_digest(&[StructuredCampMessageSegment::Text {
+                canonical_content_digest(&[StructuredThreadMessageSegment::Text {
                     text: envelope.payload.final_output.clone(),
                 }])?;
             let (ordinary_final_camp_message_id, automatic_public_output_suppressed) =
@@ -3718,7 +3732,7 @@ impl ExecutionRuntimeService {
                 Some(envelope.payload.execution_epoch),
                 &json!({
                     "nativeTurnId": envelope.payload.native_turn_id,
-                    "finalCampMessageId": final_camp_message_id,
+                    "finalThreadMessageId": final_camp_message_id,
                     "finalOutputDigest": final_output_digest,
                     "publicOutputMode": public_output_mode.as_str(),
                     "recipientFree": true,
@@ -3765,10 +3779,10 @@ impl ExecutionRuntimeService {
                 "agent_run.succeeded",
                 json!({
                     "agentRunId": target.agent_run_id,
-                    "campTurnId": (!target.camp_turn_id.is_empty())
+                    "threadTurnId": (!target.camp_turn_id.is_empty())
                         .then_some(target.camp_turn_id),
-                    "campTurnStatus": camp_turn_status,
-                    "finalCampMessageId": final_camp_message_id,
+                    "threadTurnStatus": camp_turn_status,
+                    "finalThreadMessageId": final_camp_message_id,
                     "finalOutputDigest": final_output_digest,
                     "publicOutputMode": public_output_mode.as_str(),
                     "automaticPublicOutputSuppressed": automatic_public_output_suppressed,
@@ -4128,9 +4142,9 @@ impl ExecutionRuntimeService {
                 "agent_run.dispatch_rejected",
                 json!({
                     "agentRunId": target.agent_run_id,
-                    "campTurnId": (!target.camp_turn_id.is_empty())
+                    "threadTurnId": (!target.camp_turn_id.is_empty())
                         .then_some(target.camp_turn_id),
-                    "campTurnStatus": camp_turn_status,
+                    "threadTurnStatus": camp_turn_status,
                 }),
                 Some(entity_ref("agent_run", &target.agent_run_id)),
             ))
@@ -4302,9 +4316,9 @@ impl ExecutionRuntimeService {
                 "agent_run.failed",
                 json!({
                     "agentRunId": target.agent_run_id,
-                    "campTurnId": (!target.camp_turn_id.is_empty())
+                    "threadTurnId": (!target.camp_turn_id.is_empty())
                         .then_some(target.camp_turn_id),
-                    "campTurnStatus": camp_turn_status,
+                    "threadTurnStatus": camp_turn_status,
                 }),
                 Some(entity_ref("agent_run", &target.agent_run_id)),
             ))
@@ -4956,7 +4970,7 @@ fn persist_single_chat_success(
     envelope: &CommandEnvelope<SucceedAgentRunCommand>,
     terminal_reason_code: Option<&str>,
 ) -> Result<CommandHandlerResult> {
-    let final_output_digest = canonical_content_digest(&[StructuredCampMessageSegment::Text {
+    let final_output_digest = canonical_content_digest(&[StructuredThreadMessageSegment::Text {
         text: envelope.payload.final_output.clone(),
     }])?;
     let final_conversation_message_id = Uuid::new_v4().to_string();
@@ -5051,7 +5065,7 @@ fn persist_single_chat_success(
             "nativeTurnId": envelope.payload.native_turn_id,
             "conversationId": target.conversation_id,
             "finalConversationMessageId": final_conversation_message_id,
-            "finalCampMessageId": Value::Null,
+            "finalThreadMessageId": Value::Null,
             "finalOutputDigest": final_output_digest,
             "responseDelivery": "conversation_message",
             "operationPolicy": "single_chat_v1",
@@ -5085,10 +5099,10 @@ fn persist_single_chat_success(
         "agent_run.succeeded",
         json!({
             "agentRunId": target.agent_run_id,
-            "campTurnId": target.camp_turn_id,
-            "campTurnStatus": camp_turn_status,
+            "threadTurnId": target.camp_turn_id,
+            "threadTurnStatus": camp_turn_status,
             "finalConversationMessageId": final_conversation_message_id,
-            "finalCampMessageId": Value::Null,
+            "finalThreadMessageId": Value::Null,
             "finalOutputDigest": final_output_digest,
             "responseDelivery": "conversation_message",
             "automaticPublicOutputSuppressed": true,
@@ -5175,7 +5189,7 @@ fn decide_missing_send_recovery(
     if candidate.body.len() > CAMP_MESSAGE_SEND_MAX_BODY_BYTES {
         return Ok(outcome("skipped_candidate_too_large", None, None));
     }
-    let candidate_digest = canonical_content_digest(&[StructuredCampMessageSegment::Text {
+    let candidate_digest = canonical_content_digest(&[StructuredThreadMessageSegment::Text {
         text: candidate.body.clone(),
     }])?;
     let message_id = persist_recipient_free_agent_publication(
@@ -5254,7 +5268,7 @@ fn persist_recipient_free_agent_publication(
     )?;
     let message_id = Uuid::new_v4().to_string();
     let addressed_agents_json = "[]";
-    let structured_content = vec![StructuredCampMessageSegment::Text {
+    let structured_content = vec![StructuredThreadMessageSegment::Text {
         text: body.to_string(),
     }];
     let structured_content_json = serde_json::to_string(&structured_content)?;
@@ -5564,7 +5578,9 @@ pub fn settle_legacy_retry_waits(database: &mut Database) -> Result<()> {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbortiveRunSettlement {
     pub agent_run_id: String,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
+    #[serde(rename = "threadTurnId", alias = "campTurnId")]
     pub camp_turn_id: String,
     pub conversation_id: String,
     pub execution_epoch: i64,
@@ -5706,7 +5722,7 @@ pub(crate) fn settle_abortive_agent_run_in_tx(
             ("agent_run", agent_run_id),
             actor,
             Some(execution_epoch),
-            &json!({"campTurnId": camp_turn_id, "reasonCode": reason_code}),
+            &json!({"threadTurnId": camp_turn_id, "reasonCode": reason_code}),
         )?;
     }
     append_domain_event(
@@ -6206,7 +6222,7 @@ fn claim_admission_rejection(
             let exhaustion = exhaust_camp_turn_execution_budget(
                 transaction,
                 &run.camp_turn_id,
-                CampTurnExecutionBudgetExhaustionReason::Elapsed,
+                ThreadTurnExecutionBudgetExhaustionReason::Elapsed,
                 &envelope.command_id,
                 &audit_now_text,
                 &envelope.actor,
@@ -6217,7 +6233,7 @@ fn claim_admission_rejection(
                 json!({
                     "message": "CampTurn Execution Budget deadline has elapsed",
                     "reason": "elapsed",
-                    "campTurnId": run.camp_turn_id,
+                    "threadTurnId": run.camp_turn_id,
                     "deadlineAt": run.execution_budget_deadline_at,
                     "agentRunsFenced": exhaustion.agent_runs_fenced,
                 }),
@@ -6872,8 +6888,8 @@ mod tests {
             AdapterKind, AdapterPermissionConfig, FrozenAgentRuntimeConfig, ResolvedModelSelection,
         },
         collaboration::{
-            AddCampMemberCommand, CollaborationService, CreateCampCommand, ExecutionRequest,
-            ProjectBindingKind, TestCampMessageAddress, TestCampMessageCommand,
+            AddThreadMemberCommand, CollaborationService, CreateThreadCommand, ExecutionRequest,
+            ProjectBindingKind, TestThreadMessageAddress, TestThreadMessageCommand,
         },
         command::CommandResultStatus,
         planned_shutdown::{
@@ -6926,7 +6942,7 @@ mod tests {
         let service = CollaborationService::default();
         let mut camps = Vec::new();
         for index in 0..2 {
-            let mut create = CreateCampCommand::for_test_with_members(
+            let mut create = CreateThreadCommand::for_test_with_members(
                 database
                     .directory()
                     .join(format!("startup-recovery-{index}"))
@@ -6942,7 +6958,7 @@ mod tests {
                     &user_envelope(&format!("recovery-create-{index}"), None, create),
                 )
                 .unwrap();
-            let camp_id = created.result.payload["campId"]
+            let camp_id = created.result.payload["threadId"]
                 .as_str()
                 .unwrap()
                 .to_string();
@@ -6952,12 +6968,12 @@ mod tests {
                     &user_envelope(
                         &format!("recovery-send-{index}"),
                         Some(&camp_id),
-                        TestCampMessageCommand {
+                        TestThreadMessageCommand {
                             camp_id: camp_id.clone(),
                             draft_revision: None,
                             body: "recover persisted cancellation".into(),
                             prepared_attachment_ids: Vec::new(),
-                            address: TestCampMessageAddress::Explicit {
+                            address: TestThreadMessageAddress::Explicit {
                                 agent_ids: vec!["agent_1".into(), "agent_2".into()],
                             },
                             reply_to_camp_message_id: None,
@@ -7508,7 +7524,7 @@ mod tests {
                 &user_envelope(
                     "planned-shutdown-create",
                     None,
-                    CreateCampCommand::for_test_with_members(
+                    CreateThreadCommand::for_test_with_members(
                         workspace.to_string_lossy().to_string(),
                         &["agent_2"],
                         "agent_2",
@@ -7516,14 +7532,17 @@ mod tests {
                 ),
             )
             .unwrap();
-        let camp_id = camp.result.payload["campId"].as_str().unwrap().to_string();
+        let camp_id = camp.result.payload["threadId"]
+            .as_str()
+            .unwrap()
+            .to_string();
         collaboration
             .add_camp_member(
                 &mut database,
                 &user_envelope(
                     "planned-shutdown-member",
                     Some(&camp_id),
-                    AddCampMemberCommand {
+                    AddThreadMemberCommand {
                         camp_id: camp_id.clone(),
                         agent_id: "agent_2".to_string(),
                         expected_membership_generation: 1,
@@ -7539,12 +7558,12 @@ mod tests {
                 &user_envelope(
                     "planned-shutdown-send",
                     Some(&camp_id),
-                    TestCampMessageCommand {
+                    TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "执行关闭语义测试".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: TestCampMessageAddress::Default,
+                        address: TestThreadMessageAddress::Default,
                         reply_to_camp_message_id: None,
                         execution: Some(ExecutionRequest {
                             task_id: None,
@@ -9326,7 +9345,7 @@ mod tests {
                 &user_envelope(
                     "runtime-create-camp",
                     None,
-                    CreateCampCommand::for_test_with_members(
+                    CreateThreadCommand::for_test_with_members(
                         workspace.to_string_lossy().to_string(),
                         &["agent_2"],
                         "agent_2",
@@ -9334,14 +9353,17 @@ mod tests {
                 ),
             )
             .unwrap();
-        let camp_id = camp.result.payload["campId"].as_str().unwrap().to_string();
+        let camp_id = camp.result.payload["threadId"]
+            .as_str()
+            .unwrap()
+            .to_string();
         collaboration
             .add_camp_member(
                 &mut database,
                 &user_envelope(
                     "runtime-add-member",
                     Some(&camp_id),
-                    AddCampMemberCommand {
+                    AddThreadMemberCommand {
                         camp_id: camp_id.clone(),
                         agent_id: "agent_2".to_string(),
                         expected_membership_generation: 1,
@@ -9360,12 +9382,12 @@ mod tests {
                     &user_envelope(
                         &format!("runtime-turn-{index}"),
                         Some(&camp_id),
-                        TestCampMessageCommand {
+                        TestThreadMessageCommand {
                             camp_id: camp_id.clone(),
                             draft_revision: None,
                             body: format!("执行职责 {index}"),
                             prepared_attachment_ids: Vec::new(),
-                            address: TestCampMessageAddress::Default,
+                            address: TestThreadMessageAddress::Default,
                             reply_to_camp_message_id: None,
                             execution: Some(ExecutionRequest {
                                 task_id: None,
@@ -9624,7 +9646,7 @@ mod tests {
                 &user_envelope(
                     "dispatch-reject-create",
                     None,
-                    CreateCampCommand::for_test_with_members(
+                    CreateThreadCommand::for_test_with_members(
                         workspace.to_string_lossy().to_string(),
                         &["agent_2"],
                         "agent_2",
@@ -9632,14 +9654,17 @@ mod tests {
                 ),
             )
             .unwrap();
-        let camp_id = camp.result.payload["campId"].as_str().unwrap().to_string();
+        let camp_id = camp.result.payload["threadId"]
+            .as_str()
+            .unwrap()
+            .to_string();
         collaboration
             .add_camp_member(
                 &mut database,
                 &user_envelope(
                     "dispatch-reject-member",
                     Some(&camp_id),
-                    AddCampMemberCommand {
+                    AddThreadMemberCommand {
                         camp_id: camp_id.clone(),
                         agent_id: "agent_2".to_string(),
                         expected_membership_generation: 1,
@@ -9655,12 +9680,12 @@ mod tests {
                 &user_envelope(
                     "dispatch-reject-send",
                     Some(&camp_id),
-                    TestCampMessageCommand {
+                    TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "消息必须保留".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: TestCampMessageAddress::Default,
+                        address: TestThreadMessageAddress::Default,
                         reply_to_camp_message_id: None,
                         execution: Some(ExecutionRequest {
                             task_id: None,
@@ -9763,7 +9788,7 @@ mod tests {
                 &user_envelope(
                     "runtime-rebind-create",
                     None,
-                    CreateCampCommand::for_test_with_members(
+                    CreateThreadCommand::for_test_with_members(
                         workspace.to_string_lossy().to_string(),
                         &["agent_2"],
                         "agent_2",
@@ -9771,14 +9796,17 @@ mod tests {
                 ),
             )
             .unwrap();
-        let camp_id = camp.result.payload["campId"].as_str().unwrap().to_string();
+        let camp_id = camp.result.payload["threadId"]
+            .as_str()
+            .unwrap()
+            .to_string();
         collaboration
             .add_camp_member(
                 &mut database,
                 &user_envelope(
                     "runtime-rebind-member",
                     Some(&camp_id),
-                    AddCampMemberCommand {
+                    AddThreadMemberCommand {
                         camp_id: camp_id.clone(),
                         agent_id: "agent_2".to_string(),
                         expected_membership_generation: 1,
@@ -9808,7 +9836,7 @@ mod tests {
             user_envelope(
                 command_id,
                 Some(&camp_id),
-                crate::camp_fast::SetCampMemberFastCommand {
+                crate::camp_fast::SetThreadMemberFastCommand {
                     camp_id: camp_id.clone(),
                     agent_id: "agent_2".into(),
                     expected_runtime_binding_revision: fast_target.runtime_binding_revision.clone(),
@@ -9823,12 +9851,12 @@ mod tests {
                 &user_envelope(
                     "runtime-rebind-send",
                     Some(&camp_id),
-                    TestCampMessageCommand {
+                    TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "允许可信 Runtime 原地升级".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: TestCampMessageAddress::Default,
+                        address: TestThreadMessageAddress::Default,
                         reply_to_camp_message_id: None,
                         execution: Some(ExecutionRequest {
                             task_id: None,
@@ -10024,7 +10052,7 @@ mod tests {
                 &user_envelope(
                     "run-cancel-create-camp",
                     None,
-                    CreateCampCommand::for_test_with_members(
+                    CreateThreadCommand::for_test_with_members(
                         workspace.to_string_lossy().to_string(),
                         &["agent_2", "agent_1"],
                         "agent_2",
@@ -10032,7 +10060,10 @@ mod tests {
                 ),
             )
             .unwrap();
-        let camp_id = camp.result.payload["campId"].as_str().unwrap().to_string();
+        let camp_id = camp.result.payload["threadId"]
+            .as_str()
+            .unwrap()
+            .to_string();
         for agent_id in ["agent_2", "agent_1"] {
             collaboration
                 .add_camp_member(
@@ -10040,7 +10071,7 @@ mod tests {
                     &user_envelope(
                         &format!("run-cancel-add-{agent_id}"),
                         Some(&camp_id),
-                        AddCampMemberCommand {
+                        AddThreadMemberCommand {
                             camp_id: camp_id.clone(),
                             agent_id: agent_id.to_string(),
                             expected_membership_generation: 1,
@@ -10057,12 +10088,12 @@ mod tests {
                 &user_envelope(
                     "run-cancel-send",
                     Some(&camp_id),
-                    TestCampMessageCommand {
+                    TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "并行处理两项职责".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: TestCampMessageAddress::Explicit {
+                        address: TestThreadMessageAddress::Explicit {
                             agent_ids: vec!["agent_2".to_string(), "agent_1".to_string()],
                         },
                         reply_to_camp_message_id: None,
@@ -10313,7 +10344,7 @@ mod tests {
                 &user_envelope(
                     "fanout-runtime-create-camp",
                     None,
-                    CreateCampCommand::for_test_with_members(
+                    CreateThreadCommand::for_test_with_members(
                         workspace.to_string_lossy().to_string(),
                         &["agent_2", "agent_1"],
                         "agent_2",
@@ -10321,7 +10352,10 @@ mod tests {
                 ),
             )
             .unwrap();
-        let camp_id = camp.result.payload["campId"].as_str().unwrap().to_string();
+        let camp_id = camp.result.payload["threadId"]
+            .as_str()
+            .unwrap()
+            .to_string();
         for agent_id in ["agent_2", "agent_1"] {
             collaboration
                 .add_camp_member(
@@ -10329,7 +10363,7 @@ mod tests {
                     &user_envelope(
                         &format!("fanout-runtime-add-{agent_id}"),
                         Some(&camp_id),
-                        AddCampMemberCommand {
+                        AddThreadMemberCommand {
                             camp_id: camp_id.clone(),
                             agent_id: agent_id.to_string(),
                             expected_membership_generation: 1,
@@ -10346,12 +10380,12 @@ mod tests {
                 &user_envelope(
                     "fanout-runtime-message",
                     Some(&camp_id),
-                    TestCampMessageCommand {
+                    TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "请独立分析并公开各自结论。".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: TestCampMessageAddress::Explicit {
+                        address: TestThreadMessageAddress::Explicit {
                             agent_ids: vec!["agent_2".to_string(), "agent_1".to_string()],
                         },
                         reply_to_camp_message_id: None,
@@ -10486,7 +10520,7 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(completed.result.status, CommandResultStatus::Applied);
-            assert!(completed.result.payload["campTurnStatus"].is_null());
+            assert!(completed.result.payload["threadTurnStatus"].is_null());
         }
 
         let settled_deliveries: i64 = database

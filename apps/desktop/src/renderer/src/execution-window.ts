@@ -2,10 +2,10 @@ import { ExecutionContentCache } from './execution-content-cache'
 import type { AgentRunExecutionEvidenceView as Evidence, AgentRunExecutionWindowChanges, AgentRunExecutionWindowPage as Page } from '@contracts'
 
 export type ExecutionWindowRequest = (params: {
-  campId: string; agentRunId: string; beforeSequence: number | null; afterSequence?: number; limit: number
+  threadId: string; agentRunId: string; beforeSequence: number | null; afterSequence?: number; limit: number
 }) => Promise<Page>
 export type ExecutionChangesRequest = (params: {
-  campId: string; agentRunId: string; afterChangeSequence: number; refreshEvidenceIds: string[]; limit: number
+  threadId: string; agentRunId: string; afterChangeSequence: number; refreshEvidenceIds: string[]; limit: number
 }) => Promise<AgentRunExecutionWindowChanges>
 type Direction = 'earlier' | 'newer' | 'latest'
 type CacheBudget = { maxItems: number; maxBytes: number }
@@ -42,7 +42,7 @@ export class ExecutionWindow {
   private viewport: [number, number] | null = null
 
   constructor(
-    readonly campId: string, readonly agentRunId: string, readonly limit: number,
+    readonly threadId: string, readonly agentRunId: string, readonly limit: number,
     private readonly request: ExecutionWindowRequest,
     private readonly changed: () => void,
     private readonly changes: ExecutionChangesRequest,
@@ -88,10 +88,10 @@ export class ExecutionWindow {
     if (pending) return pending
     const limit = before === null && after === undefined ? this.limit : HISTORY_LIMIT
     const generation = this.generation
-    const promise = this.request({ campId: this.campId, agentRunId: this.agentRunId, beforeSequence: before,
+    const promise = this.request({ threadId: this.threadId, agentRunId: this.agentRunId, beforeSequence: before,
       ...(after === undefined ? {} : { afterSequence: after }), limit }).then(page => {
       const items = page.evidence
-      if (page.schemaVersion !== 2 || page.campId !== this.campId || page.agentRunId !== this.agentRunId
+      if (page.schemaVersion !== 2 || page.threadId !== this.threadId || page.agentRunId !== this.agentRunId
         || page.requestedBeforeSequence !== before || (page.requestedAfterSequence ?? undefined) !== after
         || !Number.isSafeInteger(page.throughSequence) || page.throughSequence < 0 || items.length > limit
         || !Number.isSafeInteger(page.throughChangeSequence) || page.throughChangeSequence < 0
@@ -170,10 +170,10 @@ export class ExecutionWindow {
         const refreshEvidenceIds = this.evidence
           .filter(item => item.revision == null && (item.phase === 'updated' || item.phase === 'started'))
           .slice(0, 256).map(item => item.id)
-        const page = await this.changes({ campId: this.campId, agentRunId: this.agentRunId,
+        const page = await this.changes({ threadId: this.threadId, agentRunId: this.agentRunId,
           afterChangeSequence: after, refreshEvidenceIds, limit: 96 })
         if (generation !== this.generation) return
-        if (page.schemaVersion !== 2 || page.campId !== this.campId || page.agentRunId !== this.agentRunId
+        if (page.schemaVersion !== 2 || page.threadId !== this.threadId || page.agentRunId !== this.agentRunId
           || page.requestedAfterChangeSequence !== after || !Number.isSafeInteger(page.nextAfterChangeSequence)
           || !Number.isSafeInteger(page.throughChangeSequence) || page.nextAfterChangeSequence < after
           || page.nextAfterChangeSequence > page.throughChangeSequence || (page.hasMore && page.nextAfterChangeSequence <= after)
@@ -194,7 +194,7 @@ export class ExecutionWindow {
         const first = this.before === null ? 0 : this.before
         this.merge([...page.evidence, ...page.refreshedEvidence].filter(item => item.sequence >= first
           || this.evidence.some(old => old.sequence === item.sequence)))
-        this.latestPage = { schemaVersion: 2, campId: this.campId, agentRunId: this.agentRunId,
+        this.latestPage = { schemaVersion: 2, threadId: this.threadId, agentRunId: this.agentRunId,
           requestedBeforeSequence: null, throughSequence: this.evidence.at(-1)?.sequence ?? 0,
           throughChangeSequence: this.cursor, runtimePhase: this.runtimePhase, evidence: this.evidence.slice(-this.limit),
           hasMore: this.hasEarlier || this.evidence.length > this.limit,
@@ -278,7 +278,7 @@ export class ExecutionWindowCache {
     }
   }
 }
-// Retain Camp history within one transport/Host connection. A replacement
+// Retain Thread history within one transport/Host connection. A replacement
 // Web client must never revive a window whose fetchers hold an old credential.
 const executionWindowCaches = new WeakMap<object, ExecutionWindowCache>()
 export function executionWindowCacheFor(client: object): ExecutionWindowCache {

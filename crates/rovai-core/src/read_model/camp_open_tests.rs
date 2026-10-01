@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
     collaboration::{
-        CollaborationService, ProjectBindingKind, TestCampConversationCommand,
-        TestCampMessageAddress,
+        CollaborationService, ProjectBindingKind, TestThreadConversationCommand,
+        TestThreadMessageAddress,
     },
     command::{ActorRef, CommandEnvelope},
     test_support::{OwnedTestDatabase, seeded_runtime_database_fast_owned},
@@ -34,11 +34,11 @@ fn business_fixture() -> (OwnedTestDatabase, String, String, String) {
                 camp_id: None,
                 expected_versions: vec![],
                 execution_epoch: None,
-                payload: TestCampConversationCommand {
+                payload: TestThreadConversationCommand {
                     project_binding_kind: ProjectBindingKind::Directory,
                     project_path: workspace.to_string_lossy().to_string(),
                     body: "保留业务状态".to_string(),
-                    address: TestCampMessageAddress::Explicit {
+                    address: TestThreadMessageAddress::Explicit {
                         agent_ids: vec!["agent_1".to_string(), "agent_2".to_string()],
                     },
                     purpose: "CampOpen SQL isolation".to_string(),
@@ -46,7 +46,7 @@ fn business_fixture() -> (OwnedTestDatabase, String, String, String) {
             },
         )
         .unwrap();
-    let camp_id = created.result.payload["campId"]
+    let camp_id = created.result.payload["threadId"]
         .as_str()
         .unwrap()
         .to_string();
@@ -224,7 +224,7 @@ fn deny_event_log(context: AuthContext<'_>) -> Authorization {
     }
 }
 
-fn read_metered(database: &mut Database, camp_id: &str) -> (CampOpenProjection, usize, Duration) {
+fn read_metered(database: &mut Database, camp_id: &str) -> (ThreadOpenProjection, usize, Duration) {
     let steps = Arc::new(AtomicUsize::new(0));
     let observed_steps = Arc::clone(&steps);
     database
@@ -369,7 +369,7 @@ fn camp_open_preserves_business_state_without_reading_event_history() {
     let open_json = serde_json::to_value(&open).unwrap();
     let snapshot_json = serde_json::to_value(&snapshot).unwrap();
     assert_eq!(open.schema_version, CAMP_OPEN_SCHEMA_VERSION);
-    assert_eq!(open_json["camp"], snapshot_json["camp"]);
+    assert_eq!(open_json["thread"], snapshot_json["thread"]);
     let delivery = open
         .message_deliveries
         .iter()
@@ -592,11 +592,11 @@ fn camp_open_work_is_independent_of_unrelated_event_and_evidence_volume() {
                 camp_id: None,
                 expected_versions: vec![],
                 execution_epoch: None,
-                payload: TestCampConversationCommand {
+                payload: TestThreadConversationCommand {
                     project_binding_kind: ProjectBindingKind::Directory,
                     project_path: unrelated_workspace.to_string_lossy().to_string(),
                     body: "无关会话".to_string(),
-                    address: TestCampMessageAddress::Default,
+                    address: TestThreadMessageAddress::Default,
                     purpose: "验证无关 Evidence 不影响 Camp Open".to_string(),
                 },
             },

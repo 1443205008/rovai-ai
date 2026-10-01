@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { useState } from 'react'
 import type { CoreSubsystemSnapshot } from '@contracts'
 import { readErrorMessage } from './error-message'
@@ -21,7 +21,7 @@ export function CoreSubsystemNotice({
 }: {
   subsystems: CoreSubsystemSnapshot[]
 }): React.JSX.Element | null {
-  const client = useCampClient()
+  const client = useThreadClient()
   const [retrying, setRetrying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const degraded = subsystems.filter((subsystem) => subsystem.state === 'degraded')

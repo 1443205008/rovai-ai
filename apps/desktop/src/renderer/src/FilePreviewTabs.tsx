@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { prefersReducedMotion } from './reduced-motion'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
@@ -33,7 +33,7 @@ function revealTab(strip: HTMLDivElement, tab: HTMLElement): void {
 
 export function FilePreviewTabs({ compact = false }: { compact?: boolean } = {}): React.JSX.Element | null {
   const language = useInterfaceLanguage()
-  const client = useCampClient()
+  const client = useThreadClient()
   const {
     tabs,
     activeTabId,
@@ -162,7 +162,7 @@ export function FilePreviewTabs({ compact = false }: { compact?: boolean } = {})
 
   const focusConversation = (): void => {
     window.requestAnimationFrame(() => {
-      const target = document.querySelector<HTMLElement>('.camp-timeline:not([hidden])')
+      const target = document.querySelector<HTMLElement>('.thread-timeline:not([hidden])')
         ?? document.querySelector<HTMLElement>('.timeline-pane')
       target?.focus({ preventScroll: true })
     })

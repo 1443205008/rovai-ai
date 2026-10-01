@@ -1,51 +1,51 @@
-import { isCampId, type NavigationCampTarget } from '@contracts'
-import { formatCampTitle } from './camp-title'
+import { isThreadId, type NavigationThreadTarget } from '@contracts'
+import { formatThreadTitle } from './camp-title'
 import { uiAttribute } from './interface-language'
 
-export function navigationCampSearch(
+export function navigationThreadSearch(
   query: string,
-  camps: readonly NavigationCampTarget[],
+  threads: readonly NavigationThreadTarget[],
   projectNameByPath: ReadonlyMap<string, string>,
-  firstRunCampId: string | null = null
-): { kind: 'id'; campId: string } | { kind: 'text'; camps: NavigationCampTarget[] } {
+  firstRunThreadId: string | null = null
+): { kind: 'id'; threadId: string } | { kind: 'text'; threads: NavigationThreadTarget[] } {
   const trimmed = query.trim()
-  if (isCampId(trimmed)) return { kind: 'id', campId: trimmed }
+  if (isThreadId(trimmed)) return { kind: 'id', threadId: trimmed }
 
   const text = query.trim().toLowerCase()
   return {
     kind: 'text',
-    camps: (text ? camps.filter((camp) => {
-      const projectName = camp.projectBindingKind === 'directory'
-        ? projectNameByPath.get(camp.projectPath) ?? ''
+    threads: (text ? threads.filter((thread) => {
+      const projectName = thread.projectBindingKind === 'directory'
+        ? projectNameByPath.get(thread.projectPath) ?? ''
         : uiAttribute('快速对话')
-      return formatCampTitle(camp, firstRunCampId).toLowerCase().includes(text)
-        || camp.title.toLowerCase().includes(text)
+      return formatThreadTitle(thread, firstRunThreadId).toLowerCase().includes(text)
+        || thread.title.toLowerCase().includes(text)
         || projectName.toLowerCase().includes(text)
-    }) : camps).slice(0, 12)
+    }) : threads).slice(0, 12)
   }
 }
 
-export interface NavigationCampLookup {
-  campId: string
-  camp: NavigationCampTarget | null
+export interface NavigationThreadLookup {
+  threadId: string
+  thread: NavigationThreadTarget | null
   error: string | null
 }
 
-export function startNavigationCampLookup(
-  campId: string,
-  publish: (result: NavigationCampLookup) => void,
-  findCamp: (campId: string) => Promise<NavigationCampTarget | null> = (id) =>
-    window.rovai.request('navigation.findCamp', { campId: id })
+export function startNavigationThreadLookup(
+  threadId: string,
+  publish: (result: NavigationThreadLookup) => void,
+  findThread: (threadId: string) => Promise<NavigationThreadTarget | null> = (id) =>
+    window.rovai.request('navigation.findThread', { threadId: id })
 ): () => void {
   let cancelled = false
   // A complete ID can still be edited quickly; only dispatch the settled input.
   const timer = setTimeout(() => {
-    void findCamp(campId).then(
-      (camp) => {
-        if (!cancelled) publish({ campId, camp, error: null })
+    void findThread(threadId).then(
+      (thread) => {
+        if (!cancelled) publish({ threadId, thread, error: null })
       },
       () => {
-        if (!cancelled) publish({ campId, camp: null, error: '暂时无法查询会话，请重试。' })
+        if (!cancelled) publish({ threadId, thread: null, error: '暂时无法查询会话，请重试。' })
       }
     )
   }, 150)

@@ -1,14 +1,14 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { CampMessageView, CampSnapshot, StructuredCampMessageContent } from '@contracts'
-import { CampWorkspace } from './CampWorkspace'
+import type { ThreadMessageView, ThreadSnapshot, StructuredThreadMessageContent } from '@contracts'
+import { ThreadWorkspace } from './ThreadWorkspace'
 import { createStructuredMessageClipboardData } from './structured-message-clipboard'
 
 const createdAt = '2026-08-30T04:00:00Z'
-type ExternalQuote = Extract<StructuredCampMessageContent[number], { kind: 'external_quote' }>
+type ExternalQuote = Extract<StructuredThreadMessageContent[number], { kind: 'external_quote' }>
 
-function message(overrides: Partial<CampMessageView> = {}): CampMessageView {
+function message(overrides: Partial<ThreadMessageView> = {}): ThreadMessageView {
   return {
     quotes: [],
     withdrawn: false,
@@ -25,8 +25,8 @@ function message(overrides: Partial<CampMessageView> = {}): CampMessageView {
     attachments: [],
     addressMode: 'default',
     addressedAgentIds: [],
-    replyToCampMessageId: null,
-    campTurnId: null,
+    replyToThreadMessageId: null,
+    threadTurnId: null,
     presentation: null,
     createdAt,
     ...overrides
@@ -44,11 +44,11 @@ function quote(overrides: Partial<ExternalQuote> = {}): ExternalQuote {
   }
 }
 
-function renderMessages(messages: CampMessageView[]): string {
-  const snapshot: CampSnapshot = {
+function renderMessages(messages: ThreadMessageView[]): string {
+  const snapshot: ThreadSnapshot = {
     schemaVersion: 34,
     throughGlobalSequence: messages.length,
-    camp: {
+    thread: {
       id: 'camp-channel-presentation',
       title: '渠道会话',
       activationState: 'active',
@@ -72,7 +72,7 @@ function renderMessages(messages: CampMessageView[]): string {
     executionEvidence: [], agentRunFileChanges: [], contextManifests: [],
     approvals: [], actions: [], timeline: []
   }
-  return renderToStaticMarkup(createElement(CampWorkspace, {
+  return renderToStaticMarkup(createElement(ThreadWorkspace, {
     snapshot,
     projectName: null,
     agents: [],
@@ -124,7 +124,7 @@ describe('channel message presentation', () => {
     const localMarkup = renderMessages([parent, message({
       sequence: 2,
       timelineGlobalSequence: 2,
-      replyToCampMessageId: parent.id
+      replyToThreadMessageId: parent.id
     })])
     const externalMarkup = renderMessages([message({
       authorType: 'external_principal',
@@ -144,7 +144,7 @@ describe('channel message presentation', () => {
   })
 
   it('hides only the Core quote separator while keeping the Owner’s own newlines', () => {
-    const content: StructuredCampMessageContent = [
+    const content: StructuredThreadMessageContent = [
       quote(),
       { kind: 'text', text: '\n\n' },
       { kind: 'member_mention', agentId: 'agent-1' },
@@ -173,7 +173,7 @@ describe('channel message presentation', () => {
     const markup = renderMessages([parent, message({
       sequence: 2,
       timelineGlobalSequence: 2,
-      replyToCampMessageId: parent.id
+      replyToThreadMessageId: parent.id
     })])
 
     expect(markup).toContain('<button class="reply-parent-quote" type="button" title="你 · 请继续检查。">')
@@ -203,7 +203,7 @@ describe('channel message presentation', () => {
       attachmentSummaries: [{ name: '设计.txt', mediaType: 'text/plain' }]
     })
     const original = structuredClone(externalQuote)
-    const content: StructuredCampMessageContent = [externalQuote, { kind: 'text', text: '\n请继续检查。' }]
+    const content: StructuredThreadMessageContent = [externalQuote, { kind: 'text', text: '\n请继续检查。' }]
     const markup = renderMessages([message({
       authorType: 'external_principal',
       authorId: 'principal-feishu',

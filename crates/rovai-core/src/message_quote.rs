@@ -1,7 +1,7 @@
 //! Immutable, owner-scoped excerpts. This module never resolves recipients or executable intent.
 use crate::{
     camp_content::{
-        StructuredCampMessageContent, StructuredCampMessageSegment, render_current_plain_text,
+        StructuredThreadMessageContent, StructuredThreadMessageSegment, render_current_plain_text,
         render_plain_text_with_current_user,
     },
     camp_message_publication::public_camp_message_publication_cte,
@@ -77,7 +77,7 @@ impl MessageQuoteSnapshot {
 
     pub fn model_projection(&self) -> Value {
         json!({"kind":"message_excerpt", "source": {
-            "scope":"current_conversation_messages", "messageId":self.source.message_id,
+            "scope":"current_messages", "messageId":self.source.message_id,
             "author":self.author_at_capture
         }, "text":self.text})
     }
@@ -96,7 +96,7 @@ pub fn public_history_quotes(quotes: &[MessageQuoteSnapshot]) -> Vec<Value> {
     model_quotes(quotes)
         .into_iter()
         .map(|mut value| {
-            value["source"]["scope"] = json!("camp_messages");
+            value["source"]["scope"] = json!("thread_messages");
             value
         })
         .collect()
@@ -224,7 +224,7 @@ pub fn load_quotes(
 /// projected to one Agent. The stored snapshot remains unchanged; only the
 /// per-viewer projection is filtered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CampQuoteFence {
+pub enum ThreadQuoteFence {
     CampSequence(i64),
     GlobalPublicationSequence(i64),
 }
@@ -234,7 +234,7 @@ pub fn load_agent_visible_camp_quotes(
     owner_message_id: &str,
     camp_id: &str,
     viewer_agent_id: &str,
-    fence: CampQuoteFence,
+    fence: ThreadQuoteFence,
 ) -> Result<Vec<MessageQuoteSnapshot>> {
     load_agent_visible_camp_quotes_with_claimed_sources(
         connection,
@@ -251,7 +251,7 @@ pub(crate) fn load_agent_visible_camp_quotes_with_claimed_sources(
     owner_message_id: &str,
     camp_id: &str,
     viewer_agent_id: &str,
-    fence: CampQuoteFence,
+    fence: ThreadQuoteFence,
     claimed_source_message_ids: &std::collections::HashSet<String>,
 ) -> Result<Vec<MessageQuoteSnapshot>> {
     let quotes = load_quotes(connection, QuoteStorage::CampMessage, owner_message_id)?;
@@ -281,11 +281,11 @@ fn camp_quote_source_is_visible(
     connection: &Connection,
     quote: &MessageQuoteSnapshot,
     viewer_agent_id: &str,
-    fence: CampQuoteFence,
+    fence: ThreadQuoteFence,
     claimed_source_is_visible: bool,
 ) -> Result<bool> {
     let (sql, boundary) = match fence {
-        CampQuoteFence::CampSequence(boundary) => (
+        ThreadQuoteFence::CampSequence(boundary) => (
             r#"
             SELECT EXISTS (
                 SELECT 1
@@ -308,7 +308,7 @@ fn camp_quote_source_is_visible(
             .to_string(),
             boundary,
         ),
-        CampQuoteFence::GlobalPublicationSequence(boundary) => (
+        ThreadQuoteFence::GlobalPublicationSequence(boundary) => (
             format!(
                 r#"
                 WITH {}
@@ -446,7 +446,7 @@ pub fn capture_quote(
             )
             .optional()?
             .context("quote.source_unavailable")?;
-        let content: StructuredCampMessageContent = serde_json::from_str(&row.2)?;
+        let content: StructuredThreadMessageContent = serde_json::from_str(&row.2)?;
         let body = render_current_plain_text(transaction, &content)?;
         (
             row.0,
@@ -473,7 +473,7 @@ pub fn capture_quote(
     let projection = if author_type == "user" {
         body.replace("\r\n", "\n")
     } else if let Some(content) = revision.get("content") {
-        let content: StructuredCampMessageContent = serde_json::from_value(content.clone())?;
+        let content: StructuredThreadMessageContent = serde_json::from_value(content.clone())?;
         let name = selection
             .current_user_display_name
             .as_deref()
@@ -550,11 +550,11 @@ pub fn capture_quote(
 
 /// Mirrors the two production structured-prefix rendering seams; plain Markdown keeps its own parser.
 pub fn project_structured_quote_text(
-    content: &StructuredCampMessageContent,
+    content: &StructuredThreadMessageContent,
     mut member_name: impl FnMut(&str) -> Option<String>,
     current_user: &str,
 ) -> Result<String> {
-    use StructuredCampMessageSegment as Segment;
+    use StructuredThreadMessageSegment as Segment;
     let render = |parts: &[Segment], names: &mut dyn FnMut(&str) -> Option<String>| {
         render_plain_text_with_current_user(parts, names, current_user)
     };
@@ -840,6 +840,7 @@ pub struct MutateQuoteDraftCommand {
     )]
     pub draft_client: crate::draft_client::DraftClient,
     #[serde(deserialize_with = "crate::camp_id::deserialize_camp_id_string")]
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub conversation_id: Option<String>,
     pub expected_revision: i64,
@@ -957,7 +958,7 @@ mod tests {
             "message_2",
             "camp_1",
             "agent_b",
-            CampQuoteFence::CampSequence(2),
+            ThreadQuoteFence::CampSequence(2),
         )
         .unwrap();
         assert!(hidden.is_empty());
@@ -967,7 +968,7 @@ mod tests {
                 "message_2",
                 "camp_1",
                 "agent_a",
-                CampQuoteFence::CampSequence(2),
+                ThreadQuoteFence::CampSequence(2),
             )
             .unwrap(),
             vec![quote.clone()]
@@ -985,7 +986,7 @@ mod tests {
                 "message_2",
                 "camp_1",
                 "agent_b",
-                CampQuoteFence::CampSequence(2),
+                ThreadQuoteFence::CampSequence(2),
             )
             .unwrap(),
             vec![quote]
@@ -1091,7 +1092,7 @@ mod tests {
                     [case["content"].to_string()],
                 )
                 .unwrap();
-            let content: StructuredCampMessageContent =
+            let content: StructuredThreadMessageContent =
                 serde_json::from_value(case["content"].clone()).unwrap();
             let text = case["text"].as_str().unwrap();
             let captured = capture_quote(
@@ -1122,7 +1123,7 @@ mod tests {
         assert_eq!(frozen, vec![quote.clone()]);
         let model = quote.model_projection();
         assert_eq!(model["source"]["author"]["displayName"], "芝士");
-        assert!(model["source"].get("campId").is_none());
+        assert!(model["source"].get("threadId").is_none());
         assert_eq!(model["text"], text);
         assert!(model.get("skills").is_none());
         assert!(model.get("locator").is_none());

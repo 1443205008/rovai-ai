@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { useCallback, useEffect, useId, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { AgentProfile, AutomationRunListPage, AutomationRunSummary, AutomationView, ChannelSettingsSnapshot, ProjectNavigationGroup } from '@contracts'
@@ -38,8 +38,8 @@ function MemberCopy({ member }: { member: AgentProfile }): React.JSX.Element {
     <span className="automation-picker-copy"><span><strong>{member.displayName}</strong><em>{member.teamRole}</em></span><small>{runtime ? `${runtimeAdapterDisplayLabel(runtime.adapterKind)}${runtime.model.mode === 'explicit' ? ` · ${runtime.model.modelId}` : ''}` : uiAttribute("尚未配置智能体")}</small></span></>
 }
 
-function RunHistory({ automation, onOpenCamp }: { automation: AutomationView; onOpenCamp(campId: string): void }): React.JSX.Element {
-  const client = useCampClient()
+function RunHistory({ automation, onOpenThread }: { automation: AutomationView; onOpenThread(threadId: string): void }): React.JSX.Element {
+  const client = useThreadClient()
   const [runs, setRuns] = useState<AutomationRunSummary[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -99,8 +99,8 @@ function RunHistory({ automation, onOpenCamp }: { automation: AutomationView; on
       {runs.map((run) => {
         const state = runStatus(run)
         const icon: AutomationIcon = run.status === 'completed' ? 'check' : run.status === 'failed' ? 'failed' : run.status === 'skipped' ? 'skip' : 'clock'
-        return <button key={run.runId} className={`automation-history-row ${state.tone}`} type="button" disabled={!run.campId} onClick={() => { if (run.campId) onOpenCamp(run.campId) }} title={state.detail ?? state.label} aria-label={`${state.label}${uiAttribute('，')}${dateTimeLabel(run.createdAt)}${run.campId ? uiAttribute("，打开执行对话") : ''}`}>
-          <AutomationGlyph name={icon} /><span><time dateTime={run.createdAt}>{dateTimeLabel(run.createdAt)}</time><small>{state.detail ?? state.label}</small></span><span className="automation-history-state">{state.label}</span>{run.campId && <span className="automation-history-open"><AutomationGlyph name="chat" /></span>}
+        return <button key={run.runId} className={`automation-history-row ${state.tone}`} type="button" disabled={!run.threadId} onClick={() => { if (run.threadId) onOpenThread(run.threadId) }} title={state.detail ?? state.label} aria-label={`${state.label}${uiAttribute('，')}${dateTimeLabel(run.createdAt)}${run.threadId ? uiAttribute("，打开执行对话") : ''}`}>
+          <AutomationGlyph name={icon} /><span><time dateTime={run.createdAt}>{dateTimeLabel(run.createdAt)}</time><small>{state.detail ?? state.label}</small></span><span className="automation-history-state">{state.label}</span>{run.threadId && <span className="automation-history-open"><AutomationGlyph name="chat" /></span>}
         </button>
       })}
     </div>
@@ -109,17 +109,17 @@ function RunHistory({ automation, onOpenCamp }: { automation: AutomationView; on
   </section>
 }
 
-export function AutomationEditor({ draft, onChange, agents, projects, automation, busy, onOpenCamp, onCreate }: {
+export function AutomationEditor({ draft, onChange, agents, projects, automation, busy, onOpenThread, onCreate }: {
   draft: AutomationDraft
   onChange: Dispatch<SetStateAction<AutomationDraft>>
   agents: AgentProfile[]
   projects: ProjectNavigationGroup[]
   automation: AutomationView | null
   busy: boolean
-  onOpenCamp(campId: string): void
+  onOpenThread(threadId: string): void
   onCreate(): void
 }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const [channels, setChannels] = useState<ChannelSettingsSnapshot | null>(null)
   const [channelError, setChannelError] = useState(false)
   const [channelsOpen, setChannelsOpen] = useState(false)
@@ -197,6 +197,6 @@ export function AutomationEditor({ draft, onChange, agents, projects, automation
     </details>
     {!automation && <div className="automation-create-actions"><button className="primary-button" type="submit" disabled={busy || Boolean(scheduleError) || !draft.prompt.trim() || member?.presence !== 'present'}>{busy ? uiAttribute("正在保存…") : uiAttribute("保存")}</button></div>}
   </form>
-    {automation && <RunHistory automation={automation} onOpenCamp={onOpenCamp} />}
+    {automation && <RunHistory automation={automation} onOpenThread={onOpenThread} />}
   </div>
 }

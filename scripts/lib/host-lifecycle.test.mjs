@@ -20,7 +20,7 @@ test('Host prepare creates only a new private authority directory and preserves 
     // Windows canonical paths can carry the extended-length prefix. Compare
     // the actual directory identity without weakening the new-directory fence.
     assert.equal(await realpath(prepared.dataDir), dataDir)
-    assert.ok(prepared.runArguments.includes(prepared.runtimeCampFilesRoot))
+    assert.ok(prepared.runArguments.includes(prepared.runtimeThreadFilesRoot))
     if (process.platform !== 'win32') assert.equal((await stat(dataDir)).mode & 0o777, 0o700)
     await assert.rejects(access(join(dataDir, 'rovai.sqlite')), { code: 'ENOENT' })
     const marker = join(dataDir, 'existing-work')

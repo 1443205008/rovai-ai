@@ -18,7 +18,7 @@ export async function createConfiguredCampAndSend(request, input) {
     defaultLeadAgentId,
     collaborationMode: 'peer'
   })
-  const campId = createResult.payload?.campId
+  const campId = (createResult.payload?.threadId ?? createResult.payload?.campId)
   if (createResult.status !== 'applied' || !campId) {
     throw new Error(`Configured Camp creation failed: ${JSON.stringify(createResult)}`)
   }

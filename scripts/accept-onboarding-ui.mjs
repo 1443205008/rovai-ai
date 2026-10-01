@@ -235,7 +235,7 @@ try {
   assert(completed.status === 'completed'
     && completed.origin === 'onboarding'
     && completed.selectedMemberRole === selectedRole
-    && completed.quickChatCampId
+    && completed.quickChatThreadId
     && completed.memberAgentId,
   `Page three did not complete onboarding: ${JSON.stringify(completed)}`)
   report.onboarding = completed
@@ -269,7 +269,7 @@ try {
   }
   const beforeProjection = await request(running.cdp, 'camps.open', {
     traceId: randomUUID(),
-    campId: completed.quickChatCampId
+    threadId: completed.quickChatThreadId
   })
   const campState = await evaluate(running.cdp, `(() => ({
     title: document.querySelector('#first-run-camp-title')?.textContent?.trim(),
@@ -283,11 +283,11 @@ try {
     })(),
     horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth
   }))()`)
-  assert(beforeProjection.camp.title === '初次集结'
-    && beforeProjection.camp.activationState === 'active'
+  assert(beforeProjection.thread.title === '初次集结'
+    && beforeProjection.thread.activationState === 'active'
     && beforeProjection.members.length === 1
     && beforeProjection.members[0].agentId === completed.memberAgentId
-    && beforeProjection.camp.defaultLeadAgentId === completed.memberAgentId,
+    && beforeProjection.thread.defaultLeadAgentId === completed.memberAgentId,
   `The created Quick Chat Camp is not exact: ${JSON.stringify(beforeProjection)}`)
   assert(beforeProjection.messages.length === 0 && beforeProjection.agentRuns.length === 0,
     `Initial Camp unexpectedly contains work: ${JSON.stringify({ messages: beforeProjection.messages.length, runs: beforeProjection.agentRuns.length })}`)
@@ -312,12 +312,12 @@ try {
   assert(Math.abs(firstRunLayout.width - 680) < 1 && firstRunLayout.centerOffset < 2 && firstRunLayout.cardRows === 1,
     `First-run welcome does not match the approved layout: ${JSON.stringify(firstRunLayout)}`)
   report.firstRunLayout = firstRunLayout
-  report.camp = {
-    id: beforeProjection.camp.id,
-    title: beforeProjection.camp.title,
-    activationState: beforeProjection.camp.activationState,
+  report.thread = {
+    id: beforeProjection.thread.id,
+    title: beforeProjection.thread.title,
+    activationState: beforeProjection.thread.activationState,
     memberCount: beforeProjection.members.length,
-    defaultLeadAgentId: beforeProjection.camp.defaultLeadAgentId
+    defaultLeadAgentId: beforeProjection.thread.defaultLeadAgentId
   }
 
   await setTheme(running.cdp, 'day')
@@ -340,7 +340,7 @@ try {
       `document.querySelector('#camp-message')?.textContent === ${JSON.stringify(prompt)}
         && document.activeElement === document.querySelector('#camp-message')`, 5_000)
     await waitForExpression(running.cdp,
-      `JSON.parse(window.localStorage.getItem('rovai.camp-composer-draft.v1:' + ${JSON.stringify(completed.quickChatCampId)}) || 'null')?.body === ${JSON.stringify(prompt)}`,
+      `JSON.parse(window.localStorage.getItem('rovai.camp-composer-draft.v1:' + ${JSON.stringify(completed.quickChatThreadId)}) || 'null')?.body === ${JSON.stringify(prompt)}`,
       10_000)
   }
   await clickSelector(running.cdp, '.first-run-starters button')
@@ -349,11 +349,11 @@ try {
       && document.activeElement === document.querySelector('#camp-message')`,
     5_000)
   await waitForExpression(running.cdp,
-    `JSON.parse(window.localStorage.getItem('rovai.camp-composer-draft.v1:' + ${JSON.stringify(completed.quickChatCampId)}) || 'null')?.body === ${JSON.stringify(expectedStarter)}`,
+    `JSON.parse(window.localStorage.getItem('rovai.camp-composer-draft.v1:' + ${JSON.stringify(completed.quickChatThreadId)}) || 'null')?.body === ${JSON.stringify(expectedStarter)}`,
     10_000)
   const afterProjection = await request(running.cdp, 'camps.open', {
     traceId: randomUUID(),
-    campId: completed.quickChatCampId
+    threadId: completed.quickChatThreadId
   })
   const draftInteraction = await evaluate(running.cdp, `(() => {
     const editor = document.querySelector('#camp-message')
@@ -398,10 +398,10 @@ try {
   const restarted = await onboardingGet(running.cdp)
   const restartedProjection = await request(running.cdp, 'camps.open', {
     traceId: randomUUID(),
-    campId: completed.quickChatCampId
+    threadId: completed.quickChatThreadId
   })
   assert(restarted.status === 'completed'
-    && restarted.quickChatCampId === completed.quickChatCampId
+    && restarted.quickChatThreadId === completed.quickChatThreadId
     && restartedProjection.messages.length === 0
     && restartedProjection.agentRuns.length === 0,
   `Completed onboarding/Camp did not survive restart: ${JSON.stringify({ restarted, messages: restartedProjection.messages.length, runs: restartedProjection.agentRuns.length })}`)
@@ -451,7 +451,7 @@ try {
 
   const persistedOnboarding = JSON.parse(await readFile(join(electronUserDataDir, 'onboarding.json'), 'utf8'))
   assert(persistedOnboarding.status === 'completed'
-    && persistedOnboarding.quickChatCampId === completed.quickChatCampId,
+    && persistedOnboarding.quickChatThreadId === completed.quickChatThreadId,
   `Private onboarding file is not completed: ${JSON.stringify(persistedOnboarding)}`)
   const reportPath = join(outputDir, 'report.json')
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)

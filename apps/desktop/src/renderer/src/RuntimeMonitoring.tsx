@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { RuntimeUsageChart, USAGE_CHART_SERIES } from './RuntimeUsageChart'
 import { readErrorMessage } from './error-message'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -75,7 +75,7 @@ export function RuntimeMonitoring({
 }: {
   platform?: NodeJS.Platform
 } = {}): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const [exported, setExported] = useState(false)
   const [filter, setFilter] = useState<MonitoringFilter>({ range: '24h' })
   const [snapshot, setSnapshot] = useState<RuntimeUsageSnapshot | null>(null)

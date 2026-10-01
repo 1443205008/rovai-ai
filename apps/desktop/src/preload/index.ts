@@ -104,10 +104,10 @@ const api: RovaiApi = {
     }
   },
   userAutomation: {
-    onOpenCamp(listener) {
+    onOpenThread(listener) {
       const handler = (
         _event: Electron.IpcRendererEvent,
-        request: { campId: string }
+        request: { threadId: string }
       ): void => listener(request)
       ipcRenderer.on('rovai:user-automation-open-camp', handler)
       return () => ipcRenderer.removeListener('rovai:user-automation-open-camp', handler)
@@ -295,8 +295,8 @@ const api: RovaiApi = {
     recordProvisionedRuntime(version) {
       return ipcRenderer.invoke('rovai:onboarding-record-runtime', version)
     },
-    recordProvisionedCamp(campId) {
-      return ipcRenderer.invoke('rovai:onboarding-record-camp', campId)
+    recordProvisionedThread(threadId) {
+      return ipcRenderer.invoke('rovai:onboarding-record-camp', threadId)
     },
     complete() {
       return ipcRenderer.invoke('rovai:onboarding-complete')
@@ -348,11 +348,11 @@ const api: RovaiApi = {
         name
       ) as Promise<NavigationPreferencesSnapshot>
     },
-    removeProject(targetKey: string, relatedCampIds: string[]) {
+    removeProject(targetKey: string, relatedThreadIds: string[]) {
       return ipcRenderer.invoke(
         'rovai:navigation-preferences-remove-project',
         targetKey,
-        relatedCampIds
+        relatedThreadIds
       ) as Promise<NavigationPreferencesSnapshot>
     },
     restoreProject(targetKey: string) {
@@ -374,12 +374,12 @@ const api: RovaiApi = {
     }
   },
   composerAttachments: {
-    async prepare(campId, expectedRevision, file) {
+    async prepare(threadId, expectedRevision, file) {
       const sourcePath = webUtils.getPathForFile(file)
       if (sourcePath) {
         return ipcRenderer.invoke(
           'rovai:composer-attachment-prepare-path',
-          campId,
+          threadId,
           expectedRevision,
           sourcePath,
           file.name,
@@ -389,7 +389,7 @@ const api: RovaiApi = {
       const bytes = new Uint8Array(await file.arrayBuffer())
       return ipcRenderer.invoke(
         'rovai:composer-attachment-prepare-bytes',
-        campId,
+        threadId,
         expectedRevision,
         file.name,
         file.type || null,
@@ -399,13 +399,13 @@ const api: RovaiApi = {
     preview(locator) {
       return ipcRenderer.invoke('rovai:composer-attachment-preview', locator)
     },
-    restore(campId, attachments) {
-      return ipcRenderer.invoke('rovai:composer-attachment-restore', campId, attachments)
+    restore(threadId, attachments) {
+      return ipcRenderer.invoke('rovai:composer-attachment-restore', threadId, attachments)
     },
-    discard(campId, attachmentRefIds) {
+    discard(threadId, attachmentRefIds) {
       return ipcRenderer.invoke(
         'rovai:composer-attachment-discard',
-        campId,
+        threadId,
         attachmentRefIds
       )
     },
@@ -509,8 +509,8 @@ const api: RovaiApi = {
       ipcRenderer.on('rovai:file-preview-resources-released', handler)
       return () => ipcRenderer.removeListener('rovai:file-preview-resources-released', handler)
     },
-    bindCamp(campId) {
-      return ipcRenderer.invoke('rovai:file-preview-bind-camp', campId)
+    bindThread(threadId) {
+      return ipcRenderer.invoke('rovai:file-preview-bind-camp', threadId)
     },
     open(request) {
       return ipcRenderer.invoke('rovai:file-preview-open', request)

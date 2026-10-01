@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { parseControlledMemberAvatarRef } from '@contracts'
 import { MemberAvatar } from './MemberAvatar'
@@ -29,7 +29,7 @@ export function MemberAvatarEditor({
   onClose(): void
   onPendingChange(pending: boolean): void
 }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const [source, setSource] = useState<PendingMemberAvatarSource | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)

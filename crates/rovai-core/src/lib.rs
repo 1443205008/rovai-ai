@@ -108,6 +108,7 @@ pub mod skill_projection;
 pub mod storage_layout;
 pub mod team_tool;
 pub mod team_tool_catalog;
+pub mod thread_compat;
 #[cfg(windows)]
 mod windows_runtime_entrypoint;
 pub mod zcode;
