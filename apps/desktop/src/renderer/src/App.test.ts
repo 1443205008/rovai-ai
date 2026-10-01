@@ -2898,10 +2898,10 @@ describe('task event projections', () => {
   })
 
   it('defines the final unified Thread and Project menu labels', () => {
-    expect(campNavigationMenuLabels(false)).toEqual(['置顶', '重命名', '复制会话 ID', '删除'])
-    expect(campNavigationMenuLabels(true)).toEqual(['取消置顶', '重命名', '复制会话 ID', '删除'])
-    expect(projectNavigationMenuLabels(false)).toEqual(['置顶项目', '重命名', '移除项目'])
-    expect(projectNavigationMenuLabels(true)).toEqual(['取消置顶项目', '重命名', '移除项目'])
+    expect(campNavigationMenuLabels(false)).toEqual(['置顶', '标记未读', '重命名', '复制会话 ID', '删除'])
+    expect(campNavigationMenuLabels(true)).toEqual(['取消置顶', '标记未读', '重命名', '复制会话 ID', '删除'])
+    expect(projectNavigationMenuLabels(false)).toEqual(['新建对话', '置顶项目', '重命名', '在 Finder 中显示', '复制项目路径', '移除项目'])
+    expect(projectNavigationMenuLabels(true)).toEqual(['新建对话', '取消置顶项目', '重命名', '在 Finder 中显示', '复制项目路径', '移除项目'])
   })
 
   it('copies only the exact Thread ID and reports clipboard failures', async () => {
@@ -2997,7 +2997,7 @@ describe('task event projections', () => {
     expect(markup).toContain('rovai-ai')
     expect(markup).toContain(longTitle)
     expect(markup).toContain(`aria-label="【飞书话题】${longTitle}，有新回复"`)
-    expect(markup).toContain(`title="【飞书话题】${longTitle} · 有新回复"`)
+    expect(markup).toContain(`title="【飞书话题】${longTitle} · 未读"`)
     expect(markup).toContain(`class="truncate">【飞书话题】${longTitle}</span>`)
     expect(markup).toContain('管理')
     expect(markup).toContain('aria-label="管理项目“rovai-ai”"')
@@ -3107,7 +3107,7 @@ describe('task event projections', () => {
     expect(settings).toContain('settings-app-update-badge')
   })
 
-  it('keeps one stable trailing status slot with loading ahead of unread', () => {
+  it('keeps unread and loading together in the stable trailing status lane', () => {
     const makeThread = (id: string, marker: 'none' | 'unread_completed' | 'loading') => ({
       id,
       title: `${id} 对话`,
@@ -3162,12 +3162,12 @@ describe('task event projections', () => {
     expect(markup).not.toContain('class="camp-marker-slot"')
     expect(markup).toContain('data-status="none"')
     expect(markup).toContain('data-status="unread"')
-    expect(markup).toContain('data-status="opening"')
+    expect(markup).toContain('data-status="opening-unread"')
     expect(markup).toContain('data-status="loading"')
-    expect(markup.match(/class="camp-unread-dot"/g)).toHaveLength(1)
+    expect(markup.match(/class="camp-unread-dot"/g)).toHaveLength(2)
     expect(markup).toContain('aria-busy="true" aria-label="opening 对话，有新回复，正在打开"')
     expect(markup).toContain('aria-label="running 对话，正在运行"')
-    expect(markup).toContain('title="opening 对话 · 有新回复"')
+    expect(markup).toContain('title="opening 对话 · 未读 · 正在打开"')
     expect(markup).toContain('class="camp-loading-spinner camp-open-spinner"')
     expect(markup).toContain('class="camp-loading-spinner camp-marker-loading"')
     expect(markup).not.toContain('role="img" aria-label="正在运行"')

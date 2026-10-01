@@ -71,6 +71,8 @@ import { legacyUserDataPath } from './user-data-path'
 import { deleteRetiredManagedDirectory } from './quick-chat-cutover'
 import { CurrentUserProfileStore } from './current-user-profile'
 import { NavigationPreferencesStore } from './navigation-preferences'
+import { isNavigationThreadReadState } from '../shared/navigation-preferences-model'
+import { revealProjectDirectory } from './reveal-project-directory'
 import {
   ProjectAccessTransactionCoordinator,
   removedProjectRootsFromSnapshot,
@@ -1551,6 +1553,19 @@ ipcMain.handle('rovai:window-reset-bounds', (event) => {
   )
 })
 
+ipcMain.handle('rovai:navigation-preferences-set-thread-read-state', (_event, threadId: unknown, state: unknown) => {
+  if (typeof threadId !== 'string' || (state !== null && !isNavigationThreadReadState(state))) {
+    throw new Error('Invalid Thread read state request')
+  }
+  return projectAccessTransactions.run(async () => {
+    const snapshot = await requireNavigationPreferences().setThreadReadState(threadId, state)
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('rovai:navigation-preferences-changed', snapshot)
+    }
+    return snapshot
+  })
+})
+
 ipcMain.handle('rovai:navigation-preferences-get', () =>
   projectAccessTransactions.run(async () => requireNavigationPreferences().get())
 )
@@ -2292,6 +2307,10 @@ ipcMain.handle(
     })
     return { ...result, availability: 'available' as const }
   }
+)
+
+ipcMain.handle('rovai:reveal-project-directory', (_event, projectPath: unknown) =>
+  revealProjectDirectory(projectPath, path => shell.showItemInFolder(path))
 )
 
 ipcMain.handle('rovai:select-workspace-directory', async () => {

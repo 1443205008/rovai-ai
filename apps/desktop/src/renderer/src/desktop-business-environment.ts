@@ -7,5 +7,6 @@ export const desktopBusinessEnvironment: BusinessEnvironment = {
   files: desktopFilePreviewApi,
   get preferences() { return window.rovai },
   get desktop() { return window.rovai },
-  selectWorkspaceDirectory: () => window.rovai.selectWorkspaceDirectory()
+  selectWorkspaceDirectory: () => window.rovai.selectWorkspaceDirectory(),
+  revealProjectDirectory: path => window.rovai.revealProjectDirectory(path)
 }
