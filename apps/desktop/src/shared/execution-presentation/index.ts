@@ -4,7 +4,7 @@ import type {
   CanonicalRuntimeDiffProjectionView,
   CanonicalRuntimeActivityView,
   CoreEvent,
-  NavigationCampItem,
+  NavigationThreadItem,
   NavigationSnapshot
 } from '@contracts'
 import { safeMarkdownHasRenderableContent } from './safe-markdown-model'
@@ -24,10 +24,10 @@ export function railExpandedFromWidth(width: number): boolean {
   return width >= (RAIL_COLLAPSED_WIDTH + RAIL_EXPANDED_WIDTH) / 2
 }
 
-export function allNavigationCamps(navigation: NavigationSnapshot): NavigationCampItem[] {
+export function allNavigationThreads(navigation: NavigationSnapshot): NavigationThreadItem[] {
   return [
-    ...navigation.quickChat.recentCamps,
-    ...navigation.projects.flatMap((project) => project.recentCamps)
+    ...navigation.quickChat.recentThreads,
+    ...navigation.projects.flatMap((project) => project.recentThreads)
   ].sort((left, right) => {
     if (left.lastActivityGlobalSequence !== right.lastActivityGlobalSequence) {
       return right.lastActivityGlobalSequence - left.lastActivityGlobalSequence

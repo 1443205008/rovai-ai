@@ -40,7 +40,7 @@ function render(theme = 'day'): void {
   document.documentElement.dataset.theme = theme
   root.render(<main style={{ padding: 24, maxWidth: 760, margin: 'auto' }}>
     <p>模拟数据 · Command View 隔离验收</p>
-    <ToolActivityGroup campId="fixture-camp" runId="fixture-run" runStatus="succeeded"
+    <ToolActivityGroup threadId="fixture-camp" runId="fixture-run" runStatus="succeeded"
       liveTail={false} cancelling={false} items={items} completeEvidence={selectCompleteExecutionEvidence(evidence)}
       onFileOpenError={message => { throw new Error(message) }} />
   </main>)

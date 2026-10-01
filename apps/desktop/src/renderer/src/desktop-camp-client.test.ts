@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { desktopCampClient } from './desktop-camp-client'
+import { desktopThreadClient } from './desktop-camp-client'
 
 // Owns the Renderer → preload channel seam: the provider kind chosen on a tab
 // must reach preload unchanged, never defaulted or rewritten to another provider.
@@ -14,8 +14,8 @@ it.each(['feishu', 'lark', 'dingtalk'] as const)('forwards %s publish and retry 
   }
   vi.stubGlobal('window', { rovai: { channels } })
 
-  await expect(desktopCampClient.channels!.publishMemberBot('agent-a', kind)).resolves.toBe(snapshot)
-  await expect(desktopCampClient.channels!.retryMemberBot('agent-a', kind)).resolves.toBe(snapshot)
+  await expect(desktopThreadClient.channels!.publishMemberBot('agent-a', kind)).resolves.toBe(snapshot)
+  await expect(desktopThreadClient.channels!.retryMemberBot('agent-a', kind)).resolves.toBe(snapshot)
 
   expect(channels.publishMemberBot).toHaveBeenCalledExactlyOnceWith('agent-a', kind)
   expect(channels.retryMemberBot).toHaveBeenCalledExactlyOnceWith('agent-a', kind)

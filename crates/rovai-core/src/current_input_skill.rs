@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use crate::{
     agent_profile::AdapterKind,
     agent_runtime_adapter::{AgentRuntimeAdapterRegistry, SkillDeliveryGroupKey},
-    camp_content::StructuredCampMessageSegment,
+    camp_content::StructuredThreadMessageSegment,
     command::canonical_json_digest,
     skill_projection::PreparedSkillExposure,
 };
@@ -350,7 +350,7 @@ pub(crate) fn projected_skill_links_for_claim(
 
 pub fn freeze_skill_selection(
     transaction: &Transaction<'_>,
-    content: &[StructuredCampMessageSegment],
+    content: &[StructuredThreadMessageSegment],
     adapter_kind: AdapterKind,
 ) -> Result<SkillSelectionSnapshot> {
     freeze_skill_selection_with_messages(
@@ -363,7 +363,7 @@ pub fn freeze_skill_selection(
 
 pub fn freeze_skill_selection_with_messages(
     transaction: &Transaction<'_>,
-    content: &[StructuredCampMessageSegment],
+    content: &[StructuredThreadMessageSegment],
     message_indices: &[usize],
     adapter_kind: AdapterKind,
 ) -> Result<SkillSelectionSnapshot> {
@@ -384,7 +384,7 @@ pub fn freeze_skill_selection_with_messages(
     let mut seen = HashSet::new();
     let mut entries = Vec::new();
     for (index, segment) in content.iter().enumerate() {
-        let StructuredCampMessageSegment::SkillMention {
+        let StructuredThreadMessageSegment::SkillMention {
             skill_id,
             name_at_send,
         } = segment
@@ -430,7 +430,7 @@ pub fn freeze_skill_selection_with_messages(
 
 fn freeze_skill_selection_v2(
     transaction: &Transaction<'_>,
-    content: &[StructuredCampMessageSegment],
+    content: &[StructuredThreadMessageSegment],
     message_indices: &[usize],
 ) -> Result<SkillSelectionSnapshot> {
     let mut seen = HashSet::new();
@@ -441,7 +441,7 @@ fn freeze_skill_selection_v2(
         .filter(|_| !db_path.is_empty())
         .and_then(|data_dir| crate::managed_skills::managed_skills_root(data_dir).ok());
     for (index, segment) in content.iter().enumerate() {
-        let StructuredCampMessageSegment::SkillMention {
+        let StructuredThreadMessageSegment::SkillMention {
             skill_id,
             name_at_send,
         } = segment
@@ -1122,34 +1122,34 @@ mod tests {
         let snapshot = freeze_skill_selection(
             &transaction,
             &[
-                StructuredCampMessageSegment::Text {
+                StructuredThreadMessageSegment::Text {
                     text: "先 ".to_string(),
                 },
-                StructuredCampMessageSegment::SkillMention {
+                StructuredThreadMessageSegment::SkillMention {
                     skill_id: "ready".to_string(),
                     name_at_send: "review-pr".to_string(),
                 },
-                StructuredCampMessageSegment::SkillMention {
+                StructuredThreadMessageSegment::SkillMention {
                     skill_id: "ready".to_string(),
                     name_at_send: "ignored-duplicate".to_string(),
                 },
-                StructuredCampMessageSegment::SkillMention {
+                StructuredThreadMessageSegment::SkillMention {
                     skill_id: "inactive".to_string(),
                     name_at_send: "retired-skill".to_string(),
                 },
-                StructuredCampMessageSegment::SkillMention {
+                StructuredThreadMessageSegment::SkillMention {
                     skill_id: "disabled".to_string(),
                     name_at_send: "grilling".to_string(),
                 },
-                StructuredCampMessageSegment::SkillMention {
+                StructuredThreadMessageSegment::SkillMention {
                     skill_id: "renamed".to_string(),
                     name_at_send: "old-name".to_string(),
                 },
-                StructuredCampMessageSegment::SkillMention {
+                StructuredThreadMessageSegment::SkillMention {
                     skill_id: "unassigned".to_string(),
                     name_at_send: "worktree".to_string(),
                 },
-                StructuredCampMessageSegment::SkillMention {
+                StructuredThreadMessageSegment::SkillMention {
                     skill_id: "missing".to_string(),
                     name_at_send: "missing".to_string(),
                 },
@@ -1159,7 +1159,7 @@ mod tests {
         .unwrap();
         let codex_recipient = freeze_skill_selection(
             &transaction,
-            &[StructuredCampMessageSegment::SkillMention {
+            &[StructuredThreadMessageSegment::SkillMention {
                 skill_id: "ready".to_string(),
                 name_at_send: "review-pr".to_string(),
             }],
@@ -1214,7 +1214,7 @@ mod tests {
         let transaction = connection.transaction().unwrap();
         let selection = freeze_skill_selection(
             &transaction,
-            &[StructuredCampMessageSegment::SkillMention {
+            &[StructuredThreadMessageSegment::SkillMention {
                 skill_id: "skill-1".to_string(),
                 name_at_send: "review-pr".to_string(),
             }],

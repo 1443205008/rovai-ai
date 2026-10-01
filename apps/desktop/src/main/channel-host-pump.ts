@@ -97,7 +97,7 @@ export class AdaptiveChannelHostPump {
       this.wake()
       return
     }
-    // A channel-bound Camp can start another AgentRun after its inbound request
+    // A channel-bound Thread can start another AgentRun after its inbound request
     // has settled. Keep lifecycle events able to discover that durable work.
     if (!this.#active
       && event.method !== 'agent_run.started'

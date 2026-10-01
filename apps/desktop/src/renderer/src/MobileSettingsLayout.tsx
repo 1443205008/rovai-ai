@@ -1,7 +1,7 @@
 import { Activity, useLayoutEffect, useRef, type ReactNode, type Ref } from 'react'
 import type { AppearanceSnapshot, SettingsSection } from '@contracts'
-import { useCampClient } from './camp-client'
-import { SETTINGS_SIDEBAR_GROUPS } from './CampNavigation'
+import { useThreadClient } from './camp-client'
+import { SETTINGS_SIDEBAR_GROUPS } from './ThreadNavigation'
 import { MobileBack, MobilePageHeader, useMobileLayout } from './MobileLayout'
 import { NavigationIcon } from './NavigationIcon'
 import { Icon } from './MissionControls'
@@ -20,7 +20,7 @@ export function MobileSettingsLayout({ overview, section, appearance, menuOpen, 
   children: ReactNode
 }): React.JSX.Element {
   const mobile = useMobileLayout()
-  const client = useCampClient()
+  const client = useThreadClient()
   const index = useRef<HTMLDivElement>(null)
   const wasOverview = useRef(overview)
   const lastSection = useRef(section)

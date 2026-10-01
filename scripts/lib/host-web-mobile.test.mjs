@@ -56,7 +56,7 @@ test('phone workbench uses shared navigation, schedules and per-tab drafts', { t
     for (let index = 1; index <= 10; index++) await host.request('camps.create', { commandId: crypto.randomUUID(), name: `分页会话 ${index}`, workspace: null, memberAgentIds: [member.agentId], defaultLeadAgentId: member.agentId, collaborationMode: 'peer' })
     const result = await host.request('camps.create', { commandId: crypto.randomUUID(), name: 'Mobile 验收对话', workspace: null, memberAgentIds: [member.agentId], defaultLeadAgentId: member.agentId, collaborationMode: 'peer' })
     assert.equal(result.status, 'applied')
-    const campId = result.payload.campId
+    const threadId = result.payload.threadId
     const uiDirectory = join(fixture, 'web')
     await cp(process.env.ROVAI_WEB_UI ?? join(repository, 'out/web'), uiDirectory, { recursive: true })
     const service = await host.request('host.web.start', { listen: '127.0.0.1:0', uiDirectory })
@@ -252,11 +252,11 @@ test('phone workbench uses shared navigation, schedules and per-tab drafts', { t
     await browser.wait(`window.mobileAcceptanceReloadMarker!==true && document.querySelector(${JSON.stringify(editor)})?.textContent==='手机标签页草稿' && document.querySelector(${JSON.stringify(editor)})?.getClientRects().length>0`)
     assert.equal(await browser.evaluate(`document.querySelector('.web-login-overlay')===null`), true)
     stage = 'phone return key'
-    const messagesBeforeReturn = (await host.request('camps.snapshot', { campId })).messages.length
+    const messagesBeforeReturn = (await host.request('camps.snapshot', { threadId })).messages.length
     await browser.click(`document.querySelector(${JSON.stringify(editor)})`)
     await browser.key('Enter')
     await browser.wait(`document.querySelector(${JSON.stringify(editor)})?.innerHTML.includes('<br')`)
-    assert.equal((await host.request('camps.snapshot', { campId })).messages.length, messagesBeforeReturn, 'phone Return inserts a line break; only Send submits')
+    assert.equal((await host.request('camps.snapshot', { threadId })).messages.length, messagesBeforeReturn, 'phone Return inserts a line break; only Send submits')
     await browser.click(byLabel('提及队员'))
     await browser.wait(`document.querySelector('.structured-mention-menu [role=option]')!==null`)
     await capture('mention-picker')
@@ -511,8 +511,8 @@ test('phone workbench uses shared navigation, schedules and per-tab drafts', { t
     const uiCreated = (await host.request('missions.list')).find(item=>item.title==='新使命草稿')
     assert.ok(uiCreated, 'the production Mission form creates a real record')
     assert.equal(uiCreated.status, 'not_started')
-    assert.equal((await host.request('camps.snapshot', { campId: uiCreated.campId })).agentRuns.length, 0)
-    assert.equal((await host.request('camps.snapshot', { campId: mission.campId })).agentRuns.length, 0)
+    assert.equal((await host.request('camps.snapshot', { threadId: uiCreated.threadId })).agentRuns.length, 0)
+    assert.equal((await host.request('camps.snapshot', { threadId: mission.threadId })).agentRuns.length, 0)
 
     stage = 'mission night and landscape navigation'
     await browser.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }, { name: 'prefers-reduced-motion', value: 'reduce' }] })
@@ -529,7 +529,7 @@ test('phone workbench uses shared navigation, schedules and per-tab drafts', { t
     await browser.wait(`!document.querySelector('#mobile-app-menu') && document.activeElement?.getAttribute('aria-label')==='打开主菜单'`)
 
     assert.deepEqual(browser.errors, [])
-    assert.equal((await host.request('camps.snapshot', { campId })).agentRuns.length, 0)
+    assert.equal((await host.request('camps.snapshot', { threadId })).agentRuns.length, 0)
     await writeFile(join(output, 'validation.json'), JSON.stringify({
       productionEntry: true,
       realHost: true,

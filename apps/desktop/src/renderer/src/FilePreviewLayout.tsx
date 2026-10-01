@@ -55,14 +55,14 @@ function readPreferredRatio(): number {
   }
 }
 
-// Layout updates have their own context so dragging does not rerender the Camp or file contents.
+// Layout updates have their own context so dragging does not rerender the Thread or file contents.
 export function FilePreviewLayoutProvider({
-  campId,
+  threadId,
   visible,
   activityMode = false,
   children
 }: {
-  campId: string | null
+  threadId: string | null
   visible: boolean
   activityMode?: boolean
   children: ReactNode
@@ -96,7 +96,7 @@ export function FilePreviewLayoutProvider({
     }
   }, [workspace])
 
-  useEffect(cancelResize, [activityMode, campId, visible, cancelResize])
+  useEffect(cancelResize, [activityMode, threadId, visible, cancelResize])
   useEffect(() => () => {
     if (snapTimer.current !== null) window.clearTimeout(snapTimer.current)
   }, [])
@@ -240,7 +240,7 @@ export function FilePreviewResizeHandle({ onClose }: { onClose(): void }): React
     cancelGesture()
     onClose()
     window.requestAnimationFrame(() => {
-      const target = document.querySelector<HTMLElement>('.camp-timeline:not([hidden])')
+      const target = document.querySelector<HTMLElement>('.thread-timeline:not([hidden])')
         ?? document.querySelector<HTMLElement>('.timeline-pane')
       target?.focus({ preventScroll: true })
     })

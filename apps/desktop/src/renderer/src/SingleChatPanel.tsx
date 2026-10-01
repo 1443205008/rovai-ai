@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { useMobileLayout } from './MobileLayout'
 import { newCommandId } from '../../shared/command-id'
 import { RunningText } from './RunningText'
@@ -25,7 +25,7 @@ import type {
   AgentProfile,
   ActionApprovalView,
   NotificationSingleChatSource,
-  CampMemberView,
+  ThreadMemberView,
   CoreEvent,
   SingleChatPendingInputView,
   SingleChatConversationView,
@@ -43,7 +43,7 @@ import {
   type AttachmentDragKind
 } from './attachment-drop'
 import { MemberAvatar } from './MemberAvatar'
-import { ApprovalDock, rectanglesOverlap, type CampLeavePreparation, type NotificationFocusTarget, type VisibleNotificationSources } from './CampWorkspace'
+import { ApprovalDock, rectanglesOverlap, type ThreadLeavePreparation, type NotificationFocusTarget, type VisibleNotificationSources } from './ThreadWorkspace'
 import {
   CompactionEventRow,
   RuntimeRetryNotice,
@@ -68,7 +68,7 @@ import {
   type ToolProgressItem
 } from './execution-tool-grouping'
 import { UiText, uiAttribute } from './interface-language'
-import { useCampDetailCopy } from './camp-detail-copy'
+import { useThreadDetailCopy } from './camp-detail-copy'
 
 const NON_TERMINAL_RUNS = new Set<SingleChatRunView['status']>(['queued', 'running', 'waiting'])
 export const SINGLE_CHAT_POLL_INTERVAL_MS = 800
@@ -80,7 +80,7 @@ export type SingleChatTargetRequest = {
 }
 
 export type SingleChatEndTarget = {
-  campId: string
+  threadId: string
   conversationId: string
   displayName: string
 }
@@ -110,7 +110,7 @@ export function singleChatEndTargetFromSnapshot(
   displayName: string
 ): SingleChatEndTarget {
   return {
-    campId: snapshot.conversation.campId,
+    threadId: snapshot.conversation.threadId,
     conversationId: snapshot.conversation.id,
     displayName
   }
@@ -119,11 +119,11 @@ export function singleChatEndTargetFromSnapshot(
 export function singleChatEndCommand(
   target: SingleChatEndTarget
 ): {
-  campId: string
+  threadId: string
   conversationId: string
 } {
   return {
-    campId: target.campId,
+    threadId: target.threadId,
     conversationId: target.conversationId
   }
 }
@@ -184,12 +184,12 @@ function nonEmptyEventString(value: unknown): string | null {
 
 export function singleChatChangeRefreshTarget(
   event: CoreEvent,
-  campId: string,
+  threadId: string,
   currentConversationId: string | null
 ): SingleChatChangeRefreshTarget {
   if (event.method !== 'single_chat.changed') return 'none'
   const params = eventRecord(event.params)
-  if (params?.campId !== campId) return 'none'
+  if (params?.threadId !== threadId) return 'none'
   const result = eventRecord(params.result)
   const resultPayload = eventRecord(result?.payload)
   const conversationId = nonEmptyEventString(params.conversationId)
@@ -307,14 +307,14 @@ export function singleChatEvidenceForRun(
     .sort((left, right) => left.sequence - right.sequence)
 }
 
-function memberCanSingleChat(member: CampMemberView): boolean {
+function memberCanSingleChat(member: ThreadMemberView): boolean {
   return member.membershipStatus === 'active'
     && member.leaveRequestedAt === null
     && member.profilePresence === 'present'
 }
 
 export function SingleChatRunHistory({
-  campId,
+  threadId,
   conversationId,
   run,
   evidence,
@@ -323,7 +323,7 @@ export function SingleChatRunHistory({
   cancelling = false,
   onNotify = () => undefined
 }: {
-  campId: string
+  threadId: string
   conversationId: string
   run: SingleChatRunView
   evidence: AgentRunExecutionEvidenceView[]
@@ -373,7 +373,7 @@ export function SingleChatRunHistory({
     if (item.kind === 'toolGroup' || item.kind === 'tool') {
       return <ToolActivityGroup
         key={item.key}
-        campId={campId}
+        threadId={threadId}
         items={item.kind === 'toolGroup' ? item.items : [item]}
         liveTail={item.key === liveTailKey}
         cancelling={stopping}
@@ -403,7 +403,7 @@ export function SingleChatRunHistory({
     if (item.kind === 'compaction') {
       return <CompactionEventRow
         key={item.key}
-        campId={campId}
+        threadId={threadId}
         compaction={item.compaction}
         runId={run.id}
         runStatus={run.status}
@@ -422,7 +422,7 @@ export function SingleChatRunHistory({
           onToggle={(event) => { if (terminal) setOpen(event.currentTarget.open) }}
         >
           <summary hidden={!terminal}>
-            <span className="single-chat-run-summary" data-notification-turn-id={terminal ? run.campTurnId : undefined}>{terminal && executionRunSummary(run, now)}</span>
+            <span className="single-chat-run-summary" data-notification-turn-id={terminal ? run.threadTurnId : undefined}>{terminal && executionRunSummary(run, now)}</span>
             <span className="single-chat-disclosure" aria-hidden="true"><ChevronGlyph /></span>
           </summary>
           <div className="single-chat-execution-content process-content">
@@ -441,7 +441,7 @@ export function SingleChatRunHistory({
         </details>
         {finalMessage && <>
           <hr className="single-chat-final-rule" />
-          <div className="single-chat-final" data-single-chat-message-id={finalMessage.id} data-message-quote-body={finalMessage.id} data-quote-owner={`single_chat:${conversationId}`} data-notification-turn-id={run.campTurnId}><SafeMarkdown>{finalMessage.body}</SafeMarkdown></div>
+          <div className="single-chat-final" data-single-chat-message-id={finalMessage.id} data-message-quote-body={finalMessage.id} data-quote-owner={`single_chat:${conversationId}`} data-notification-turn-id={run.threadTurnId}><SafeMarkdown>{finalMessage.body}</SafeMarkdown></div>
         </>}
       </div>
     </section>
@@ -497,7 +497,7 @@ function SingleChatTranscript({
                       attachment={attachment}
                       locator={{
                         owner: 'single_chat_message',
-                        campId: snapshot.conversation.campId,
+                        threadId: snapshot.conversation.threadId,
                         conversationId: snapshot.conversation.id,
                         conversationMessageId: message.id,
                         attachmentRefId: attachment.id
@@ -514,7 +514,7 @@ function SingleChatTranscript({
           {run && (
             <SingleChatRunHistory
               conversationId={snapshot.conversation.id}
-              campId={snapshot.conversation.campId}
+              threadId={snapshot.conversation.threadId}
               cancelling={cancelling && run.id === snapshot.conversation.activeAgentRunId}
               onNotify={onNotify}
               run={run}
@@ -544,7 +544,7 @@ function SingleChatPendingQueue({ snapshot, busyOutside, onRefresh, onNotify, on
   onNotify(message: string): void
   onReturnToComposer(item: SingleChatPendingInputView, editToken: string | null): Promise<void>
 }): React.JSX.Element | null {
-  const client = useCampClient()
+  const client = useThreadClient()
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
   const queue = snapshot.pendingInputs
@@ -557,7 +557,7 @@ function SingleChatPendingQueue({ snapshot, busyOutside, onRefresh, onNotify, on
       const editToken = session?.pendingInputId === item.id ? session.editToken : null
       if (remove) {
         const result = await client.request<StoredCommandResult>('singleChat.pendingInputs.edit', {
-          commandId: newCommandId(), command: { campId: snapshot.conversation.campId,
+          commandId: newCommandId(), command: { threadId: snapshot.conversation.threadId,
             conversationId: snapshot.conversation.id, pendingInputId: item.id,
             expectedRevision: item.revision, editToken, action: { type: 'delete' } }
         })
@@ -604,7 +604,7 @@ function SingleChatPendingQueue({ snapshot, busyOutside, onRefresh, onNotify, on
                       attachment={attachment}
                       locator={{
                         owner: 'single_chat_pending',
-                        campId: snapshot.conversation.campId,
+                        threadId: snapshot.conversation.threadId,
                         conversationId: snapshot.conversation.id,
                         pendingInputId: item.id,
                         attachmentRefId: attachment.id
@@ -631,7 +631,7 @@ type PendingReturnRecovery = {
 }
 
 export function SingleChatPanel({
-  campId,
+  threadId,
   members,
   entryHost,
   visible,
@@ -654,18 +654,18 @@ export function SingleChatPanel({
   profileById?: Map<string, AgentProfile>
   busy?: boolean
   onResolveApproval?(approval: ActionApprovalView, optionId: string): void
-  campId: string
-  members: CampMemberView[]
+  threadId: string
+  members: ThreadMemberView[]
   entryHost?: HTMLElement | null
   visible: boolean
   onOpen(): void
   onClose(): void
-  onLeaveGuardChange?(guard: (() => CampLeavePreparation) | null): void
+  onLeaveGuardChange?(guard: (() => ThreadLeavePreparation) | null): void
   onNotify?(message: string): void
 }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const mobile = useMobileLayout()
-  const copy = useCampDetailCopy()
+  const copy = useThreadDetailCopy()
   const panelId = useId()
   const initialAgentId = members.find((member) => memberCanSingleChat(member) && member.isDefaultLead)?.agentId
     ?? members.find(memberCanSingleChat)?.agentId
@@ -674,7 +674,7 @@ export function SingleChatPanel({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const focusPanel = useRef(false)
   const visibleRef = useRef(visible)
-  const campIdRef = useRef(campId)
+  const campIdRef = useRef(threadId)
   const selectedAgentIdRef = useRef<string | null>(initialAgentId)
   const currentConversationIdRef = useRef<string | null>(null)
   const conversationsRef = useRef<SingleChatConversationView[]>([])
@@ -697,7 +697,7 @@ export function SingleChatPanel({
   const [conversations, setConversations] = useState<SingleChatConversationView[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(initialAgentId)
   const [snapshot, setSnapshot] = useState<SingleChatSnapshot | null>(null)
-  const recoveryKey = `single-chat:${campId}`
+  const recoveryKey = `single-chat:${threadId}`
   const [bodyDrafts, updateBodyDrafts] = useState<Record<string, string>>(() => {
     const saved = client.editingRecovery?.get(recoveryKey)
     return saved && typeof saved === 'object' ? Object.fromEntries(Object.entries(saved).filter(([, value]) => typeof value === 'string')) : {}
@@ -761,19 +761,19 @@ export function SingleChatPanel({
   const currentTargetReady = singleChatConversationReady(snapshot, selectedAgentId, loading)
   const currentSnapshot = currentTargetReady ? snapshot : null
   const bodyDraftKey = snapshot?.conversation.agentId === selectedAgentId
-    ? `${campId}:${snapshot.conversation.id}` : `${campId}:pending:${selectedAgentId ?? ''}`
+    ? `${threadId}:${snapshot.conversation.id}` : `${threadId}:pending:${selectedAgentId ?? ''}`
   const draft = bodyDrafts[bodyDraftKey] ?? ''
   const setDraft = (value: string): void => setBodyDrafts((current) => ({ ...current, [bodyDraftKey]: value }))
   useEffect(() => {
     if (!snapshot || snapshot.conversation.agentId !== selectedAgentId) return
-    const pendingKey = `${campId}:pending:${selectedAgentId ?? ''}`
+    const pendingKey = `${threadId}:pending:${selectedAgentId ?? ''}`
     setBodyDrafts((current) => {
       if (!(pendingKey in current)) return current
       const next = { ...current, [bodyDraftKey]: current[bodyDraftKey] ?? current[pendingKey] }
       delete next[pendingKey]
       return next
     })
-  }, [campId, selectedAgentId, snapshot?.conversation.id, bodyDraftKey])
+  }, [threadId, selectedAgentId, snapshot?.conversation.id, bodyDraftKey])
   const activeRun = currentSnapshot?.agentRuns.find((run) => NON_TERMINAL_RUNS.has(run.status)) ?? null
   const runningCount = conversations.filter((conversation) => (
     conversation.id === currentSnapshot?.conversation.id
@@ -782,7 +782,7 @@ export function SingleChatPanel({
   )).length
 
   visibleRef.current = visible
-  campIdRef.current = campId
+  campIdRef.current = threadId
   activeMembersRef.current = activeMembers
   memberByIdRef.current = memberById
 
@@ -799,7 +799,7 @@ export function SingleChatPanel({
   ): void => {
     if (
       !visibleRef.current
-      || campIdRef.current !== campId
+      || campIdRef.current !== threadId
       || currentConversationIdRef.current !== conversationId
     ) return
     if (next && snapshotRef.current?.conversation.id === conversationId
@@ -807,14 +807,14 @@ export function SingleChatPanel({
     snapshotRef.current = next
     setSnapshot(next)
     setError(null)
-  }, [campId])
+  }, [threadId])
 
   const refreshCurrent = useCallback((
     conversationId = currentConversationIdRef.current
   ): Promise<SingleChatSnapshot | null | undefined> => {
     if (
       !visibleRef.current
-      || campIdRef.current !== campId
+      || campIdRef.current !== threadId
       || !conversationId
       || currentConversationIdRef.current !== conversationId
       || !selectedAgentIdRef.current
@@ -850,7 +850,7 @@ export function SingleChatPanel({
         currentReadAgainRef.current = false
         if (
           !visibleRef.current
-          || campIdRef.current !== campId
+          || campIdRef.current !== threadId
           || currentConversationIdRef.current !== currentRead.conversationId
           || !singleChatTargetRequestIsCurrent(
             currentRead.targetRequest,
@@ -864,12 +864,12 @@ export function SingleChatPanel({
             'singleChat.get',
             { conversationId: currentRead.conversationId }
           )
-          const next = !loaded || (loaded.conversation.campId === campId
+          const next = !loaded || (loaded.conversation.threadId === threadId
             && loaded.conversation.id === currentRead.conversationId) ? loaded : null
           if (
             currentReadInFlightRef.current === currentRead
             && visibleRef.current
-            && campIdRef.current === campId
+            && campIdRef.current === threadId
             && currentConversationIdRef.current === currentRead.conversationId
             && singleChatTargetRequestIsCurrent(
               currentRead.targetRequest,
@@ -886,7 +886,7 @@ export function SingleChatPanel({
           if (
             currentReadInFlightRef.current === currentRead
             && visibleRef.current
-            && campIdRef.current === campId
+            && campIdRef.current === threadId
             && currentConversationIdRef.current === currentRead.conversationId
             && singleChatTargetRequestIsCurrent(
               currentRead.targetRequest,
@@ -908,23 +908,23 @@ export function SingleChatPanel({
     }
     void reading.then(clearCurrentRead, clearCurrentRead)
     return reading
-  }, [acceptSnapshot, campId])
+  }, [acceptSnapshot, threadId])
 
   const refreshList = useCallback(async (): Promise<SingleChatConversationView[] | undefined> => {
-    if (!visibleRef.current || campIdRef.current !== campId) return undefined
+    if (!visibleRef.current || campIdRef.current !== threadId) return undefined
     try {
-      const nextConversations = await client.request<SingleChatConversationView[]>('singleChat.list', { campId })
-      if (!visibleRef.current || campIdRef.current !== campId) return undefined
+      const nextConversations = await client.request<SingleChatConversationView[]>('singleChat.list', { threadId })
+      if (!visibleRef.current || campIdRef.current !== threadId) return undefined
       conversationsRef.current = nextConversations
       setConversations(nextConversations)
       return nextConversations
     } catch (nextError) {
-      if (visibleRef.current && campIdRef.current === campId) {
+      if (visibleRef.current && campIdRef.current === threadId) {
         setError(readErrorMessage(nextError, uiAttribute('单聊列表暂时无法读取。')))
       }
       return undefined
     }
-  }, [campId])
+  }, [threadId])
 
   useEffect(() => {
     if (!visible) {
@@ -935,7 +935,7 @@ export function SingleChatPanel({
     const requestSequence = ++targetRequestSequenceRef.current
     const requestIsCurrent = (): boolean => (
       visibleRef.current
-      && campIdRef.current === campId
+      && campIdRef.current === threadId
       && requestSequence === targetRequestSequenceRef.current
     )
     followLatestRef.current = true
@@ -987,7 +987,7 @@ export function SingleChatPanel({
       currentReadAgainRef.current = false
     }
   // Only actual target eligibility changes should repeat the panel-open list read.
-  }, [activeMemberIdsKey, campId, refreshCurrent, refreshList, target, visible])
+  }, [activeMemberIdsKey, threadId, refreshCurrent, refreshList, target, visible])
 
   const pollingRequired = singleChatSnapshotNeedsPolling(currentSnapshot)
   useEffect(() => {
@@ -1006,7 +1006,7 @@ export function SingleChatPanel({
     return client.onEvent?.((event) => {
       const target = singleChatChangeRefreshTarget(
         event,
-        campId,
+        threadId,
         currentConversationIdRef.current
       )
       if (target === 'current-conversation') {
@@ -1015,7 +1015,7 @@ export function SingleChatPanel({
         void refreshList().catch(() => undefined)
       }
     })
-  }, [campId, client, refreshCurrent, refreshList, visible])
+  }, [threadId, client, refreshCurrent, refreshList, visible])
 
   useEffect(() => {
     if (!visible) return
@@ -1080,7 +1080,7 @@ export function SingleChatPanel({
           })) approvalIds.add(node.dataset.approvalId!)
         }
       }
-      const sources: VisibleNotificationSources = { campId,
+      const sources: VisibleNotificationSources = { threadId,
         conversationId: currentSnapshot?.conversation.id ?? null, surfaceVisible: canObserve,
         snapshotSequence: 0, messageIds: [], campTurnIds: [...campTurnIds].sort(),
         agentRunIds: [], approvalIds: [...approvalIds].sort() }
@@ -1107,7 +1107,7 @@ export function SingleChatPanel({
       window.removeEventListener('focus', schedule)
       document.removeEventListener('visibilitychange', schedule)
     }
-  }, [campId, currentSnapshot, onVisibleNotificationSources, visible])
+  }, [threadId, currentSnapshot, onVisibleNotificationSources, visible])
 
   useEffect(() => {
     if (!visible || !notificationFocus?.active || notificationFocus.approvalId
@@ -1134,7 +1134,7 @@ export function SingleChatPanel({
       let result: StoredCommandResult
       try {
         result = await client.request<StoredCommandResult>('singleChat.pendingInputs.edit', {
-          commandId, command: { campId: current.conversation.campId,
+          commandId, command: { threadId: current.conversation.threadId,
             conversationId: item.conversationId, pendingInputId: item.id, expectedRevision: item.revision,
             editToken, action: { type: 'return_to_composer', expectedDraftRevision: current.draft.revision } }
         })
@@ -1148,7 +1148,7 @@ export function SingleChatPanel({
       if (result.status === 'rejected') throw new Error(resultMessage(result))
       const body = resultPayloadString(result, 'body') ?? ''
       const returnedDraft = result.payload.draft as unknown as SingleChatSnapshot['draft']
-      const key = `${current.conversation.campId}:${item.conversationId}`
+      const key = `${current.conversation.threadId}:${item.conversationId}`
       setBodyDrafts((drafts) => ({ ...drafts, [key]: body }))
       if (currentConversationIdRef.current === item.conversationId) {
         const latest = snapshotRef.current?.conversation.id === item.conversationId ? snapshotRef.current : current
@@ -1193,11 +1193,11 @@ export function SingleChatPanel({
   ): Promise<SingleChatSnapshot | null> => {
     const result = await client.request<StoredCommandResult>('singleChat.open', {
       commandId: newCommandId(),
-      command: { campId, agentId }
+      command: { threadId, agentId }
     })
     if (
       !visibleRef.current
-      || campIdRef.current !== campId
+      || campIdRef.current !== threadId
       || !singleChatTargetRequestIsCurrent(
         targetRequest,
         targetRequestSequenceRef.current,
@@ -1228,7 +1228,7 @@ export function SingleChatPanel({
       sequence: ++targetRequestSequenceRef.current
     }
     const requestIsCurrent = (): boolean => visibleRef.current
-      && campIdRef.current === campId
+      && campIdRef.current === threadId
       && singleChatTargetRequestIsCurrent(
         targetRequest,
         targetRequestSequenceRef.current,
@@ -1427,7 +1427,7 @@ export function SingleChatPanel({
       const current = snapshotRef.current
       if (!current || current.conversation.id !== owner || currentConversationIdRef.current !== owner) throw new Error('quote.owner_unavailable')
       const next = await client.request<SingleChatSnapshot>('messageQuotes.mutateDraft', {
-        commandId, command: { campId, conversationId: owner, expectedRevision: current.draft.revision, action }
+        commandId, command: { threadId, conversationId: owner, expectedRevision: current.draft.revision, action }
       })
       acceptSnapshot(owner, next)
     })
@@ -1460,7 +1460,7 @@ export function SingleChatPanel({
       const result = await client.request<StoredCommandResult>('singleChat.send', {
         commandId: newCommandId(),
         command: {
-          campId,
+          threadId,
           conversationId: current.conversation.id,
           body,
           draftRevision: current.draft.revision
@@ -1492,7 +1492,7 @@ export function SingleChatPanel({
     try {
       const result = await client.request<StoredCommandResult>('agentRuns.cancel', {
         commandId: newCommandId(),
-        command: { campId, agentRunId: run.id, expectedVersion: run.version }
+        command: { threadId, agentRunId: run.id, expectedVersion: run.version }
       })
       if (result.status === 'rejected') throw new Error(resultMessage(result))
       await refreshCurrent(current.conversation.id)
@@ -1519,7 +1519,7 @@ export function SingleChatPanel({
       setEndDialogOpen(false)
       setEndTarget(null)
       if (
-        campIdRef.current === target.campId
+        campIdRef.current === target.threadId
         && currentConversationIdRef.current === target.conversationId
       ) {
         setPreparingAttachments([])
@@ -1528,7 +1528,7 @@ export function SingleChatPanel({
         snapshotRef.current = null
         setSnapshot(null)
       }
-      if (campIdRef.current === target.campId) {
+      if (campIdRef.current === target.threadId) {
         const remainingConversations = conversationsRef.current.filter((conversation) => (
           conversation.id !== target.conversationId
         ))
@@ -1684,7 +1684,7 @@ export function SingleChatPanel({
 
       <ReturnToLatest
         viewportRef={viewportRef}
-        ownerKey={campId + ':' + (currentSnapshot?.conversation.id ?? selectedAgentId)}
+        ownerKey={threadId + ':' + (currentSnapshot?.conversation.id ?? selectedAgentId)}
         contentRevision={String(currentSnapshot?.conversation.lastMessageSequence ?? 0) + ':' + (activeRun?.executionEvidenceCount ?? 0)}
         scope="single"
         enabled={visible && currentSnapshot !== null}
@@ -1725,7 +1725,7 @@ export function SingleChatPanel({
                     attachment={attachment}
                     locator={{
                       owner: 'single_chat_composer',
-                      campId,
+                      threadId,
                       conversationId: currentSnapshot.conversation.id,
                       attachmentRefId: attachment.id
                     }}

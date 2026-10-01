@@ -27,7 +27,7 @@ const renderGroup = (items: ToolProgressItem[], expanded = false, liveTail = fal
   <ExecutionToolGroupStateContext.Provider value={{
     expanded: new Set(expanded ? items.map(item => `run:${item.key}`) : []), change() {}
   }}>
-    <ToolActivityGroup items={items} runId="run" runStatus={runStatus} campId="camp" liveTail={liveTail}
+    <ToolActivityGroup items={items} runId="run" runStatus={runStatus} threadId="camp" liveTail={liveTail}
       cancelling={cancelling} completeEvidence={{ byToolId: new Map() }} onFileOpenError={() => {}} />
   </ExecutionToolGroupStateContext.Provider>
 )
@@ -147,7 +147,7 @@ describe('localized execution summaries', () => {
     }
     const english = (chinese: string): string => translateUi('en', chinese)
     await changeInterfaceLanguage(preferences, 'en')
-    const markup = renderToStaticMarkup(<CompactionEventRow campId="camp" runId="run" runStatus="running" compaction={compaction} />)
+    const markup = renderToStaticMarkup(<CompactionEventRow threadId="camp" runId="run" runStatus="running" compaction={compaction} />)
     expect(markup).toContain('Compacting context · Codex · 128.4K → 61.2K')
     expect(markup).not.toContain('正在压缩会话上下文')
     expect(runtimeCompactionTitle({ ...compaction, phase: 'imminent' }, english)).toContain('Preparing to compact context')
@@ -170,7 +170,7 @@ describe('localized execution summaries', () => {
     ].join('\n'))
 
     await changeInterfaceLanguage(preferences, 'zh-CN')
-    expect(renderToStaticMarkup(<CompactionEventRow campId="camp" runId="run" runStatus="running" compaction={compaction} />))
+    expect(renderToStaticMarkup(<CompactionEventRow threadId="camp" runId="run" runStatus="running" compaction={compaction} />))
       .toContain('正在压缩会话上下文')
   })
 })
@@ -267,7 +267,7 @@ describe('command disclosure presentation', () => {
 
     await expect(openAgentRunActivityFilePreview({
       filePreview: { open },
-      campId: 'mission-camp',
+      threadId: 'mission-camp',
       evidence: selected.byToolId.get('edit-mission'),
       path: 'crates/rovai-core/src/application/mission.rs',
       onError: vi.fn()
@@ -275,7 +275,7 @@ describe('command disclosure presentation', () => {
 
     expect(open).toHaveBeenCalledWith({
       kind: 'run_activity_file',
-      campId: 'mission-camp',
+      threadId: 'mission-camp',
       agentRunId: 'direct-camp-run',
       executionEpoch: 1,
       evidenceId: 'diff-evidence',
@@ -368,14 +368,14 @@ describe('command disclosure presentation', () => {
   it('omits expansion cues on commands without detail and retains independent read-file buttons', () => {
     const step = { ...tool('read', 'file-read', 'completed').step, detail: '',
       shellReadSummary: { title: '阅读 a.ts，b.ts', paths: ['src/a.ts', 'src/b.ts'], displayPaths: ['a.ts', 'b.ts'] } }
-    const markup = renderToStaticMarkup(<ToolCallRow campId="camp" step={step} runId="run" runStatus="running" onFileOpenError={() => {}} />)
+    const markup = renderToStaticMarkup(<ToolCallRow threadId="camp" step={step} runId="run" runStatus="running" onFileOpenError={() => {}} />)
     expect(markup).not.toContain('command-expand-cue')
     expect(markup.match(/class="tool-file-link shell-read-file-link"/g)).toHaveLength(2)
     expect(markup).toContain('打开文件预览：src/a.ts')
   })
   it('highlights only an active Compact and never infers completion from a finished Run', () => {
     for (const runStatus of ['running', 'waiting', 'succeeded', 'failed', 'cancelled'] as const) {
-      const markup = renderToStaticMarkup(<CompactionEventRow campId="camp" runId="run" runStatus={runStatus}
+      const markup = renderToStaticMarkup(<CompactionEventRow threadId="camp" runId="run" runStatus={runStatus}
         compaction={{ id: 'compact', phase: 'started', completionEvidence: null, adapterKind: 'codex-cli', tokens: {}, messages: {}, summaryText: null }} />)
       expect(markup.includes('running-text-highlight')).toBe(runStatus === 'running')
       expect(markup).not.toContain('status-completed')

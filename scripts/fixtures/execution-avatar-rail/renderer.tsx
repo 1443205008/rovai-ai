@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { AgentProfile, AgentRunView, CampComposerDraftView, CampSnapshot, ExecutionConsolePlacement, MessageDeliveryView } from '@contracts'
+import type { AgentProfile, AgentRunView, ThreadComposerDraftView, ThreadSnapshot, ExecutionConsolePlacement, MessageDeliveryView } from '@contracts'
 import { AppHeader } from '../../../apps/desktop/src/renderer/src/App'
-import { CampWorkspace, type NotificationFocusTarget, type VisibleNotificationSources } from '../../../apps/desktop/src/renderer/src/CampWorkspace'
+import { ThreadWorkspace, type NotificationFocusTarget, type VisibleNotificationSources } from '../../../apps/desktop/src/renderer/src/ThreadWorkspace'
 import { FilePreviewProvider, useFilePreview } from '../../../apps/desktop/src/renderer/src/FilePreviewContext'
 import '../../../apps/desktop/src/renderer/src/styles.css'
 
 // The actual production workspace, with closed local fixtures. No Core, Runtime or daily data.
 const now = '2026-08-31T04:00:00Z'
-const campId = 'rvcamp_01m0wzxbb8e1ht984tsbjmysfe'
+const threadId = 'rvcamp_01m0wzxbb8e1ht984tsbjmysfe'
 const fixtureMessage = '本页挂载真实的执行浮层、执行详情和三个生产入口。可检查头像横滑、键盘导航，并从任务的关联执行定位最后一位队员。'
 const longPath = `/fixture/workspace/${'execution_popover_width_regression_'.repeat(7)}report.md`
 const longCommand = `git show HEAD -- ${longPath}`
@@ -25,12 +25,12 @@ const agents: AgentProfile[] = Array.from({ length: 49 }, (_, index) => ({
   createdAt: now, updatedAt: now, removedAt: null
 }))
 
-function snapshotFor(count: number, revision: number, recipientCount = 0): CampSnapshot {
+function snapshotFor(count: number, revision: number, recipientCount = 0): ThreadSnapshot {
   const profiles = agents.slice(0, count)
   const members = agents.slice(0, Math.max(count, recipientCount > 0 ? recipientCount + 1 : 0))
   const deliveries: MessageDeliveryView[] = agents.slice(1, recipientCount + 1).flatMap((recipient, index) =>
     [0, 1, 2].map(attempt => ({
-      id: `delivery-${index}-${attempt}`, messageId: `public-message-${attempt}`, campTurnId: 'turn-agent-1',
+      id: `delivery-${index}-${attempt}`, messageId: `public-message-${attempt}`, threadTurnId: 'turn-agent-1',
       taskId: null, recipientAgentId: recipient.agentId, recipientMembershipVersionAtAdmission: 1,
       deliveryKind: 'public_a2a' as const, sourceAgentRunId: 'run-agent-1', dispatchDisposition: 'dispatch' as const,
       completionRole: 'required' as const, gatherId: null, gatherDispatchDeliveryId: null,
@@ -50,7 +50,7 @@ function snapshotFor(count: number, revision: number, recipientCount = 0): CampS
   const runs: AgentRunView[] = profiles.map((agent, index) => {
     const status = (['running', 'waiting', 'running', 'succeeded', 'failed', 'cancelled'] as const)[index < 3 ? index : 3 + (index % 3)]
     return {
-      id: `run-${agent.agentId}`, campTurnId: `turn-${agent.agentId}`, conversationId: `conversation-${agent.agentId}`,
+      id: `run-${agent.agentId}`, threadTurnId: `turn-${agent.agentId}`, conversationId: `conversation-${agent.agentId}`,
       inputMessageIds: index === 0 ? ['public-message-0', 'public-message-1', 'public-message-2'] : ['message-1'],
       anchorMessageId: index === 0 ? 'public-message-2' : 'message-1',
       agentId: agent.agentId, taskId: index === count - 1 ? 'task-rail' : null,
@@ -67,30 +67,30 @@ function snapshotFor(count: number, revision: number, recipientCount = 0): CampS
   })
   return {
     schemaVersion: 34, throughGlobalSequence: revision + 1,
-    camp: { id: campId, title: '执行台头像轨道', activationState: 'active', projectBindingKind: 'directory',
+    thread: { id: threadId, title: '执行台头像轨道', activationState: 'active', projectBindingKind: 'directory',
       projectPath: '/fixture/workspace', defaultLeadAgentId: profiles[0]?.agentId ?? null,
       membershipGeneration: 1, version: 1, createdAt: now, updatedAt: now },
     members: members.map((agent, index) => ({ agentId: agent.agentId, displayName: agent.displayName,
       avatarRef: agent.avatarRef, teamRole: agent.teamRole, accent: '', membershipStatus: 'active',
       leaveRequestedAt: null, profilePresence: 'present', memberOrder: index, isDefaultLead: index === 0, version: 1 })),
     membershipReconciliations: [],
-    tasks: count ? [{ taskId: 'task-rail', campId, title: '检查最后一位队员的执行', description: '从关联执行定位轨道末尾，随后可重复定位同一队员，并确保目标头像完整可见。',
+    tasks: count ? [{ taskId: 'task-rail', threadId, title: '检查最后一位队员的执行', description: '从关联执行定位轨道末尾，随后可重复定位同一队员，并确保目标头像完整可见。',
       status: 'in_progress', assigneeAgentId: profiles.at(-1)!.agentId,
       blockedReason: null, completionSummary: null, cancelReason: null, createdByType: 'user', createdById: 'local-user',
       sourceAgentRunId: null, closedByType: null, closedById: null, closedByAgentRunId: null,
       version: 1, createdAt: now, updatedAt: now, closedAt: null, availableActions: [] }] : [],
     messages: [{ id: 'message-1', sequence: 1, timelineGlobalSequence: 1, authorType: 'user', authorId: 'local-user',
       sourceAgentRunId: null, body: fixtureMessage,
-      content: [{ kind: 'text', text: fixtureMessage }], addressMode: 'default', attachments: [], addressedAgentIds: [], replyToCampMessageId: null,
-      campTurnId: null, presentation: null, createdAt: now }, ...[0, 1, 2].map((index) => ({
+      content: [{ kind: 'text', text: fixtureMessage }], addressMode: 'default', attachments: [], addressedAgentIds: [], replyToThreadMessageId: null,
+      threadTurnId: null, presentation: null, createdAt: now }, ...[0, 1, 2].map((index) => ({
       id: `public-message-${index}`, sequence: index + 2, timelineGlobalSequence: index + 2,
       authorType: 'user' as const, authorId: 'local-user', sourceAgentRunId: null,
       body: `第 ${index + 1} 条合批输入`, content: [{ kind: 'text' as const, text: `第 ${index + 1} 条合批输入` }],
       addressMode: 'explicit' as const, attachments: [], addressedAgentIds: ['agent-1'],
-      replyToCampMessageId: null, campTurnId: null, presentation: null, createdAt: now
+      replyToThreadMessageId: null, threadTurnId: null, presentation: null, createdAt: now
     }))],
     messageDeliveries: deliveries, turns: [], agentRuns: runs,
-    executionEvidence: runs.flatMap<CampSnapshot['executionEvidence'][number]>(run => [{ id: `evidence-${run.agentId}`, agentRunId: run.id, executionEpoch: 1,
+    executionEvidence: runs.flatMap<ThreadSnapshot['executionEvidence'][number]>(run => [{ id: `evidence-${run.agentId}`, agentRunId: run.id, executionEpoch: 1,
       sequence: 1, eventType: 'agent.text.delta', kind: 'narration', phase: 'updated',
       payload: { itemId: `message-${run.agentId}`, delta: longNarration },
       contentBlobId: null, contentByteCount: 0, isTruncated: false, occurredAt: now }, {
@@ -109,7 +109,7 @@ function snapshotFor(count: number, revision: number, recipientCount = 0): CampS
   }
 }
 
-let draft: CampComposerDraftView = { campId, body: '', content: { version: 2, segments: [] }, revision: 1, attachments: [],
+let draft: ThreadComposerDraftView = { threadId, body: '', content: { version: 2, segments: [] }, revision: 1, attachments: [],
   replyIntent: null, continuationIntent: null, updatedAt: now, expiresAt: null }
 Object.assign(window, { rovai: {
   platform: 'darwin', onEvent: () => () => {},
@@ -221,17 +221,17 @@ function Fixture(): React.JSX.Element {
     requestId,
     kind: 'agent_run',
     agentRunId: runId,
-    campTurnId: null,
+    threadTurnId: null,
     active: true
   })
-  focusNotificationSubject = (kind, requestId) => setNotificationFocus({ requestId, kind, subjectId: kind === 'task' ? 'task-rail' : 'mission-rail', campTurnId: null, active: true })
+  focusNotificationSubject = (kind, requestId) => setNotificationFocus({ requestId, kind, subjectId: kind === 'task' ? 'task-rail' : 'mission-rail', threadTurnId: null, active: true })
   const snapshot = snapshotFor(count, revision, recipientCount)
   if (notificationFixtureEnabled && snapshot.agentRuns[0]) {
     snapshot.agentRuns.push({ ...snapshot.agentRuns[0], id: 'run-agent-1-history',
       status: 'succeeded', createdAt: '2026-08-30T04:00:00Z', endedAt: now })
   }
   if (longTitleScenario) {
-    snapshot.turns = snapshot.agentRuns.map(run => ({ id: run.campTurnId!, triggerType: 'camp_message',
+    snapshot.turns = snapshot.agentRuns.map(run => ({ id: run.threadTurnId!, triggerType: 'camp_message',
       triggerId: run.anchorMessageId!, status: 'running', aggregateReasonCode: null,
       cancelRequestedAt: null, createdAt: now, updatedAt: now, endedAt: null, version: 1,
       executionBudget: { schemaVersion: 1, acceptedAt: now, deadlineAt: null, elapsedSeconds: null,
@@ -264,7 +264,7 @@ function Fixture(): React.JSX.Element {
       memberOrder: snapshot.members.length, isDefaultLead: false, version: 1
     })
   }
-  return <FilePreviewProvider campId={campId} resolvedTheme={theme === 'night' ? 'night' : 'day'}>
+  return <FilePreviewProvider threadId={threadId} resolvedTheme={theme === 'night' ? 'night' : 'day'}>
     <NotificationFixtureBridge />
     <div className="app-shell app-shell-camp">
     <aside style={{ gridRow: '1 / -1', padding: '48px 24px', background: 'var(--rail)', color: 'var(--rail-ink)' }}>
@@ -288,9 +288,9 @@ function Fixture(): React.JSX.Element {
         }}>{theme === 'day' ? '切换夜间主题' : '切换日间主题'}</button>
       </div>
     </aside>
-    <AppHeader campTitle={snapshot.camp.title} contextLabel="隔离验收" camp={snapshot} detailEntryHostRef={setEntryHost} onFocusApprovals={() => {}} />
+    <AppHeader threadTitle={snapshot.thread.title} contextLabel="隔离验收" thread={snapshot} detailEntryHostRef={setEntryHost} onFocusApprovals={() => {}} />
     <main className="content task-content">
-      <CampWorkspace missionBoard={notificationFixtureEnabled ? <section className="mission-intro" data-mission-id="mission-rail" tabIndex={-1}>使命来源</section> : null} snapshot={snapshot} projectName="隔离验收" agents={agents.slice(0, snapshot.members.length)} busy={false} stopping={false}
+      <ThreadWorkspace missionBoard={notificationFixtureEnabled ? <section className="mission-intro" data-mission-id="mission-rail" tabIndex={-1}>使命来源</section> : null} snapshot={snapshot} projectName="隔离验收" agents={agents.slice(0, snapshot.members.length)} busy={false} stopping={false}
         onSend={async () => {}} onChangeLead={async () => {}} onTasksChanged={async () => {}} onResolveApproval={() => {}}
         onStop={() => {}} worldMapEnabled={false} inspectorVisible={open} detailEntryHost={entryHost}
         onCancelAgentRun={async run => { setStoppedRuns(current => [...current, run.id]) }}

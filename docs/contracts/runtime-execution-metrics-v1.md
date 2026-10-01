@@ -13,7 +13,7 @@ last_updated: 2026-10-01
 
 ## 读取与归属
 
-`monitoring.execution({campId, agentRunIds})` 返回 schemaVersion 1、`runs[]` 与 `sessions[]`。最多读取 500 个指定 Run，Run 必须属于 Camp；返回的用量只取当前 Monitoring collection 的 `runtime_usage_run_summary`。每个 Run 行提供 `agentRunId`、`executionEpoch`、`promptInputTotalTokens`、`outputTokens`、`cacheReadTokens`、`cacheWriteTokens`、`finalizedAt`、`lastObservedAt`。缺失保持 `null`，运行中已到达的原生用量继续保存和读取。
+`monitoring.execution({threadId, agentRunIds})` 返回 schemaVersion 1、`runs[]` 与 `sessions[]`。兼容旧 `campId` 输入；新旧字段同时出现则拒绝。最多读取 500 个指定 Run，Run 必须属于 Thread；返回的用量只取当前 Monitoring collection 的 `runtime_usage_run_summary`。每个 Run 行提供 `agentRunId`、`executionEpoch`、`promptInputTotalTokens`、`outputTokens`、`cacheReadTokens`、`cacheWriteTokens`、`finalizedAt`、`lastObservedAt`。缺失保持 `null`，运行中已到达的原生用量继续保存和读取。
 
 `sessions[]` 只返回该 Camp 目前 `Conversation.native_binding_id + native_binding_generation + native_session_id` 均匹配的最新上下文。每行包含 `conversationId`、`agentId`、`sessionGeneration`、`runtimeKind`、`modelKey`、`usedTokens`、`windowTokens`、`nativeRatio`、`source`、`dialectId`、`observedAt`。持久行还保存原生 Session ID、Runtime 版本、有效配置摘要、来源 Run/epoch。旧会话事件、旧绑定代次、较早观测不能覆盖当前值；后续 Run 的有效配置变化使旧观测在读取时失效。
 
@@ -35,7 +35,7 @@ Session 权威视图，不与历史 Run 缓存拼接。比较原始数值、代�
 相同条目保留对象和数组引用，整份相同不更新 state。数量的缺失、原生零与仅有比例继续区分。
 后端对指定 Run 执行一次参数化批量查询，保留 Camp／当前 collection／最大 500 条准入，不读取历史正文。
 
-只接受同一原生 Session 观测的明确 `used`、正数 `window` 或有限的原生 `nativeRatio`（0–1）。`nativeRatio` 独立保存，数量仍可为空；可靠 used/window 齐全时优先按两者计算比例，否则可展示原生比例，不反推任何 token 数。只有窗口上限时 used 和比例仍未知。每次有效观测整体替换数量与原生比例，不跨时刻或配置拼接。Migration 179 在已安装的 v1.72/schema 128 表上添加 nullable REAL 比例，原记录和业务数据保留，升级为 schema 129；不回写 Migration 178。Codex 当前已核验的通知把 `tokenUsage.last.totalTokens` 作为最近单次模型调用的 Context used 候选，与同一通知的 `modelContextWindow` 配对；它不是实时窗口同步值。`tokenUsage.total.totalTokens`、`last.inputTokens`、Run 累计与正文估算都不能代替 used。Context 的来源身份独立于 Run Usage 的累计来源身份：消耗总量未变但 `last` 或窗口变化时仍接收新观测。ACP 原生 Gauge 在提示结束后到达时，可在短暂的原 Session owner 保留期内按原 Run／代次落盘；新 owner 绑定后不沿用旧 owner。`used > window` 的无效观测不进入当前上下文。当前绑定发生已确认压缩后，旧 gauge 在新 gauge 到达前不再显示。
+只接受同一原生 Session 观测的明确 `used`、正数 `window` 或有限的原生 `nativeRatio`（0–1）。`nativeRatio` 独立保存，数量仍可为空；可靠 used/window 齐全时优先按两者计算比例，否则可展示原生比例，不反推任何 token 数。只有窗口上限时 used 和比例仍未知。每次有效观测整体替换数量与原生比例，不跨时刻或配置拼接。Migration 179 在已安装的 v1.72/schema 128 表上添加 nullable REAL 比例，原记录和业务数据保留，升级为 schema 129；不回写已安装分支的 Migration 178。合入 Thread 更名后由 Migration 180 将 schema 129 收口为 130；main 已安装的 schema 128 仅在完整 v32 Context 准入、没有指标表且没有后续收据的精确布局下获准，179 在同一事务补建指标表和比例，180 保留其既有格式及冻结证据。Codex 当前已核验的通知把 `tokenUsage.last.totalTokens` 作为最近单次模型调用的 Context used 候选，与同一通知的 `modelContextWindow` 配对；它不是实时窗口同步值。`tokenUsage.total.totalTokens`、`last.inputTokens`、Run 累计与正文估算都不能代替 used。Context 的来源身份独立于 Run Usage 的累计来源身份：消耗总量未变但 `last` 或窗口变化时仍接收新观测。ACP 原生 Gauge 在提示结束后到达时，可在短暂的原 Session owner 保留期内按原 Run／代次落盘；新 owner 绑定后不沿用旧 owner。`used > window` 的无效观测不进入当前上下文。当前绑定发生已确认压缩后，旧 gauge 在新 gauge 到达前不再显示。
 
 ## 原生上下文来源
 
@@ -86,7 +86,7 @@ ACP 广告模型与实际调用模型的差异，不把广告标签当作实际 
 
 ## 临时测速协议
 
-`monitoring.observableOutput({campId, agentRunId, executionEpoch})` 只在请求的 Run 属于 Camp、仍运行且代次匹配时返回最近数值；其他情况返回 `null`。`agentRunId + executionEpoch + counterGeneration` 是计数身份，`sequence` 单调递增；`sampledAtMs` 与 `lastOutputAtMs` 均来自同一 Core 进程单调时钟。返回 `algorithmVersion`、`unicodeDataVersion`、`publicTextUnits`、`reasoningUnits`、`reasoningSource`、`streamConfirmed`，单位为 0.01 个显示估算 token。接口不含正文、思考、摘要、工具 payload 或内容哈希；Web 对返回字段再做一次白名单投影。Core 重启、计数缺口或容量重建会更换 `counterGeneration`，Renderer 先建立基线；网络断开超过 2 秒同样重新建基线，不把积压量回放成当前速度。
+`monitoring.observableOutput({threadId, agentRunId, executionEpoch})` 兼容旧 `campId` 输入并拒绝同义字段重复；只在请求的 Run 属于 Thread、仍运行且代次匹配时返回最近数值；其他情况返回 `null`。`agentRunId + executionEpoch + counterGeneration` 是计数身份，`sequence` 单调递增；`sampledAtMs` 与 `lastOutputAtMs` 均来自同一 Core 进程单调时钟。返回 `algorithmVersion`、`unicodeDataVersion`、`publicTextUnits`、`reasoningUnits`、`reasoningSource`、`streamConfirmed`，单位为 0.01 个显示估算 token。接口不含正文、思考、摘要、工具 payload 或内容哈希；Web 对返回字段再做一次白名单投影。Core 重启、计数缺口或容量重建会更换 `counterGeneration`，Renderer 先建立基线；网络断开超过 2 秒同样重新建基线，不把积压量回放成当前速度。
 
 分类使用 ICU4X 2.2.0 随程序打包的 Unicode 属性数据：空白与指定格式字符为 0，可打印 ASCII 和 Latin 为 0.25，Han／Kana／Hangul／明确的 CJK 共享标点为 0.60，其他图形符号为 1.00，其余标量为 0.50。单个标量只能归入一类；`Script_Extensions` 只用于共享字符的单次归类。假名、韩文、符号与其他脚本的权重未按具体模型校准。旧 `visible-text-heuristic-v2` 不再驱动速度。
 

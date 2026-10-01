@@ -6,6 +6,8 @@ last_updated: 2026-09-27
 
 # 长期接口合同
 
+公开命名与历史合同的关系见 [Thread Naming v1](thread-naming-v1.md)；当前模型与 CLI 版本见 [ContextManifest v32](context-manifest-evidence-v32.md)、[Built-in Tool Transport v33](builtin-tool-transport-v33.md)。
+
 本目录保存跨版本、字段级且可由测试直接验证的接口合同。[Version Decisions](../decisions/README.md)解释为什么选择某个边界，
 Architecture 解释组件如何组成，Version 概览记录交付范围；它们都不复制本目录的完整 wire shape。
 

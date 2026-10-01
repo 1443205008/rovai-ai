@@ -534,8 +534,9 @@ pub struct MonitoringFilter {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MonitoringExecutionParams {
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub agent_run_ids: Vec<String>,
 }
@@ -4208,6 +4209,18 @@ mod tests {
 
     #[test]
     fn execution_usage_batch_keeps_requested_scope_collection_and_sparse_fields() {
+        for key in ["threadId", "campId"] {
+            let input = json!({key: "camp-a", "agentRunIds": ["run-a"]});
+            let parsed: MonitoringExecutionParams = serde_json::from_value(input).unwrap();
+            assert_eq!(parsed.camp_id, "camp-a");
+            assert_eq!(parsed.agent_run_ids, ["run-a"]);
+        }
+        assert!(
+            serde_json::from_value::<MonitoringExecutionParams>(json!({
+                "threadId": "camp-a", "campId": "camp-a", "agentRunIds": []
+            }))
+            .is_err()
+        );
         // Lowest-cost owner of the SQL read seam; no migrations, Runtime or historical bodies.
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         connection.execute_batch(r#"

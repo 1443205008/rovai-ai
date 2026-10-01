@@ -23,8 +23,10 @@ pub struct TraceExportParams {
     pub since: DateTime<Utc>,
     pub until: DateTime<Utc>,
     #[serde(default)]
+    #[serde(rename = "threadIds", alias = "campIds")]
     pub camp_ids: Vec<String>,
     #[serde(default)]
+    #[serde(rename = "excludeThreadIds", alias = "excludeCampIds")]
     pub exclude_camp_ids: Vec<String>,
     #[serde(default)]
     pub exclude_automation_ids: Vec<String>,
@@ -66,7 +68,7 @@ WITH eligible_turns AS (
 
 const RUNS: &str = r#"
 SELECT json_object(
-    'agentRunId', r.id, 'campId', COALESCE(r.camp_id, t.camp_id), 'campTurnId', t.id,
+    'agentRunId', r.id, 'threadId', COALESCE(r.camp_id, t.camp_id), 'threadTurnId', t.id,
     'automationId', t.automation_id, 'automationRunId', t.automation_run_id,
     'status', r.status, 'waitReason', r.wait_reason,
     'createdAt', r.created_at, 'inputReadyAt', r.input_ready_at,
@@ -96,7 +98,7 @@ ORDER BY r.created_at, r.id LIMIT :row_limit
 
 const DELIVERIES: &str = r#"
 SELECT json_object(
-    'deliveryId', d.id, 'campId', t.camp_id, 'campTurnId', t.id,
+    'deliveryId', d.id, 'threadId', t.camp_id, 'threadTurnId', t.id,
     'automationId', t.automation_id, 'deliveryKind', d.delivery_kind,
     'sourceAgentRunId', d.source_agent_run_id, 'targetAgentRunId', d.target_agent_run_id,
     'a2aRootAgentRunId', d.a2a_root_agent_run_id, 'edgeKind', d.edge_kind,
@@ -119,7 +121,7 @@ ORDER BY d.created_at, d.id LIMIT :row_limit
 const DELIVERY_EVENTS: &str = r#"
 SELECT json_object(
     'eventId', e.event_id, 'globalSequence', e.global_sequence,
-    'deliveryId', d.id, 'campId', t.camp_id, 'campTurnId', t.id,
+    'deliveryId', d.id, 'threadId', t.camp_id, 'threadTurnId', t.id,
     'automationId', t.automation_id, 'deliveryKind', d.delivery_kind,
     'dispatchDisposition', d.dispatch_disposition,
     'eventType', e.event_type, 'occurredAt', e.created_at,
@@ -139,7 +141,7 @@ ORDER BY e.global_sequence LIMIT :row_limit
 
 const TOOLS: &str = r#"
 SELECT json_object(
-    'agentRunId', a.agent_run_id, 'campId', COALESCE(r.camp_id, t.camp_id), 'campTurnId', t.id,
+    'agentRunId', a.agent_run_id, 'threadId', COALESCE(r.camp_id, t.camp_id), 'threadTurnId', t.id,
     'automationId', t.automation_id, 'executionEpoch', a.execution_epoch,
     'operationId', a.operation_id, 'classifierVersion', a.classifier_version,
     'activityDomain', a.activity_domain, 'semanticKind', a.semantic_kind,
@@ -557,8 +559,8 @@ mod tests {
     fn export_queries_current_schema_without_reading_bodies_or_writing_state() {
         use crate::{
             collaboration::{
-                CollaborationService, ProjectBindingKind, TestCampConversationCommand,
-                TestCampMessageAddress,
+                CollaborationService, ProjectBindingKind, TestThreadConversationCommand,
+                TestThreadMessageAddress,
             },
             command::{ActorRef, CommandEnvelope},
         };
@@ -580,18 +582,18 @@ mod tests {
                     camp_id: None,
                     expected_versions: vec![],
                     execution_epoch: None,
-                    payload: TestCampConversationCommand {
+                    payload: TestThreadConversationCommand {
                         project_path: workspace.to_string_lossy().to_string(),
                         project_binding_kind: ProjectBindingKind::Directory,
                         body: "PRIVATE_BODY_CANARY".to_string(),
-                        address: TestCampMessageAddress::Default,
+                        address: TestThreadMessageAddress::Default,
                         purpose: "PRIVATE_PURPOSE_CANARY".to_string(),
                     },
                 },
             )
             .unwrap();
         let run_id = created.result.payload["agentRunIds"][0].as_str().unwrap();
-        let camp_id = created.result.payload["campId"].as_str().unwrap();
+        let camp_id = created.result.payload["threadId"].as_str().unwrap();
         let params = window();
         database
             .connection()

@@ -11,11 +11,11 @@ const [renderer, userData, root, preload] = process.argv.slice(2)
 app.setPath('userData', userData)
 app.setPath('sessionData', join(userData, 'session'))
 const service = new FilePreviewService({ async resolve(request) {
-  if (request.kind === 'attachment') return { kind: 'file_target', sourceKind: 'attachment', campId: request.campId,
+  if (request.kind === 'attachment') return { kind: 'file_target', sourceKind: 'attachment', threadId: request.threadId,
     sourceIdentity: 'attachment-history', rootPath: root, basePath: root, candidatePath: join(root, 'attachment.html'),
     displayName: '附件交互稿.html', canShowPath: false, allowChildren: true }
   if (request.kind !== 'camp_workspace') return null
-  return { kind: 'file_target', sourceKind: request.kind, campId: request.campId,
+  return { kind: 'file_target', sourceKind: request.kind, threadId: request.threadId,
     sourceIdentity: request.rawReference, rootPath: root, basePath: root,
     rawReference: request.rawReference, allowChildren: true }
 } }, { selectRoot: async () => null, confirmOpen: async () => true, openPath: async () => '', revealPath() {}, copyText() {}, publishExternalUpdate() {} })
@@ -51,7 +51,7 @@ app.whenReady().then(async () => {
   for (const name of ['original-history.html','original-canvas.html']) if (await access(join(root,name)).then(()=>true,()=>false)) names.push(name)
   for (const name of names) {
     const started = performance.now()
-    await run(`window.previewAcceptance.open({kind:'camp_workspace',campId:'preview-test',rawReference:${JSON.stringify(name)}})`)
+    await run(`window.previewAcceptance.open({kind:'camp_workspace',threadId:'preview-test',rawReference:${JSON.stringify(name)}})`)
     const frames = () => window.webContents.mainFrame.framesInSubtree.filter(frame => frame !== window.webContents.mainFrame)
     const deadline = performance.now() + 10_000
     for (;;) {

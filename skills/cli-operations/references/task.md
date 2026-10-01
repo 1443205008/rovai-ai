@@ -1,6 +1,6 @@
 # Task
 
-Create a Task only for responsibility that needs tracking across Runs and independent handoff or acceptance. Use CampMessage for brief coordination, answers, progress and questions.
+Create a Task only for responsibility that needs tracking across Runs and independent handoff or acceptance. Use ThreadMessage for brief coordination, answers, progress and questions.
 
 Choose an operation with `rovai task --help`, then read its exact help. Reuse an existing Task where possible; put scope and requirements together in `description`.
 

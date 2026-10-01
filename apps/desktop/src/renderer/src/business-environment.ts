@@ -1,11 +1,11 @@
 import type { RovaiApi } from '@contracts'
-import type { CampClient } from './camp-client'
+import type { ThreadClient } from './camp-client'
 import type { FilePreviewApi } from '@contracts'
 
 /** Only dependencies the production business shell uses; never a replacement window.rovai. */
 export interface BusinessEnvironment {
   navigationHistory?: import('./desktop-navigation').NavigationHistory
-  client: CampClient
+  client: ThreadClient
   files: FilePreviewApi
   preferences: Pick<RovaiApi, 'appearance' | 'generalPreferences' | 'navigationPreferences'>
   selectWorkspaceDirectory: RovaiApi['selectWorkspaceDirectory']

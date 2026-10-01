@@ -15,7 +15,7 @@ const EMPTY_HISTORY: NavigationState = { entries: [], index: -1 }
 const emptySnapshot = (): NavigationState => EMPTY_HISTORY
 const noSubscription = (): (() => void) => () => undefined
 
-// Layout state stays below App so resizing does not rebuild the Camp or Composer children.
+// Layout state stays below App so resizing does not rebuild the Thread or Composer children.
 export function NavigationShell({ platform, disabled = false, settings = false, navigation, nativeWindowControls, browser = false, className = '', children, ...attributes }: HTMLAttributes<HTMLDivElement> & {
   platform: NodeJS.Platform
   disabled?: boolean

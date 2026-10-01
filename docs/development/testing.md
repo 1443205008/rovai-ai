@@ -606,7 +606,7 @@ Team Case 可在密封 manifest 中声明 `collaboration` 合同。Runner 将它
 
 ## UI 验收命令
 
-`pnpm test:execution-metrics-ui` 复用 CampWorkspace 的隔离 Renderer fixture，独立验证当前指标的
+`pnpm test:execution-metrics-ui` 复用 ThreadWorkspace 的隔离 Renderer fixture，独立验证当前指标的
 500 Run 范围读取、可见收起卡片、滚动与展开、面板／页面隐藏、恢复速度基线、有限终态尾读后的
 迟到用量，以及当前 Context 整体换代和删除；夹具数值不是 Runtime 能力证据。
 `ROVAI_KEEP_EXECUTION_METRICS_FIXTURE=1` 保留报告与双主题截图；默认清理本次临时目录。
@@ -853,3 +853,12 @@ Copilot 逐调用／子 Agent／dataOmitted／缺失与终态累计排除，以�
 11 个 OpenCode 调用及 Grok 两个终态聚合。原始形态、归一化数字和最终读取同时保留；
 没有新增、删除、合并或停用 Rust owner，亦未为真实网络请求添加单元测试。
 真实原生压缩、四类健康冷恢复、同次 Grok 思考 UI 与 App 重开见[边界证据](../research/runtime-monitoring/native-boundaries-verification-2026-10-01.md)。
+
+
+2026-10-02 合入 Thread 更名时，扩展既有
+`db::thread_names::tests::thread_upgrade_preserves_existing_tables_and_rolls_back_on_receipt_failure`
+owner，覆盖已安装指标 schema 129 和 main Thread schema 128 两条路径、179/180 收据失败回滚、
+冻结 Context 摘要及收据保留、重开后 schema 130 准入。该 owner 使用独立 SQLite 目录及
+`fresh_schema_database_at`，沿用 `extended-tests`；不新增 Rust owner。既有 Session Context 迁移
+owner 继续拥有指标数量保留与 127/128 升级；默认 workspace 与字段级回归另行执行。
+最低命令：`cargo test -p rovai-core --features extended-tests --lib thread_upgrade_preserves_existing_tables_and_rolls_back_on_receipt_failure`。

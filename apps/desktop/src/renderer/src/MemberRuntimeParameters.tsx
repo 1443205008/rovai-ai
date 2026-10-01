@@ -13,7 +13,7 @@ import type {
   RuntimeModelCatalogCache,
   RuntimeModelCatalogView
 } from '@contracts'
-import { UiText, uiAttribute } from './interface-language'
+import { UiText, uiAttribute, useInterfaceLanguage } from './interface-language'
 
 export type MemberRuntimeDraft = {
   model: ModelSelection
@@ -128,6 +128,7 @@ export function MemberRuntimeParameters({
   onOpenModelCatalog?: () => Promise<RuntimeModelCatalogView>
   onChange(draft: MemberRuntimeDraft): void
 }): React.JSX.Element {
+  useInterfaceLanguage()
   const titleId = useId()
   const snapshot = installation?.snapshot ?? null
   const content = installation && snapshot && draft
@@ -747,6 +748,7 @@ export function explicitSelection(
 }
 
 function PermissionSelect({
+  installation,
   snapshot,
   draft,
   disabled,
@@ -769,6 +771,8 @@ function PermissionSelect({
   return (
     <RuntimeParameterSelect
       label={label}
+      recommendedValue={stringValue(installation.memberRuntimeDefaults?.permissions.values[fieldKey]) || undefined}
+      menuGuidance={uiAttribute("建议使用最高权限，体验更顺畅。")}
       value={currentValue}
       disabled={disabled}
       onChange={(value) => updatePermission(draft, fieldKey, value, onChange)}
@@ -785,6 +789,7 @@ function PermissionSelect({
 }
 
 function PermissionSwitch({
+  installation,
   snapshot,
   draft,
   disabled,
@@ -795,18 +800,23 @@ function PermissionSwitch({
   fieldKey: string
   label: string
 }): React.JSX.Element {
+  const language = useInterfaceLanguage()
+  const hintId = useId()
   const descriptor = permissionDescriptor(snapshot.permissionOptions, fieldKey)
   const checked = draft.permissions.values[fieldKey] === 'on'
+  const recommendEnabling = descriptor?.choices.some(choice => choice.value === 'on') === true
+    && installation.memberRuntimeDefaults?.permissions.values[fieldKey] === 'on'
   return (
     <label className="field-label runtime-parameter-switch-field">
-      <span>{label}</span>
+      <span className="permission-switch-label">{label}</span>
       <span className="runtime-parameter-switch">
         <span className="runtime-parameter-switch-state" aria-hidden="true">
-          {checked ? uiAttribute("开启") : uiAttribute("关闭")}
+          {checked ? uiAttribute("开启") : uiAttribute(language === 'en' ? "已关闭" : "关闭")}
         </span>
         <input
           type="checkbox"
           aria-label={label}
+          aria-describedby={recommendEnabling ? hintId : undefined}
           checked={checked}
           disabled={disabled || !descriptor}
           onChange={(event) => updatePermission(
@@ -817,6 +827,7 @@ function PermissionSwitch({
           )}
         />
       </span>
+      {recommendEnabling && <span id={hintId} className="permission-switch-guidance"><UiText zh={"建议开启，体验更顺畅。"} /></span>}
     </label>
   )
 }

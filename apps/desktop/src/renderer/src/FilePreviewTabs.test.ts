@@ -36,7 +36,7 @@ function tab(id: string): FilePreviewTabModel {
     kind: 'file',
     id,
     sourceKey: `workspace:camp-1:src/${id}.ts`,
-    sourceRequest: { kind: 'camp_workspace', campId: 'camp-1', rawReference: `src/${id}.ts` },
+    sourceRequest: { kind: 'camp_workspace', threadId: 'camp-1', rawReference: `src/${id}.ts` },
     previewKey: id,
     presentation: {
       fileName: file.fileName,
@@ -195,7 +195,7 @@ describe('FilePreviewTabs open feedback', () => {
     const currentFile = tab('readme')
     updateFile(currentFile, { kind: 'markdown', fileName: 'readme.md', displayPath: 'docs/readme.md' })
     const review = {
-      kind: 'file_change' as const, id: 'review-1', campId: 'camp-1', selectedEvidenceFileId: 'evidence-1',
+      kind: 'file_change' as const, id: 'review-1', threadId: 'camp-1', selectedEvidenceFileId: 'evidence-1',
       changes: {
         schemaVersion: 2 as const, agentRunId: 'run-1', executionEpoch: 1,
         fileCount: 1, operationCount: 1, completedAt: '2026-08-30T08:00:00Z',

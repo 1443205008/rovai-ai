@@ -2,15 +2,15 @@ import type { LiveRuntimeEvent } from './index'
 
 /** Display vocabulary only. Protocol identities, receipts and stored evidence stay unchanged. */
 export const BUILTIN_CLI_NAMES: Readonly<Record<string, string>> = Object.freeze({
-  'camp.message.send': 'rovai send',
+  'thread.message.send': 'rovai send',
   'member.create': 'rovai member create',
   'team.create_task': 'rovai task create',
   'team.get_task': 'rovai task get',
   'team.list_tasks': 'rovai task list',
   'team.update_task': 'rovai task update',
-  'camp.list': 'rovai camp list',
-  'camp.search': 'rovai camp search',
-  'camp.read': 'rovai camp read',
+  'thread.list': 'rovai thread list',
+  'thread.search': 'rovai thread search',
+  'thread.read': 'rovai thread read',
   'single_chat.history': 'rovai single-chat history',
   'history.search': 'rovai history search',
   'memory.view': 'rovai memory view',
@@ -30,6 +30,11 @@ export const BUILTIN_CLI_NAMES: Readonly<Record<string, string>> = Object.freeze
   'mission.status': 'rovai mission status'
 })
 
+function currentOperation(operation: unknown): unknown {
+  if (typeof operation !== 'string') return operation
+  return ({ 'camp.list': 'thread.list', 'camp.search': 'thread.search', 'camp.read': 'thread.read', 'camp.message.send': 'thread.message.send' } as Record<string, string>)[operation] ?? operation
+}
+
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown> : {}
@@ -37,7 +42,7 @@ function record(value: unknown): Record<string, unknown> {
 
 export function builtinOperation(payloadValue: unknown): string | null {
   const payload = record(payloadValue)
-  const operation = payload.canonicalTool
+  const operation = currentOperation(payload.canonicalTool)
   return payload.sourceAuthority === 'core' && typeof operation === 'string'
     && Object.hasOwn(BUILTIN_CLI_NAMES, operation) ? operation : null
 }
@@ -49,9 +54,9 @@ export function builtinInputText(payloadValue: unknown): string | null {
   const operation = builtinOperation(payload)
   if (!operation) return null
   const projection = record(payload.operationProjection)
-  if (projection.operation !== operation) return null
+  if (currentOperation(projection.operation) !== operation) return null
   const input = record(projection.canonicalInput)
-  const message = operation === 'camp.message.send'
+  const message = operation === 'thread.message.send'
   const fields = Object.entries(input).filter(([key, value]) =>
     value !== null && value !== undefined && !PROJECTION_FACT.test(key) && key !== 'changedFields'
     && !(message && key === 'body')
@@ -64,7 +69,7 @@ export function builtinInputText(payloadValue: unknown): string | null {
 function cliResult(operation: string, result: unknown): unknown {
   const value = record(result)
   let keys: string[] | undefined
-  if (operation === 'camp.message.send') keys = ['messageId', 'agentAddressingMode', 'effectiveRecipients', 'deliveryIds']
+  if (operation === 'thread.message.send') keys = ['messageId', 'agentAddressingMode', 'effectiveRecipients', 'deliveryIds']
   if (operation === 'team.create_task' || operation === 'team.update_task') {
     keys = ['taskId', 'title', 'status', 'assigneeAgentId']
     if (operation === 'team.update_task') keys.push('changed')

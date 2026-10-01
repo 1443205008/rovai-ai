@@ -1,6 +1,6 @@
 # Mission
 
-Get a known Mission directly; list only to discover one. Reading another Mission does not switch context: update/status still affect the current public Camp's Mission.
+Get a known Mission directly; list only to discover one. Reading another Mission does not switch context: update/status still affect the current public Thread's Mission.
 
 `sourceMessageId` is optional for every status, including `needs_you` and `completed`. Update status directly; link a relevant existing public message only when useful. A Mission owns the shared objective; a Task owns independently transferable responsibility. Do not automatically create a duplicate Task. Edit only the established objective and requirements.
 

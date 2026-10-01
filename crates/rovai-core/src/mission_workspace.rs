@@ -22,6 +22,7 @@ use uuid::Uuid;
 pub struct MissionWorkspace {
     pub id: String,
     pub mission_id: String,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub execution_host_id: String,
     pub source_directory: String,

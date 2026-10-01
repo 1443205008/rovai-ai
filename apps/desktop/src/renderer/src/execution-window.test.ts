@@ -19,7 +19,7 @@ function source(initial = 100) {
     const end = params.afterSequence === undefined ? Math.min(state.through, (params.beforeSequence ?? state.through + 1) - 1)
       : Math.min(state.through, start + params.limit - 1)
     const hasMore = params.afterSequence === undefined ? start > 1 : end < state.through
-    return { schemaVersion: 2, campId: 'camp', agentRunId: 'run', requestedBeforeSequence: params.beforeSequence,
+    return { schemaVersion: 2, threadId: 'camp', agentRunId: 'run', requestedBeforeSequence: params.beforeSequence,
       requestedAfterSequence: params.afterSequence, nextAfterSequence: params.afterSequence !== undefined && hasMore ? end : null,
       nextBeforeSequence: params.afterSequence === undefined && hasMore ? start : null,
       throughSequence: state.through, throughChangeSequence: state.through, hasMore,
@@ -28,7 +28,7 @@ function source(initial = 100) {
   const changes = vi.fn<ExecutionChangesRequest>(async params => {
     if (state.offline) throw new Error('offline')
     const end = Math.min(state.through, params.afterChangeSequence + params.limit)
-    return { schemaVersion: 2, campId: 'camp', agentRunId: 'run', requestedAfterChangeSequence: params.afterChangeSequence,
+    return { schemaVersion: 2, threadId: 'camp', agentRunId: 'run', requestedAfterChangeSequence: params.afterChangeSequence,
       nextAfterChangeSequence: end, throughSequence: state.through, throughChangeSequence: state.through,
       hasMore: end < state.through,
       evidence: Array.from({ length: end - params.afterChangeSequence }, (_, offset) => evidence(params.afterChangeSequence + offset + 1)),
@@ -97,7 +97,7 @@ describe('continuous execution history', () => {
     expect(executionWindowPageSize(4000)).toBe(48)
   })
 
-  it('keeps successful data on failure, retries the same direction and validates Camp/cursor boundaries', async () => {
+  it('keeps successful data on failure, retries the same direction and validates Thread/cursor boundaries', async () => {
     const { state, request, changes } = source(1000)
     state.offline = true
     const current = new ExecutionWindow('camp', 'run', 12, request, () => {}, changes)
@@ -114,7 +114,7 @@ describe('continuous execution history', () => {
     state.offline = false; await current.retry()
     expect(current.error).toBeNull()
     expect(current.evidence.length).toBeGreaterThan(retained.length)
-    const invalid = new ExecutionWindow('camp', 'run', 12, async params => ({ ...await request(params), campId: 'other' }), () => {}, changes)
+    const invalid = new ExecutionWindow('camp', 'run', 12, async params => ({ ...await request(params), threadId: 'other' }), () => {}, changes)
     await invalid.latest()
     expect(invalid.error).toContain('不兼容')
     expect(invalid.evidence).toEqual([])
@@ -145,13 +145,13 @@ describe('continuous execution history', () => {
     expect(bytes.evidence.length).toBeLessThan(12)
   })
 
-  it('fences late responses after unmount and reuses a released Run cache across Camp switches', async () => {
+  it('fences late responses after unmount and reuses a released Run cache across Thread switches', async () => {
     const { request, changes } = source()
     let resolve!: (value: AgentRunExecutionWindowPage) => void
     const changed = vi.fn()
     const late = new ExecutionWindow('camp', 'run', 12, () => new Promise(done => { resolve = done }), changed, changes)
     const loading = late.latest(); late.dispose(); changed.mockClear()
-    resolve(await request({ campId: 'camp', agentRunId: 'run', beforeSequence: null, limit: 12 }))
+    resolve(await request({ threadId: 'camp', agentRunId: 'run', beforeSequence: null, limit: 12 }))
     await loading
     expect(late.evidence).toEqual([]); expect(changed).not.toHaveBeenCalled()
     const cache = new ExecutionWindowCache(2)
@@ -166,7 +166,7 @@ describe('continuous execution history', () => {
     const old = cache.acquire('b', create, changed)
     expect(old.window).not.toBe(b.window); old.release()
     // Identical Run IDs on a replacement Host/client must load through the new
-    // transport, while revisiting a Camp on the same client still hits cache.
+    // transport, while revisiting a Thread on the same client still hits cache.
     const firstClient = {}, nextClient = {}
     const firstSource = source(3), nextSource = source(7)
     const first = executionWindowCacheFor(firstClient).acquire('same-run', notify => new ExecutionWindow('camp', 'run', 12, firstSource.request, notify, firstSource.changes), changed)

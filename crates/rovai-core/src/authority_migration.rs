@@ -1410,10 +1410,10 @@ mod tests {
                         &mut database,
                         match source {
                             "main_fast_lifetime" => {
-                                crate::db::MainCampMigrationSource::FastLifetime
+                                crate::db::MainThreadMigrationSource::FastLifetime
                             }
-                            "main_fast" => crate::db::MainCampMigrationSource::Fast,
-                            _ => crate::db::MainCampMigrationSource::Pending,
+                            "main_fast" => crate::db::MainThreadMigrationSource::Fast,
+                            _ => crate::db::MainThreadMigrationSource::Pending,
                         },
                     );
                     database.connection().execute_batch(r#"
@@ -1880,9 +1880,9 @@ mod tests {
                     crate::db::downgrade_current_schema_to_main_camp_source_for_test(
                         &mut database,
                         if interruption == "after_lifetime_reconciliation" {
-                            crate::db::MainCampMigrationSource::FastLifetime
+                            crate::db::MainThreadMigrationSource::FastLifetime
                         } else {
-                            crate::db::MainCampMigrationSource::Fast
+                            crate::db::MainThreadMigrationSource::Fast
                         },
                     )
                 }

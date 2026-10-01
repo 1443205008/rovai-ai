@@ -22,9 +22,7 @@ use crate::{
         AdapterCapabilitySnapshot, AdapterKind, AdapterPermissionConfig, ModelDescriptor,
         ModelOptionDescriptor, PermissionOptionDescriptor, RuntimeOptionScope, ValueChoice,
     },
-    builtin_tool_transport::{
-        BUILTIN_TOOL_CONTRACT_VERSION, BUILTIN_TOOL_RUNTIME_CAPABILITY, builtin_tool_catalog_digest,
-    },
+    builtin_tool_transport::BUILTIN_TOOL_RUNTIME_CAPABILITY,
     command::canonical_json_digest,
     context_contract::{
         CODEX_SESSION_GUIDANCE_REVISION,
@@ -3311,8 +3309,8 @@ impl AgentRuntimeAdapter for AntigravityAppAdapterPolicy {
         let binding_compatibility_digest = antigravity_binding_compatibility_digest(
             input.installation_id,
             &protocol_version,
-            BUILTIN_TOOL_CONTRACT_VERSION,
-            &builtin_tool_catalog_digest()?,
+            NATIVE_BINDING_TOOL_COMPATIBILITY_VERSION,
+            NATIVE_BINDING_TOOL_COMPATIBILITY_DIGEST,
         )?;
         let host_config_digest = canonical_json_digest(&json!({
             "adapterKind": self.kind(),
@@ -3334,6 +3332,12 @@ impl AgentRuntimeAdapter for AntigravityAppAdapterPolicy {
         })
     }
 }
+
+// Tool names and input aliases changed in v33; native protocol/session semantics did not.
+// Keep the exact v32 identity used by existing bindings. Live discovery uses the current catalog.
+const NATIVE_BINDING_TOOL_COMPATIBILITY_VERSION: u32 = 32;
+const NATIVE_BINDING_TOOL_COMPATIBILITY_DIGEST: &str =
+    "sha256:f3a80021f106afb84a02db2eb0eaa5f81d4936df46a8aaa131f3c15127fb70c1";
 
 fn antigravity_binding_compatibility_digest(
     installation_id: &str,
@@ -4493,23 +4497,37 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_catalog_upgrade_replaces_the_native_conversation_binding() {
-        let current_catalog = builtin_tool_catalog_digest().unwrap();
+    fn antigravity_catalog_rename_preserves_binding_but_protocol_changes_do_not() {
+        let baseline = antigravity_binding_compatibility_digest(
+            "agy-local",
+            "antigravity-app-cli-v1",
+            32,
+            "sha256:f3a80021f106afb84a02db2eb0eaa5f81d4936df46a8aaa131f3c15127fb70c1",
+        )
+        .unwrap();
         let current = antigravity_binding_compatibility_digest(
             "agy-local",
             "antigravity-app-cli-v1",
-            BUILTIN_TOOL_CONTRACT_VERSION,
-            &current_catalog,
+            NATIVE_BINDING_TOOL_COMPATIBILITY_VERSION,
+            NATIVE_BINDING_TOOL_COMPATIBILITY_DIGEST,
         )
         .unwrap();
-        let legacy = antigravity_binding_compatibility_digest(
-            "agy-local",
-            "antigravity-app-cli-v1",
-            7,
-            &format!("sha256:{}", "0".repeat(64)),
-        )
-        .unwrap();
-        assert_ne!(current, legacy);
+        assert_eq!(current, baseline);
+        for (installation, protocol) in [
+            ("agy-other", "antigravity-app-cli-v1"),
+            ("agy-local", "antigravity-app-cli-v2"),
+        ] {
+            assert_ne!(
+                current,
+                antigravity_binding_compatibility_digest(
+                    installation,
+                    protocol,
+                    NATIVE_BINDING_TOOL_COMPATIBILITY_VERSION,
+                    NATIVE_BINDING_TOOL_COMPATIBILITY_DIGEST,
+                )
+                .unwrap()
+            );
+        }
     }
 
     #[test]

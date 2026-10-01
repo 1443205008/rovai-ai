@@ -1,32 +1,32 @@
 import { newCommandId } from '../../shared/command-id'
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { AdapterInstallation, AgentProfile, CampMemberFastView, CampSnapshot, StoredCommandResult } from '@contracts'
+import type { AdapterInstallation, AgentProfile, ThreadMemberFastView, ThreadSnapshot, StoredCommandResult } from '@contracts'
 import { runtimeEditorInstallation } from './MemberRuntimeParameters'
 import { readErrorMessage } from './error-message'
 
 type FastEntry = {
   scope: string
   projection: string
-  value: CampMemberFastView | null | undefined
+  value: ThreadMemberFastView | null | undefined
   failed: boolean
 }
 
-export type CampMemberFastControls = {
-  get(agentId: string): { value: CampMemberFastView | null | undefined; pending: boolean } | undefined
+export type ThreadMemberFastControls = {
+  get(agentId: string): { value: ThreadMemberFastView | null | undefined; pending: boolean } | undefined
   save(agentId: string, fastOverride: boolean): Promise<void>
 }
 
-// One workspace owns both surfaces. Metadata and writes are coalesced per Camp/member,
-// while entry identity fences late results after a binding, projection or Camp change.
-export function useCampMemberFast(
-  snapshot: CampSnapshot,
+// One workspace owns both surfaces. Metadata and writes are coalesced per Thread/member,
+// while entry identity fences late results after a binding, projection or Thread change.
+export function useThreadMemberFast(
+  snapshot: ThreadSnapshot,
   profiles: Map<string, AgentProfile>,
   installations: AdapterInstallation[],
   retrySurface: string | null,
   onNotify: (message: string) => void
-): CampMemberFastControls {
-  const client = useCampClient()
+): ThreadMemberFastControls {
+  const client = useThreadClient()
   const [, refresh] = useState(0)
   const entries = useRef(new Map<string, FastEntry>())
   const checks = useRef(new Set<string>())
@@ -40,7 +40,7 @@ export function useCampMemberFast(
       || (runtime?.adapterKind !== 'claude-code-cli' && runtime?.adapterKind !== 'codex-cli')) return []
     const installation = runtimeEditorInstallation(installations, runtime.adapterKind)
     const scope = JSON.stringify([
-      snapshot.camp.id, snapshot.camp.projectPath, member.membershipStatus, member.profilePresence,
+      snapshot.thread.id, snapshot.thread.projectPath, member.membershipStatus, member.profilePresence,
       member.fast?.runtimeBindingRevision, profile?.version, runtime.adapterKind, runtime.model,
       installation?.id, installation?.authScope, installation?.executablePath, installation?.enabled,
       installation?.generation, installation?.snapshot?.executableFingerprint,
@@ -49,7 +49,7 @@ export function useCampMemberFast(
     ])
     return [[member.agentId, { scope, projection: JSON.stringify(member.fast ?? null), value: member.fast }]] as const
   }))
-  const requestKey = (agentId: string) => JSON.stringify([snapshot.camp.id, agentId])
+  const requestKey = (agentId: string) => JSON.stringify([snapshot.thread.id, agentId])
   const changed = () => { if (mounted.current) refresh(current => current + 1) }
   useLayoutEffect(() => {
     mounted.current = true
@@ -64,7 +64,7 @@ export function useCampMemberFast(
       if (previous?.scope === target.scope && previous.projection === target.projection) continue
       entries.current.set(agentId, {
         scope: target.scope, projection: target.projection,
-        // Profile refresh can arrive before the Camp projection. Never reuse the old
+        // Profile refresh can arrive before the Thread projection. Never reuse the old
         // projection for a changed binding merely because the same object is still present.
         value: previous && previous.scope !== target.scope && previous.projection === target.projection
           ? undefined : target.value,
@@ -80,8 +80,8 @@ export function useCampMemberFast(
       const key = requestKey(agentId)
       if (entry.value !== undefined || checks.current.has(key)) continue
       checks.current.add(key)
-      void client.request<CampMemberFastView | null>('camps.members.fast.check', {
-        campId: snapshot.camp.id, agentId
+      void client.request<ThreadMemberFastView | null>('threads.members.fast.check', {
+        threadId: snapshot.thread.id, agentId
       }).then(value => {
         if (entries.current.get(agentId) === entry) entry.value = value
       }).catch(() => {
@@ -91,7 +91,7 @@ export function useCampMemberFast(
       }).finally(() => { checks.current.delete(key); changed() })
     }
   })
-  const get: CampMemberFastControls['get'] = agentId => {
+  const get: ThreadMemberFastControls['get'] = agentId => {
     const target = targets.get(agentId)
     if (!target) return undefined
     const entry = entries.current.get(agentId)
@@ -101,7 +101,7 @@ export function useCampMemberFast(
         ? undefined : target.value
     return { value, pending: saves.current.has(requestKey(agentId)) }
   }
-  const save: CampMemberFastControls['save'] = async (agentId, fastOverride) => {
+  const save: ThreadMemberFastControls['save'] = async (agentId, fastOverride) => {
     const value = get(agentId)?.value
     const entry = entries.current.get(agentId)
     const key = requestKey(agentId)
@@ -109,13 +109,13 @@ export function useCampMemberFast(
     saves.current.add(key)
     changed()
     try {
-      const result = await client.request<StoredCommandResult>('camps.members.fast.set', {
+      const result = await client.request<StoredCommandResult>('threads.members.fast.set', {
         commandId: newCommandId(),
-        command: { campId: snapshot.camp.id, agentId, expectedRuntimeBindingRevision: value.runtimeBindingRevision, fastOverride }
+        command: { threadId: snapshot.thread.id, agentId, expectedRuntimeBindingRevision: value.runtimeBindingRevision, fastOverride }
       })
       if (!mounted.current || entries.current.get(agentId) !== entry) return
       if (result.status !== 'applied') throw new Error('队员配置已变化，请稍后重试。')
-      entry.value = (result.payload as { fast?: CampMemberFastView | null }).fast ?? null
+      entry.value = (result.payload as { fast?: ThreadMemberFastView | null }).fast ?? null
     } catch (error) {
       if (mounted.current && entries.current.get(agentId) === entry) {
         onNotify(readErrorMessage(error, '响应模式未保存，请重试。'))

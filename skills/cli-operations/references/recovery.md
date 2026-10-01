@@ -12,7 +12,7 @@ Follow `error.recovery`, not guesses based on error wording:
 
 ## Uncertain outcome
 
-With an authoritative CampMessage locator, read that stable message ID exactly and decide from its current state. The current Run may verify its own committed message; this exception does not allow a later neighborhood, thread, timeline, search, or another author/Run's messages. Missing downstream completion does not imply Send failure.
+With an authoritative ThreadMessage locator, read that stable message ID exactly and decide from its current state. The current Run may verify its own committed message; this exception does not allow a later neighborhood, reply chain, timeline, search, or another author/Run's messages. Missing downstream completion does not imply Send failure.
 
 Without a locator, report the uncertain outcome and stop the mutation. Do not search by similar content, author or time, guess request identity, or resend with a new identity. Approximate matches prove neither success nor failure.
 

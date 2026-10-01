@@ -69,7 +69,7 @@ export function FileFindProvider({ activeTabId, visible, children }: { activeTab
     let lastRegion: 'file' | 'conversation' = 'conversation'
     const track = (event: Event): void => {
       if (isFileFindTarget(event.target)) lastRegion = 'file'
-      else if (event.target instanceof Element && event.target.closest('.camp-workspace,.topbar-conversation-context')) lastRegion = 'conversation'
+      else if (event.target instanceof Element && event.target.closest('.thread-workspace,.topbar-conversation-context')) lastRegion = 'conversation'
     }
     const shortcut = (event: KeyboardEvent): void => {
       if (event.defaultPrevented || event.isComposing || event.altKey || !current.current.visible) return

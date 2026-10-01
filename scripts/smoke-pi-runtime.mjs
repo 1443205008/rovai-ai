@@ -126,19 +126,19 @@ try {
   })
   const firstAccepted = metricsOneTurn
     ? {
-        campId: (first.commandResult ?? first).payload?.campId,
+        threadId: (first.commandResult ?? first).payload?.threadId,
         agentRunId: await waitForMessageRun(
           client.request,
-          (first.commandResult ?? first).payload?.campId,
-          (first.commandResult ?? first).payload?.campMessageId
+          (first.commandResult ?? first).payload?.threadId,
+          (first.commandResult ?? first).payload?.threadMessageId
         )
       }
     : acceptedRun(first)
-  const firstResult = await waitForRun(client, firstAccepted.campId, firstAccepted.agentRunId)
+  const firstResult = await waitForRun(client, firstAccepted.threadId, firstAccepted.agentRunId)
   const firstOutput = outputForRun(firstResult.snapshot, firstAccepted.agentRunId)
   const firstStart = startForRun(client.events, firstAccepted.agentRunId)
   const firstExecutionMetrics = await client.request('monitoring.execution', {
-    campId: firstAccepted.campId,
+    threadId: firstAccepted.threadId,
     agentRunIds: [firstAccepted.agentRunId]
   })
   if (firstResult.run.status !== 'succeeded'
@@ -171,14 +171,14 @@ try {
 
   const restoredRequest = await sendExistingCampMessage(
     client.request,
-    firstAccepted.campId,
+    firstAccepted.threadId,
     'Continue the immediately preceding arithmetic discussion: which two addends did I ask you to combine? Answer in one short sentence.',
     'Verify Pi exact Session resume after Core and Host restart.'
   )
-  const restoredAccepted = acceptedRun(restoredRequest, firstAccepted.campId)
+  const restoredAccepted = acceptedRun(restoredRequest, firstAccepted.threadId)
   const restoredResult = await waitForRun(
     client,
-    firstAccepted.campId,
+    firstAccepted.threadId,
     restoredAccepted.agentRunId
   )
   const restoredOutput = outputForRun(restoredResult.snapshot, restoredAccepted.agentRunId)
@@ -206,7 +206,7 @@ try {
     purpose: 'Verify a workspace-resident Pi Host can switch to a distinct Native Session.'
   })
   const secondAccepted = acceptedRun(secondSession)
-  const secondResult = await waitForRun(client, secondAccepted.campId, secondAccepted.agentRunId)
+  const secondResult = await waitForRun(client, secondAccepted.threadId, secondAccepted.agentRunId)
   const secondOutput = outputForRun(secondResult.snapshot, secondAccepted.agentRunId)
   const secondStart = startForRun(client.events, secondAccepted.agentRunId)
   if (secondResult.run.status !== 'succeeded'
@@ -219,14 +219,14 @@ try {
 
   const switchBackRequest = await sendExistingCampMessage(
     client.request,
-    firstAccepted.campId,
+    firstAccepted.threadId,
     'Return to our earlier arithmetic discussion in this conversation: what sum did you calculate? Answer with the number.',
     'Verify the workspace-resident Pi Host switches exactly from Session B back to Session A.'
   )
-  const switchBackAccepted = acceptedRun(switchBackRequest, firstAccepted.campId)
+  const switchBackAccepted = acceptedRun(switchBackRequest, firstAccepted.threadId)
   const switchBackResult = await waitForRun(
     client,
-    firstAccepted.campId,
+    firstAccepted.threadId,
     switchBackAccepted.agentRunId
   )
   const switchBackOutput = outputForRun(switchBackResult.snapshot, switchBackAccepted.agentRunId)
@@ -241,14 +241,14 @@ try {
 
   const nativeWriteRequest = await sendExistingCampMessage(
     client.request,
-    firstAccepted.campId,
+    firstAccepted.threadId,
     `Use the write tool exactly once to create ${nativeWritePath} with exactly PI_NATIVE_WRITE_OK and a trailing newline. Do not call another tool. Then reply exactly WRITE_DONE.`,
     'Verify native Pi tool execution after cold resume.'
   )
-  const nativeWriteAccepted = acceptedRun(nativeWriteRequest, firstAccepted.campId)
+  const nativeWriteAccepted = acceptedRun(nativeWriteRequest, firstAccepted.threadId)
   const nativeWriteResult = await waitForRun(
     client,
-    firstAccepted.campId,
+    firstAccepted.threadId,
     nativeWriteAccepted.agentRunId
   )
   const nativeWriteStart = startForRun(client.events, nativeWriteAccepted.agentRunId)
@@ -293,12 +293,12 @@ try {
   }
   const concurrentTwoResult = await waitForRun(
     client,
-    concurrentTwoAccepted.campId,
+    concurrentTwoAccepted.threadId,
     concurrentTwoAccepted.agentRunId
   )
   const concurrentOneResult = await waitForRun(
     client,
-    concurrentOneAccepted.campId,
+    concurrentOneAccepted.threadId,
     concurrentOneAccepted.agentRunId
   )
   if (concurrentOneResult.run.status !== 'succeeded'
@@ -325,20 +325,20 @@ try {
   const bashMatrixAccepted = acceptedRun(bashMatrixRequest)
   const bashMatrixResult = await waitForRun(
     client,
-    bashMatrixAccepted.campId,
+    bashMatrixAccepted.threadId,
     bashMatrixAccepted.agentRunId
   )
   await assertBashOutputMatrix(
     client,
     bashMatrixResult,
-    bashMatrixAccepted.campId,
+    bashMatrixAccepted.threadId,
     bashMatrixAccepted.agentRunId,
     bashOutputCases
   )
 
   const cancelRequest = await sendExistingCampMessage(
     client.request,
-    firstAccepted.campId,
+    firstAccepted.threadId,
     [
       'This is a native Pi tool cancellation test.',
       `You must invoke the Bash tool exactly once to run: sleep 30; printf 'SHOULD_NOT_EXIST\\n' > '${cancelledPath}'.`,
@@ -346,10 +346,10 @@ try {
     ].join(' '),
     'Verify Pi abort and descendant cleanup.'
   )
-  const cancelAccepted = acceptedRun(cancelRequest, firstAccepted.campId)
+  const cancelAccepted = acceptedRun(cancelRequest, firstAccepted.threadId)
   const cancelledResult = await cancelRunningTool(
     client,
-    firstAccepted.campId,
+    firstAccepted.threadId,
     cancelAccepted.agentRunId
   )
   await delay(1_500)
@@ -492,7 +492,7 @@ async function runPiFileOperationMatrix({ client, workspace, agentId, projectRoo
     }
   ]
 
-  let campId = null
+  let threadId = null
   const results = []
   let nativeSessionId = null
   for (const [index, testCase] of cases.entries()) {
@@ -507,17 +507,17 @@ async function runPiFileOperationMatrix({ client, workspace, agentId, projectRoo
         })
       : await sendExistingCampMessage(
           client.request,
-          campId,
+          threadId,
           testCase.prompt,
           `Verify Pi ${testCase.name} file-operation Evidence`
         )
-    const accepted = acceptedRun(sent, campId ?? undefined)
-    campId ??= accepted.campId
-    const result = await waitForRun(client, campId, accepted.agentRunId)
+    const accepted = acceptedRun(sent, threadId ?? undefined)
+    threadId ??= accepted.threadId
+    const result = await waitForRun(client, threadId, accepted.agentRunId)
     const start = startForRun(client.events, accepted.agentRunId)
     nativeSessionId ??= start?.params?.nativeThreadId ?? null
     const evidencePage = await client.request('agentRunEvidence.list', {
-      campId,
+      threadId,
       agentRunId: accepted.agentRunId,
       afterSequence: 0,
       limit: 1_000
@@ -759,16 +759,16 @@ function startCore(dataDirectory, isolatedPiAgentDir, resolvedPiBinary) {
   return { events, stderr, pid: child.pid, request, stop }
 }
 
-async function sendExistingCampMessage(request, campId, body, purpose) {
-  const draft = await request('camp.composerDraft.get', { campId })
+async function sendExistingCampMessage(request, threadId, body, purpose) {
+  const draft = await request('camp.composerDraft.get', { threadId })
   const saved = await request('camp.composerDraft.save', {
-    campId,
+    threadId,
     expectedRevision: draft.revision,
     content: { version: 2, segments: [{ kind: 'text', text: body }] }
   })
-  return request('camp.messages.send', {
+  return request('thread.messages.send', {
     commandId: crypto.randomUUID(),
-    campId,
+    threadId,
     draftRevision: saved.revision,
     execution: { taskId: null, purpose, completionRole: 'required' }
   })
@@ -776,19 +776,19 @@ async function sendExistingCampMessage(request, campId, body, purpose) {
 
 function acceptedRun(result, knownCampId = null) {
   const command = result.commandResult ?? result
-  const campId = knownCampId ?? command.payload?.campId
+  const threadId = knownCampId ?? command.payload?.threadId
   const agentRunId = command.payload?.agentRunIds?.[0]
-  if (command.status !== 'accepted' || !campId || !agentRunId) {
+  if (command.status !== 'accepted' || !threadId || !agentRunId) {
     throw new Error(`Pi AgentRun intake failed: ${JSON.stringify(result)}`)
   }
-  return { campId, agentRunId }
+  return { threadId, agentRunId }
 }
 
-async function waitForMessageRun(request, campId, messageId) {
-  if (!campId || !messageId) throw new Error('Pi smoke Camp message was not accepted')
+async function waitForMessageRun(request, threadId, messageId) {
+  if (!threadId || !messageId) throw new Error('Pi smoke Camp message was not accepted')
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
-    const snapshot = await request('camps.snapshot', { campId })
+    const snapshot = await request('threads.snapshot', { threadId })
     const run = snapshot.agentRuns.find((candidate) =>
       candidate.inputMessageIds?.includes(messageId) || candidate.anchorMessageId === messageId
     )
@@ -798,12 +798,12 @@ async function waitForMessageRun(request, campId, messageId) {
   throw new Error(`Pi smoke Camp message ${messageId} did not dispatch an AgentRun`)
 }
 
-async function waitForRun(client, campId, agentRunId) {
+async function waitForRun(client, threadId, agentRunId) {
   const deadline = Date.now() + 300_000
   let snapshot
   let run
   while (Date.now() < deadline) {
-    snapshot = await client.request('camps.snapshot', { campId })
+    snapshot = await client.request('threads.snapshot', { threadId })
     const actions = actionsForRun(snapshot, agentRunId)
     const approvals = approvalsForRun(snapshot, agentRunId)
     if (approvals.length > 0) {
@@ -818,11 +818,11 @@ async function waitForRun(client, campId, agentRunId) {
   throw new Error(`Timed out waiting for Pi AgentRun ${agentRunId}: ${JSON.stringify(run)}`)
 }
 
-async function cancelRunningTool(client, campId, agentRunId) {
+async function cancelRunningTool(client, threadId, agentRunId) {
   let cancellationRequested = false
   const deadline = Date.now() + 240_000
   while (Date.now() < deadline) {
-    const snapshot = await client.request('camps.snapshot', { campId })
+    const snapshot = await client.request('threads.snapshot', { threadId })
     const approvals = approvalsForRun(snapshot, agentRunId)
     if (approvals.length > 0) {
       throw new Error(`Native Pi cancellation unexpectedly created Rovai Approval state: ${JSON.stringify(approvals)}`)
@@ -838,10 +838,10 @@ async function cancelRunningTool(client, campId, agentRunId) {
         && event.params?.payload?.status === 'in_progress'
     )
     if (!cancellationRequested && nativeToolStarted && run) {
-      const turn = snapshot.turns.find((candidate) => candidate.id === run.campTurnId)
+      const turn = snapshot.turns.find((candidate) => candidate.id === run.threadTurnId)
       const cancellation = await client.request('campTurns.cancel', {
         commandId: crypto.randomUUID(),
-        command: { campId, campTurnId: turn.id, expectedVersion: turn.version }
+        command: { threadId, threadTurnId: turn.id, expectedVersion: turn.version }
       })
       if (cancellation.status === 'rejected') throw new Error(`Pi CampTurn cancel failed: ${JSON.stringify(cancellation)}`)
       cancellationRequested = true
@@ -874,7 +874,7 @@ function runtimeActionOutput(events, agentRunId) {
     .join('\n')
 }
 
-async function assertBashOutputMatrix(client, result, campId, agentRunId, testCases) {
+async function assertBashOutputMatrix(client, result, threadId, agentRunId, testCases) {
   const output = outputForRun(result.snapshot, agentRunId)
   const events = client.events.filter((event) =>
     event.method === 'runtime.action'
@@ -907,7 +907,7 @@ async function assertBashOutputMatrix(client, result, campId, agentRunId, testCa
   if (inputByToolCallId.size !== testCases.length) failures.push(`input tool count=${inputByToolCallId.size}`)
   if (terminalByToolCallId.size !== testCases.length) failures.push(`terminal tool count=${terminalByToolCallId.size}`)
   const evidencePage = await client.request('agentRunEvidence.list', {
-    campId,
+    threadId,
     agentRunId,
     afterSequence: 0,
     limit: 1_000
@@ -934,7 +934,7 @@ async function assertBashOutputMatrix(client, result, campId, agentRunId, testCa
         failures.push(`${testCase.name}: truncated preview has no managed evidence Blob`)
       } else {
         const full = await client.request('agentRunEvidence.getContent', {
-          campId,
+          threadId,
           evidenceId: evidence.id
         })
         terminal = full.payload

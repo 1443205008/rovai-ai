@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import type { RuntimeExecutionMetricsSnapshot } from '@contracts'
-import type { CampClient } from './camp-client'
+import type { ThreadClient } from './camp-client'
 import { ExecutionMetricsReader, type ExecutionMetricsScope } from './execution-metrics-reader'
 
 /** Observe actual clipped cards, including collapsed cards with a visible token entry. */
@@ -67,19 +67,19 @@ export function useExecutionMetricsVisibility(panelRef: RefObject<HTMLElement | 
 }
 
 export function useExecutionMetrics(
-  client: Pick<CampClient, 'request' | 'onEvent' | 'onInvalidated'>,
-  campId: string,
+  client: Pick<ThreadClient, 'request' | 'onEvent' | 'onInvalidated'>,
+  threadId: string,
   agentId: string,
   scope: ExecutionMetricsScope
 ): RuntimeExecutionMetricsSnapshot | null {
-  const owner = `${campId}\u0000${agentId}`
+  const owner = `${threadId}\u0000${agentId}`
   const scopeRef = useRef(scope)
   scopeRef.current = scope
   const readerRef = useRef<ExecutionMetricsReader | null>(null)
   const [state, setState] = useState<{ client: typeof client; owner: string; snapshot: RuntimeExecutionMetricsSnapshot } | null>(null)
   useEffect(() => {
     const reader = new ExecutionMetricsReader(ids => client.request('monitoring.execution', {
-      campId, agentRunIds: ids
+      threadId, agentRunIds: ids
     }), snapshot => setState({ client, owner, snapshot }))
     readerRef.current = reader
     reader.setScope(scopeRef.current)
@@ -98,7 +98,7 @@ export function useExecutionMetrics(
       window.removeEventListener('focus', onFocus)
       if (readerRef.current === reader) readerRef.current = null
     }
-  }, [client, campId, owner])
+  }, [client, threadId, owner])
   useEffect(() => { readerRef.current?.setScope(scope) }, [scope.visible, scope.runs, scope.visibleRunIds, scope.expandedRunIds])
   return state?.client === client && state.owner === owner ? state.snapshot : null
 }

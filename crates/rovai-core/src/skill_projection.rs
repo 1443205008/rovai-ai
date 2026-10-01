@@ -3209,8 +3209,8 @@ mod slow_tests {
     use super::*;
     use crate::{
         collaboration::{
-            AddCampMemberCommand, CollaborationService, CreateCampCommand, ExecutionRequest,
-            TestCampMessageAddress, TestCampMessageCommand,
+            AddThreadMemberCommand, CollaborationService, CreateThreadCommand, ExecutionRequest,
+            TestThreadMessageAddress, TestThreadMessageCommand,
         },
         command::{ActorRef, CommandEnvelope},
         context::ContextService,
@@ -3593,7 +3593,7 @@ mod slow_tests {
                 &mut database,
                 &user_envelope(
                     "legacy-cleanup-run-camp",
-                    CreateCampCommand::for_test_with_members(
+                    CreateThreadCommand::for_test_with_members(
                         roots[0].to_string_lossy().into_owned(),
                         &["agent_2"],
                         "agent_2",
@@ -3601,14 +3601,14 @@ mod slow_tests {
                 ),
             )
             .unwrap();
-        let camp_id = created.result.payload["campId"].as_str().unwrap();
+        let camp_id = created.result.payload["threadId"].as_str().unwrap();
         collaboration
             .add_camp_member(
                 &mut database,
                 &camp_envelope(
                     "legacy-cleanup-run-member",
                     camp_id,
-                    AddCampMemberCommand {
+                    AddThreadMemberCommand {
                         camp_id: camp_id.to_string(),
                         agent_id: "agent_2".to_string(),
                         expected_membership_generation: 1,
@@ -3624,12 +3624,12 @@ mod slow_tests {
                 &camp_envelope(
                     "legacy-cleanup-queue-run",
                     camp_id,
-                    TestCampMessageCommand {
+                    TestThreadMessageCommand {
                         camp_id: camp_id.to_string(),
                         draft_revision: None,
                         body: "Verify the normal project Run can start".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: TestCampMessageAddress::Default,
+                        address: TestThreadMessageAddress::Default,
                         reply_to_camp_message_id: None,
                         execution: Some(ExecutionRequest {
                             task_id: None,

@@ -1,12 +1,12 @@
 ---
 document_type: development-guide
 authority: standalone-server-preview-operation
-last_updated: 2026-09-29
+last_updated: 2026-09-30
 ---
 
 # 原生 Server 安装与开发验收
 
-Server 0.4.1（`server-v0.4.1`）已有公开原生包。普通用户从[官网安装与启动指南](https://rovai.dev/zh/docs/server-install.html)开始，无需克隆或构建源码；本页保留开发构建与资格验收流程。公开发布不代表所有平台与智能体组合均完成真实执行验收。
+Server 0.4.2 已与 Desktop 一起公开发布于 [`v0.4.2`](https://github.com/murray17/rovai-ai/releases/tag/v0.4.2)，两端使用同一源码提交。普通用户从[官网安装与启动指南](https://rovai.dev/zh/docs/server-install.html)开始，无需克隆或构建源码；本页保留开发构建与资格验收流程。公开发布不代表所有平台与智能体组合均完成真实执行验收。
 
 2026-09-29 的 macOS arm64 **0.4.0** 发布包实测确认安装、登录与会话可用，但有两个发布包阻碍：快捷命令启动可能找不到 WebUI；直接运行 `current/rovai-server` 后，首次 Agent 执行仍因 `bundled Skill resources are unavailable` 失败，归档缺少内置 Skill 资源。0.4.1 桥接包补齐归档资源与快捷命令路径，包内 Skill 读取和 0.4.0 数据升级已在隔离环境验收；尚不能把旧截图记成端到端执行成功。完整记录见[官网部署素材说明](../../website/deployment-notes.md)。
 
@@ -41,6 +41,13 @@ Python smoke 只作为外部驱动，Host 的 PATH 中不含 Node/Electron/Rust�
 不能写成三平台通过。main 上全部目标通过后可显式开启 `server_release_draft` 组装 GitHub draft Release；
 它校验 source SHA、release profile、版本及平台一致，不自动公开发布或晋升默认安装指针。
 
+从 0.4.2 起，Desktop 与 Server 必须以相同版本、同一个确定的源码 SHA 构建，资产集中在 `v<版本>`。
+Server workflow 在四个原生目标与三套 Linux OS 检查通过后创建该统一草稿，使用
+`build/release-notes.md` 的共用说明。发布者继续加入同一 SHA 的 Desktop 安装包与更新清单，核对
+所有资产版本、来源、校验值及 Desktop 签名验证报告后，一次公开完整 Release。两端构建可并行，
+不得先公开缺少另一端资产的版本。公开资产验证可下载后才晋升 `scripts/server-release-tag.txt`，
+同步官网安装与下载说明；旧 `scripts/server-channel.txt` 固定为 0.4.1，保留到桥接包的入口。
+
 ## Linux 的两个验收 Gate
 
 - Gate A：对同一 release profile/source SHA/归档，在三套目标 OS 的普通用户环境完成安装、Web 登录、认证读写、
@@ -73,7 +80,7 @@ Unix 默认配置 `.profile`、`.bashrc`、`.bash_profile`、`.zshrc` 的去重 
 `rovai-server-<版本>-<target>.tar.gz`（Unix）或 `.zip`（Windows），`SHA256SUMS` 每个资产恰好一项。
 安装器先完整下载、校验 SHA-256，检查归档路径/类型和包内版本/目标，再切换入口；下载/校验失败保留旧安装。
 0.4.0 已安装程序继续读 `scripts/server-channel.txt`，该旧指针在桥接版发布后固定为 `0.4.1`。
-0.4.1 起的程序和安装器改读 `scripts/server-release-tag.txt`：`server-v0.4.1` 指向桥接包，未来 `v<版本>` 指向同版 Desktop/Server 包，`unpublished`
+0.4.1 起的程序和安装器改读 `scripts/server-release-tag.txt`：当前 `v0.4.2` 指向同版 Desktop/Server 包，历史 `server-v0.4.1` 指向桥接包，`unpublished`
 表示新通道尚未晋升。只有实际发布相应资产并晋升指针后，才能把网络安装命令描述为可用。
 没有独立域名或下载服务。
 

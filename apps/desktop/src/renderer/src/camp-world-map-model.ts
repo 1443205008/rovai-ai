@@ -1,4 +1,4 @@
-import type { AgentRunView, CampMemberView } from '@contracts'
+import type { AgentRunView, ThreadMemberView } from '@contracts'
 import { uiAttribute } from './interface-language'
 import { localizedExecutionStepTitle } from './execution-step-language'
 import type { ExecutionProgressItem, LiveExecutionProgress } from './ui-model'
@@ -9,7 +9,7 @@ const NON_TERMINAL_RUN_STATUSES = new Set<AgentRunView['status']>([
   'waiting'
 ])
 
-export type CampWorldMapNodeId =
+export type ThreadWorldMapNodeId =
   | 'research'
   | 'explore'
   | 'remote'
@@ -21,48 +21,48 @@ export type CampWorldMapNodeId =
   | 'memory'
   | 'harbor'
 
-export type CampWorldMapRouteKind = 'main' | 'forest' | 'mountain' | 'bridge' | 'water'
+export type ThreadWorldMapRouteKind = 'main' | 'forest' | 'mountain' | 'bridge' | 'water'
 
-export type CampWorldMapNode = {
-  id: CampWorldMapNodeId
+export type ThreadWorldMapNode = {
+  id: ThreadWorldMapNodeId
   x: number
   y: number
   label: string
 }
 
-export type CampWorldMapRoute = {
+export type ThreadWorldMapRoute = {
   id: string
-  from: CampWorldMapNodeId
-  to: CampWorldMapNodeId
-  kind: CampWorldMapRouteKind
+  from: ThreadWorldMapNodeId
+  to: ThreadWorldMapNodeId
+  kind: ThreadWorldMapRouteKind
   d: string
   graph?: boolean
 }
 
-export type CampWorldMapPathEdge = {
+export type ThreadWorldMapPathEdge = {
   routeId: string
-  from: CampWorldMapNodeId
-  to: CampWorldMapNodeId
+  from: ThreadWorldMapNodeId
+  to: ThreadWorldMapNodeId
 }
 
-export type CampWorldMapSpeech = {
+export type ThreadWorldMapSpeech = {
   key: string
   kind: 'real' | 'waiting'
   label: string
   text: string
 }
 
-export type CampWorldMapAgent = {
+export type ThreadWorldMapAgent = {
   agentId: string
   displayName: string
   avatarRef: string | null
   mode: 'idle' | 'running' | 'waiting'
   hasExecutionProcess: boolean
   activeRunId: string | null
-  speech: CampWorldMapSpeech | null
+  speech: ThreadWorldMapSpeech | null
 }
 
-export type CampWorldMapRendezvous = {
+export type ThreadWorldMapRendezvous = {
   key: string
   sourceAgentId: string
   targetAgentId: string
@@ -70,20 +70,20 @@ export type CampWorldMapRendezvous = {
   targetRunId: string
 }
 
-export type CampWorldMapProjection = {
-  agents: CampWorldMapAgent[]
-  rendezvous: CampWorldMapRendezvous[]
+export type ThreadWorldMapProjection = {
+  agents: ThreadWorldMapAgent[]
+  rendezvous: ThreadWorldMapRendezvous[]
 }
 
 export const CAMP_WORLD_MAP_WIDTH = 1148
 export const CAMP_WORLD_MAP_HEIGHT = 646
 
-export const CAMP_WORLD_MAP_NODES: Readonly<Record<CampWorldMapNodeId, CampWorldMapNode>> = {
+export const CAMP_WORLD_MAP_NODES: Readonly<Record<ThreadWorldMapNodeId, ThreadWorldMapNode>> = {
   research: { id: 'research', x: 130.45, y: 343.25, label: '探索林地' },
   explore: { id: 'explore', x: 357.03, y: 147.6, label: '风吟山脉' },
   remote: { id: 'remote', x: 504.65, y: 185.36, label: '观测台' },
   review: { id: 'review', x: 803.33, y: 196.34, label: '审阅塔' },
-  camp: { id: 'camp', x: 638.54, y: 387.87, label: '协作公会' },
+  'camp': { id: 'camp', x: 638.54, y: 387.87, label: '协作公会' },
   approval: { id: 'approval', x: 978.41, y: 354.24, label: '守门所' },
   build: { id: 'build', x: 235.5, y: 545.08, label: '星火工坊' },
   a2a: { id: 'a2a', x: 538.98, y: 516.25, label: '河畔会合点' },
@@ -92,10 +92,10 @@ export const CAMP_WORLD_MAP_NODES: Readonly<Record<CampWorldMapNodeId, CampWorld
 }
 
 export const CAMP_WORLD_MAP_NODE_IDS = Object.freeze(
-  Object.keys(CAMP_WORLD_MAP_NODES) as CampWorldMapNodeId[]
+  Object.keys(CAMP_WORLD_MAP_NODES) as ThreadWorldMapNodeId[]
 )
 
-export const CAMP_WORLD_MAP_ROUTES: readonly CampWorldMapRoute[] = [
+export const CAMP_WORLD_MAP_ROUTES: readonly ThreadWorldMapRoute[] = [
   {
     id: 'research-camp',
     from: 'research',
@@ -204,7 +204,7 @@ export const CAMP_WORLD_MAP_ROUTES: readonly CampWorldMapRoute[] = [
   }
 ]
 
-const CAMP_WORLD_MAP_RENDEZVOUS_NODES: readonly CampWorldMapNodeId[] = [
+const CAMP_WORLD_MAP_RENDEZVOUS_NODES: readonly ThreadWorldMapNodeId[] = [
   'a2a',
   'camp',
   'remote',
@@ -212,14 +212,14 @@ const CAMP_WORLD_MAP_RENDEZVOUS_NODES: readonly CampWorldMapNodeId[] = [
   'harbor'
 ]
 
-function routeWeight(route: CampWorldMapRoute): number {
+function routeWeight(route: ThreadWorldMapRoute): number {
   const from = CAMP_WORLD_MAP_NODES[route.from]
   const to = CAMP_WORLD_MAP_NODES[route.to]
   return Math.hypot(to.x - from.x, to.y - from.y)
 }
 
-function worldMapGraph(): ReadonlyMap<CampWorldMapNodeId, CampWorldMapPathEdge[]> {
-  const graph = new Map<CampWorldMapNodeId, CampWorldMapPathEdge[]>(
+function worldMapGraph(): ReadonlyMap<ThreadWorldMapNodeId, ThreadWorldMapPathEdge[]> {
+  const graph = new Map<ThreadWorldMapNodeId, ThreadWorldMapPathEdge[]>(
     CAMP_WORLD_MAP_NODE_IDS.map((nodeId) => [nodeId, []])
   )
   for (const route of CAMP_WORLD_MAP_ROUTES) {
@@ -234,16 +234,16 @@ const CAMP_WORLD_MAP_GRAPH = worldMapGraph()
 const CAMP_WORLD_MAP_ROUTE_BY_ID = new Map(CAMP_WORLD_MAP_ROUTES.map((route) => [route.id, route]))
 
 export function campWorldMapShortestPath(
-  start: CampWorldMapNodeId,
-  end: CampWorldMapNodeId
-): CampWorldMapPathEdge[] | null {
+  start: ThreadWorldMapNodeId,
+  end: ThreadWorldMapNodeId
+): ThreadWorldMapPathEdge[] | null {
   if (start === end) return []
-  const distances = new Map<CampWorldMapNodeId, number>([[start, 0]])
-  const previous = new Map<CampWorldMapNodeId, CampWorldMapPathEdge>()
+  const distances = new Map<ThreadWorldMapNodeId, number>([[start, 0]])
+  const previous = new Map<ThreadWorldMapNodeId, ThreadWorldMapPathEdge>()
   const unvisited = new Set(CAMP_WORLD_MAP_NODE_IDS)
 
   while (unvisited.size > 0) {
-    let current: CampWorldMapNodeId | null = null
+    let current: ThreadWorldMapNodeId | null = null
     let best = Number.POSITIVE_INFINITY
     for (const nodeId of unvisited) {
       const distance = distances.get(nodeId) ?? Number.POSITIVE_INFINITY
@@ -268,7 +268,7 @@ export function campWorldMapShortestPath(
   }
 
   if (!distances.has(end)) return null
-  const edges: CampWorldMapPathEdge[] = []
+  const edges: ThreadWorldMapPathEdge[] = []
   let cursor = end
   while (cursor !== start) {
     const edge = previous.get(cursor)
@@ -279,7 +279,7 @@ export function campWorldMapShortestPath(
   return edges
 }
 
-function campWorldMapPathDistance(path: readonly CampWorldMapPathEdge[] | null): number {
+function campWorldMapPathDistance(path: readonly ThreadWorldMapPathEdge[] | null): number {
   if (!path) return Number.POSITIVE_INFINITY
   return path.reduce((total, edge) => {
     const route = CAMP_WORLD_MAP_ROUTE_BY_ID.get(edge.routeId)
@@ -288,10 +288,10 @@ function campWorldMapPathDistance(path: readonly CampWorldMapPathEdge[] | null):
 }
 
 export function campWorldMapRendezvousNode(
-  left: CampWorldMapNodeId,
-  right: CampWorldMapNodeId
-): CampWorldMapNodeId | null {
-  let selected: CampWorldMapNodeId | null = null
+  left: ThreadWorldMapNodeId,
+  right: ThreadWorldMapNodeId
+): ThreadWorldMapNodeId | null {
+  let selected: ThreadWorldMapNodeId | null = null
   let selectedDistance = Number.POSITIVE_INFINITY
   for (const candidate of CAMP_WORLD_MAP_RENDEZVOUS_NODES) {
     const distance = campWorldMapPathDistance(campWorldMapShortestPath(left, candidate))
@@ -314,14 +314,14 @@ export function campWorldMapStableHash(value: string): number {
 }
 
 export function campWorldMapInitialNodes(
-  campId: string,
+  threadId: string,
   agentIds: readonly string[]
-): Readonly<Record<string, CampWorldMapNodeId>> {
-  const placements: Record<string, CampWorldMapNodeId> = {}
-  const used = new Set<CampWorldMapNodeId>()
+): Readonly<Record<string, ThreadWorldMapNodeId>> {
+  const placements: Record<string, ThreadWorldMapNodeId> = {}
+  const used = new Set<ThreadWorldMapNodeId>()
   const orderedAgentIds = [...new Set(agentIds)].sort((left, right) => left.localeCompare(right))
   for (const agentId of orderedAgentIds) {
-    const start = campWorldMapStableHash(`${campId}:${agentId}`) % CAMP_WORLD_MAP_NODE_IDS.length
+    const start = campWorldMapStableHash(`${threadId}:${agentId}`) % CAMP_WORLD_MAP_NODE_IDS.length
     let selected = CAMP_WORLD_MAP_NODE_IDS[start]
     for (let offset = 0; offset < CAMP_WORLD_MAP_NODE_IDS.length; offset += 1) {
       const candidate = CAMP_WORLD_MAP_NODE_IDS[(start + offset) % CAMP_WORLD_MAP_NODE_IDS.length]
@@ -347,7 +347,7 @@ export function campWorldMapPlainText(value: string): string {
     .trim()
 }
 
-export function truncateCampWorldMapSpeech(value: string, maximum = 92): string {
+export function truncateThreadWorldMapSpeech(value: string, maximum = 92): string {
   const normalized = campWorldMapPlainText(value)
   const graphemes = Array.from(new Intl.Segmenter('zh', { granularity: 'grapheme' }).segment(normalized),
     (entry) => entry.segment)
@@ -380,7 +380,7 @@ export function campWorldMapExecutionSummary(
   progress: LiveExecutionProgress | undefined
 ): { itemKey: string; text: string } | null {
   for (const item of [...(progress?.items ?? [])].reverse()) {
-    const text = truncateCampWorldMapSpeech(executionProgressItemText(item))
+    const text = truncateThreadWorldMapSpeech(executionProgressItemText(item))
     if (text) return { itemKey: item.key, text }
   }
   return null
@@ -400,7 +400,7 @@ function preferredMapRun(runs: readonly AgentRunView[]): AgentRunView | null {
 function mapSpeechForRun(
   run: AgentRunView,
   progress: LiveExecutionProgress | undefined
-): CampWorldMapSpeech {
+): ThreadWorldMapSpeech {
   const summary = campWorldMapExecutionSummary(progress)
   if (run.status === 'running') {
     return summary
@@ -429,11 +429,11 @@ function mapSpeechForRun(
   }
 }
 
-export function projectCampWorldMap(
-  members: readonly CampMemberView[],
+export function projectThreadWorldMap(
+  members: readonly ThreadMemberView[],
   runs: readonly AgentRunView[],
   progressByRunId: ReadonlyMap<string, LiveExecutionProgress>
-): CampWorldMapProjection {
+): ThreadWorldMapProjection {
   const visibleMembers = members
     .filter((member) => member.membershipStatus === 'active' && member.profilePresence === 'present')
     .sort((left, right) => left.memberOrder - right.memberOrder || left.agentId.localeCompare(right.agentId))
@@ -444,7 +444,7 @@ export function projectCampWorldMap(
     runsByAgentId.set(run.agentId, [...(runsByAgentId.get(run.agentId) ?? []), run])
   }
   const activeRunByAgentId = new Map<string, AgentRunView>()
-  const agents = visibleMembers.map((member): CampWorldMapAgent => {
+  const agents = visibleMembers.map((member): ThreadWorldMapAgent => {
     const agentRuns = runsByAgentId.get(member.agentId) ?? []
     const activeRun = preferredMapRun(agentRuns)
     if (activeRun) activeRunByAgentId.set(member.agentId, activeRun)
@@ -469,7 +469,7 @@ export function projectCampWorldMap(
   const rendezvous = [...runs]
     .filter((run) => run.invocationKind === 'a2a' && run.status === 'running')
     .sort(newestFirst)
-    .flatMap((targetRun): CampWorldMapRendezvous[] => {
+    .flatMap((targetRun): ThreadWorldMapRendezvous[] => {
       const sourceRun = targetRun.a2aParentAgentRunId
         ? runs.find((candidate) => candidate.id === targetRun.a2aParentAgentRunId) ?? null
         : null

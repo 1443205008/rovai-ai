@@ -272,6 +272,7 @@ pub struct AutomationRunSummary {
     pub status: String,
     pub reason: Option<String>,
     pub scheduled_for: String,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: Option<String>,
     pub result_message_id: Option<String>,
     pub notification_status: String,
@@ -532,6 +533,7 @@ struct AutomationRecord {
 #[serde(rename_all = "camelCase")]
 pub struct AutomationDispatch {
     pub automation_run_id: String,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
 }
 
@@ -1271,8 +1273,7 @@ impl ClaimedOccurrence {
         json!({
             "status": self.status,
             "runId": self.run_id,
-            "campId": self.camp_id,
-            "conversationId": self.camp_id,
+            "threadId": self.camp_id,
             "reason": self.reason,
         })
     }
@@ -2881,7 +2882,7 @@ mod tests {
             .as_str()
             .expect("AutomationRun ID should be returned")
             .to_string();
-        let camp_id = first.result.payload["campId"]
+        let camp_id = first.result.payload["threadId"]
             .as_str()
             .expect("Camp ID should be returned")
             .to_string();
@@ -2999,7 +3000,7 @@ mod tests {
             .expect("overlapping occurrence should be recorded");
         assert_eq!(overlapping.result.payload["status"], "skipped");
         assert_eq!(overlapping.result.payload["reason"], "overlap");
-        assert!(overlapping.result.payload["campId"].is_null());
+        assert!(overlapping.result.payload["threadId"].is_null());
         let counts: (i64, i64) = database
             .connection()
             .query_row(
@@ -3068,7 +3069,7 @@ mod tests {
             next_snapshot,
             (2, "Use the revised instruction for future runs.".into())
         );
-        assert_ne!(next.result.payload["campId"], camp_id);
+        assert_ne!(next.result.payload["threadId"], camp_id);
         service
             .interrupt_before_runtime(&mut database, next_run_id)
             .expect("test run should settle");

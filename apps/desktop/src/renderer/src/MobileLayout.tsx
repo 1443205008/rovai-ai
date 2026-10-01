@@ -3,7 +3,7 @@ import { NavigationIcon } from './NavigationIcon'
 import { PanelToggleIcon } from './PanelToggleIcon'
 import { uiAttribute } from './interface-language'
 
-// Presentation only. Host capabilities and editing identity still come from CampClient.
+// Presentation only. Host capabilities and editing identity still come from ThreadClient.
 const MobileLayout = createContext(false)
 const query = '(max-width: 767px), (max-width: 1039px) and (max-height: 560px) and (pointer: coarse)'
 const subscribe = (notify: () => void): (() => void) => {

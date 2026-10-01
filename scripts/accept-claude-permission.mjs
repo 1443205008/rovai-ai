@@ -59,19 +59,19 @@ try {
   const prompt = `Use Bash exactly once to run this exact command: ${command}. If denied, do not retry and finish with DENIED. If it succeeds, finish with DONE.`
   const intake = await createConfiguredCampAndSend(request, { commandId: crypto.randomUUID(), workspace,
     memberAgentIds: ['agent_1'], defaultLeadAgentId: 'agent_1', body: prompt, purpose: 'Actual Desktop native approval click acceptance' })
-  const campId = intake.payload?.campId
-  if (intake.status !== 'accepted' || !campId) throw new Error('Desktop acceptance Camp was not accepted')
+  const threadId = intake.payload?.threadId
+  if (intake.status !== 'accepted' || !threadId) throw new Error('Desktop acceptance Camp was not accepted')
   const results = []
   let rememberedRules, rememberedSettings
   for (const decision of ['allow_once', 'deny', 'allow_remember']) {
     if (results.length) {
-      const sent = await request('camp.messages.send', { commandId: crypto.randomUUID(), campId,
-        content: { version: 2, segments: [{ kind: 'text', text: prompt }] }, sourceAttachments: [], quotes: [], replyToCampMessageId: null,
+      const sent = await request('camp.messages.send', { commandId: crypto.randomUUID(), threadId,
+        content: { version: 2, segments: [{ kind: 'text', text: prompt }] }, sourceAttachments: [], quotes: [], replyToThreadMessageId: null,
         execution: { taskId: null, purpose: 'Resume same native session and repeat the exact command', completionRole: 'required' } })
       if (sent.commandResult?.status !== 'accepted') throw new Error('Desktop resume input was not accepted')
     }
     const pending = await waitFor(async () => {
-      const snapshot = await request('camps.snapshot', { campId })
+      const snapshot = await request('camps.snapshot', { threadId })
       const run = snapshot.agentRuns.find(value => !results.some(result => result.runId === value.id))
       const action = snapshot.actions.find(value => value.agentRunId === run?.id)
       const approval = snapshot.approvals.find(value => value.actionId === action?.id && value.status === 'pending')
@@ -81,8 +81,8 @@ try {
     if (JSON.stringify(pending.approval.canonicalInput.argv) !== JSON.stringify([command])) {
       throw new Error('Claude did not request the exact repeated command')
     }
-    await waitFor(() => evaluate(`Boolean(document.querySelector('[data-sidebar-menu-target="camp:${campId}"]'))`), 'Camp navigation')
-    await click(`document.querySelector('[data-sidebar-menu-target="camp:${campId}"]')?.closest('.camp-nav-row')?.querySelector('.camp-nav-open')`)
+    await waitFor(() => evaluate(`Boolean(document.querySelector('[data-sidebar-menu-target="camp:${threadId}"]'))`), 'Camp navigation')
+    await click(`document.querySelector('[data-sidebar-menu-target="camp:${threadId}"]')?.closest('.camp-nav-row')?.querySelector('.camp-nav-open')`)
     await waitFor(() => evaluate(`Boolean(document.querySelector('.approval-dock'))`), 'Approval Dock')
     if (await evaluate(`Boolean(document.querySelector('.approval-dock.is-collapsed'))`)) await click(`document.querySelector('.approval-dock-collapse')`)
     const option = decision === 'allow_remember'
@@ -102,7 +102,7 @@ try {
     await screenshot(`${decision}-pending.png`)
     await click(button)
     const settled = await waitFor(async () => {
-      const snapshot = await request('camps.snapshot', { campId })
+      const snapshot = await request('camps.snapshot', { threadId })
       const run = snapshot.agentRuns.find(value => value.id === pending.run.id)
       return run && ['succeeded', 'failed', 'cancelled'].includes(run.status) ? { snapshot, run } : null
     }, `${decision} tool and Run settlement`, 240000)
@@ -111,7 +111,7 @@ try {
     if (typeof nativeSessionId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(nativeSessionId)) {
       throw new Error('Actual Desktop Run had no reliable native Session binding event')
     }
-    const receipt = await claudeSendReceipt(request, campId, pending.run.id, marker, settled.snapshot)
+    const receipt = await claudeSendReceipt(request, threadId, pending.run.id, marker, settled.snapshot)
     const published = settled.snapshot.messages.some(value => value.body === marker && value.sourceAgentRunId === pending.run.id)
     if (settled.run.status !== 'succeeded' || (decision !== 'deny'
       ? action?.status !== 'succeeded' || !receipt || !published
@@ -138,17 +138,17 @@ try {
       || !results[0].requestDigest || !results[1].requestDigest || results[0].requestDigest === results[1].requestDigest) {
     throw new Error('Identical Desktop commands did not bind independent native requests')
   }
-  const repeated = await request('camp.messages.send', { commandId: crypto.randomUUID(), campId,
-    content: { version: 2, segments: [{ kind: 'text', text: prompt }] }, sourceAttachments: [], quotes: [], replyToCampMessageId: null,
+  const repeated = await request('camp.messages.send', { commandId: crypto.randomUUID(), threadId,
+    content: { version: 2, segments: [{ kind: 'text', text: prompt }] }, sourceAttachments: [], quotes: [], replyToThreadMessageId: null,
     execution: { taskId: null, purpose: 'Verify the saved native rule skips approval on a subsequent Run', completionRole: 'required' } })
   if (repeated.commandResult?.status !== 'accepted') throw new Error('Remembered-rule repeat was not accepted')
   const automatic = await waitFor(async () => {
-    const snapshot = await request('camps.snapshot', { campId })
+    const snapshot = await request('camps.snapshot', { threadId })
     const run = snapshot.agentRuns.find(value => !results.some(result => result.runId === value.id))
     if (snapshot.approvals.some(value => value.agentRunId === run?.id)) throw new Error('Remembered command unexpectedly requested another approval')
     return run && ['succeeded', 'failed', 'cancelled'].includes(run.status) ? { snapshot, run } : null
   }, 'Remembered native command without another approval', 240000)
-  const automaticReceipt = await claudeSendReceipt(request, campId, automatic.run.id, marker, automatic.snapshot)
+  const automaticReceipt = await claudeSendReceipt(request, threadId, automatic.run.id, marker, automatic.snapshot)
   const automaticPublished = automatic.snapshot.messages.some(value => value.body === marker && value.sourceAgentRunId === automatic.run.id)
   const automaticSession = await evaluate(`window.__claudeApprovalSessions.find(value => value.agentRunId === ${JSON.stringify(automatic.run.id)})?.nativeThreadId`)
   if (automatic.run.status !== 'succeeded' || !automaticReceipt || !automaticPublished || automaticSession !== results[0].nativeSessionId) {

@@ -1,6 +1,6 @@
-import type { AgentProfile, CampMemberView } from '@contracts'
+import type { AgentProfile, ThreadMemberView } from '@contracts'
 
-type Member = Pick<CampMemberView, 'agentId' | 'membershipStatus' | 'profilePresence'>
+type Member = Pick<ThreadMemberView, 'agentId' | 'membershipStatus' | 'profilePresence'>
 type Profile = Pick<AgentProfile, 'agentId' | 'presence'>
 
 export interface ComposerInvitationTargets {

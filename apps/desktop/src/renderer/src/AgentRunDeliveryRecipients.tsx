@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import * as Dialog from '@radix-ui/react-dialog'
-import type { CampSnapshot, MessageDeliveryView } from '@contracts'
+import type { ThreadSnapshot, MessageDeliveryView } from '@contracts'
 import { MemberAvatar } from './MemberAvatar'
 import { executionDeliveryRecipientIds, executionRecipientLayout } from './execution-delivery-recipients'
 import { UiText, uiAttribute } from './interface-language'
 
-type Member = CampSnapshot['members'][number]
+type Member = ThreadSnapshot['members'][number]
 
 export function AgentRunDeliveryRecipients({
   sourceAgentRunId,

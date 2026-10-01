@@ -46,8 +46,8 @@ const databasePath = join(dataDir, 'rovai.sqlite')
 const debugPort = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_DEBUG_PORT
   ? Number(process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_DEBUG_PORT)
   : await availableLoopbackPort()
-const campId = 'rvcamp_01h47kvsy5fk1shh6w1g60eec0'
-const campTitle = previewOnly ? '执行背景分层验收 · 模拟数据' : 'v0.55 Agent 执行过程验收'
+const threadId = 'rvcamp_01h47kvsy5fk1shh6w1g60eec0'
+const threadTitle = previewOnly ? '执行背景分层验收 · 模拟数据' : 'v0.55 Agent 执行过程验收'
 const composerLayoutCampId = 'rvcamp_01h47kvsy5fk1shh6w1g60eec1'
 const composerLayoutCampTitle = 'v0.56 Composer 布局验收'
 const ambientEncounterCampId = 'rvcamp_01h47kvsy5fk1shh6w1g60eec2'
@@ -151,8 +151,8 @@ const runtimes = [
     evidenceKind: 'runtime.action', eventType: 'runtime.action', sourceAuthority: 'core',
     credibility: 'core_verified', payload: {
       toolCallId: 'op-antigravity', status: 'completed', kind: 'mcp_tool_call',
-      title: 'Built-in CLI', sourceAuthority: 'core', canonicalTool: 'camp.message.send', output: 'delivered',
-      operationProjection: { operation: 'camp.message.send', canonicalInput: { recipientAgentIds: ['agent_101'] } }
+      title: 'Built-in CLI', sourceAuthority: 'core', canonicalTool: 'thread.message.send', output: 'delivered',
+      operationProjection: { operation: 'thread.message.send', canonicalInput: { recipientAgentIds: ['agent_101'] } }
     }
   })
 ]
@@ -193,7 +193,7 @@ try {
   app = await launchApp(debugPort, 1440, 920)
   await setTheme(app.cdp, 'day')
   await activateControlledRun()
-  await openCamp(app.cdp, campId)
+  await openCamp(app.cdp, threadId)
   await waitForExpression(app.cdp,
     `document.querySelectorAll(${JSON.stringify(runArticleSelector)}).length > 0`, 30_000)
   const renderedMessageCount = await evaluate(app.cdp,
@@ -271,7 +271,7 @@ try {
     }, null, 2))
   } else if (previewOnly) {
     console.log(JSON.stringify({ ready: true, mode: 'controlled-manual-preview', app: appPath,
-      fixtureRoot, userData: dataDir, skillLibrary: join(dataDir, 'managed-skill-library'), campId, campTitle }, null, 2))
+      fixtureRoot, userData: dataDir, skillLibrary: join(dataDir, 'managed-skill-library'), threadId, threadTitle }, null, 2))
     await new Promise(resolveExit => app.child.once('exit', resolveExit))
   } else {
   // The remaining matrix exercises all three placements, then continues from bottom.
@@ -851,9 +851,9 @@ try {
   })
   await waitForExpression(app.cdp, `innerWidth === 2560 && innerHeight === 1440`)
 
-  await openCamp(app.cdp, campId)
+  await openCamp(app.cdp, threadId)
   await waitForExpression(app.cdp,
-    `document.querySelector('.camp-workspace')?.getAttribute('aria-label') === ${JSON.stringify(`会话：${campTitle}`)}`, 30_000)
+    `document.querySelector('.camp-workspace')?.getAttribute('aria-label') === ${JSON.stringify(`会话：${threadTitle}`)}`, 30_000)
   await wait(200)
   const wideConversationLayout = await collectWideConversationLayout(app.cdp)
   assert(wideConversationLayout.viewportWidth === 2560
@@ -1006,7 +1006,7 @@ try {
       completeToolOutput,
       webSearchPresentation,
       claudeCommandDisclosure,
-      antigravityCoreToolCatalogName: observed.find((row) => row.runtime === 'Antigravity')?.toolTitles[0] === 'camp.message.send',
+      antigravityCoreToolCatalogName: observed.find((row) => row.runtime === 'Antigravity')?.toolTitles[0] === 'thread.message.send',
       conversationPresentation,
       timelineFollowLatest,
       messageAuthorProfileTriggers,
@@ -1290,10 +1290,10 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
     body: 'ROVAI_STREAM_FAST_SETUP',
     purpose: 'Seed one completed Run for switching cards'
   })
-  assert(setup.status === 'accepted' && setup.payload?.campId && setup.payload?.campMessageId,
+  assert(setup.status === 'accepted' && setup.payload?.threadId && setup.payload?.threadMessageId,
     `Could not create the controlled streaming Camp: ${JSON.stringify(setup)}`)
-  const streamCampId = setup.payload.campId
-  const setupRunId = await waitForControlledMessageRun(request, streamCampId, setup.payload.campMessageId)
+  const streamCampId = setup.payload.threadId
+  const setupRunId = await waitForControlledMessageRun(request, streamCampId, setup.payload.threadMessageId)
   await waitForControlledRunStatus(request, streamCampId, setupRunId, 'succeeded')
   await openCamp(app.cdp, campId)
   await openCamp(app.cdp, streamCampId)
@@ -1316,9 +1316,9 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
     execution: { taskId: null, purpose: 'Verify live Renderer metrics', completionRole: 'required' }
   })
   const accepted = sent.commandResult ?? sent
-  assert(accepted.status === 'accepted' && accepted.payload?.campMessageId,
+  assert(accepted.status === 'accepted' && accepted.payload?.threadMessageId,
     `The controlled streaming Run was not accepted: ${JSON.stringify(sent)}`)
-  const runId = await waitForControlledMessageRun(request, streamCampId, accepted.payload.campMessageId)
+  const runId = await waitForControlledMessageRun(request, streamCampId, accepted.payload.threadMessageId)
   const stageSelector = `.execution-process-stage[data-agent-run-id="${runId}"]`
   await evaluate(app.cdp,
     `document.querySelector('.camp-detail-entry[data-detail="execution"]')?.click()`)
@@ -1517,8 +1517,8 @@ async function verifyRealRuntimeObservableOutput(app, capturesRoot) {
     purpose: 'Long native observable output through packaged Renderer'
   })
   assert(setup.status === 'accepted', 'Real Runtime acceptance was not accepted')
-  const liveCampId = setup.payload.campId
-  const runId = await waitForControlledMessageRun(request, liveCampId, setup.payload.campMessageId)
+  const liveCampId = setup.payload.threadId
+  const runId = await waitForControlledMessageRun(request, liveCampId, setup.payload.threadMessageId)
   await openCamp(app.cdp, liveCampId)
   await selectCampConversationView(app.cdp, 'conversation')
   await evaluate(app.cdp, `(() => {
@@ -1729,7 +1729,7 @@ async function seedFixture() {
   assert(typeof runtimeRootMarker.rootIdentityDigest === 'string',
     `Runtime Files Root marker did not expose its identity: ${JSON.stringify(runtimeRootMarker)}`)
   const emptyCatalogDigest = '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945'
-  const attachmentRootRelativePath = `camps/${campId}/attachments`
+  const attachmentRootRelativePath = `camps/${threadId}/attachments`
   const publishedAttachmentRoot = join(runtimeRoot, attachmentRootRelativePath)
   const fixtureRunFacts = {
     attachmentOutputRoot: publishedAttachmentRoot,
@@ -1738,7 +1738,7 @@ async function seedFixture() {
   const fixtureRunFactRefs = [{ fact: 'attachment_output_root' }, { fact: 'history_hint' }]
   const campAttachmentViewReceipt = {
     schemaVersion: 2,
-    campId,
+    threadId,
     attachmentRootRelativePath,
     catalogRevision: 0,
     catalogEntryCount: 0,
@@ -1749,7 +1749,7 @@ async function seedFixture() {
   const campAttachmentViewReceiptDigest = canonicalJsonDigest(campAttachmentViewReceipt)
   const runtimeAttachmentAuthReceipt = {
     schemaVersion: 1,
-    campId,
+    threadId,
     publishedAttachmentRoot,
     rootIdentityDigest: runtimeRootMarker.rootIdentityDigest,
     dispatchGeneration: 1,
@@ -1791,13 +1791,13 @@ async function seedFixture() {
     'member', '', '[]', '', ''
   )`).join(',\n')
   const memberRows = runtimes.map((entry) => `(
-    ${sqlLiteral(campId)}, ${sqlLiteral(entry.agentId)}, 'active', '{}', 1, ${sqlLiteral(now)}
+    ${sqlLiteral(threadId)}, ${sqlLiteral(entry.agentId)}, 'active', '{}', 1, ${sqlLiteral(now)}
   )`).join(',\n')
   const ambientMemberRows = ambientEncounterAgentIds.map((agentId) => `(
     ${sqlLiteral(ambientEncounterCampId)}, ${sqlLiteral(agentId)}, 'active', '{}', 1, ${sqlLiteral(now)}
   )`).join(',\n')
   const conversationRows = runtimes.map((entry) => `(
-    ${sqlLiteral(`conversation-${entry.key}`)}, ${sqlLiteral(campId)}, ${sqlLiteral(entry.agentId)},
+    ${sqlLiteral(`conversation-${entry.key}`)}, ${sqlLiteral(threadId)}, ${sqlLiteral(entry.agentId)},
     1, ${sqlLiteral(now)}, ${sqlLiteral(now)}
   )`).join(',\n')
   const ambientConversationRows = ambientEncounterAgentIds.map((agentId, index) => `(
@@ -1810,7 +1810,7 @@ async function seedFixture() {
       const nonTerminal = active
       const updatedAt = `2026-08-05T12:${String(index).padStart(2, '0')}:${active ? '01' : '02'}Z`
       return `(
-        ${sqlLiteral(`turn-${entry.key}`)}, ${sqlLiteral(campId)}, 'system_event',
+        ${sqlLiteral(`turn-${entry.key}`)}, ${sqlLiteral(threadId)}, 'system_event',
         ${sqlLiteral(`runtime-activity-${entry.key}`)}, ${sqlLiteral(nonTerminal ? 'running' : 'completed')},
         1, ${sqlLiteral(now)}, ${sqlLiteral(nonTerminal ? '2036-08-06T12:00:00Z' : '2026-08-06T12:00:00Z')}, ${nonTerminal ? 0 : 86400}, 32, 16, 1,
         1,
@@ -1820,7 +1820,7 @@ async function seedFixture() {
       )`
     }),
     `(
-      'turn-codex-history', ${sqlLiteral(campId)}, 'system_event',
+      'turn-codex-history', ${sqlLiteral(threadId)}, 'system_event',
       'runtime-activity-codex-history', 'completed',
       1, ${sqlLiteral(now)}, '2026-08-06T12:00:00Z', 86400, 32, 16, 1,
       1, '2026-08-05T11:58:00Z', '2026-08-05T11:58:02Z', '2026-08-05T11:58:02Z'
@@ -1837,7 +1837,7 @@ async function seedFixture() {
         ${sqlLiteral(`run-${entry.key}`)}, ${sqlNullable(recoveryBlocked ? null : `turn-${entry.key}`)},
         ${sqlLiteral(`conversation-${entry.key}`)},
         ${sqlLiteral(recoveryBlocked ? 'batch' : 'direct')},
-        ${sqlNullable(recoveryBlocked ? campId : null)},
+        ${sqlNullable(recoveryBlocked ? threadId : null)},
         ${sqlNullable(recoveryBlocked ? recoveryInputMessageId : null)},
         ${recoveryBlocked ? fixtureLastMessageSequence : 'NULL'},
         0, 0,
@@ -1877,7 +1877,7 @@ async function seedFixture() {
       ? [runtimes[0].agentId, runtimes[1].agentId]
       : []
     return `(
-      ${sqlLiteral(`message-${entry.key}`)}, ${sqlLiteral(campId)}, ${sequence},
+      ${sqlLiteral(`message-${entry.key}`)}, ${sqlLiteral(threadId)}, ${sequence},
       'agent', ${sqlLiteral(entry.agentId)}, ${sqlLiteral(`run-${entry.key}`)},
       ${sqlLiteral(body)}, ${sqlLiteral(JSON.stringify([{ kind: 'text', text: body }]))},
       ${sqlLiteral(addressedAgentIds.length > 0 ? 'explicit' : 'default')},
@@ -1888,7 +1888,7 @@ async function seedFixture() {
     )`
   }).join(',\n')
   const recoveryInputMessageRow = `(
-    ${sqlLiteral(recoveryInputMessageId)}, ${sqlLiteral(campId)}, ${recoveryInputSequence},
+    ${sqlLiteral(recoveryInputMessageId)}, ${sqlLiteral(threadId)}, ${recoveryInputSequence},
     'user', 'local_user', NULL,
     ${sqlLiteral(recoveryInputBody)}, ${sqlLiteral(JSON.stringify(recoveryInputContent))},
     'explicit', ${sqlLiteral(JSON.stringify([recoveryInputEntry.agentId]))}, NULL,
@@ -1901,7 +1901,7 @@ async function seedFixture() {
     id: 'delivery-antigravity-opencode', recipientAgentId: runtimes[1].agentId,
     recipientCanonicalPosition: 1, status: 'failed', failureCode: 'runtime_unavailable'
   }].map((delivery) => `(
-    ${sqlLiteral(delivery.id)}, ${sqlLiteral(campId)}, 'turn-antigravity',
+    ${sqlLiteral(delivery.id)}, ${sqlLiteral(threadId)}, 'turn-antigravity',
     'message-antigravity', ${sqlLiteral(delivery.recipientAgentId)},
     ${delivery.recipientCanonicalPosition}, ${sqlLiteral(`digest-${delivery.id}`)},
     ${sqlLiteral('digest-message-antigravity')}, 'run-antigravity', 'forward', 'run-antigravity', 1,
@@ -1941,7 +1941,7 @@ async function seedFixture() {
       project_path, default_lead_agent_id, last_message_sequence,
       version, created_at, updated_at, activation_state
     ) VALUES (
-      ${sqlLiteral(campId)}, ${sqlLiteral(campTitle)}, 'user', 'peer', 'quick_chat',
+      ${sqlLiteral(threadId)}, ${sqlLiteral(threadTitle)}, 'user', 'peer', 'quick_chat',
       '', ${sqlLiteral(runtimes[0].agentId)}, ${fixtureLastMessageSequence}, 1,
       ${sqlLiteral(now)}, ${sqlLiteral(now)}, 'active'
     ), (
@@ -1966,7 +1966,7 @@ async function seedFixture() {
            NULL, NULL, ${sqlLiteral(now)}, ${sqlLiteral(now)}
     FROM camp
     WHERE id IN (
-      ${sqlLiteral(campId)},
+      ${sqlLiteral(threadId)},
       ${sqlLiteral(composerLayoutCampId)},
       ${sqlLiteral(ambientEncounterCampId)}
     );
@@ -2025,7 +2025,7 @@ async function seedFixture() {
       status, claimed_agent_run_id, failure_code, version,
       created_at, claimed_at, ended_at, updated_at
     ) VALUES (
-      'fixture-copilot-delivery', ${sqlLiteral(campId)}, ${sqlLiteral(recoveryInputMessageId)},
+      'fixture-copilot-delivery', ${sqlLiteral(threadId)}, ${sqlLiteral(recoveryInputMessageId)},
       ${sqlLiteral(recoveryInputEntry.agentId)}, 1, ${recoveryInputSequence},
       'claimed', ${sqlLiteral(recoveryBlockedRunId)}, NULL, 2,
       ${sqlLiteral(now)}, ${sqlLiteral(now)}, NULL, ${sqlLiteral(now)}
@@ -2167,7 +2167,7 @@ async function seedFixture() {
     `)
   }
   await seedEmptyAttachmentViewRoots(runtimeRoot, [
-    campId,
+    threadId,
     composerLayoutCampId,
     ambientEncounterCampId
   ])
@@ -2179,11 +2179,11 @@ async function seedFixture() {
   if (toolDetailsOnly) await seedClaudeToolDetailFixtures()
 }
 
-async function seedEmptyAttachmentViewRoots(runtimeRoot, campIds) {
+async function seedEmptyAttachmentViewRoots(runtimeRoot, threadIds) {
   const campsRoot = join(runtimeRoot, 'camps')
   await chmod(campsRoot, 0o300)
   try {
-    for (const exactCampId of campIds) {
+    for (const exactCampId of threadIds) {
       const campRoot = join(campsRoot, exactCampId)
       const attachmentRoot = join(campRoot, 'attachments')
       await mkdir(campRoot, { mode: 0o700 })
@@ -2818,7 +2818,7 @@ async function seedActivity(entry, index) {
   `] : []).join('\n')
   const evidenceIds = evidence.map((item) => item.id)
   const toolName = entry.payload.toolName
-    ?? (entry.sourceAuthority === 'core' ? 'camp.message.send' : null)
+    ?? (entry.sourceAuthority === 'core' ? 'thread.message.send' : null)
   await runSql(databasePath, `
     PRAGMA foreign_keys = ON;
     BEGIN IMMEDIATE;
@@ -3313,7 +3313,7 @@ async function verifyConversationDropZone(cdp, sourceDirectory, capturesDirector
       && !card?.textContent?.includes('只读快照')
   })()`, 30_000)
   const draft = await evaluate(cdp,
-    `window.rovai.request('camp.composerDraft.get', { campId: ${JSON.stringify(campId)} })`,
+    `window.rovai.request('camp.composerDraft.get', { threadId: ${JSON.stringify(threadId)} })`,
     true)
   const directoryAttachment = draft?.attachments?.find((attachment) =>
     attachment.displayName === '项目资料')
@@ -5240,9 +5240,9 @@ async function verifyGlobalExecutionPlacement(cdp) {
     `document.querySelector('.camp-detail-entry[aria-expanded="true"]')?.click()`)
   await waitForExpression(cdp,
     `document.querySelector('.camp-detail-popover')?.hidden`)
-  await openCamp(cdp, campId)
+  await openCamp(cdp, threadId)
   await waitForExpression(cdp,
-    `document.querySelector('.camp-workspace')?.getAttribute('aria-label') === ${JSON.stringify(`会话：${campTitle}`)}`, 30_000)
+    `document.querySelector('.camp-workspace')?.getAttribute('aria-label') === ${JSON.stringify(`会话：${threadTitle}`)}`, 30_000)
   await waitForExpression(cdp, `(() => {
     const activeTab = document.querySelector('.camp-detail-entry[aria-expanded="true"]')
       ?.querySelector(':scope > span:not([aria-hidden="true"])')?.textContent?.trim()
@@ -5271,7 +5271,7 @@ async function verifyGlobalExecutionPlacement(cdp) {
   await waitForExpression(cdp, `Boolean(document.querySelector('.settings-workbench'))`)
   await evaluate(cdp, `document.querySelector('.settings-sidebar-back')?.click()`)
   await waitForExpression(cdp,
-    `document.querySelector('.camp-workspace')?.getAttribute('aria-label') === ${JSON.stringify(`会话：${campTitle}`)}`, 30_000)
+    `document.querySelector('.camp-workspace')?.getAttribute('aria-label') === ${JSON.stringify(`会话：${threadTitle}`)}`, 30_000)
   await waitForExpression(cdp, `(() => {
     const activeTab = document.querySelector('.camp-detail-entry[aria-expanded="true"]')
       ?.querySelector(':scope > span:not([aria-hidden="true"])')?.textContent?.trim()
@@ -5318,7 +5318,7 @@ async function verifyRightExecutionPlacement(cdp) {
   } catch (error) {
     const state = await evaluate(cdp, `(() => ({
       visibleHosts: [...document.querySelectorAll('.file-preview-retained-host:not([hidden])')].map((host) => ({
-        campId: host.dataset.previewCamp ?? null,
+        threadId: host.dataset.previewCamp ?? null,
         tabs: [...host.querySelectorAll('.file-preview-tab-activate')].map((tab) => ({
           label: tab.textContent?.trim() ?? null,
           selected: tab.getAttribute('aria-selected')
@@ -5379,7 +5379,7 @@ async function verifyExecutionPlacementAcrossRestart(currentApp) {
     `innerWidth === 1440 && innerHeight === 920 && Math.abs(devicePixelRatio - 1) < 0.01`)
   await evaluate(currentApp.cdp,
     'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))', true)
-  await openCamp(currentApp.cdp, campId)
+  await openCamp(currentApp.cdp, threadId)
   await chooseExecutionPlacement(currentApp.cdp, 'inspector')
   await waitForExpression(currentApp.cdp, `Boolean(document.querySelector('.run-pulse-inspector'))`)
   const beforeRestart = await evaluate(
@@ -5393,11 +5393,11 @@ async function verifyExecutionPlacementAcrossRestart(currentApp) {
   await closeApp(currentApp)
   const relaunchedApp = await launchApp(debugPort, 1440, 920)
   try {
-    await openCamp(relaunchedApp.cdp, campId)
+    await openCamp(relaunchedApp.cdp, threadId)
     await waitForExpression(relaunchedApp.cdp,
       `(() => {
         return document.querySelector('.camp-workspace')?.getAttribute('aria-label')
-          === ${JSON.stringify(`会话：${campTitle}`)}
+          === ${JSON.stringify(`会话：${threadTitle}`)}
           && !document.querySelector('.timeline-pane > .run-pulse-bottom')
       })()`, 30_000)
     const afterRestart = await evaluate(

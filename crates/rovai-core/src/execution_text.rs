@@ -693,8 +693,8 @@ mod slow_tests {
     use super::*;
     use crate::{
         collaboration::{
-            CollaborationService, ProjectBindingKind, TestCampConversationCommand,
-            TestCampMessageAddress,
+            CollaborationService, ProjectBindingKind, TestThreadConversationCommand,
+            TestThreadMessageAddress,
         },
         command::{ActorRef, CommandEnvelope},
         execution_evidence::ExecutionEvidenceService,
@@ -721,11 +721,11 @@ mod slow_tests {
                     camp_id: None,
                     expected_versions: vec![],
                     execution_epoch: None,
-                    payload: TestCampConversationCommand {
+                    payload: TestThreadConversationCommand {
                         project_binding_kind: ProjectBindingKind::Directory,
                         project_path: workspace.to_string_lossy().into(),
                         body: "检查流式正文".into(),
-                        address: TestCampMessageAddress::Explicit {
+                        address: TestThreadMessageAddress::Explicit {
                             agent_ids: vec!["agent_1".into()],
                         },
                         purpose: "text block verification".into(),
@@ -733,7 +733,7 @@ mod slow_tests {
                 },
             )
             .unwrap();
-        let camp = created.result.payload["campId"].as_str().unwrap();
+        let camp = created.result.payload["threadId"].as_str().unwrap();
         let run = created.result.payload["agentRunIds"][0].as_str().unwrap();
         database
             .connection()

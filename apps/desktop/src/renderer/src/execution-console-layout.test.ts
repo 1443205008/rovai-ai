@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 const mobileStyles = readFileSync(new URL('../../../../web/src/mobile.css', import.meta.url), 'utf8')
-const workspaceSource = readFileSync(new URL('./CampWorkspace.tsx', import.meta.url), 'utf8')
+const workspaceSource = readFileSync(new URL('./ThreadWorkspace.tsx', import.meta.url), 'utf8')
 
 function styleBlock(selector: string, source = styles): string | null {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

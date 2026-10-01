@@ -2,7 +2,7 @@
 
 Read `rovai send --help` for current inputs. A Send can independently:
 
-- publish a message visible to everyone in the current Camp;
+- publish a message visible to everyone in the current Thread;
 - route concrete work to Agents through frozen Deliveries;
 - request Principal attention without creating an Agent Delivery.
 

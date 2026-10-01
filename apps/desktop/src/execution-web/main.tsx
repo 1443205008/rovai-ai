@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { CampClientProvider, type CampClient } from '../renderer/src/camp-client'
+import { ThreadClientProvider, type ThreadClient } from '../renderer/src/camp-client'
 import { ExecutionContentContext } from '../renderer/src/ExecutionVirtualList'
 import { ExecutionContentCache } from '../renderer/src/execution-content-cache'
 import { ExecutionStatusGlyph } from '../renderer/src/ExecutionStatusGlyph'
@@ -22,7 +22,7 @@ import './web.css'
 const readonlyClient = {
   platform: 'web',
   request: async () => { throw new Error('只读执行台不能读取私有内容') }
-} as unknown as CampClient
+} as unknown as ThreadClient
 const emptyEvidence = { byToolId: new Map() }
 const nonTerminal = (run: PublicExecutionRun): boolean =>
   run.status === 'queued' || run.status === 'running' || run.status === 'waiting'
@@ -153,7 +153,7 @@ function RunBody({
         parts.push(<PublicFileGroup key={`f:${groupIndex}:${start}`} activities={activities}
           stateKey={`${run.id}:files:${groupIndex}:${start}`} expanded={expanded} setExpanded={setExpanded} />)
       } else {
-        parts.push(<ToolActivityGroup key={`t:${groupIndex}:${start}`} campId="public-execution"
+        parts.push(<ToolActivityGroup key={`t:${groupIndex}:${start}`} threadId="public-execution"
           runId={run.id} runStatus={run.status}
           items={toToolItems(activities, run, groupIndex, start)}
           liveTail={groupIndex === run.items.length - 1 && end === item.activities.length}
@@ -174,7 +174,7 @@ function isSnapshot(value: unknown, runId: string): value is PublicExecutionSnap
   if (typeof value !== 'object' || value === null) return false
   const snapshot = value as Partial<PublicExecutionSnapshot>
   return snapshot.schemaVersion === 1 && snapshot.focusRunId === runId
-    && Array.isArray(snapshot.runs) && typeof snapshot.camp?.title === 'string'
+    && Array.isArray(snapshot.runs) && typeof snapshot.thread?.title === 'string'
     && typeof snapshot.agent?.displayName === 'string'
 }
 
@@ -394,7 +394,7 @@ function App(): React.JSX.Element {
     </li>
   }
 
-  return <CampClientProvider client={readonlyClient}>
+  return <ThreadClientProvider client={readonlyClient}>
     <ExecutionContentContext.Provider value={contentCache}>
       <ExecutionToolGroupStateContext.Provider value={{
         expanded: expandedGroups,
@@ -405,7 +405,7 @@ function App(): React.JSX.Element {
         })
       }}>
         <a className="skip-link" href="#execution-records">跳到执行记录</a>
-        <header className="web-app-bar"><div><Mark /><h1>{snapshot?.camp.title || '执行台'}</h1>
+        <header className="web-app-bar"><div><Mark /><h1>{snapshot?.thread.title || '执行台'}</h1>
           <span className="web-readonly">只读</span></div></header>
         {!snapshot && <main className="web-state" id="execution-records"
           role={error ? 'alert' : 'status'}><div>
@@ -467,7 +467,7 @@ function App(): React.JSX.Element {
         </main>}
       </ExecutionToolGroupStateContext.Provider>
     </ExecutionContentContext.Provider>
-  </CampClientProvider>
+  </ThreadClientProvider>
 }
 
 createRoot(document.getElementById('root')!).render(<App />)

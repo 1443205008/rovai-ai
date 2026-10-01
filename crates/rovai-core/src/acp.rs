@@ -44,7 +44,7 @@ use rovai_core::{
     runtime_discovery::{RuntimeLaunchPurpose, runtime_launch_allowed},
     runtime_failure::sanitize_public_runtime_error,
     runtime_search_operation,
-    storage_layout::CampOutputDirectory,
+    storage_layout::ThreadOutputDirectory,
 };
 use serde_json::{Value, json};
 use tokio::{
@@ -4710,7 +4710,7 @@ pub(crate) fn runtime_compatibility_digest(
     workspace: &AgentRunWorkspace,
     permission_semantics: PermissionSemantics,
     external_mcp_servers: &BTreeMap<String, McpServerDefinition>,
-    attachment_authorization: &CampOutputDirectory,
+    attachment_authorization: &ThreadOutputDirectory,
 ) -> Result<String> {
     let kimi_provider_environment_digest = (frozen_runtime.adapter_kind
         == AdapterKind::KimiCodeCli)
@@ -4731,7 +4731,7 @@ fn runtime_compatibility_digest_with_provider_environment(
     workspace: &AgentRunWorkspace,
     permission_semantics: PermissionSemantics,
     external_mcp_servers: &BTreeMap<String, McpServerDefinition>,
-    attachment_authorization: &CampOutputDirectory,
+    attachment_authorization: &ThreadOutputDirectory,
     kimi_provider_environment_digest: Option<&str>,
 ) -> Result<String> {
     let execution_root = PathBuf::from(&workspace.execution_root)
@@ -11131,7 +11131,7 @@ while IFS= read -r ignored; do :; done
             std::env::temp_dir().join(format!("rovai-trae-compatibility-{}", uuid::Uuid::new_v4()));
         let attachments = root.join("attachments");
         std::fs::create_dir_all(&attachments).unwrap();
-        let attachment_authorization = CampOutputDirectory {
+        let attachment_authorization = ThreadOutputDirectory {
             camp_id: "rvcamp_01h47kvsy5fk1shh6w1g60eecf".to_string(),
             output_root: attachments,
         };

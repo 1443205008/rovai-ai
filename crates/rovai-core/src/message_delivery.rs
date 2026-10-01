@@ -10,7 +10,7 @@ use crate::{
     agent_identity::parse_agent_id,
     agent_profile::resolve_frozen_runtime,
     camp_content::{
-        AGENT_PRINCIPAL_DISPLAY_NAME, StructuredCampMessageSegment, canonical_content_digest,
+        AGENT_PRINCIPAL_DISPLAY_NAME, StructuredThreadMessageSegment, canonical_content_digest,
         normalize_content, render_current_plain_text,
     },
     collaboration::{append_domain_event, build_effective_config},
@@ -30,7 +30,7 @@ use crate::{
     runtime_basis::capture_run_runtime_basis,
 };
 
-pub const CAMP_MESSAGE_SEND_TOOL_NAME: &str = "camp.message.send";
+pub const CAMP_MESSAGE_SEND_TOOL_NAME: &str = "thread.message.send";
 pub const CAMP_MESSAGE_SEND_MAX_BODY_BYTES: usize = 32 * 1024;
 pub const CAMP_MESSAGE_SEND_MAX_FANOUT: usize = 16;
 pub const MESSAGE_DELIVERY_MAX_A2A_DEPTH: i64 = 5;
@@ -150,7 +150,7 @@ pub(crate) struct TopicRosterRefreshRequest {
     pub required_roster_generation: i64,
 }
 
-/// The v1.60 public Agent message contract. A send publishes exactly one Camp
+/// The v1.60 public Agent message contract. A send publishes exactly one Thread
 /// message and, when it has Agent recipients, appends ordinary waiting
 /// Deliveries. It deliberately carries no CampTurn, lineage, depth or budget
 /// identity: those concepts no longer participate in admission or batching.
@@ -201,7 +201,7 @@ enum LineLeadingMentionClusterPosition {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ActiveCampAgent {
+struct ActiveThreadAgent {
     agent_id: String,
     display_name: String,
 }
@@ -349,7 +349,7 @@ pub fn persist_queued_agent_message(
     {
         return Ok(rejected_with_details(
             "message.invalid_task",
-            "taskId must identify a non-terminal Task assigned to the sole recipient in this Camp",
+            "taskId must identify a non-terminal Task assigned to the sole recipient in this Thread",
             json!({"newRequestIdRequired": true}),
         ));
     }
@@ -999,7 +999,7 @@ fn transition_message_delivery_to_cancelled(
         &json!({
             "deliveryId": target.id,
             "failureCode": failure_code,
-            "campTurnId": target.camp_turn_id,
+            "threadTurnId": target.camp_turn_id,
             "dispatchAttemptCount": target.dispatch_attempt_count,
         }),
     )?;
@@ -1622,7 +1622,7 @@ fn process_dispatch_attempt(
         &actor,
         None,
         &json!({
-            "campTurnId": delivery.camp_turn_id,
+            "threadTurnId": delivery.camp_turn_id,
             "taskId": delivery.task_id,
             "invocationKind": "a2a",
             "messageDeliveryId": delivery.id,
@@ -2192,7 +2192,7 @@ fn ensure_delivery_conversation(
 fn load_active_camp_agents(
     transaction: &Transaction<'_>,
     camp_id: &str,
-) -> Result<Vec<ActiveCampAgent>> {
+) -> Result<Vec<ActiveThreadAgent>> {
     let mut statement = transaction.prepare(
         r#"
         SELECT camp_member.agent_id, agent_profile.display_name
@@ -2207,7 +2207,7 @@ fn load_active_camp_agents(
     )?;
     Ok(statement
         .query_map([camp_id], |row| {
-            Ok(ActiveCampAgent {
+            Ok(ActiveThreadAgent {
                 agent_id: row.get(0)?,
                 display_name: row.get(1)?,
             })
@@ -2246,7 +2246,7 @@ fn load_run_reply_anchor(
         .optional()?
         .context("Agent-authored send source Run does not exist")?;
     if anchor.1.as_deref() != Some(camp_id) {
-        anyhow::bail!("Agent-authored send source Run is outside the current Camp");
+        anyhow::bail!("Agent-authored send source Run is outside the current Thread");
     }
     if let Some(message_id) = anchor.0.as_deref() {
         let readable: bool = transaction.query_row(
@@ -2276,7 +2276,7 @@ fn stable_unique(values: impl IntoIterator<Item = String>) -> Vec<String> {
         .collect()
 }
 
-fn parse_inline_addressing(body: &str, active_agents: &[ActiveCampAgent]) -> InlineAddressing {
+fn parse_inline_addressing(body: &str, active_agents: &[ActiveThreadAgent]) -> InlineAddressing {
     let bytes = body.as_bytes();
     let mut occurrences = Vec::new();
     let mut principal_occurrences = Vec::new();
@@ -2430,7 +2430,7 @@ fn line_leading_mention_cluster_position(
 fn match_display_name_mention<'a>(
     body: &str,
     at_byte: usize,
-    active_agents: &'a [ActiveCampAgent],
+    active_agents: &'a [ActiveThreadAgent],
 ) -> Option<(&'a str, usize)> {
     let tail = &body[at_byte + 1..];
     let mut best_match: Option<(&str, usize, usize)> = None;
@@ -2474,13 +2474,13 @@ fn structured_content_from_inline_addressing(
     occurrences: &[InlineAddressingOccurrence],
     principal_occurrences: &[std::ops::Range<usize>],
     mention_user: bool,
-) -> Vec<StructuredCampMessageSegment> {
+) -> Vec<StructuredThreadMessageSegment> {
     let mut mentions = occurrences
         .iter()
         .map(|occurrence| {
             (
                 occurrence.start_byte..occurrence.end_byte,
-                StructuredCampMessageSegment::MemberMention {
+                StructuredThreadMessageSegment::MemberMention {
                     agent_id: occurrence.agent_id.clone(),
                 },
             )
@@ -2488,7 +2488,7 @@ fn structured_content_from_inline_addressing(
         .chain(principal_occurrences.iter().map(|range| {
             (
                 range.clone(),
-                StructuredCampMessageSegment::CurrentUserMention {
+                StructuredThreadMessageSegment::CurrentUserMention {
                     user_id: CURRENT_USER_ID.to_string(),
                 },
             )
@@ -2497,14 +2497,14 @@ fn structured_content_from_inline_addressing(
     mentions.sort_by_key(|(range, _)| range.start);
     let mut content = Vec::with_capacity(mentions.len().saturating_mul(2).saturating_add(2));
     if mention_user && principal_occurrences.is_empty() {
-        content.push(StructuredCampMessageSegment::CurrentUserMention {
+        content.push(StructuredThreadMessageSegment::CurrentUserMention {
             user_id: CURRENT_USER_ID.to_string(),
         });
     }
     let mut cursor = 0_usize;
     for (range, mention) in mentions {
         if cursor < range.start {
-            content.push(StructuredCampMessageSegment::Text {
+            content.push(StructuredThreadMessageSegment::Text {
                 text: body[cursor..range.start].to_string(),
             });
         }
@@ -2514,13 +2514,13 @@ fn structured_content_from_inline_addressing(
         let leading_principal = range.start == 0
             && matches!(
                 mention,
-                StructuredCampMessageSegment::CurrentUserMention { .. }
+                StructuredThreadMessageSegment::CurrentUserMention { .. }
             );
         content.push(mention);
         cursor = range.end + usize::from(leading_principal && body[range.end..].starts_with(' '));
     }
     if cursor < body.len() {
-        content.push(StructuredCampMessageSegment::Text {
+        content.push(StructuredThreadMessageSegment::Text {
             text: body[cursor..].to_string(),
         });
     }
@@ -2543,7 +2543,7 @@ mod tests {
 
     // Owns the persisted roster gate, not channel admission or Runtime setup.
     // A small SQLite fixture exercises the real gate and provider-scoped queries;
-    // the existing channel membership test only covers Camp roster reconciliation.
+    // the existing channel membership test only covers Thread roster reconciliation.
     #[test]
     fn topic_dispatch_waits_for_its_provider_roster_and_checks_its_published_bot() {
         let mut connection = rusqlite::Connection::open_in_memory().unwrap();
@@ -2709,11 +2709,11 @@ mod tests {
     #[test]
     fn principal_alias_uses_leading_clusters_and_merges_explicit_attention() {
         let agents = vec![
-            ActiveCampAgent {
+            ActiveThreadAgent {
                 agent_id: "agent_2".into(),
                 display_name: "爱丽丝".into(),
             },
-            ActiveCampAgent {
+            ActiveThreadAgent {
                 agent_id: "agent_3".into(),
                 display_name: "Principal".into(),
             },
@@ -2767,10 +2767,10 @@ mod tests {
             assert_eq!(
                 content,
                 vec![
-                    StructuredCampMessageSegment::CurrentUserMention {
+                    StructuredThreadMessageSegment::CurrentUserMention {
                         user_id: CURRENT_USER_ID.into()
                     },
-                    StructuredCampMessageSegment::Text {
+                    StructuredThreadMessageSegment::Text {
                         text: "请确认".into()
                     },
                 ]
@@ -2824,7 +2824,7 @@ https://example.test/@agent_7
 
     #[test]
     fn exact_display_name_alias_routes_to_active_agent() {
-        let active_agents = vec![ActiveCampAgent {
+        let active_agents = vec![ActiveThreadAgent {
             agent_id: "agent_6".to_string(),
             display_name: "爱丽丝".to_string(),
         }];
@@ -2842,7 +2842,7 @@ https://example.test/@agent_7
 
     #[test]
     fn display_name_alias_accepts_indented_line_end_and_requires_whitespace_boundary() {
-        let active_agents = vec![ActiveCampAgent {
+        let active_agents = vec![ActiveThreadAgent {
             agent_id: "agent_6".to_string(),
             display_name: "爱丽丝".to_string(),
         }];
@@ -2864,11 +2864,11 @@ https://example.test/@agent_7
     #[test]
     fn line_leading_display_name_alias_supports_whitespace_separated_clusters() {
         let active_agents = vec![
-            ActiveCampAgent {
+            ActiveThreadAgent {
                 agent_id: "agent_6".to_string(),
                 display_name: "爱丽丝".to_string(),
             },
-            ActiveCampAgent {
+            ActiveThreadAgent {
                 agent_id: "agent_7".to_string(),
                 display_name: "鲍勃".to_string(),
             },
@@ -2948,15 +2948,15 @@ https://example.test/@agent_7
     #[test]
     fn display_name_alias_uses_longest_match_and_canonical_tokens_take_precedence() {
         let active_agents = vec![
-            ActiveCampAgent {
+            ActiveThreadAgent {
                 agent_id: "agent_6".to_string(),
                 display_name: "爱丽丝".to_string(),
             },
-            ActiveCampAgent {
+            ActiveThreadAgent {
                 agent_id: "agent_7".to_string(),
                 display_name: "爱丽丝 助手".to_string(),
             },
-            ActiveCampAgent {
+            ActiveThreadAgent {
                 agent_id: "agent_8".to_string(),
                 display_name: "agent_6".to_string(),
             },
@@ -2975,15 +2975,15 @@ https://example.test/@agent_7
     #[test]
     fn display_name_alias_ignores_literal_regions_urls_escapes_and_ambiguous_names() {
         let active_agents = vec![
-            ActiveCampAgent {
+            ActiveThreadAgent {
                 agent_id: "agent_6".to_string(),
                 display_name: "爱丽丝".to_string(),
             },
-            ActiveCampAgent {
+            ActiveThreadAgent {
                 agent_id: "agent_7".to_string(),
                 display_name: "重复".to_string(),
             },
-            ActiveCampAgent {
+            ActiveThreadAgent {
                 agent_id: "agent_8".to_string(),
                 display_name: "重复".to_string(),
             },

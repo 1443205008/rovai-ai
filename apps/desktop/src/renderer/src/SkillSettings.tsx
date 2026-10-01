@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { newCommandId } from '../../shared/command-id'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
@@ -29,7 +29,7 @@ import { AppDialogGlyph, DialogControlIcon } from './AppDialog'
 import { UiText, uiAttribute } from './interface-language'
 
 export function SkillSettings({ theme = 'day' }: { theme?: ResolvedTheme }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const [skills, setSkills] = useState<SkillView[] | null>(null)
   const [groups, setGroups] = useState<SkillDeliveryGroupView[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)

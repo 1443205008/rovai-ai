@@ -45,7 +45,7 @@ export type PublicExecutionSnapshot = {
   schemaVersion: 1
   focusRunId: string
   terminal: boolean
-  camp: { id: string; title: string }
+  thread: { id: string; title: string }
   agent: { id: string; displayName: string }
   runs: PublicExecutionRun[]
 }

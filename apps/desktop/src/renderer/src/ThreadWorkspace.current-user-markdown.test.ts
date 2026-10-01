@@ -4,18 +4,18 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type {
-  CampMessageView,
-  CampSnapshot,
-  StructuredCampMessageContent
+  ThreadMessageView,
+  ThreadSnapshot,
+  StructuredThreadMessageContent
 } from '@contracts'
 import {
-  CampWorkspace,
+  ThreadWorkspace,
   defaultRecipientMentionAgentId,
   projectLeadingCurrentUserMentionMarkdownBody,
-  structuredCampContentPlainText
-} from './CampWorkspace'
+  structuredThreadContentPlainText
+} from './ThreadWorkspace'
 
-const members: CampSnapshot['members'] = [{
+const members: ThreadSnapshot['members'] = [{
   agentId: 'agent_author',
   displayName: '洛可',
   teamRole: 'Lead',
@@ -42,14 +42,14 @@ const members: CampSnapshot['members'] = [{
 }]
 
 function renderMessage(
-  content: StructuredCampMessageContent,
+  content: StructuredThreadMessageContent,
   body = 'NON_AUTHORITATIVE_BODY_CACHE',
   authorType: 'agent' | 'user' | 'external_principal' = 'agent',
   campMembers = members,
   profile: CurrentUserProfile = DEFAULT_CURRENT_USER_PROFILE,
-  messageOverrides: Partial<CampMessageView> = {}
+  messageOverrides: Partial<ThreadMessageView> = {}
 ): string {
-  const message: CampMessageView = {
+  const message: ThreadMessageView = {
     quotes: [],
     withdrawn: false,
     canWithdraw: false,
@@ -65,16 +65,16 @@ function renderMessage(
     attachments: [],
     addressMode: 'default',
     addressedAgentIds: [],
-    replyToCampMessageId: null,
-    campTurnId: null,
+    replyToThreadMessageId: null,
+    threadTurnId: null,
     presentation: null,
     createdAt: '2026-08-13T00:00:00Z',
     ...messageOverrides
   }
-  const snapshot: CampSnapshot = {
+  const snapshot: ThreadSnapshot = {
     schemaVersion: 34,
     throughGlobalSequence: 1,
-    camp: {
+    thread: {
       id: 'camp-current-user-markdown',
       title: 'Current User Markdown',
       activationState: 'active',
@@ -103,7 +103,7 @@ function renderMessage(
 
   return renderToStaticMarkup(createElement(CurrentUserProfileContext.Provider, {
     value: { profile, ready: true, error: null, reload: () => undefined, save: async () => profile }
-  }, createElement(CampWorkspace, {
+  }, createElement(ThreadWorkspace, {
     snapshot,
     projectName: null,
     agents: [],
@@ -120,7 +120,7 @@ function renderMessage(
 
 describe('Default recipient timeline Mention rendering', () => {
   it('shows the frozen default recipient before authored user text without changing the source', () => {
-    const content: StructuredCampMessageContent = [{ kind: 'text', text: '请检查这条消息' }]
+    const content: StructuredThreadMessageContent = [{ kind: 'text', text: '请检查这条消息' }]
     const source = JSON.stringify(content)
     const message = {
       authorType: 'user' as const,
@@ -228,7 +228,7 @@ describe('Agent Current User Mention Markdown rendering', () => {
   })
 
   it('renders a profile-card trigger plus sanitized GFM from Structured Content', () => {
-    const content: StructuredCampMessageContent = [{
+    const content: StructuredThreadMessageContent = [{
       kind: 'current_user_mention',
       userId: 'local_user'
     }, {
@@ -292,14 +292,14 @@ describe('Agent Current User Mention Markdown rendering', () => {
   })
 
   it('preserves Markdown and live nicknames for non-leading and repeated Current User segments', () => {
-    const nonLeading: StructuredCampMessageContent = [{
+    const nonLeading: StructuredThreadMessageContent = [{
       kind: 'text',
       text: '## 检查结果 <script>alert("unsafe")</script> '
     }, {
       kind: 'current_user_mention',
       userId: 'local_user'
     }]
-    const repeated: StructuredCampMessageContent = [{
+    const repeated: StructuredThreadMessageContent = [{
       kind: 'current_user_mention',
       userId: 'local_user'
     }, {
@@ -323,13 +323,13 @@ describe('Agent Current User Mention Markdown rendering', () => {
         { kind: 'text', text: '**完成**\n\nROVAICURRENTUSER1END\n' },
         { kind: 'current_user_mention', userId: 'local_user' },
         { kind: 'text', text: ' 请确认 `@Principal`' }
-      ] as StructuredCampMessageContent]) {
+      ] as StructuredThreadMessageContent]) {
         const rendered = renderMessage(content, undefined, 'agent', members, { displayName, avatarDataUrl: null })
         expect(rendered).toContain(`>@${displayName}</span>`)
         expect(rendered).not.toContain('>@@')
         const expectedCount = content.filter((segment) => segment.kind === 'current_user_mention').length
         expect(rendered.match(/class="message-mention-token current-user/g)).toHaveLength(expectedCount)
-        expect(structuredCampContentPlainText(content, members, displayName)).toContain(`@${displayName}`)
+        expect(structuredThreadContentPlainText(content, members, displayName)).toContain(`@${displayName}`)
       }
     }
     const collision = renderMessage([
@@ -366,7 +366,7 @@ describe('Agent Current User Mention Markdown rendering', () => {
   })
 
   it('projects file labels in user messages without flattening Member and Skill identities', () => {
-    const content: StructuredCampMessageContent = [{
+    const content: StructuredThreadMessageContent = [{
       kind: 'member_mention',
       agentId: 'agent_reviewer'
     }, {
@@ -453,7 +453,7 @@ describe('Agent leading Member Mention Markdown rendering', () => {
   })
 
   it('preserves multiple leading recipients and does not mutate authoritative content', () => {
-    const content: StructuredCampMessageContent = [
+    const content: StructuredThreadMessageContent = [
       { kind: 'text', text: ' ' },
       { kind: 'member_mention', agentId: 'agent_reviewer' },
       { kind: 'text', text: ' ' },
@@ -511,7 +511,7 @@ describe('Agent leading Member Mention Markdown rendering', () => {
   })
 
   it('keeps a mention-only message visible and preserves the following paragraph boundary', () => {
-    const mention: StructuredCampMessageContent[number] = { kind: 'member_mention', agentId: 'agent_reviewer' }
+    const mention: StructuredThreadMessageContent[number] = { kind: 'member_mention', agentId: 'agent_reviewer' }
     const mentionOnly = renderMessage([mention])
     expect(mentionOnly).toContain('@沐瓦</span>')
     expect(mentionOnly).not.toContain('member-mention-markdown-content')
@@ -554,7 +554,7 @@ describe('Agent leading Member Mention Markdown rendering', () => {
 
 describe('historical current user presentation', () => {
   it('changes author identity presentation and only structured mentions, keeping canonical content and body intact', () => {
-    const content: StructuredCampMessageContent = [
+    const content: StructuredThreadMessageContent = [
       { kind: 'current_user_mention', userId: 'local_user' },
       { kind: 'text', text: '正文 @你 与 `@你` 保持原样。' }
     ]
@@ -564,7 +564,7 @@ describe('historical current user presentation', () => {
     expect(markup).toContain('aria-label="查看Murray 🐻的个人资料"')
     expect(markup).toContain('>@Murray 🐻</span>')
     expect(markup).toContain('正文 @你 与 <code>@你</code> 保持原样。')
-    expect(structuredCampContentPlainText(content, members, profile.displayName)).toBe('@Murray 🐻 正文 @你 与 `@你` 保持原样。')
+    expect(structuredThreadContentPlainText(content, members, profile.displayName)).toBe('@Murray 🐻 正文 @你 与 `@你` 保持原样。')
     expect(JSON.stringify(content)).toBe(canonical)
     expect(renderMessage([{ kind: 'text', text: '普通正文 @你 保持原样' }], '普通正文 @你 保持原样', 'agent', members, profile)).toContain('普通正文 @你 保持原样')
     for (const authorType of ['user', 'external_principal'] as const) {

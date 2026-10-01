@@ -367,7 +367,7 @@ describe('Porcelain Day + Steel Night theme tokens', () => {
     expect(css).not.toMatch(/has-adjacent-text-(?:before|after)\s*\{[^}]*(?:margin-left|margin-right):/)
   })
 
-  it('uses quiet selected backgrounds for the active Camp and current Project', () => {
+  it('uses quiet selected backgrounds for the active Thread and current Project', () => {
     expect(css).toMatch(/\.camp-nav-row\.selected\s*\{[^}]*background: var\(--surface-selected\)/)
     expect(css).toMatch(/\.project-heading-row\.current-project\s*\{[^}]*background: var\(--surface-selected\)/)
   })
@@ -521,7 +521,7 @@ describe('Porcelain Day + Steel Night theme tokens', () => {
     )
   })
 
-  it('shares Mist Gray Markdown code layers across Camp reading surfaces', () => {
+  it('shares Mist Gray Markdown code layers across Thread reading surfaces', () => {
     expect(css).toMatch(/\.conversation-bubble :is\(\.final-copy, \.message-bubble\) \.safe-markdown code,\s*\.execution-drawer \.safe-markdown code,\s*\.file-preview-markdown \.safe-markdown code\s*\{[^}]*padding:\s*1px 4px[^}]*border-radius:\s*6px[^}]*background:\s*var\(--conversation-inline-code-canvas\)[^}]*box-decoration-break:\s*clone/)
     expect(css).toMatch(/\.conversation-bubble :is\(\.final-copy, \.message-bubble\) \.safe-markdown pre,\s*\.execution-drawer \.safe-markdown pre,\s*\.file-preview-markdown \.safe-markdown pre\s*\{[^}]*padding:\s*11px 12px[^}]*border-color:\s*var\(--conversation-code-line\)[^}]*border-radius:\s*8px[^}]*background:\s*var\(--conversation-code-block-canvas\)/)
     expect(css).toMatch(/\.conversation-bubble :is\(\.final-copy, \.message-bubble\) \.safe-markdown pre code,\s*\.execution-drawer \.safe-markdown pre code,\s*\.file-preview-markdown \.safe-markdown pre code\s*\{[^}]*padding:\s*0[^}]*border-radius:\s*0[^}]*background:\s*transparent/)
@@ -577,7 +577,7 @@ describe('Porcelain Day + Steel Night theme tokens', () => {
     expect(css).toMatch(/\.composer-action-row\s*\{[^}]*z-index:\s*1[^}]*justify-content:\s*space-between[^}]*background:\s*var\(--input\)/)
   })
 
-  it('keeps Camp details on a themed popover with row-level member menus', () => {
+  it('keeps Thread details on a themed popover with row-level member menus', () => {
     expect(css).toMatch(/\.camp-detail-popover\s*\{[^}]*position:\s*absolute[^}]*background:\s*var\(--inspector-surface\)/)
     expect(css).toMatch(/\.task-action-row\s*\{[^}]*position:\s*sticky/)
     expect(css).toMatch(/\.task-state-dot\.state-in_progress\s*\{[^}]*border-color:\s*var\(--brand\)/)

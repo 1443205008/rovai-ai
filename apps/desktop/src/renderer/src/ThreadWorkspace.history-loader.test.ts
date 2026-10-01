@@ -1,19 +1,19 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { CampSnapshot } from '@contracts'
+import type { ThreadSnapshot } from '@contracts'
 import {
-  CampWorkspace,
+  ThreadWorkspace,
   campHistoryKeyboardInputMovesEarlier
-} from './CampWorkspace'
+} from './ThreadWorkspace'
 
 const createdAt = '2026-09-04T00:00:00Z'
 
 function renderHistoryLoader(hasEarlier = true): string {
-  const snapshot: CampSnapshot = {
+  const snapshot: ThreadSnapshot = {
     schemaVersion: 34,
     throughGlobalSequence: 1,
-    camp: {
+    thread: {
       id: 'camp-history-loader',
       title: '历史消息',
       activationState: 'active',
@@ -40,7 +40,7 @@ function renderHistoryLoader(hasEarlier = true): string {
     timeline: []
   }
 
-  return renderToStaticMarkup(createElement(CampWorkspace, {
+  return renderToStaticMarkup(createElement(ThreadWorkspace, {
     snapshot,
     messageHistory: {
       loadedCount: 20,
@@ -65,7 +65,7 @@ function renderHistoryLoader(hasEarlier = true): string {
   }))
 }
 
-describe('Camp history loader', () => {
+describe('Thread history loader', () => {
   it('keeps the manual history entry as a native text button with coverage', () => {
     const markup = renderHistoryLoader()
     const loader = markup.match(/<div class="camp-history-loader[^>]*>[\s\S]*?<\/div>/)?.[0]

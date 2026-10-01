@@ -31,7 +31,7 @@ Projection/Rollup、Read Side 和 Renderer 如何组合。
 Execution Evidence、Canonical Activity、AgentRun、Approval、Delivery、Recovery、Context 和 Runtime health
 继续由各自 Core domain 拥有。Monitoring 不复制、不删除也不重建这些事实。
 
-执行台增加一条窄读取路径：现有 Run summary 提供每 Run 四项用量，当前原生 Session 上下文单独保存在 `runtime_session_context_latest`。后者由 Session gauge 写入，并由 `Conversation` 的当前 Binding ID、代次和原生 Session ID 在读取时栅栏；Migration 178 从 v1.72/schema 127 建立空表；Migration 179 在 schema 128 上添加 nullable `native_context_ratio` 并升级到 schema 129，保留已安装分支的数据，不回填旧 Run 或旧 Session。占用数量与原生比例属于同一最新观测；比例不用于反推 token 数。当前速度由 Core 的有界临时计数和按 Camp／Run／代次授权的 `monitoring.observableOutput` 数值读取提供；Renderer 只消费数字并平滑，不接收思考内容，计数不进入 Usage buffer、checkpoint 或 hourly rollup。
+执行台增加一条窄读取路径：现有 Run summary 提供每 Run 四项用量，当前原生 Session 上下文单独保存在 `runtime_session_context_latest`。后者由 Session gauge 写入，并由 `Conversation` 的当前 Binding ID、代次和原生 Session ID 在读取时栅栏；指标分支的 Migration 178 从 v1.72/schema 127 建立空表，179 添加 nullable `native_context_ratio` 并升级到 schema 129，保留已安装分支的数据，不回填旧 Run 或旧 Session。合入 Thread 更名后由 180 收口为 schema 130；main 已部署的另一种 schema 128 仅按完整 v32 准入、指标表缺失和精确收据链识别，179 原子补建指标投影，180 保留已具备的 Thread 格式和冻结证据。占用数量与原生比例属于同一最新观测；比例不用于反推 token 数。当前速度由 Core 的有界临时计数和按 Thread／Run／代次授权的 `monitoring.observableOutput` 数值读取提供；Renderer 只消费数字并平滑，不接收思考内容，计数不进入 Usage buffer、checkpoint 或 hourly rollup。
 
 ## Write path
 

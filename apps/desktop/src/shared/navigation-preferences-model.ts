@@ -1,4 +1,4 @@
-import { isCampId } from '@contracts'
+import { isThreadId } from '@contracts'
 import type { NavigationPin, NavigationPreferencesSnapshot, RemovedNavigationProject } from '@contracts'
 import { normalizeProjectDisplayName, projectDisplayNameError } from './project-display-name'
 
@@ -38,7 +38,7 @@ export function sanitizePins(source: Record<string, unknown>): NavigationPin[] {
       (kind !== 'camp' && kind !== 'project')
       || typeof targetKey !== 'string'
       || (kind === 'camp'
-        ? !isCampId(targetKey)
+        ? !isThreadId(targetKey)
         : !isProjectTargetKey(targetKey))
       || !isTimestamp(candidate.pinnedAt)
     ) continue

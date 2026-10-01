@@ -239,9 +239,9 @@ describe('AboutUpdatesSettingsView', () => {
 
     const differentTitle = render(snapshot({
       status: 'available',
-      availableRelease: { ...release, releaseNotes: '# Camp 改进\n\n本版摘要' }
+      availableRelease: { ...release, releaseNotes: '# Thread 改进\n\n本版摘要' }
     }))
-    expect(differentTitle).toContain('data-markdown-heading="Camp 改进"')
+    expect(differentTitle).toContain('data-markdown-heading="Thread 改进"')
 
     const fencedSource = '```md\n# Rovai AI v0.0.3\n```\n\n本版摘要'
     expect(displayReleaseNotes({ ...release, releaseNotes: fencedSource })).toBe(fencedSource)

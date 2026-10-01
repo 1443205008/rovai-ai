@@ -3358,8 +3358,8 @@ mod tests {
     use crate::test_support::absolute_test_path;
     use crate::{
         collaboration::{
-            AddCampMemberCommand, CollaborationService, CreateCampCommand, ExecutionRequest,
-            TestCampMessageAddress, TestCampMessageCommand,
+            AddThreadMemberCommand, CollaborationService, CreateThreadCommand, ExecutionRequest,
+            TestThreadMessageAddress, TestThreadMessageCommand,
         },
         command::{ActorRef, CommandEnvelope},
         context::{
@@ -4793,11 +4793,14 @@ mod tests {
                     camp_id: None,
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: CreateCampCommand::for_test(workspace.display().to_string()),
+                    payload: CreateThreadCommand::for_test(workspace.display().to_string()),
                 },
             )
             .unwrap();
-        let camp_id = camp.result.payload["campId"].as_str().unwrap().to_string();
+        let camp_id = camp.result.payload["threadId"]
+            .as_str()
+            .unwrap()
+            .to_string();
         collaboration
             .add_camp_member(
                 &mut database,
@@ -4809,7 +4812,7 @@ mod tests {
                     camp_id: Some(camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: AddCampMemberCommand {
+                    payload: AddThreadMemberCommand {
                         camp_id: camp_id.clone(),
                         agent_id: "agent_2".to_string(),
                         expected_membership_generation: 1,
@@ -4830,12 +4833,12 @@ mod tests {
                     camp_id: Some(camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: TestCampMessageCommand {
+                    payload: TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "Run with private execution evidence".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: TestCampMessageAddress::Explicit {
+                        address: TestThreadMessageAddress::Explicit {
                             agent_ids: vec!["agent_2".to_string()],
                         },
                         reply_to_camp_message_id: None,

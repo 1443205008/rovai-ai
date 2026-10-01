@@ -3723,8 +3723,8 @@ mod tests {
     use crate::read_model::ReadModelService;
     use crate::{
         collaboration::{
-            AddCampMemberCommand, CollaborationService, CreateCampCommand, ExecutionRequest,
-            TestCampMessageAddress, TestCampMessageCommand,
+            AddThreadMemberCommand, CollaborationService, CreateThreadCommand, ExecutionRequest,
+            TestThreadMessageAddress, TestThreadMessageCommand,
         },
         command::CommandResultStatus,
     };
@@ -3779,7 +3779,7 @@ mod tests {
                 &user_envelope(
                     "create-camp",
                     None,
-                    CreateCampCommand::for_test_with_members(
+                    CreateThreadCommand::for_test_with_members(
                         workspace.to_string_lossy().to_string(),
                         &["agent_2"],
                         "agent_2",
@@ -3787,7 +3787,7 @@ mod tests {
                 ),
             )
             .unwrap();
-        let camp_id = created.result.payload["campId"]
+        let camp_id = created.result.payload["threadId"]
             .as_str()
             .unwrap()
             .to_string();
@@ -3797,7 +3797,7 @@ mod tests {
                 &user_envelope(
                     "add-muwa",
                     Some(&camp_id),
-                    AddCampMemberCommand {
+                    AddThreadMemberCommand {
                         camp_id: camp_id.clone(),
                         agent_id: "agent_2".to_string(),
                         expected_membership_generation: 1,
@@ -3813,12 +3813,12 @@ mod tests {
                 &user_envelope(
                     "start-run",
                     Some(&camp_id),
-                    TestCampMessageCommand {
+                    TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "执行一个受限动作".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: TestCampMessageAddress::Default,
+                        address: TestThreadMessageAddress::Default,
                         reply_to_camp_message_id: None,
                         execution: Some(ExecutionRequest {
                             task_id: None,

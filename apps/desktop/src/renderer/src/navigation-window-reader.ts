@@ -1,4 +1,4 @@
-import type { NavigationCampItem, NavigationCampRows, NavigationSnapshot, NavigationSnapshotRequest } from '@contracts'
+import type { NavigationThreadItem, NavigationThreadRows, NavigationSnapshot, NavigationSnapshotRequest } from '@contracts'
 import {
   createNavigationRefreshCoordinator,
   type NavigationRefreshCoordinator,
@@ -11,32 +11,32 @@ export const NAVIGATION_MORE_CAMPS_STEP = 10
 export type NavigationGroupLimits = Readonly<Record<string, number>>
 export interface NavigationInvalidation {
   scope?: 'camp' | 'group' | 'all'
-  campId?: string
+  threadId?: string
   groupKeys?: string[]
 }
 export interface NavigationWindowReader extends NavigationRefreshCoordinator {
   resizeGroup(groupKey: string, limit: number): Promise<void>
-  refreshCamps(campIds: string[], trigger?: NavigationRefreshTrigger): Promise<void>
+  refreshThreads(threadIds: string[], trigger?: NavigationRefreshTrigger): Promise<void>
   refreshGroups(groupKeys: string[], trigger?: NavigationRefreshTrigger): Promise<void>
   invalidate(change: NavigationInvalidation): Promise<void>
-  acceptRows(rows: NavigationCampRows): void
+  acceptRows(rows: NavigationThreadRows): void
 }
 
-export function navigationGroupKey(camp: Pick<NavigationCampItem, 'projectBindingKind' | 'projectPath'>): string {
-  return camp.projectBindingKind === 'directory' ? `directory:${camp.projectPath}` : 'quick-chat'
+export function navigationGroupKey(thread: Pick<NavigationThreadItem, 'projectBindingKind' | 'projectPath'>): string {
+  return thread.projectBindingKind === 'directory' ? `directory:${thread.projectPath}` : 'quick-chat'
 }
 
-interface PendingRead { all: boolean; camps: Set<string>; groups: Set<string>; groupCamps: Set<string> }
-const emptyRead = (): PendingRead => ({ all: false, camps: new Set(), groups: new Set(), groupCamps: new Set() })
+interface PendingRead { all: boolean; threads: Set<string>; groups: Set<string>; groupThreads: Set<string> }
+const emptyRead = (): PendingRead => ({ all: false, threads: new Set(), groups: new Set(), groupThreads: new Set() })
 
 /** One owner for the window, three read scopes; no event replay or page cache. */
 export function createNavigationWindowReader(
   read: (request: NavigationSnapshotRequest) => Promise<NavigationSnapshot>,
   commit: (snapshot: NavigationSnapshot, groupLimits: NavigationGroupLimits) => void,
   options: NavigationRefreshCoordinatorOptions & {
-    readCamps(campIds: string[]): Promise<NavigationCampRows>
-    getPinnedCampIds?(): string[]
-    onRows?(rows: NavigationCampRows, requestedIds: string[]): void
+    readThreads(threadIds: string[]): Promise<NavigationThreadRows>
+    getPinnedThreadIds?(): string[]
+    onRows?(rows: NavigationThreadRows, requestedIds: string[]): void
     onError?(error: unknown): void
   }
 ): NavigationWindowReader {
@@ -50,33 +50,33 @@ export function createNavigationWindowReader(
   const resizeTokens = new Map<string, symbol>()
   const restore = (scope: PendingRead): void => {
     pending.all ||= scope.all
-    for (const id of scope.camps) pending.camps.add(id)
+    for (const id of scope.threads) pending.threads.add(id)
     for (const key of scope.groups) pending.groups.add(key)
-    for (const id of scope.groupCamps) pending.groupCamps.add(id)
+    for (const id of scope.groupThreads) pending.groupThreads.add(id)
   }
-  const allRows = (): NavigationCampItem[] => snapshot
-    ? [...snapshot.quickChat.recentCamps, ...snapshot.projects.flatMap(group => group.recentCamps)] : []
-  const rememberRows = (camps: NavigationCampItem[], sequence: number): void => {
-    for (const camp of camps) appliedRows.set(camp.id, {
-      sequence, seen: camp.lastSeenGlobalSequence ?? 0, version: camp.version
+  const allRows = (): NavigationThreadItem[] => snapshot
+    ? [...snapshot.quickChat.recentThreads, ...snapshot.projects.flatMap(group => group.recentThreads)] : []
+  const rememberRows = (threads: NavigationThreadItem[], sequence: number): void => {
+    for (const thread of threads) appliedRows.set(thread.id, {
+      sequence, seen: thread.lastSeenGlobalSequence ?? 0, version: thread.version
     })
   }
-  const applyRows = (rows: NavigationCampRows, ids: string[]): boolean => {
+  const applyRows = (rows: NavigationThreadRows, ids: string[]): boolean => {
     if (disposed) return false
-    const received = new Map(rows.camps.map(camp => [camp.id, camp]))
+    const received = new Map(rows.threads.map(thread => [thread.id, thread]))
     const acceptedIds = ids.filter(id => {
       const previous = appliedRows.get(id)
-      const camp = received.get(id)
+      const thread = received.get(id)
       // A newer C read says nothing about whether B's row was refreshed.
       return !previous || (rows.throughGlobalSequence >= previous.sequence
-        && (!camp || ((camp.lastSeenGlobalSequence ?? 0) >= previous.seen && camp.version >= previous.version)))
+        && (!thread || ((thread.lastSeenGlobalSequence ?? 0) >= previous.seen && thread.version >= previous.version)))
     })
     if (acceptedIds.length === 0) return false
     const accepted = new Set(acceptedIds)
-    const camps = rows.camps.filter(camp => accepted.has(camp.id))
+    const threads = rows.threads.filter(thread => accepted.has(thread.id))
     for (const id of acceptedIds) {
-      const camp = received.get(id)
-      if (camp) rememberRows([camp], rows.throughGlobalSequence)
+      const thread = received.get(id)
+      if (thread) rememberRows([thread], rows.throughGlobalSequence)
       else {
         const previous = appliedRows.get(id)
         appliedRows.set(id, {
@@ -84,14 +84,14 @@ export function createNavigationWindowReader(
         })
       }
     }
-    options.onRows?.({ ...rows, camps }, acceptedIds)
+    options.onRows?.({ ...rows, threads }, acceptedIds)
     if (!snapshot) return true
-    const byId = new Map(camps.map(camp => [camp.id, camp]))
+    const byId = new Map(threads.map(thread => [thread.id, thread]))
     // Row reads never infer membership, order or counts from an incomplete window.
-    const replace = (camps: NavigationCampItem[]) => camps.map(camp => byId.get(camp.id) ?? camp)
+    const replace = (threads: NavigationThreadItem[]) => threads.map(thread => byId.get(thread.id) ?? thread)
     snapshot = { ...snapshot, throughGlobalSequence: Math.max(snapshot.throughGlobalSequence, rows.throughGlobalSequence),
-      quickChat: { ...snapshot.quickChat, recentCamps: replace(snapshot.quickChat.recentCamps) },
-      projects: snapshot.projects.map(group => ({ ...group, recentCamps: replace(group.recentCamps) })) }
+      quickChat: { ...snapshot.quickChat, recentThreads: replace(snapshot.quickChat.recentThreads) },
+      projects: snapshot.projects.map(group => ({ ...group, recentThreads: replace(group.recentThreads) })) }
     commit(snapshot, displayed)
     return true
   }
@@ -105,20 +105,20 @@ export function createNavigationWindowReader(
       if (!snapshot) scope.all = true
       // Core resolves the current group; the displayed row supplies the old group
       // during a move/delete. Deletion notifications also carry the old group explicitly.
-      let groupRows: NavigationCampRows | undefined
-      if (!scope.all && scope.groupCamps.size > 0) {
-        groupRows = await options.readCamps([...scope.groupCamps])
+      let groupRows: NavigationThreadRows | undefined
+      if (!scope.all && scope.groupThreads.size > 0) {
+        groupRows = await options.readThreads([...scope.groupThreads])
         groupRows.groupKeys.forEach(key => scope.groups.add(key))
-        allRows().filter(camp => scope.groupCamps.has(camp.id)).forEach(camp => scope.groups.add(navigationGroupKey(camp)))
+        allRows().filter(thread => scope.groupThreads.has(thread.id)).forEach(thread => scope.groups.add(navigationGroupKey(thread)))
         if (scope.groups.size === 0) scope.all = true
       }
       const keys = [...scope.groups]
       const next = scope.all || keys.length > 0
         ? await read({ groupLimits: { ...windows }, ...(scope.all ? {} : { groupKeys: keys }) })
         : undefined
-      const ids = [...new Set([...scope.camps, ...(scope.all ? options.getPinnedCampIds?.() ?? [] : [])])]
-      // State-only Camp IDs must not expand a simultaneous group's read scope.
-      const rows = ids.length > 0 ? await options.readCamps(ids) : undefined
+      const ids = [...new Set([...scope.threads, ...(scope.all ? options.getPinnedThreadIds?.() ?? [] : [])])]
+      // State-only Thread IDs must not expand a simultaneous group's read scope.
+      const rows = ids.length > 0 ? await options.readThreads(ids) : undefined
       if (disposed) return
       if (windows !== requested || beforeRows !== rowRevision) {
         restore(scope)
@@ -133,11 +133,11 @@ export function createNavigationWindowReader(
         } else snapshot = { ...snapshot, throughGlobalSequence: Math.max(snapshot.throughGlobalSequence, next.throughGlobalSequence),
           quickChat: scope.groups.has('quick-chat') ? next.quickChat : snapshot.quickChat,
           projects: [...snapshot.projects.filter(group => !scope.groups.has(group.projectKey)), ...next.projects] }
-        rememberRows([next.quickChat.recentCamps, ...next.projects.map(group => group.recentCamps)].flat(), next.throughGlobalSequence)
+        rememberRows([next.quickChat.recentThreads, ...next.projects.map(group => group.recentThreads)].flat(), next.throughGlobalSequence)
         displayed = windows
         commit(snapshot, displayed)
       }
-      if (groupRows) applyRows(groupRows, [...scope.groupCamps])
+      if (groupRows) applyRows(groupRows, [...scope.groupThreads])
       if (rows) applyRows(rows, ids)
     } catch (error) {
       if (disposed) return
@@ -154,25 +154,25 @@ export function createNavigationWindowReader(
     keys.forEach(key => pending.groups.add(key))
     return coordinator.refresh(trigger)
   }
-  const refreshCamps = (ids: string[], trigger: NavigationRefreshTrigger = 'invalidation'): Promise<void> => {
-    ids.forEach(id => pending.camps.add(id))
+  const refreshThreads = (ids: string[], trigger: NavigationRefreshTrigger = 'invalidation'): Promise<void> => {
+    ids.forEach(id => pending.threads.add(id))
     return coordinator.refresh(trigger)
   }
   return {
     ...coordinator,
     refresh(trigger) { pending.all = true; return coordinator.refresh(trigger) },
-    refreshCamps,
+    refreshThreads,
     refreshGroups,
     invalidate(change) {
-      if (change.scope === 'camp' && change.campId) return refreshCamps([change.campId])
+      if (change.scope === 'camp' && change.threadId) return refreshThreads([change.threadId])
       if (change.scope === 'group') {
         if (change.groupKeys?.length) return refreshGroups(change.groupKeys)
-        if (change.campId) { pending.groupCamps.add(change.campId); return coordinator.refresh('invalidation') }
+        if (change.threadId) { pending.groupThreads.add(change.threadId); return coordinator.refresh('invalidation') }
       }
       pending.all = true
       return coordinator.refresh('invalidation')
     },
-    acceptRows(rows) { if (applyRows(rows, rows.camps.map(camp => camp.id))) rowRevision += 1 },
+    acceptRows(rows) { if (applyRows(rows, rows.threads.map(thread => thread.id))) rowRevision += 1 },
     async resizeGroup(groupKey, limit) {
       if (disposed) throw new Error('Navigation window reader is disposed')
       if (!Number.isSafeInteger(limit) || limit < NAVIGATION_INITIAL_VISIBLE_CAMPS) {

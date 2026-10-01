@@ -125,7 +125,7 @@ describe('navigation preferences', () => {
     expect(store.loadDegradation?.code).toBe('navigation_preferences_invalid')
   })
 
-  it('removes one project locally and atomically clears its Project and Camp pins', async () => {
+  it('removes one project locally and atomically clears its Project and Thread pins', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'rovai-navigation-preferences-'))
     cleanup.push(directory)
     const filePath = join(directory, 'navigation.json')

@@ -41,6 +41,7 @@ fn agent_run_belongs_to_camp(
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWindowPage {
     pub schema_version: i64,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub agent_run_id: String,
     pub requested_before_sequence: Option<i64>,
@@ -248,6 +249,7 @@ fn select_items(
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWindowChanges {
     pub schema_version: i64,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub agent_run_id: String,
     pub requested_after_change_sequence: i64,

@@ -6,6 +6,8 @@ last_updated: 2026-09-27
 
 # Rovai-ai 文档导航
 
+公开会话统一称 Thread；改名和兼容边界先读 [Thread Naming v1](contracts/thread-naming-v1.md)。
+
 本文件定义 `docs/` 的职责、权威边界和读取顺序。人和 AI 在处理架构、实现、规划或文档任务前，应先从这里判断需要读取哪些资料，而不是默认加载全部历史文档。
 
 ## 从这里开始

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import type { AgentProfile, CheckoutState, MissionActivity, MissionChangedFile, MissionDelivery as Delivery, MissionFileDiff, MissionRecord, MissionWorkspaceChangesView } from '@contracts'
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { AttachmentCard } from './AttachmentCard'
 import { Icon, useMissionStatuses } from './MissionControls'
 import { missionCommand, missionError } from './useMissions'
@@ -16,7 +16,7 @@ import { displayProjectPath } from '../../shared/project-display-name'
 import { UiText, getInterfaceLanguage, uiAttribute, useUiText } from './interface-language'
 
 export function MissionActivityDocument({ mission, agents, onSource, onNotify, onWorkspaceCleanupRequested }: {
-  mission: MissionRecord; agents: AgentProfile[]; onSource(id: string): void; onNotify(message: string): void; onWorkspaceCleanupRequested(campId: string): Promise<void>
+  mission: MissionRecord; agents: AgentProfile[]; onSource(id: string): void; onNotify(message: string): void; onWorkspaceCleanupRequested(threadId: string): Promise<void>
 }) {
   const preview = useFilePreview(), layout = useOptionalFilePreviewLayout()
   const source = (id: string) => { if (layout?.compact) preview.hidePane(); onSource(id) }
@@ -34,8 +34,8 @@ export function missionChangesVisible(git: boolean, workspaceState: MissionWorks
 export function missionCleanupAttentionVisible(workspaceState: MissionWorkspaceState | null, diagnostic: string | null): boolean {
   return Boolean(diagnostic) && (workspaceState === 'ready' || workspaceState === 'cleanup_failed')
 }
-export function MissionDeliveryPanel({ mission, agents, onSource, onNotify, onWorkspaceCleanupRequested }: { mission: MissionRecord; agents: AgentProfile[]; onSource(id: string): void; onNotify(message: string): void; onWorkspaceCleanupRequested(campId: string): Promise<void> }) {
-  const client = useCampClient()
+export function MissionDeliveryPanel({ mission, agents, onSource, onNotify, onWorkspaceCleanupRequested }: { mission: MissionRecord; agents: AgentProfile[]; onSource(id: string): void; onNotify(message: string): void; onWorkspaceCleanupRequested(threadId: string): Promise<void> }) {
+  const client = useThreadClient()
   const [data, setData] = useState<Delivery | null>(null), [error, setError] = useState(''), [revision, setRevision] = useState(0)
   const [cleanupBusy, setCleanupBusy] = useState(false)
   useEffect(() => {
@@ -50,7 +50,7 @@ export function MissionDeliveryPanel({ mission, agents, onSource, onNotify, onWo
       setData(current => current?.workspace
         ? { ...current, workspace: { ...current.workspace, state: 'cleanup_pending', diagnostic: null } }
         : current)
-      void onWorkspaceCleanupRequested(mission.campId).catch(error => onNotify(uiAttribute("使命 Worktree 清理已开始，但信息刷新失败：{0}", String(missionError(error)))))
+      void onWorkspaceCleanupRequested(mission.threadId).catch(error => onNotify(uiAttribute("使命 Worktree 清理已开始，但信息刷新失败：{0}", String(missionError(error)))))
     } catch (error) { onNotify(missionError(error)) } finally { setCleanupBusy(false) }
   }
   const cleanupRefused = data?.workspace?.state === 'ready' && Boolean(data.workspace.diagnostic)
@@ -70,7 +70,7 @@ export function MissionDeliveryPanel({ mission, agents, onSource, onNotify, onWo
       </div>
       {missionChangesVisible(data.git, data.workspace?.state ?? null) && <MissionChanges key={`${data.workspace?.id}:${data.workspace?.baseSha}`} mission={mission} baseSha={data.workspace?.baseSha ?? null}/>}
       <section className="mission-delivery-section"><h3><UiText zh={"队员交付 "} /><span>{data.files.length || ''}</span></h3>{data.files.map(file => <div className="mission-delivery-file" key={`${file.messageId}:${file.attachmentId}`}>
-        <div className="mission-artifact"><AttachmentCard presentation="agent-timeline" attachment={{ id: file.attachmentId, displayName: file.displayName, kind: file.kind, fileCount: file.fileCount, mediaType: file.mediaType, byteSize: file.byteSize, previewKind: file.previewKind, availability: 'unknown' }} locator={{ owner: 'message', campId: mission.campId, messageId: file.messageId, attachmentRefId: file.attachmentId }} onNotify={onNotify}/><small>{agents.find(a => a.agentId === file.agentId)?.displayName ?? uiAttribute('队员')} · {missionDate(file.createdAt)}</small></div>
+        <div className="mission-artifact"><AttachmentCard presentation="agent-timeline" attachment={{ id: file.attachmentId, displayName: file.displayName, kind: file.kind, fileCount: file.fileCount, mediaType: file.mediaType, byteSize: file.byteSize, previewKind: file.previewKind, availability: 'unknown' }} locator={{ owner: 'message', threadId: mission.threadId, messageId: file.messageId, attachmentRefId: file.attachmentId }} onNotify={onNotify}/><small>{agents.find(a => a.agentId === file.agentId)?.displayName ?? uiAttribute('队员')} · {missionDate(file.createdAt)}</small></div>
         <button className="mission-source-link" onClick={() => onSource(file.messageId)}><UiText zh={"查看来源"} /></button>
       </div>)}{!data.files.length && <p className="mission-section-empty"><UiText zh={"暂无队员交付的文件。"} /></p>}</section>
     </>}
@@ -97,9 +97,9 @@ function putMissionDiff(store: MissionDiffStore, fileId: string, diff: MissionFi
     store.cache.delete(oldest)
   }
 }
-function eventCampId(params: unknown): string | null {
-  return typeof params === 'object' && params !== null && typeof (params as Record<string, unknown>).campId === 'string'
-    ? (params as Record<string, string>).campId
+function eventThreadId(params: unknown): string | null {
+  return typeof params === 'object' && params !== null && typeof (params as Record<string, unknown>).threadId === 'string'
+    ? (params as Record<string, string>).threadId
     : null
 }
 function staleMissionDiffSnapshot(error: unknown): boolean {
@@ -399,7 +399,7 @@ function missionReadTime(value: string): string {
 
 function MissionChanges({ mission, baseSha }: { mission: MissionRecord; baseSha: string | null }) {
   const t = useUiText()
-  const client = useCampClient()
+  const client = useThreadClient()
   const [expanded, setExpanded] = useState(false), [view, setView] = useState<MissionWorkspaceChangesView | null>(null)
   const [error, setError] = useState(''), [loading, setLoading] = useState(false), [attempted, setAttempted] = useState(false)
   const [stale, setStale] = useState(false), [readAt, setReadAt] = useState('')
@@ -438,14 +438,14 @@ function MissionChanges({ mission, baseSha }: { mission: MissionRecord; baseSha:
   useEffect(() => {
     const terminal = client.onEvent?.(event => {
       if (event.method !== 'agent_run.terminal') return
-      const campId = eventCampId(event.params)
-      if (!campId || campId === mission.campId) markStale()
+      const threadId = eventThreadId(event.params)
+      if (!threadId || threadId === mission.threadId) markStale()
     })
     const visible = () => { if (document.visibilityState === 'visible') markStale() }
     window.addEventListener('focus', visible)
     document.addEventListener('visibilitychange', visible)
     return () => { terminal?.(); window.removeEventListener('focus', visible); document.removeEventListener('visibilitychange', visible) }
-  }, [client, markStale, mission.campId])
+  }, [client, markStale, mission.threadId])
   useEffect(() => {
     alive.current = true
     return () => {
@@ -620,7 +620,7 @@ function activityText(item: MissionActivity, statuses: ReturnType<typeof useMiss
 export function MissionActivityPanel({ mission, agents, onSource }: {mission: MissionRecord; agents: AgentProfile[]; onSource(id: string): void}) {
   const t = useUiText()
   const statuses = useMissionStatuses()
-  const client = useCampClient(), [items, setItems] = useState<MissionActivity[]>([]), [loading, setLoading] = useState(true), [more, setMore] = useState(false), [error, setError] = useState(''), [retry, setRetry] = useState(0)
+  const client = useThreadClient(), [items, setItems] = useState<MissionActivity[]>([]), [loading, setLoading] = useState(true), [more, setMore] = useState(false), [error, setError] = useState(''), [retry, setRetry] = useState(0)
   useEffect(() => { let current=true; setLoading(true); void client.request<MissionActivity[]>('missions.activity', {missionId: mission.missionId}).then(items => {if(current) {setItems(items); setMore(items.length===100); setError('')}}).catch(error => {if(current) setError(missionError(error))}).finally(() => {if(current) setLoading(false)}); return () => {current=false} }, [client, mission.missionId, mission.updatedAt, retry])
   async function earlier() {setLoading(true); try {const next=await client.request<MissionActivity[]>('missions.activity',{missionId:mission.missionId,before:items.at(-1)?.id}); setItems(items => [...items,...next.filter(next=>!items.some(item=>item.id===next.id))]); setMore(next.length===100); setError('')}catch(error){setError(missionError(error))}finally{setLoading(false)}}
   return <section className="mission-activity-panel" aria-label={t('使命活动')}><h3><UiText zh={"使命历史"} /></h3>{items.map(item => <div className="mission-history-row" key={item.id}><Icon name="history"/><div><p><strong>{item.actorType==='user' ? t('你') : agents.find(a=>a.agentId===item.actorId)?.displayName ?? t('队员')}</strong> {activityText(item, statuses, t)}</p><time dateTime={item.createdAt} title={new Date(item.createdAt).toLocaleString(getInterfaceLanguage() === 'en' ? 'en-US' : 'zh-CN')}>{missionDate(item.createdAt)}</time>{typeof item.changes.sourceMessageId==='string' && <button className="mission-source-link" onClick={()=>onSource(item.changes.sourceMessageId as string)}><UiText zh={"查看说明"} /></button>}</div></div>)}

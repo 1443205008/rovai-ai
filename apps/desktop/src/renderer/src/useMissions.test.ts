@@ -11,12 +11,12 @@ describe('unreadMissionCount', () => {
   })
 })
 
-it('ignores ordinary Camp switching and refreshes only known Mission changes', () => {
+it('ignores ordinary Thread switching and refreshes only known Mission changes', () => {
   const ids = new Set(['mission-camp'])
-  for (const reason of ['camps.enter', 'navigation.campViewed', 'agent_run.terminal']) {
-    expect(shouldRefreshMissionsForEvent({ method: 'navigation.invalidated', params: { reason, campId: 'ordinary-camp' } }, ids)).toBe(false)
+  for (const reason of ['threads.enter', 'navigation.campViewed', 'agent_run.terminal']) {
+    expect(shouldRefreshMissionsForEvent({ method: 'navigation.invalidated', params: { reason, threadId: 'ordinary-camp' } }, ids)).toBe(false)
   }
-  expect(shouldRefreshMissionsForEvent({ method: 'navigation.invalidated', params: { reason: 'agent_run.terminal', campId: 'mission-camp' } }, ids)).toBe(true)
+  expect(shouldRefreshMissionsForEvent({ method: 'navigation.invalidated', params: { reason: 'agent_run.terminal', threadId: 'mission-camp' } }, ids)).toBe(true)
   expect(shouldRefreshMissionsForEvent({ method: 'missions.invalidated', params: {} }, ids)).toBe(true)
-  expect(shouldRefreshMissionsForEvent({ method: 'events.batch', params: { events: [{ eventType: 'camp_message.sent', campId: 'ordinary-camp' }] } }, ids)).toBe(false)
+  expect(shouldRefreshMissionsForEvent({ method: 'events.batch', params: { events: [{ eventType: 'camp_message.sent', threadId: 'ordinary-camp' }] } }, ids)).toBe(false)
 })

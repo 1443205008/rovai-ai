@@ -1,14 +1,14 @@
 ---
 document_type: verification-report
 status: verified-with-scoped-limitations
-verified_at: 2026-10-01
+verified_at: 2026-10-02
 baseline_ref: e3bd6b626d746f5773b334a4660756dfaaab1863
 ---
 
 # 执行指标读取与引用复用验收
 
 本轮只收口执行面板取数：可见性、请求范围、相同结果复用及迟到落盘通知。
-保持既有速度／耗时／Run Card／Context／气泡布局和 v3 算法，不修改原生字段资格或数据库结构。
+保持既有速度／耗时／Run Card／Context／气泡布局和 v3 算法，不修改原生字段资格。取数收口本身不改变数据库结构；后续 main 更名冲突的兼容迁移另见下节。
 接口与生命周期由 [Runtime Execution Metrics v1](../../contracts/runtime-execution-metrics-v1.md#renderer-读取生命周期) 拥有。
 
 ## 改动与证据
@@ -33,7 +33,7 @@ cargo test -p rovai-core --lib execution_usage_batch_keeps_requested_scope
 ROVAI_KEEP_EXECUTION_METRICS_FIXTURE=1 pnpm test:execution-metrics-ui
 ```
 
-UI 入口挂载生产 CampWorkspace/CSS，复用已有封闭 Fixture API；Electron 使用本次临时 userData 和
+UI 入口挂载生产 ThreadWorkspace/CSS，复用已有封闭 Fixture API；Electron 使用本次临时 userData 和
 Skill Library，不启动 Core／Runtime，也不访问日常数据库。保留目录含 `metrics-report.json` 和双主题截图。
 测试脚本、固定请求与数值来源分别位于：
 
@@ -58,3 +58,25 @@ Skill Library，不启动 Core／Runtime，也不访问日常数据库。保留�
   `e3bd6b62` 的 `hideSummary` Run Card 结构上也不适用；本轮没有改写该旧 Fast 验收场景，也不计为通过。
 - 本轮未重新打包 App 或调用 Provider；前轮真实原生边界证据继续由[原生边界验收](native-boundaries-verification-2026-10-01.md)拥有。
   Windows／移动 Web 的实际可见性验收不从本次 macOS Electron 结果推定通过。
+
+
+## 2026-10-02 合入 main 的兼容收口
+
+合入 main `4aa0e9ed`（含 Camp → Thread）。生产 Renderer 改为 `ThreadWorkspace`，指标两接口使用
+`threadId`，接受旧 `campId` 并拒绝重复同义字段；Run／Session 的数值含义和采集边界保持原合同。
+
+main 的更名和已安装指标分支都占用 Migration 178 / schema 128。保留指标分支既有 178/179，
+将 Thread 格式迁移放在 180，当前 schema 为 130：
+
+- 已安装指标 schema 128/129：保留上下文数量／比例，通过既有 179 和新 180 升级；
+- 已安装 main Thread schema 128：只接受完整 v32 准入、没有指标表且没有后续收据的精确布局；
+  179 原子补建指标投影和比例，180 记录收口，不重建已具备的 Thread Context 表；
+- 原 schema 127：顺序经过指标 178/179 和 Thread 180。
+
+两条路径沿用原 ID、Native Binding、Bootstrap、历史 Context 字节和原生 Session；没有访问日常数据库。
+现有 DB owner 扩展回滚、保留与重开边界，相关结果由本轮附件保存。更名前的测试计数属于上节基线，
+更名后全量 Vitest 已为 225 文件／2,430 项。生产 ThreadWorkspace 的同一隔离 Renderer 验收再次通过。
+
+合并后的默认 Rust workspace 449 项通过／1 项既有忽略，Monitoring 扩展 12 项、数据库扩展 91 项和
+Thread 双路径升级 owner 1 项通过。TypeScript、Desktop／Web 构建、Product Contract 指纹、docs:test
+10 项及对 `4aa0e9ed` 的 diff-aware 文档门禁通过；没有通过测试的旧 Fast 脚本仍按上节单独记录。

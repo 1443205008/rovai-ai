@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react'
-import type { CampSnapshot, MissionRecord } from '@contracts'
+import type { ThreadSnapshot, MissionRecord } from '@contracts'
 import { AppHeader } from './AppHeader'
 import { useMobileLayout } from './MobileLayout'
 import { DialogControlIcon } from './AppDialog'
@@ -7,8 +7,8 @@ import { Icon } from './MissionControls'
 import { useFilePreview } from './FilePreviewContext'
 import { UiText, uiAttribute } from './interface-language'
 
-export function MissionHeader({ mission, drawer, projectName, camp, openRequest, executionTakesPreviewPriority = false, onExpand, onFold, onClose, onFocusApprovals, detailEntryHostRef }: {
-  mission: MissionRecord; drawer: boolean; projectName: string | null; camp: CampSnapshot; openRequest: number
+export function MissionHeader({ mission, drawer, projectName, thread, openRequest, executionTakesPreviewPriority = false, onExpand, onFold, onClose, onFocusApprovals, detailEntryHostRef }: {
+  mission: MissionRecord; drawer: boolean; projectName: string | null; thread: ThreadSnapshot; openRequest: number
   executionTakesPreviewPriority?: boolean
   onExpand(): void; onFold(): void; onClose(): void; onFocusApprovals(): void
   detailEntryHostRef(host: HTMLDivElement | null): void
@@ -31,10 +31,10 @@ export function MissionHeader({ mission, drawer, projectName, camp, openRequest,
     preview.openExecution,
     preview.openMissionActivity
   ])
-  if (mobile) return <AppHeader campTitle={mission.title} contextLabel={projectName} camp={camp}
+  if (mobile) return <AppHeader threadTitle={mission.title} contextLabel={projectName} thread={thread}
     detailEntryHostRef={detailEntryHostRef} onFocusApprovals={onFocusApprovals}
     onOpenConversationList={onClose} conversationListLabel={uiAttribute("返回使命板")} />
-  return <AppHeader campTitle={mission.title} contextLabel={projectName} camp={camp} detailEntryHostRef={detailEntryHostRef}
+  return <AppHeader threadTitle={mission.title} contextLabel={projectName} thread={thread} detailEntryHostRef={detailEntryHostRef}
     onFocusApprovals={onFocusApprovals} hideTitle={drawer}
     leading={<div className="mission-session-leading">
       <button className="file-preview-toggle" aria-label={drawer ? uiAttribute("关闭使命抽屉") : uiAttribute("返回使命板")} title={drawer ? uiAttribute("关闭使命抽屉") : uiAttribute("返回使命板")} onClick={onClose}>

@@ -992,7 +992,7 @@ impl Core {
                     ))
                 })?;
                 let scheduled = execution.result.payload["scheduled"] == json!(true);
-                let camp_id = execution.result.payload["campId"]
+                let camp_id = execution.result.payload["threadId"]
                     .as_str()
                     .map(str::to_string);
                 drop(database);
@@ -1302,7 +1302,7 @@ impl Core {
                     &user_command_envelope(params.command_id, params.command),
                 )?;
                 if execution.result.status == CommandResultStatus::Applied
-                    && let Some(camp_id) = execution.result.payload["campId"].as_str()
+                    && let Some(camp_id) = execution.result.payload["threadId"].as_str()
                 {
                     self.attachment_views
                         .ensure_empty_camp_ready(&mut database, camp_id)?;
@@ -1310,7 +1310,7 @@ impl Core {
                 emit_missions_invalidated(
                     &self.output,
                     "missions.create",
-                    execution.result.payload["campId"].as_str(),
+                    execution.result.payload["threadId"].as_str(),
                 );
                 Ok(serde_json::to_value(execution.result)?)
             }

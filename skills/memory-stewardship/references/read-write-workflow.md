@@ -5,7 +5,7 @@ Read exact help for each needed `rovai memory view|search|read|write` operation.
 ## Capture: complete View before mutation
 
 1. Form one atomic candidate and select its exact Scope.
-2. View the global Hearth, your Companion, or the applicable set for you and one present Camp counterparty.
+2. View the global Hearth, your Companion, or the applicable set for you and one present Thread counterparty.
 3. Require `complete: true` and `itemCount == items.length`; `totalBodyBytes` measures that full set. Stop on failure, incompleteness or inconsistency.
 4. Compare every item. Equivalent: stop. The same understanding needs correction and `agentCanRevise: true`: revise. No equivalent and clear lasting value: add. Uncertain: stop.
 5. For revise, copy the selected item's entire `target` unchanged. Core rechecks authority and Revision CAS. Mutual Relationship items support understanding and duplicate detection, not Agent revision.

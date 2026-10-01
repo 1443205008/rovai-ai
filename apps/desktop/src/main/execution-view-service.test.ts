@@ -159,7 +159,7 @@ describe('ExecutionViewService', () => {
     const scope: ExecutionViewScope = {
       channelConversationId: 'channel-original',
       targetAppId: 'app-a',
-      campId: 'camp-a',
+      threadId: 'camp-a',
       agentId: 'agent-a',
       focusRunId: 'run-a',
       maxRunCreatedAt: '2026-09-01T00:00:00Z'
@@ -303,7 +303,7 @@ describe('ExecutionViewService', () => {
       const href = await service.createExecutionViewUrl({
         channelConversationId: 'channel-a',
         targetAppId: 'app-a',
-        campId: 'camp-a',
+        threadId: 'camp-a',
         agentId: 'agent-a',
         focusRunId: 'run-a',
         maxRunCreatedAt: '2026-09-01T00:00:00Z'
@@ -366,7 +366,7 @@ describe('ExecutionViewService', () => {
       const href = await service.createExecutionViewUrl({
         channelConversationId: 'channel-a',
         targetAppId: 'app-a',
-        campId: 'camp-a',
+        threadId: 'camp-a',
         agentId: 'agent-a',
         focusRunId: 'run-a',
         maxRunCreatedAt: '2026-09-01T00:00:00Z'
@@ -387,7 +387,7 @@ describe('ExecutionViewService', () => {
       expect(await service.createExecutionViewUrl({
         channelConversationId: 'channel-a',
         targetAppId: 'app-a',
-        campId: 'camp-a',
+        threadId: 'camp-a',
         agentId: 'agent-a',
         focusRunId: 'run-a',
         maxRunCreatedAt: '2026-09-01T00:00:00Z'
@@ -437,11 +437,11 @@ function coreSnapshot(): unknown {
   return {
     schemaVersion: 1,
     focusRunId: 'run-a',
-    camp: { id: 'camp-a', title: '产品讨论' },
+    thread: { id: 'camp-a', title: '产品讨论' },
     agent: { id: 'agent-a', displayName: '叮叮' },
     runs: [{
       id: 'run-a',
-      campTurnId: 'turn-a',
+      threadTurnId: 'turn-a',
       purpose: '公开触发消息',
       invocationKind: 'direct',
       status: 'running',

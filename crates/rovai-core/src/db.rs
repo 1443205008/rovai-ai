@@ -6,6 +6,8 @@ mod mission_context;
 mod mission_details;
 #[path = "db_notification_model.rs"]
 pub(crate) mod notification_model;
+#[path = "db_thread_names.rs"]
+mod thread_names;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -30,7 +32,7 @@ use crate::agent_identity::{
 };
 #[cfg(all(test, feature = "extended-tests"))]
 use crate::agent_runtime_adapter::SkillDeliveryGroupKey;
-use crate::camp_id::CampId;
+use crate::camp_id::ThreadId;
 use crate::command::canonical_json_digest;
 use crate::context_index::{camp_message_content_digest, extract_context_references};
 use crate::database_admission::{
@@ -272,13 +274,13 @@ const CAMP_FAST_LIFETIME_SCHEMA_OBJECTS: &[(&str, &str)] = &[
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MainCampMigrationSource {
+pub(crate) enum MainThreadMigrationSource {
     Pending,
     Fast,
     FastLifetime,
 }
 
-impl MainCampMigrationSource {
+impl MainThreadMigrationSource {
     fn has_fast(self) -> bool {
         self != Self::Pending
     }
@@ -293,7 +295,7 @@ impl MainCampMigrationSource {
 }
 
 pub(crate) const CURRENT_DATA_CONTRACT_VERSION: &str = "v1.72";
-pub(crate) const CURRENT_PROJECTION_SCHEMA_VERSION: i64 = 129;
+pub(crate) const CURRENT_PROJECTION_SCHEMA_VERSION: i64 = 130;
 const V147_MIGRATION_SOURCE_DATA_CONTRACT_VERSION: &str = "v1.54";
 const V147_MIGRATION_SOURCE_PROJECTION_SCHEMA_VERSION: i64 = 96;
 const V145_MIGRATION_SOURCE_DATA_CONTRACT_VERSION: &str = "v1.53";
@@ -747,6 +749,7 @@ struct CurrentMigrationState {
     v177: bool,
     v178: bool,
     v179: bool,
+    v180: bool,
 }
 
 impl CurrentMigrationState {
@@ -768,11 +771,19 @@ impl CurrentMigrationState {
     }
 
     fn admits(&self, contract: &str, schema: i64, classifier: &str) -> bool {
+        if self.v180 {
+            let mut previous = *self;
+            previous.v180 = false;
+            return contract == CURRENT_DATA_CONTRACT_VERSION
+                && schema == CURRENT_PROJECTION_SCHEMA_VERSION
+                && self.v179
+                && previous.admits("v1.72", 129, classifier);
+        }
         if self.v179 {
             let mut previous = *self;
             previous.v179 = false;
             return contract == CURRENT_DATA_CONTRACT_VERSION
-                && schema == CURRENT_PROJECTION_SCHEMA_VERSION
+                && schema == 129
                 && self.v178
                 && previous.admits("v1.72", 128, classifier);
         }
@@ -2771,7 +2782,7 @@ fn connection_has_admissible_data_contract(connection: &Connection) -> rusqlite:
 /// already used those numbers. Only the exact shipped main schemas may remap.
 fn main_camp_migration_collision(
     connection: &Connection,
-) -> rusqlite::Result<Option<MainCampMigrationSource>> {
+) -> rusqlite::Result<Option<MainThreadMigrationSource>> {
     let marker = connection
         .query_row(
             "SELECT contract_version, projection_schema_version, classifier_version
@@ -2790,15 +2801,15 @@ fn main_camp_migration_collision(
         return Ok(None);
     };
     let source = match (contract.as_str(), schema, classifier.as_str()) {
-        ("v1.33", 71, V116_CLASSIFIER_VERSION) => MainCampMigrationSource::Pending,
-        ("v1.34", 72, V116_CLASSIFIER_VERSION) => MainCampMigrationSource::Fast,
-        ("v1.34", 73, V116_CLASSIFIER_VERSION) => MainCampMigrationSource::FastLifetime,
+        ("v1.33", 71, V116_CLASSIFIER_VERSION) => MainThreadMigrationSource::Pending,
+        ("v1.34", 72, V116_CLASSIFIER_VERSION) => MainThreadMigrationSource::Fast,
+        ("v1.34", 73, V116_CLASSIFIER_VERSION) => MainThreadMigrationSource::FastLifetime,
         _ => return Ok(None),
     };
     let mut state = load_current_migration_state(connection)?;
     if !state.v117
         || state.v118 != source.has_fast()
-        || state.v119 != (source == MainCampMigrationSource::FastLifetime)
+        || state.v119 != (source == MainThreadMigrationSource::FastLifetime)
     {
         return Ok(None);
     }
@@ -2834,10 +2845,10 @@ fn main_camp_migration_collision(
 
 fn pending_fast_schema_matches(
     connection: &Connection,
-    source: MainCampMigrationSource,
+    source: MainThreadMigrationSource,
 ) -> rusqlite::Result<bool> {
     let has_fast = source.has_fast();
-    let has_lifetime = source == MainCampMigrationSource::FastLifetime;
+    let has_lifetime = source == MainThreadMigrationSource::FastLifetime;
     let state = load_current_migration_state(connection)?;
     let has_source_attachments = state.v137;
     let normalized = |sql: &str| {
@@ -2953,9 +2964,9 @@ fn pending_fast_schema_matches(
 /// rows or turn ordinary upgrades into whole-database integrity diagnostics.
 fn validate_joined_channel_schema(connection: &Connection) -> Result<()> {
     let source = if load_current_migration_state(connection)?.v130 {
-        MainCampMigrationSource::FastLifetime
+        MainThreadMigrationSource::FastLifetime
     } else {
-        MainCampMigrationSource::Fast
+        MainThreadMigrationSource::Fast
     };
     if !pending_fast_schema_matches(connection, source)? {
         anyhow::bail!("joined schema is missing the exact Pending/Fast objects or columns");
@@ -3134,6 +3145,7 @@ pub(crate) fn classify_database_contract(
         return Ok(DatabaseContractClassification::Unknown(None));
     };
     let migrations = load_current_migration_state(connection)?;
+    let legacy_thread_source = legacy_thread_names_v178_source(connection, &marker, migrations)?;
     let legacy_client_source = legacy_web_client_source(connection, &marker, migrations)?;
     let deployed_tool_source = marker.contract_version == "v1.52"
         && marker.projection_schema_version == 92
@@ -3243,7 +3255,9 @@ pub(crate) fn classify_database_contract(
         || (migrations.v175 && !notification_model::schema_matches(connection)?)
         || (migrations.v176 && !lark_channel_v176_schema_matches(connection)?)
         || (migrations.v177 && !navigation_summary_schema_matches(connection)?)
-        || (migrations.v178 && !runtime_session_context_schema_matches(connection)?)
+        || (migrations.v178
+            && !legacy_thread_source
+            && !runtime_session_context_schema_matches(connection)?)
         || (migrations.v179 && !runtime_session_context_ratio_schema_matches(connection)?)
         || (migrations.v156
             && !migrations.v157
@@ -3517,7 +3531,7 @@ fn camp_message_agent_run_v163_schema_matches(connection: &Connection) -> rusqli
             'context_manifest_v28_only_insert',
             'context_manifest_v29_only_insert',
             'context_manifest_v30_only_insert',
-            'context_manifest_v31_only_insert',
+            'context_manifest_v31_only_insert','context_manifest_v32_only_insert',
             'context_manifest_quote_profile_insert',
             'runtime_input_delivery_attachment_auth_insert'
         )
@@ -3541,8 +3555,8 @@ fn camp_message_agent_run_v163_schema_matches(connection: &Connection) -> rusqli
                 .contains("formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29)")
             || context_manifest_schema
                 .contains("formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)")
-            || context_manifest_schema
-                .contains("formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31)"))
+            || (context_manifest_schema
+                .contains("formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31)") || context_manifest_schema.contains("formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32)")))
         && (context_manifest_schema
             .contains("context_manifest_version IN (19, 20, 21, 22, 23, 24, 25, 26)")
             || context_manifest_schema
@@ -3555,15 +3569,15 @@ fn camp_message_agent_run_v163_schema_matches(connection: &Connection) -> rusqli
             || context_manifest_schema.contains(
                 "context_manifest_version IN (19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30)",
             )
-            || context_manifest_schema.contains(
+            || (context_manifest_schema.contains(
                 "context_manifest_version IN (19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31)",
-            ))
+            ) || context_manifest_schema.contains("context_manifest_version IN (19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32)")))
         && (context_manifest_schema.contains("run_facts_schema_version IN (1, 2, 3, 4, 5)")
             || context_manifest_schema.contains("run_facts_schema_version IN (1, 2, 3, 4, 5, 6)")
             || context_manifest_schema
                 .contains("run_facts_schema_version IN (1, 2, 3, 4, 5, 6, 7)")
-            || context_manifest_schema
-                .contains("run_facts_schema_version IN (1, 2, 3, 4, 5, 6, 7, 8)"))
+            || (context_manifest_schema
+                .contains("run_facts_schema_version IN (1, 2, 3, 4, 5, 6, 7, 8)") || context_manifest_schema.contains("run_facts_schema_version IN (1, 2, 3, 4, 5, 6, 7, 8, 9)")))
         && automation_run_schema.contains("trigger_message_id TEXT UNIQUE")
         && automation_run_schema.contains("trigger_delivery_id TEXT UNIQUE")
         && mission_start_schema
@@ -3594,7 +3608,7 @@ fn default_recipient_mention_v166_schema_matches(
             'agent_run_input_v28_only_insert',
             'agent_run_input_v29_only_insert',
             'agent_run_input_v30_only_insert',
-            'agent_run_input_v31_only_insert',
+            'agent_run_input_v31_only_insert','agent_run_input_v32_only_insert',
             'agent_run_input_context_projection_immutable'
         )
         "#,
@@ -3614,7 +3628,7 @@ fn default_recipient_mention_v166_schema_matches(
             'context_manifest_v28_only_insert',
             'context_manifest_v29_only_insert',
             'context_manifest_v30_only_insert',
-            'context_manifest_v31_only_insert',
+            'context_manifest_v31_only_insert','context_manifest_v32_only_insert',
             'context_manifest_quote_profile_insert',
             'runtime_input_delivery_attachment_auth_insert'
         )
@@ -3624,7 +3638,7 @@ fn default_recipient_mention_v166_schema_matches(
     )?;
     let new_write_trigger: String = connection
         .query_row(
-            "SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'trigger' AND name IN ('context_manifest_v27_only_insert', 'context_manifest_v28_only_insert', 'context_manifest_v29_only_insert', 'context_manifest_v30_only_insert', 'context_manifest_v31_only_insert')",
+            "SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'trigger' AND name IN ('context_manifest_v27_only_insert', 'context_manifest_v28_only_insert', 'context_manifest_v29_only_insert', 'context_manifest_v30_only_insert', 'context_manifest_v31_only_insert','context_manifest_v32_only_insert')",
             [],
             |row| row.get(0),
         )
@@ -3640,6 +3654,27 @@ fn default_recipient_mention_v166_schema_matches(
         [],
         |row| row.get(0),
     )?;
+    if manifest_schema.contains(
+        "context_manifest_version IN (19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32)",
+    ) {
+        return Ok(input_columns == 2
+            && input_guards == 2
+            && triggers == 3
+            && manifest_schema.contains(
+                "formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32)",
+            )
+            && manifest_schema
+                .contains("context_delivery_profile_version IN (4, 5, 6, 7, 8, 9, 10)")
+            && new_write_trigger.contains("NEW.context_manifest_version = 32")
+            && new_write_trigger.contains("NEW.context_manifest_version = 28")
+            && new_write_trigger.contains("NEW.context_manifest_version = 30")
+            && new_write_trigger.contains("NEW.context_manifest_version = 27")
+            && new_write_trigger.contains("invocation_kind = 'batch'")
+            && profile_trigger.contains("NEW.context_manifest_version = 31")
+            && profile_trigger.contains("NEW.context_delivery_profile_version = 10")
+            && attachment_trigger
+                .contains("context_manifest_version IN (26, 27, 28, 29, 30, 31, 32)"));
+    }
     if manifest_schema.contains(
         "context_manifest_version IN (19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31)",
     ) {
@@ -3988,6 +4023,53 @@ fn navigation_summary_schema_matches(connection: &Connection) -> rusqlite::Resul
         [], |row| row.get(0))
 }
 
+// Main's Thread naming migration and the installed metrics preview both used 178/128.
+// Admit only the exact main layout: v32 guards with no metrics table or later receipts.
+fn legacy_thread_names_v178_source(
+    connection: &Connection,
+    marker: &DatabaseContractMarker,
+    migrations: CurrentMigrationState,
+) -> rusqlite::Result<bool> {
+    if marker.contract_version != "v1.72"
+        || marker.projection_schema_version != 128
+        || !migrations.v178
+        || migrations.v179
+        || migrations.v180
+    {
+        return Ok(false);
+    }
+    connection.query_row(
+        "SELECT NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_session_context_latest')
+          AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='context_manifest_v32_only_insert')
+          AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='agent_run_input_v32_only_insert')",
+        [], |row| row.get(0))
+}
+
+fn create_runtime_session_context_table(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(r#"
+            CREATE TABLE runtime_session_context_latest (
+                conversation_id TEXT NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+                native_binding_id TEXT NOT NULL,
+                native_binding_generation INTEGER NOT NULL CHECK(native_binding_generation >= 1),
+                native_session_id TEXT NOT NULL,
+                runtime_kind TEXT NOT NULL,
+                runtime_version TEXT,
+                model_key TEXT,
+                effective_config_digest TEXT,
+                context_used_tokens INTEGER CHECK(context_used_tokens IS NULL OR context_used_tokens >= 0),
+                context_window_tokens INTEGER CHECK(context_window_tokens IS NULL OR context_window_tokens > 0),
+                source TEXT NOT NULL,
+                dialect_id TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                source_agent_run_id TEXT NOT NULL,
+                source_execution_epoch INTEGER NOT NULL CHECK(source_execution_epoch >= 1),
+                PRIMARY KEY(conversation_id),
+                CHECK(context_used_tokens IS NULL OR context_window_tokens IS NULL
+                    OR context_used_tokens <= context_window_tokens)
+            );
+    "#)
+}
+
 fn runtime_session_context_ratio_schema_matches(connection: &Connection) -> rusqlite::Result<bool> {
     let column: bool = connection.query_row(
         "SELECT COUNT(*)=1 FROM pragma_table_info('runtime_session_context_latest') WHERE name='native_context_ratio' AND type='REAL' AND [notnull]=0 AND dflt_value IS NULL",
@@ -4037,8 +4119,27 @@ fn public_history_claim_v174_schema_matches(connection: &Connection) -> rusqlite
     let run = schema("table", "agent_run")?;
     let manifest = schema("table", "context_manifest")?;
     let input = schema("table", "agent_run_input")?;
-    let manifest_guard = schema("trigger", "context_manifest_v31_only_insert")?;
-    let input_guard = schema("trigger", "agent_run_input_v31_only_insert")?;
+    let thread_names: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=180) OR EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='context_manifest_v32_only_insert')",
+        [],
+        |row| row.get(0),
+    )?;
+    let manifest_guard = schema(
+        "trigger",
+        if thread_names {
+            "context_manifest_v32_only_insert"
+        } else {
+            "context_manifest_v31_only_insert"
+        },
+    )?;
+    let input_guard = schema(
+        "trigger",
+        if thread_names {
+            "agent_run_input_v32_only_insert"
+        } else {
+            "agent_run_input_v31_only_insert"
+        },
+    )?;
     let profile_guard = schema("trigger", "context_manifest_quote_profile_insert")?;
     let attachment_guard = schema("trigger", "runtime_input_delivery_attachment_auth_insert")?;
     let skills_tables: i64 = connection.query_row(
@@ -4051,7 +4152,11 @@ fn public_history_claim_v174_schema_matches(connection: &Connection) -> rusqlite
         "trigger",
         "native_session_bootstrap_evidence_v5_only_insert",
     )?;
-    Ok(columns == 2
+    Ok((!thread_names || (manifest_guard.contains("NEW.context_manifest_version = 32 AND NEW.formatter_version = 32")
+        && manifest_guard.contains("NEW.context_manifest_version = 28 AND NEW.formatter_version = 28")
+        && manifest_guard.contains("NEW.run_facts_schema_version = 9 AND NEW.context_delivery_profile_version = 10")
+        && profile_guard.contains("NEW.context_manifest_version = 32 AND NEW.context_delivery_profile_version = 10")))
+        && columns == 2
         && skills_tables == 4
         && bootstrap_guard.contains("bootstrap_formatter_version IS NOT 5")
         && bootstrap.contains("native_session_bootstrap_v5")
@@ -4062,12 +4167,12 @@ fn public_history_claim_v174_schema_matches(connection: &Connection) -> rusqlite
         && run.contains(
             "claim_has_additional_public_messages INTEGER CHECK(claim_has_additional_public_messages IN (0, 1))",
         )
-        && manifest.contains("formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31)")
-        && manifest.contains("context_manifest_version IN (19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31)")
-        && manifest.contains("run_facts_schema_version IN (1, 2, 3, 4, 5, 6, 7, 8)")
+        && manifest.contains(if thread_names { "formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32)" } else { "formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31)" })
+        && manifest.contains(if thread_names { "context_manifest_version IN (19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32)" } else { "context_manifest_version IN (19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31)" })
+        && manifest.contains(if thread_names { "run_facts_schema_version IN (1, 2, 3, 4, 5, 6, 7, 8, 9)" } else { "run_facts_schema_version IN (1, 2, 3, 4, 5, 6, 7, 8)" })
         && manifest.contains("context_manifest_version = 31 AND formatter_version = 31 AND run_facts_schema_version = 8")
         && manifest.contains("context_manifest_version = 30 AND formatter_version = 30 AND run_facts_schema_version = 7")
-        && input.contains("context_manifest_version IN (26, 27, 28, 29, 30, 31)")
+        && input.contains(if thread_names { "context_manifest_version IN (26, 27, 28, 29, 30, 31, 32)" } else { "context_manifest_version IN (26, 27, 28, 29, 30, 31)" })
         && manifest_guard.contains("NEW.context_manifest_version = 31 AND NEW.formatter_version = 31")
         && manifest_guard.contains("NEW.run_facts_schema_version = 8 AND NEW.context_delivery_profile_version = 10")
         && manifest_guard.contains("run.claim_previous_public_boundary_sequence IS NOT NULL")
@@ -4077,10 +4182,10 @@ fn public_history_claim_v174_schema_matches(connection: &Connection) -> rusqlite
         && manifest_guard.contains("NEW.context_manifest_version = 29")
         && manifest_guard.contains("NEW.context_manifest_version = 27")
         && manifest_guard.contains("NEW.context_manifest_version = 26")
-        && input_guard.contains("NEW.context_manifest_version IS NOT 31")
+        && input_guard.contains(if thread_names { "NEW.context_manifest_version IS NOT 32" } else { "NEW.context_manifest_version IS NOT 31" })
         && profile_guard.contains("NEW.context_manifest_version = 31 AND NEW.context_delivery_profile_version = 10")
         && profile_guard.contains("NEW.context_manifest_version = 30 AND NEW.context_delivery_profile_version = 10")
-        && attachment_guard.contains("context_manifest_version IN (26, 27, 29, 30, 31)"))
+        && attachment_guard.contains(if thread_names { "context_manifest_version IN (26, 27, 28, 29, 30, 31, 32)" } else { "context_manifest_version IN (26, 27, 29, 30, 31)" }))
 }
 
 fn skills_rebuild_v173_schema_matches(connection: &Connection) -> rusqlite::Result<bool> {
@@ -4502,7 +4607,7 @@ fn message_quote_v148_schema_matches(connection: &Connection) -> rusqlite::Resul
             return Ok(false);
         }
     }
-    let guards: i64 = connection.query_row("SELECT COUNT(*) FROM sqlite_schema WHERE type='trigger' AND name IN ('context_manifest_v23_only_insert','context_manifest_v24_only_insert','context_manifest_v25_only_insert','context_manifest_v26_only_insert','context_manifest_v27_only_insert','context_manifest_v28_only_insert','context_manifest_v29_only_insert','context_manifest_v30_only_insert','context_manifest_v31_only_insert','context_manifest_quote_profile_insert')", [], |row| row.get(0))?;
+    let guards: i64 = connection.query_row("SELECT COUNT(*) FROM sqlite_schema WHERE type='trigger' AND name IN ('context_manifest_v23_only_insert','context_manifest_v24_only_insert','context_manifest_v25_only_insert','context_manifest_v26_only_insert','context_manifest_v27_only_insert','context_manifest_v28_only_insert','context_manifest_v29_only_insert','context_manifest_v30_only_insert','context_manifest_v31_only_insert','context_manifest_v32_only_insert','context_manifest_quote_profile_insert')", [], |row| row.get(0))?;
     Ok(guards == 2)
 }
 
@@ -5013,7 +5118,8 @@ fn load_current_migration_state(
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 176),
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 177),
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 178),
-               EXISTS(SELECT 1 FROM schema_migration WHERE version = 179)
+               EXISTS(SELECT 1 FROM schema_migration WHERE version = 179),
+               EXISTS(SELECT 1 FROM schema_migration WHERE version = 180)
         "#,
         [],
         |row| {
@@ -5128,6 +5234,7 @@ fn load_current_migration_state(
                 v177: row.get(107)?,
                 v178: row.get(108)?,
                 v179: row.get(109)?,
+                v180: row.get(110)?,
             })
         },
     )
@@ -8221,6 +8328,9 @@ impl Database {
                     self.migrate_runtime_session_context_ratio_v179()
                 );
             }
+            if !self.schema_migration_applied(180)? {
+                migration_step!("migration_180", thread_names::migrate(self));
+            }
             if let Err(error) =
                 crate::notification::maintain_notification_episode_retention(self.connection())
             {
@@ -8976,6 +9086,9 @@ impl Database {
                 "migration_179",
                 self.migrate_runtime_session_context_ratio_v179()
             );
+        }
+        if !self.schema_migration_applied(180)? {
+            migration_step!("migration_180", thread_names::migrate(self));
         }
         if let Err(error) =
             crate::notification::maintain_notification_episode_retention(self.connection())
@@ -18868,11 +18981,11 @@ impl Database {
             .path
             .parent()
             .context("v99 database path has no data directory")?;
-        let attachment_store = crate::camp_attachment::CampAttachmentStore::new(data_dir);
+        let attachment_store = crate::camp_attachment::ThreadAttachmentStore::new(data_dir);
         for (camp_id, attachment_id, media_type, byte_size, content_digest, storage_path) in
             &published_attachments
         {
-            CampId::parse(camp_id)
+            ThreadId::parse(camp_id)
                 .with_context(|| format!("v99 Published Attachment has invalid Camp {camp_id}"))?;
             Uuid::parse_str(attachment_id).with_context(|| {
                 format!("v99 Published Attachment has invalid ID {attachment_id}")
@@ -23620,7 +23733,7 @@ impl Database {
                 [],
             )?;
         }
-        if source == MainCampMigrationSource::FastLifetime {
+        if source == MainThreadMigrationSource::FastLifetime {
             transaction.execute(
                 "UPDATE schema_migration SET version = 130 WHERE version = 119",
                 [],
@@ -23739,7 +23852,7 @@ impl Database {
                 V130_MIGRATION_SOURCE_PROJECTION_SCHEMA_VERSION,
                 V116_CLASSIFIER_VERSION,
             )
-            || !pending_fast_schema_matches(&transaction, MainCampMigrationSource::Fast)?
+            || !pending_fast_schema_matches(&transaction, MainThreadMigrationSource::Fast)?
         {
             anyhow::bail!("Fast lifetime migration requires the exact legacy Fast schema");
         }
@@ -28380,31 +28493,9 @@ impl Database {
                     if marker.contract_version == "v1.72" && marker.projection_schema_version == 127),
             "Runtime session context migration requires v1.72/schema 127"
         );
-        tx.execute_batch(r#"
-            CREATE TABLE runtime_session_context_latest (
-                conversation_id TEXT NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
-                native_binding_id TEXT NOT NULL,
-                native_binding_generation INTEGER NOT NULL CHECK(native_binding_generation >= 1),
-                native_session_id TEXT NOT NULL,
-                runtime_kind TEXT NOT NULL,
-                runtime_version TEXT,
-                model_key TEXT,
-                effective_config_digest TEXT,
-                context_used_tokens INTEGER CHECK(context_used_tokens IS NULL OR context_used_tokens >= 0),
-                context_window_tokens INTEGER CHECK(context_window_tokens IS NULL OR context_window_tokens > 0),
-                source TEXT NOT NULL,
-                dialect_id TEXT NOT NULL,
-                observed_at TEXT NOT NULL,
-                source_agent_run_id TEXT NOT NULL,
-                source_execution_epoch INTEGER NOT NULL CHECK(source_execution_epoch >= 1),
-                PRIMARY KEY(conversation_id),
-                CHECK(context_used_tokens IS NULL OR context_window_tokens IS NULL
-                    OR context_used_tokens <= context_window_tokens)
-            );
-            INSERT INTO schema_migration VALUES (178, datetime('now'));
-            UPDATE rovai_data_contract SET projection_schema_version=128, updated_at=datetime('now')
-                WHERE singleton=1;
-        "#)?;
+        create_runtime_session_context_table(&tx)?;
+        tx.execute_batch("INSERT INTO schema_migration VALUES (178, datetime('now'));
+            UPDATE rovai_data_contract SET projection_schema_version=128, updated_at=datetime('now') WHERE singleton=1;")?;
         anyhow::ensure!(
             runtime_session_context_schema_matches(&tx)?,
             "Runtime session context schema is incomplete"
@@ -28431,6 +28522,10 @@ impl Database {
                 if marker.contract_version == "v1.72" && marker.projection_schema_version == 128),
             "Runtime context ratio migration requires v1.72/schema 128"
         );
+        if !runtime_session_context_schema_matches(&tx)? {
+            // Classification above accepts absence only for the complete main v32 layout.
+            create_runtime_session_context_table(&tx)?;
+        }
         tx.execute_batch(r#"
             ALTER TABLE runtime_session_context_latest ADD COLUMN native_context_ratio REAL
                 CHECK(native_context_ratio IS NULL OR (native_context_ratio >= 0 AND native_context_ratio <= 1));
@@ -28444,7 +28539,8 @@ impl Database {
         anyhow::ensure!(
             matches!(
                 classify_database_contract(&tx)?,
-                DatabaseContractClassification::Current(_)
+                DatabaseContractClassification::SupportedMigrationSource(ref marker)
+                    if marker.contract_version == "v1.72" && marker.projection_schema_version == 129
             ),
             "Runtime context ratio migration failed current schema admission"
         );
@@ -33513,7 +33609,7 @@ impl Database {
             } else {
                 None
             };
-            let camp_id = CampId::new();
+            let camp_id = ThreadId::new();
             let internal_ref = is_repository.then(|| format!("refs/rovai/camps/{camp_id}"));
             let lead = active_profiles
                 .first()
@@ -33756,7 +33852,7 @@ impl Database {
 #[cfg(all(test, feature = "extended-tests"))]
 pub(crate) fn downgrade_current_schema_to_main_camp_source_for_test(
     database: &mut Database,
-    source: MainCampMigrationSource,
+    source: MainThreadMigrationSource,
 ) {
     downgrade_current_schema_to_v115_source_for_test(database.connection());
     database.migrate_runtime_activity_classifier_v116().unwrap();
@@ -33765,7 +33861,7 @@ pub(crate) fn downgrade_current_schema_to_main_camp_source_for_test(
         database.migrate_camp_member_fast_v127().unwrap();
     }
     let connection = database.connection();
-    if source == MainCampMigrationSource::FastLifetime {
+    if source == MainThreadMigrationSource::FastLifetime {
         connection
             .execute_batch("DROP TRIGGER agent_profile_fast_revision_update;")
             .unwrap();
@@ -33947,6 +34043,7 @@ pub(crate) fn open_v170_source_for_test(directory: &Path) -> Result<Database> {
 
 #[cfg(test)]
 fn downgrade_runtime_session_context_for_test(connection: &Connection) {
+    thread_names::downgrade_for_test(connection);
     let applied: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=178)",
@@ -38902,7 +38999,7 @@ mod tests {
         assert!(
             old_insert
                 .to_string()
-                .contains("must use ContextManifest v31")
+                .contains("must use ContextManifest v32")
         );
         for (column, invalid) in [
             ("claim_previous_public_boundary_sequence", -1),
@@ -39712,7 +39809,7 @@ mod tests {
     #[test]
     fn v163_requeues_unfrozen_public_work_and_retires_the_legacy_run_placeholder() {
         use crate::{
-            collaboration::{CollaborationService, CreateCampCommand},
+            collaboration::{CollaborationService, CreateThreadCommand},
             command::{ActorRef, CommandEnvelope},
             delivery_queue::{claim_waiting_delivery_batches, enqueue_message_deliveries},
         };
@@ -39731,7 +39828,7 @@ mod tests {
                     camp_id: None,
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: CreateCampCommand::for_test_with_members(
+                    payload: CreateThreadCommand::for_test_with_members(
                         workspace.to_string_lossy().into_owned(),
                         &["agent_1"],
                         "agent_1",
@@ -39739,7 +39836,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let camp_id = created.result.payload["campId"]
+        let camp_id = created.result.payload["threadId"]
             .as_str()
             .unwrap()
             .to_string();
@@ -39864,6 +39961,12 @@ mod tests {
         database.migrate_public_history_claim_v174().unwrap();
         notification_model::migrate(&mut database).unwrap();
         database.migrate_lark_channel_v176().unwrap();
+        database.migrate_navigation_summary_v177().unwrap();
+        database.migrate_runtime_session_context_v178().unwrap();
+        database
+            .migrate_runtime_session_context_ratio_v179()
+            .unwrap();
+        thread_names::migrate(&mut database).unwrap();
         let successor_run_id = claim_waiting_delivery_batches(&mut database, 1)
             .unwrap()
             .pop()
@@ -40220,6 +40323,7 @@ mod tests {
             v177: version >= 177,
             v178: version >= 178,
             v179: version >= 179,
+            v180: version >= 180,
         }
     }
 
@@ -40228,9 +40332,9 @@ mod tests {
     #[test]
     fn main_camp_collision_rejects_lookalike_markers_and_partial_schemas() {
         for source in [
-            MainCampMigrationSource::Pending,
-            MainCampMigrationSource::Fast,
-            MainCampMigrationSource::FastLifetime,
+            MainThreadMigrationSource::Pending,
+            MainThreadMigrationSource::Fast,
+            MainThreadMigrationSource::FastLifetime,
         ] {
             let connection = Connection::open_in_memory().unwrap();
             connection.execute_batch(
@@ -40275,7 +40379,7 @@ mod tests {
                     connection.execute_batch(schema).unwrap();
                 }
             }
-            if source == MainCampMigrationSource::FastLifetime {
+            if source == MainThreadMigrationSource::FastLifetime {
                 connection
                     .execute_batch("DROP TRIGGER agent_profile_fast_revision_update;")
                     .unwrap();
@@ -40414,8 +40518,16 @@ mod tests {
                 "current",
                 CURRENT_DATA_CONTRACT_VERSION,
                 CURRENT_PROJECTION_SCHEMA_VERSION,
-                177,
+                180,
             ),
+            (
+                "v1.72/schema 129 before Thread convergence",
+                "v1.72",
+                129,
+                179,
+            ),
+            ("v1.72/schema 128 before native ratio", "v1.72", 128, 178),
+            ("v1.72/schema 127 before metrics", "v1.72", 127, 177),
             (
                 "v1.72/schema 126 before navigation summaries",
                 "v1.72",
@@ -40907,7 +41019,7 @@ mod tests {
         }
 
         assert!(migration_state_through(141).admits("v1.52", 92, V142_CLASSIFIER_VERSION));
-        let current = migration_state_through(179);
+        let current = migration_state_through(180);
         let v092_source = migration_state_through(91);
         let mut missing_intermediate = current;
         missing_intermediate.v84 = false;
@@ -40951,7 +41063,34 @@ mod tests {
         missing_execution_lifecycle.v168 = false;
         let mut missing_navigation_summary = current;
         missing_navigation_summary.v177 = false;
+        let mut missing_session_context = current;
+        missing_session_context.v178 = false;
+        let mut missing_native_ratio = current;
+        missing_native_ratio.v179 = false;
+        let mut missing_thread_convergence = current;
+        missing_thread_convergence.v180 = false;
         let rejected = [
+            (
+                "current marker without session context migration",
+                missing_session_context,
+                CURRENT_DATA_CONTRACT_VERSION,
+                CURRENT_PROJECTION_SCHEMA_VERSION,
+                V147_CLASSIFIER_VERSION,
+            ),
+            (
+                "current marker without native ratio migration",
+                missing_native_ratio,
+                CURRENT_DATA_CONTRACT_VERSION,
+                CURRENT_PROJECTION_SCHEMA_VERSION,
+                V147_CLASSIFIER_VERSION,
+            ),
+            (
+                "current marker without Thread convergence migration",
+                missing_thread_convergence,
+                CURRENT_DATA_CONTRACT_VERSION,
+                CURRENT_PROJECTION_SCHEMA_VERSION,
+                V147_CLASSIFIER_VERSION,
+            ),
             (
                 "current marker without navigation summary migration",
                 missing_navigation_summary,
@@ -41388,7 +41527,7 @@ mod tests {
             )
             .expect("current contract marker should load");
 
-        assert_eq!(state, migration_state_through(179));
+        assert_eq!(state, migration_state_through(180));
         assert!(state.admits(&contract, schema, &classifier));
         assert!(has_admissible_data_contract(
             &directory.join("rovai.sqlite")
@@ -41845,7 +41984,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let camp = result.result.payload["campId"].as_str().unwrap();
+        let camp = result.result.payload["threadId"].as_str().unwrap();
         let mission = result.result.payload["missionId"].as_str().unwrap();
         database.connection().execute("INSERT INTO mission_workspace(id,mission_id,camp_id,execution_host_id,source_directory,repository_root,git_common_dir,worktree_path,working_directory,base_branch,branch,base_sha,preparation_token,state,diagnostic,created_at,updated_at) VALUES('cleanup',?1,?2,?3,'/fixture/repo','/fixture/repo','/fixture/repo/.git','/fixture/worktree','/fixture/worktree','main','rovai/mission/fixture','base','ownership','ready',NULL,'created','updated')",rusqlite::params![mission,camp,host]).unwrap();
         crate::collaboration::delete_camp_aggregate(database.connection(), camp).unwrap();
@@ -42448,7 +42587,7 @@ mod tests {
         let mut database = fresh_schema_database_v170_at(&directory);
         let camp_id = "rvcamp_01h47kvsy5fk1shh6w1g60eecf";
         crate::camp_attachment::insert_test_camp(&database, camp_id);
-        let store = crate::camp_attachment::CampAttachmentStore::new(&directory);
+        let store = crate::camp_attachment::ThreadAttachmentStore::new(&directory);
         let draft = store
             .save_body(&mut database, camp_id, "Desktop edit survives upgrade")
             .unwrap();
@@ -42846,13 +42985,16 @@ mod tests {
                     camp_id: None,
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: crate::collaboration::CreateCampCommand::for_test(
+                    payload: crate::collaboration::CreateThreadCommand::for_test(
                         workspace.display().to_string(),
                     ),
                 },
             )
             .unwrap();
-        let camp_id = camp.result.payload["campId"].as_str().unwrap().to_string();
+        let camp_id = camp.result.payload["threadId"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let sent = collaboration
             .send_test_camp_message(
                 &mut database.0,
@@ -42864,12 +43006,12 @@ mod tests {
                     camp_id: Some(camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: crate::collaboration::TestCampMessageCommand {
+                    payload: crate::collaboration::TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "Invalidate the old Camp identity context".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: crate::collaboration::TestCampMessageAddress::Default,
+                        address: crate::collaboration::TestThreadMessageAddress::Default,
                         reply_to_camp_message_id: None,
                         execution: Some(crate::collaboration::ExecutionRequest {
                             task_id: None,
@@ -43013,7 +43155,7 @@ mod tests {
             )
             .unwrap();
         assert!(manifest_schema.contains(
-            "CHECK(formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31))"
+            "CHECK(formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32))"
         ));
         let conversation: (Option<String>, Option<String>, i64, i64) = reopened
             .connection()
@@ -43076,13 +43218,16 @@ mod tests {
                     camp_id: None,
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: crate::collaboration::CreateCampCommand::for_test(
+                    payload: crate::collaboration::CreateThreadCommand::for_test(
                         workspace.display().to_string(),
                     ),
                 },
             )
             .unwrap();
-        let camp_id = camp.result.payload["campId"].as_str().unwrap().to_string();
+        let camp_id = camp.result.payload["threadId"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let sent = collaboration
             .send_test_camp_message(
                 &mut database,
@@ -43094,12 +43239,12 @@ mod tests {
                     camp_id: Some(camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: crate::collaboration::TestCampMessageCommand {
+                    payload: crate::collaboration::TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "Migration 98 must preserve this public message".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: crate::collaboration::TestCampMessageAddress::Default,
+                        address: crate::collaboration::TestThreadMessageAddress::Default,
                         reply_to_camp_message_id: None,
                         execution: Some(crate::collaboration::ExecutionRequest {
                             task_id: None,
@@ -43115,7 +43260,7 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
-        let message_id = sent.result.payload["campMessageId"]
+        let message_id = sent.result.payload["threadMessageId"]
             .as_str()
             .unwrap()
             .to_string();
@@ -43344,7 +43489,7 @@ mod tests {
             )
             .unwrap();
         assert!(manifest_schema.contains(
-            "CHECK(formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31))"
+            "CHECK(formatter_version IN (20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32))"
         ));
         assert!(
             manifest_schema
@@ -43510,11 +43655,11 @@ mod tests {
     #[test]
     fn v100_backfills_stable_catalog_and_terminalizes_old_nonterminal_runs() {
         use crate::{
-            camp_attachment::CampAttachmentStore,
-            camp_attachment_view::CampAttachmentViewStore,
+            camp_attachment::ThreadAttachmentStore,
+            camp_attachment_view::ThreadAttachmentViewStore,
             collaboration::{
-                CollaborationService, CreateCampCommand, ExecutionRequest,
-                SendUserCampDraftCommand, TestCampMessageAddress, TestCampMessageCommand,
+                CollaborationService, CreateThreadCommand, ExecutionRequest,
+                SendUserThreadDraftCommand, TestThreadMessageAddress, TestThreadMessageCommand,
             },
             command::{ActorRef, CommandEnvelope},
         };
@@ -43535,15 +43680,15 @@ mod tests {
                     camp_id: None,
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: CreateCampCommand::for_test(workspace.display().to_string()),
+                    payload: CreateThreadCommand::for_test(workspace.display().to_string()),
                 },
             )
             .unwrap();
-        let camp_id = created.result.payload["campId"]
+        let camp_id = created.result.payload["threadId"]
             .as_str()
             .unwrap()
             .to_string();
-        let attachment_store = CampAttachmentStore::new(&data_dir);
+        let attachment_store = ThreadAttachmentStore::new(&data_dir);
         let source = data_dir.join("migration-100.txt");
         fs::write(&source, b"stable semantic attachment").unwrap();
         let saved = attachment_store
@@ -43558,7 +43703,7 @@ mod tests {
                 "migration-100.txt",
             )
             .unwrap();
-        let view = CampAttachmentViewStore::for_test(&database).unwrap();
+        let view = ThreadAttachmentViewStore::for_test(&database).unwrap();
         let command_id = Uuid::new_v4().to_string();
         let publication = view
             .stage_publication(
@@ -43584,7 +43729,7 @@ mod tests {
                     camp_id: Some(camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: SendUserCampDraftCommand {
+                    payload: SendUserThreadDraftCommand {
                         draft_client: crate::draft_client::DraftClient::default(),
                         camp_id: camp_id.clone(),
                         draft_revision: draft.revision,
@@ -43615,12 +43760,12 @@ mod tests {
                     camp_id: Some(camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: TestCampMessageCommand {
+                    payload: TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "Old V1 receipt run".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: TestCampMessageAddress::Default,
+                        address: TestThreadMessageAddress::Default,
                         reply_to_camp_message_id: None,
                         execution: Some(ExecutionRequest {
                             task_id: None,
@@ -44934,7 +45079,7 @@ mod tests {
         assert!(database.migrate_fast_preference_lifetime_v130().is_err());
         assert!(!database.schema_migration_applied(130).unwrap());
         assert!(
-            pending_fast_schema_matches(database.connection(), MainCampMigrationSource::Fast)
+            pending_fast_schema_matches(database.connection(), MainThreadMigrationSource::Fast)
                 .unwrap()
         );
         assert_eq!(database.connection().query_row(
@@ -47848,13 +47993,16 @@ mod tests {
                     camp_id: None,
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: crate::collaboration::CreateCampCommand::for_test(
+                    payload: crate::collaboration::CreateThreadCommand::for_test(
                         workspace.display().to_string(),
                     ),
                 },
             )
             .unwrap();
-        let camp_id = camp.result.payload["campId"].as_str().unwrap().to_string();
+        let camp_id = camp.result.payload["threadId"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let sent = collaboration
             .send_test_camp_message(
                 &mut database,
@@ -47866,12 +48014,12 @@ mod tests {
                     camp_id: Some(camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: crate::collaboration::TestCampMessageCommand {
+                    payload: crate::collaboration::TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "Migration 111 must preserve terminal cancellation".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: crate::collaboration::TestCampMessageAddress::Default,
+                        address: crate::collaboration::TestThreadMessageAddress::Default,
                         reply_to_camp_message_id: None,
                         execution: Some(crate::collaboration::ExecutionRequest {
                             task_id: None,
@@ -47887,7 +48035,7 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
-        let message_id = sent.result.payload["campMessageId"]
+        let message_id = sent.result.payload["threadMessageId"]
             .as_str()
             .unwrap()
             .to_string();
@@ -48326,11 +48474,11 @@ mod tests {
     fn v99_preserves_legacy_evidence_classifies_unfinished_work_and_backfills_only_published_attachments()
      {
         use crate::{
-            camp_attachment::CampAttachmentStore,
-            camp_attachment_view::CampAttachmentViewStore,
+            camp_attachment::ThreadAttachmentStore,
+            camp_attachment_view::ThreadAttachmentViewStore,
             collaboration::{
-                CollaborationService, CreateCampCommand, ExecutionRequest, TestCampMessageAddress,
-                TestCampMessageCommand,
+                CollaborationService, CreateThreadCommand, ExecutionRequest,
+                TestThreadMessageAddress, TestThreadMessageCommand,
             },
             command::{ActorRef, CommandEnvelope},
             context::{
@@ -48359,12 +48507,12 @@ mod tests {
                         camp_id: Some(camp_id.to_string()),
                         expected_versions: Vec::new(),
                         execution_epoch: None,
-                        payload: TestCampMessageCommand {
+                        payload: TestThreadMessageCommand {
                             camp_id: camp_id.to_string(),
                             draft_revision: None,
                             body: body.to_string(),
                             prepared_attachment_ids: Vec::new(),
-                            address: TestCampMessageAddress::Explicit {
+                            address: TestThreadMessageAddress::Explicit {
                                 agent_ids: vec![agent_id.to_string()],
                             },
                             reply_to_camp_message_id: None,
@@ -48383,7 +48531,7 @@ mod tests {
                     .as_str()
                     .unwrap()
                     .to_string(),
-                sent.result.payload["campMessageId"]
+                sent.result.payload["threadMessageId"]
                     .as_str()
                     .unwrap()
                     .to_string(),
@@ -48405,7 +48553,7 @@ mod tests {
                     camp_id: None,
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: CreateCampCommand::for_test_with_members(
+                    payload: CreateThreadCommand::for_test_with_members(
                         workspace.display().to_string(),
                         &["agent_1", "agent_2", "agent_3"],
                         "agent_1",
@@ -48413,11 +48561,11 @@ mod tests {
                 },
             )
             .unwrap();
-        let camp_id = created.result.payload["campId"]
+        let camp_id = created.result.payload["threadId"]
             .as_str()
             .unwrap()
             .to_string();
-        let view = CampAttachmentViewStore::for_test(&database).unwrap();
+        let view = ThreadAttachmentViewStore::for_test(&database).unwrap();
         view.ensure_empty_camp_ready(&mut database, &camp_id)
             .unwrap();
 
@@ -48498,7 +48646,7 @@ mod tests {
             )
             .unwrap();
 
-        let attachment_store = CampAttachmentStore::new(&data_dir);
+        let attachment_store = ThreadAttachmentStore::new(&data_dir);
         let published_source = data_dir.join("migration-99-published.txt");
         fs::write(&published_source, b"published authority bytes").unwrap();
         let saved = attachment_store
@@ -48908,7 +49056,7 @@ mod tests {
         database
             .migrate_unified_attachment_publication_v102()
             .unwrap();
-        let view = CampAttachmentViewStore::for_test(&database).unwrap();
+        let view = ThreadAttachmentViewStore::for_test(&database).unwrap();
         view.reconcile_camp(&mut database, &attachment_store, &camp_id)
             .unwrap();
         assert_eq!(
@@ -48950,10 +49098,10 @@ mod tests {
     #[test]
     fn v99_authority_preflight_failure_leaves_schema_and_evidence_untouched() {
         use crate::{
-            camp_attachment::CampAttachmentStore,
+            camp_attachment::ThreadAttachmentStore,
             collaboration::{
-                CollaborationService, CreateCampCommand, TestCampMessageAddress,
-                TestCampMessageCommand,
+                CollaborationService, CreateThreadCommand, TestThreadMessageAddress,
+                TestThreadMessageCommand,
             },
             command::{ActorRef, CommandEnvelope},
         };
@@ -48973,11 +49121,11 @@ mod tests {
                     camp_id: None,
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: CreateCampCommand::for_test(workspace.display().to_string()),
+                    payload: CreateThreadCommand::for_test(workspace.display().to_string()),
                 },
             )
             .unwrap();
-        let camp_id = created.result.payload["campId"]
+        let camp_id = created.result.payload["threadId"]
             .as_str()
             .unwrap()
             .to_string();
@@ -48992,23 +49140,23 @@ mod tests {
                     camp_id: Some(camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: TestCampMessageCommand {
+                    payload: TestThreadMessageCommand {
                         camp_id: camp_id.clone(),
                         draft_revision: None,
                         body: "published attachment authority".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: TestCampMessageAddress::Default,
+                        address: TestThreadMessageAddress::Default,
                         reply_to_camp_message_id: None,
                         execution: None,
                     },
                 },
             )
             .unwrap();
-        let message_id = sent.result.payload["campMessageId"]
+        let message_id = sent.result.payload["threadMessageId"]
             .as_str()
             .unwrap()
             .to_string();
-        let attachment_store = CampAttachmentStore::new(&data_dir);
+        let attachment_store = ThreadAttachmentStore::new(&data_dir);
         let source = data_dir.join("migration-99-preflight.txt");
         fs::write(&source, b"original authority bytes").unwrap();
         let saved = attachment_store
@@ -50403,7 +50551,7 @@ mod tests {
     #[test]
     fn v17_resets_collaboration_and_preserves_member_and_adapter_configuration() {
         use crate::{
-            collaboration::{CollaborationService, CreateCampCommand, CreateTaskCommand},
+            collaboration::{CollaborationService, CreateTaskCommand, CreateThreadCommand},
             command::{ActorRef, CommandEnvelope},
         };
 
@@ -50450,13 +50598,16 @@ mod tests {
                     camp_id: None,
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: CreateCampCommand::for_test(
+                    payload: CreateThreadCommand::for_test(
                         directory.join("workspace").to_string_lossy().to_string(),
                     ),
                 },
             )
             .unwrap();
-        let camp_id = camp.result.payload["campId"].as_str().unwrap().to_string();
+        let camp_id = camp.result.payload["threadId"]
+            .as_str()
+            .unwrap()
+            .to_string();
         service
             .create_task(
                 &mut database,
@@ -50764,8 +50915,8 @@ mod tests {
     fn v35_installs_directory_workspace_and_agent_run_git_observation_columns() {
         use crate::{
             collaboration::{
-                CollaborationService, CreateCampCommand, TestCampMessageAddress,
-                TestCampMessageCommand,
+                CollaborationService, CreateThreadCommand, TestThreadMessageAddress,
+                TestThreadMessageCommand,
             },
             command::{ActorRef, CommandEnvelope},
         };
@@ -50810,11 +50961,11 @@ mod tests {
                     camp_id: None,
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: CreateCampCommand::for_test(workspace.to_string_lossy().to_string()),
+                    payload: CreateThreadCommand::for_test(workspace.to_string_lossy().to_string()),
                 },
             )
             .unwrap();
-        let camp_id = created.result.payload["campId"].as_str().unwrap();
+        let camp_id = created.result.payload["threadId"].as_str().unwrap();
         let binding: (String, String) = database
             .connection()
             .query_row(
@@ -50837,12 +50988,12 @@ mod tests {
                     camp_id: Some(camp_id.to_string()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: TestCampMessageCommand {
+                    payload: TestThreadMessageCommand {
                         camp_id: camp_id.to_string(),
                         draft_revision: None,
                         body: "migration fixture".to_string(),
                         prepared_attachment_ids: Vec::new(),
-                        address: TestCampMessageAddress::Default,
+                        address: TestThreadMessageAddress::Default,
                         reply_to_camp_message_id: None,
                         execution: None,
                     },
@@ -54012,9 +54163,9 @@ mod tests {
             connection,
             "trigger",
             &[
-                "context_manifest_v31_only_insert",
+                "context_manifest_v32_only_insert",
                 "context_manifest_version_immutable",
-                "agent_run_input_v31_only_insert",
+                "agent_run_input_v32_only_insert",
                 "agent_run_input_context_projection_immutable",
                 "runtime_input_delivery_attachment_auth_insert",
                 "camp_attachment_view_camp_insert",
