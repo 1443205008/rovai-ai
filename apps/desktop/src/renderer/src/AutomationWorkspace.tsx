@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { newCommandId } from '../../shared/command-id'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
@@ -29,7 +29,7 @@ export function AutomationWorkspace({
   projects,
   defaultMemberId,
   topNotices,
-  onOpenCamp,
+  onOpenThread,
   onNotify,
   onLeaveGuardChange
 }: {
@@ -37,11 +37,11 @@ export function AutomationWorkspace({
   projects: ProjectNavigationGroup[]
   defaultMemberId: string
   topNotices?: React.ReactNode
-  onOpenCamp(campId: string): void
+  onOpenThread(threadId: string): void
   onNotify(message: string): void
   onLeaveGuardChange?(guard: AutomationLeaveGuard | null): void
 }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const [automations, setAutomations] = useState<AutomationView[]>([])
   const refreshGeneration = useRef(0)
   useEffect(() => () => { refreshGeneration.current++ }, [client])
@@ -580,7 +580,7 @@ export function AutomationWorkspace({
             }}><span /></div>
           <section className="automation-editor" aria-label={selectedId === 'new' ? uiAttribute("新建定时任务") : uiAttribute("定时任务详情")} hidden={editorClosed}>
             <header className="automation-editor-toolbar"><span>{selectedId === 'new' ? uiAttribute("新建") : uiAttribute("详情")}</span><small role="status">{selected ? saveLabel : ''}</small><button type="button" className="automation-icon-button" aria-label={uiAttribute("返回定时任务总览")} onClick={() => void showOverview()}><AutomationGlyph name="close" /></button></header>
-            <AutomationEditor key={selectedId} draft={draft} onChange={setDraft} agents={agents} projects={projects} automation={selected} busy={busy !== null} onOpenCamp={onOpenCamp} onCreate={() => void create()} />
+            <AutomationEditor key={selectedId} draft={draft} onChange={setDraft} agents={agents} projects={projects} automation={selected} busy={busy !== null} onOpenThread={onOpenThread} onCreate={() => void create()} />
           </section>
         </>}
       </div>

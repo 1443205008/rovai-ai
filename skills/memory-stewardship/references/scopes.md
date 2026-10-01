@@ -5,12 +5,12 @@ Choose the smallest Scope that fully expresses the meaning. Revision preserves S
 | Scope | Purpose and Agent authority |
 | --- | --- |
 | Companion | User-to-current-member collaboration. `preference`, `agreement`, `lesson`; write only your own Companion. `effective` applies immediately. |
-| Relationship | Your future responsibility toward one present member in the current Camp. `agreement` or `lesson`; write only `directed(self -> counterparty)`. |
-| Hearth | Application-global understanding for all members in the user's local Rovai home, across Camps. All three Kinds; `memory write` creates a pending user review. |
+| Relationship | Your future responsibility toward one present member in the current Thread. `agreement` or `lesson`; write only `directed(self -> counterparty)`. |
+| Hearth | Application-global understanding for all members in the user's local Rovai home, across Threads. All three Kinds; `memory write` creates a pending user review. |
 
 A Relationship View for A and B returns `directed(A -> B)` and `mutual(A, B)`, not `directed(B -> A)`. Reading mutual information grants no write authority. Do not write reverse or mutual relationships, another member's Companion, or commitments on their behalf.
 
-Hearth success is `review_pending`. Its candidate is not Memory, a Revision or Agent-readable content until accepted by the user. Hearth is application-global, not Camp-wide.
+Hearth success is `review_pending`. Its candidate is not Memory, a Revision or Agent-readable content until accepted by the user. Hearth is application-global, not Thread-wide.
 
 ## Capacity and user governance
 

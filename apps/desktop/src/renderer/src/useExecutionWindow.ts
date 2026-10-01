@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AgentRunView, AgentRunExecutionWindowPage, AgentRunExecutionWindowChanges } from '@contracts'
 import { ExecutionWindow, executionWindowPageSize, executionWindowCacheFor } from './execution-window'
@@ -18,8 +18,8 @@ function hasRecentExecutionReadingIntent(host: HTMLElement): boolean {
     && performance.now() - markedAt <= EXECUTION_READING_INTENT_MAX_AGE_MS
 }
 
-export function useExecutionWindow(enabled: boolean, campId: string, run: AgentRunView, liveRevision: unknown, contentRevision: unknown) {
-  const client = useCampClient()
+export function useExecutionWindow(enabled: boolean, threadId: string, run: AgentRunView, liveRevision: unknown, contentRevision: unknown) {
+  const client = useThreadClient()
   const root = useRef<HTMLDivElement>(null)
   const store = useRef<ExecutionWindow | null>(null)
   const [revision, changed] = useState(0)
@@ -63,8 +63,8 @@ export function useExecutionWindow(enabled: boolean, campId: string, run: AgentR
   useLayoutEffect(() => {
     if (!enabled) return undefined
     const host = scrollHost()
-    const retained = executionWindowCacheFor(client).acquire(`${campId}:${run.id}:${run.executionEpoch}`,
-      notify => new ExecutionWindow(campId, run.id, executionWindowPageSize(host?.clientHeight || 500),
+    const retained = executionWindowCacheFor(client).acquire(`${threadId}:${run.id}:${run.executionEpoch}`,
+      notify => new ExecutionWindow(threadId, run.id, executionWindowPageSize(host?.clientHeight || 500),
         params => client.request<AgentRunExecutionWindowPage>('agentRunExecution.page', params), notify,
         params => client.request<AgentRunExecutionWindowChanges>('agentRunExecution.changes', params)),
       () => changed(value => value + 1))
@@ -80,7 +80,7 @@ export function useExecutionWindow(enabled: boolean, campId: string, run: AgentR
     const readLatest = (): void => {
       if (!wasLoaded && coldLoadStartedAt.current === null) {
         coldLoadStartedAt.current = performance.now()
-        console.info(`[execution-window] method=agentRunExecution.page camp=${campId} run=${run.id} stage=renderer_request`)
+        console.info(`[execution-window] method=agentRunExecution.page camp=${threadId} run=${run.id} stage=renderer_request`)
       }
       void current.latest().then(() => { if (wasLoaded) void current.refresh() })
     }
@@ -103,7 +103,7 @@ export function useExecutionWindow(enabled: boolean, campId: string, run: AgentR
       pendingRefresh.current = null
       anchor.current = null
     }
-  }, [client, enabled, campId, run.id, run.executionEpoch])
+  }, [client, enabled, threadId, run.id, run.executionEpoch])
 
   useLayoutEffect(() => {
     if (!enabled || latest?.runId !== run.id || latest.request === handledLatest.current
@@ -142,7 +142,7 @@ export function useExecutionWindow(enabled: boolean, campId: string, run: AgentR
       if (current.error && coldStartedAt !== null) {
         coldLoadStartedAt.current = null
         console.info(
-          `[execution-window] method=agentRunExecution.page camp=${campId} run=${run.id} `
+          `[execution-window] method=agentRunExecution.page camp=${threadId} run=${run.id} `
           + `stage=renderer_failed elapsed_ms=${Math.round(performance.now() - coldStartedAt)}`
         )
       }
@@ -154,7 +154,7 @@ export function useExecutionWindow(enabled: boolean, campId: string, run: AgentR
       requestAnimationFrame(() => requestAnimationFrame(() => {
         if (store.current !== current || !root.current) return
         console.info(
-          `[execution-window] method=agentRunExecution.page camp=${campId} run=${run.id} `
+          `[execution-window] method=agentRunExecution.page camp=${threadId} run=${run.id} `
           + `stage=renderer_painted elapsed_ms=${Math.round(performance.now() - coldStartedAt)}`
         )
       }))
@@ -179,7 +179,7 @@ export function useExecutionWindow(enabled: boolean, campId: string, run: AgentR
     lastScrollTop.current = scrollHost()?.scrollTop ?? 0
     const adjustedHost = scrollHost()
     if (adjustedHost) adjustedHost.dataset.executionAdjustedTop = String(adjustedHost.scrollTop)
-  }, [enabled, revision, contentRevision, campId, run.id])
+  }, [enabled, revision, contentRevision, threadId, run.id])
 
   useEffect(() => {
     if (!enabled) return undefined
@@ -218,10 +218,10 @@ export function useExecutionWindow(enabled: boolean, campId: string, run: AgentR
     }
     host.addEventListener('scroll', onScroll, { passive: true })
     return () => host.removeEventListener('scroll', onScroll)
-  }, [client, enabled, campId, run.id])
+  }, [client, enabled, threadId, run.id])
 
-  const evidence = useMemo(() => store.current?.campId === campId && store.current.agentRunId === run.id
-    ? store.current.evidence : [], [revision, enabled, campId, run.id])
+  const evidence = useMemo(() => store.current?.threadId === threadId && store.current.agentRunId === run.id
+    ? store.current.evidence : [], [revision, enabled, threadId, run.id])
   return {
     project: <T,>(input: AgentRunExecutionWindowPage['evidence'], build: () => T): T => store.current?.project(input, build) ?? build(),
     contentCache: store.current?.content ?? null,

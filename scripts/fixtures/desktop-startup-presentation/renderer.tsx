@@ -1,5 +1,5 @@
 import type { NavigationSnapshot } from '@contracts'
-import type { CampCreationPreflight, CoreEvent, DesktopStartupSnapshot, HealthStatus, OnboardingSnapshot, RestorableLocation, RovaiApi, SupervisorSnapshot } from '@contracts'
+import type { ThreadCreationPreflight, CoreEvent, DesktopStartupSnapshot, HealthStatus, OnboardingSnapshot, RestorableLocation, RovaiApi, SupervisorSnapshot } from '@contracts'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { App } from '../../../apps/desktop/src/renderer/src/App'
@@ -8,7 +8,7 @@ import { STARTUP_LOADING_EXIT_MS, StartupLoadingCanvas } from '../../../apps/des
 import { DEFAULT_APPEARANCE } from '../../../apps/desktop/src/shared/appearance'
 import '../../../apps/desktop/src/renderer/src/styles.css'
 
-const campId = 'rvcamp_01h47kvsy5fk1shh6w1g60eec0'
+const threadId = 'rvcamp_01h47kvsy5fk1shh6w1g60eec0'
 const errors: string[] = []
 window.addEventListener('error', event => errors.push(String(event.error?.stack ?? event.message)))
 window.addEventListener('unhandledrejection', event => errors.push(String(event.reason)))
@@ -113,7 +113,7 @@ async function advance(milliseconds: number) {
   await flush()
 }
 
-async function reset(target: RestorableLocation | null = { kind: 'camp', campId }, resolveSupervisor = true) {
+async function reset(target: RestorableLocation | null = { kind: 'camp', threadId }, resolveSupervisor = true) {
   if (root) flushSync(() => root!.unmount())
   timers.clear()
   listeners.clear()
@@ -199,7 +199,7 @@ Object.assign(window, { startupTest: {
     noAuthority()
     cases.push('null initial snapshots retain ordinary chrome')
 
-    for (const target of [{ kind: 'camp', campId }, { kind: 'members', agentId: null, tab: 'identity' },
+    for (const target of [{ kind: 'camp', threadId }, { kind: 'members', agentId: null, tab: 'identity' },
       { kind: 'memory' }, { kind: 'quick_chat' }] as RestorableLocation[]) {
       await reset(target)
       await advance(399)
@@ -249,7 +249,7 @@ Object.assign(window, { startupTest: {
     check(!document.querySelector('[role="dialog"]'), 'The pending navigation shortcut must not open an empty Camp palette')
     cases.push('migration keeps the target frame without authority requests')
 
-    await reset({ kind: 'camp', campId }, false)
+    await reset({ kind: 'camp', threadId }, false)
     publish({ startupPhase: 'migrating_authority' })
     initialSupervisor.resolve({ ...starting(), runtimeMode: 'full_core', fullCoreState: 'ready',
       capabilities: { ...supervisor.capabilities, authoritativeWorkspace: true, coreRequests: true } })
@@ -285,7 +285,7 @@ Object.assign(window, { startupTest: {
     await advance(1)
     pageFrame('camp', true)
     onboarding.resolve({ schemaVersion: 2, status: 'completed', origin: 'existing_installation',
-      completedAt: '2026-08-30T00:00:00Z', selectedMemberRole: null, memberAgentId: null, quickChatCampId: null })
+      completedAt: '2026-08-30T00:00:00Z', selectedMemberRole: null, memberAgentId: null, quickChatThreadId: null })
     await flush()
     // The production restore path intentionally paints the route before entering
     // the Camp. Allow that additional pair of frames to complete.
@@ -337,7 +337,7 @@ Object.assign(window, { startupTest: {
     responses.set('members.list', [])
     responses.set('runtime.installations.list', [])
     onboarding.resolve({ schemaVersion: 2, status: 'completed', origin: 'existing_installation',
-      completedAt: '2026-08-31T00:00:00Z', selectedMemberRole: null, memberAgentId: null, quickChatCampId: null })
+      completedAt: '2026-08-31T00:00:00Z', selectedMemberRole: null, memberAgentId: null, quickChatThreadId: null })
     publish({ runtimeMode: 'full_core', fullCoreState: 'ready', startupPhase: null,
       authorityState: { kind: 'current', origin: 'existing' },
       capabilities: { ...supervisor.capabilities, authoritativeWorkspace: true, coreRequests: true } })
@@ -397,7 +397,7 @@ Object.assign(window, { startupTest: {
     responses.set('health.check', health)
     responses.set('members.list', [])
     responses.set('runtime.installations.list', [])
-    responses.set('navigation.snapshot', { schemaVersion: 3, projects: [], quickChat: { recentCamps: [], totalCount: 0 } })
+    responses.set('navigation.snapshot', { schemaVersion: 3, projects: [], quickChat: { recentThreads: [], totalCount: 0 } })
     const navPreferences = { pins: [], removedProjects: [], projectOrder: [], projectNames: {} }
     responses.set('navigationPreferences.get', navPreferences)
     responses.set('navigationPreferences.synchronizeProjectOrder', navPreferences)
@@ -410,7 +410,7 @@ Object.assign(window, { startupTest: {
       version: 1, createdAt: '2026-09-13T00:00:00Z', updatedAt: '2026-09-13T00:00:00Z', retiredAt: null, forgottenAt: null, revisions: []
     })) })
     onboarding.resolve({ schemaVersion: 2, status: 'completed', origin: 'existing_installation',
-      completedAt: '2026-08-31T00:00:00Z', selectedMemberRole: null, memberAgentId: null, quickChatCampId: null })
+      completedAt: '2026-08-31T00:00:00Z', selectedMemberRole: null, memberAgentId: null, quickChatThreadId: null })
     publish({ runtimeMode: 'full_core', fullCoreState: 'ready', startupPhase: null,
       authorityState: { kind: 'current', origin: 'existing' },
       capabilities: { ...supervisor.capabilities, authoritativeWorkspace: true, coreRequests: true } })
@@ -457,7 +457,7 @@ Object.assign(window, { startupTest: {
     const coverage = { loadedCount: 0, totalCount: 0, omittedCount: 0, complete: true }
     const campProjection = (id: string) => ({
       schemaVersion: 8, throughGlobalSequence: 0,
-      camp: { id, title: '导航会话 ' + id, activationState: 'active', projectBindingKind: 'quick_chat',
+      thread: { id, title: '导航会话 ' + id, activationState: 'active', projectBindingKind: 'quick_chat',
         projectPath: '/fixture/quick-chat', defaultLeadAgentId: null, membershipGeneration: 1, version: 1, createdAt: stamp, updatedAt: stamp },
       members: [], membershipReconciliations: [], tasks: [], messages: [], messageDeliveries: [], turns: [],
       agentRuns: [], executionEvidence: [], approvals: [], agentRunFileChanges: [],
@@ -465,23 +465,23 @@ Object.assign(window, { startupTest: {
         messageDeliveries: coverage, turns: coverage, agentRuns: coverage, approvals: coverage }
     })
     responses.set('navigation.snapshot', { schemaVersion: 3, throughGlobalSequence: 0, projects: [], quickChat: {
-      totalCount: 4, recentCamps: ['A', 'B', 'C', 'D'].map(id => ({ id, title: '导航会话 ' + id, activationState: 'active',
+      totalCount: 4, recentThreads: ['A', 'B', 'C', 'D'].map(id => ({ id, title: '导航会话 ' + id, activationState: 'active',
         projectBindingKind: 'quick_chat', projectPath: '/fixture/quick-chat', defaultLead: null, marker: 'none',
         lastActivityAt: stamp, lastActivityGlobalSequence: 0, latestCompletionGlobalSequence: 0, version: 1 }))
     } })
-    requestHandlers.set('navigation.camps', ({ campIds }) => ({ throughGlobalSequence: 0, groupKeys: ['quick-chat'],
-      camps: (responses.get('navigation.snapshot') as NavigationSnapshot).quickChat.recentCamps.filter(camp => campIds.includes(camp.id)) }))
-    responses.set('navigation.campViewed', { changed: false, navigation: { throughGlobalSequence: 0, groupKeys: ['quick-chat'], camps: [] } })
+    requestHandlers.set('navigation.threads', ({ threadIds }) => ({ throughGlobalSequence: 0, groupKeys: ['quick-chat'],
+      threads: (responses.get('navigation.snapshot') as NavigationSnapshot).quickChat.recentThreads.filter(camp => threadIds.includes(camp.id)) }))
+    responses.set('navigation.campViewed', { changed: false, navigation: { throughGlobalSequence: 0, groupKeys: ['quick-chat'], threads: [] } })
     responses.set('skills.list', [])
     responses.set('skills.deliveryGroups.list', [])
     responses.set('skills.candidates', { skills: [], errors: [] })
     responses.set('camps.exists', true)
-    requestHandlers.set('camp.composerDraft.get', ({ campId }) => ({ campId, body: '', content: { version: 2, segments: [] },
+    requestHandlers.set('camp.composerDraft.get', ({ threadId }) => ({ threadId, body: '', content: { version: 2, segments: [] },
       revision: 1, attachments: [], replyIntent: null, continuationIntent: null, updatedAt: stamp, expiresAt: null }))
-    requestHandlers.set('camp.pendingInputs.get', ({ campId }) => ({ campId, executionActive: false, editSession: null, items: [] }))
+    requestHandlers.set('camp.pendingInputs.get', ({ threadId }) => ({ threadId, executionActive: false, editSession: null, items: [] }))
     let campRequest = (id: string): unknown => campProjection(id)
-    requestHandlers.set('camps.enter', ({ command }) => campRequest(command.campId))
-    requestHandlers.set('camps.open', ({ campId }) => campRequest(campId))
+    requestHandlers.set('camps.enter', ({ command }) => campRequest(command.threadId))
+    requestHandlers.set('camps.open', ({ threadId }) => campRequest(threadId))
     for (const listener of coreListeners) listener({ method: 'navigation.invalidated', params: {} } as CoreEvent)
     await advance(500); await flush()
     await clickNavigation('返回 App', '.settings-sidebar-back')
@@ -493,7 +493,7 @@ Object.assign(window, { startupTest: {
     const switchCalls = calls.slice(switchCallStart)
     check(!switchCalls.some(method => ['navigation.snapshot', 'navigation.groupCamps', 'missions.list', 'skills.candidates', 'navigation.campViewed'].includes(method)),
       'An ordinary read Camp switch must not read the sidebar, Missions or Skill directories, or acknowledge again')
-    check(switchCalls.includes('navigation.camps'), 'Camp switching validates only the target navigation row')
+    check(switchCalls.includes('navigation.threads'), 'Camp switching validates only the target navigation row')
     cases.push('Ordinary Camp switching reads only the target row without unrelated queries')
     const skillReadStart = calls.filter(method => method === 'skills.candidates').length
     const editor = document.querySelector<HTMLElement>('.structured-mention-editor')!
@@ -522,14 +522,14 @@ Object.assign(window, { startupTest: {
     check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 B', 'A failed Camp read keeps the displayed page')
     await back(); check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 A', 'Failed reads do not consume a history entry')
     campRequest = id => { if (id === 'B') throw new Error('Fixture Camp removed'); return campProjection(id) }
-    requestHandlers.set('camps.exists', ({ campId }) => campId !== 'B')
+    requestHandlers.set('camps.exists', ({ threadId }) => threadId !== 'B')
     await forward(); check(document.querySelector('.compose-content'), 'A deleted historical Camp resolves to the valid home page')
     await back(); check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 A', 'Deleted-resource fallback replaces the current entry')
     const pendingDiscard = deferred<unknown>()
     requestHandlers.set('camps.discardPending', () => pendingDiscard.promise)
     campRequest = id => {
       const projection = campProjection(id)
-      return id === 'D' ? { ...projection, camp: { ...projection.camp, activationState: 'pending' } } : projection
+      return id === 'D' ? { ...projection, thread: { ...projection.thread, activationState: 'pending' } } : projection
     }
     await clickNavigation('导航会话 D', '.camp-nav-open')
     await flush(); await flush()
@@ -552,7 +552,7 @@ Object.assign(window, { startupTest: {
       campRequest = id => campProjection(id)
       setup?.()
       onboarding.resolve({ schemaVersion: 2, status: 'completed', origin: 'existing_installation', completedAt: stamp,
-        selectedMemberRole: null, memberAgentId: null, quickChatCampId: null })
+        selectedMemberRole: null, memberAgentId: null, quickChatThreadId: null })
       publish({ runtimeMode: 'full_core', fullCoreState: 'ready', startupPhase: null, authorityState: { kind: 'current', origin: 'existing' },
         capabilities: { ...supervisor.capabilities, authoritativeWorkspace: true, coreRequests: true } })
       await flush(); await advance(0); await flush(); await advance(0); await flush()
@@ -601,7 +601,7 @@ Object.assign(window, { startupTest: {
     const cleanup = deferred<unknown>(), afterCleanup = deferred<unknown>()
     requestHandlers.set('camps.discardPending', () => cleanup.promise)
     campRequest = id => id === 'C' ? afterCleanup.promise : id === 'D'
-      ? { ...campProjection(id), camp: { ...campProjection(id).camp, activationState: 'pending' } } : campProjection(id)
+      ? { ...campProjection(id), thread: { ...campProjection(id).thread, activationState: 'pending' } } : campProjection(id)
     await clickNavigation('导航会话 D', '.camp-nav-open')
     await flush(); await flush()
     await clickNavigation('导航会话 A', '.camp-nav-open')
@@ -635,7 +635,7 @@ Object.assign(window, { startupTest: {
     await clickNavigation('新对话', '.unified-primary-nav button')
     check(calls.includes('camps.create'), 'One-click creation must reach Core before navigation moves')
     await clickNavigation('记忆', '.unified-primary-nav button')
-    lateCreation.resolve({ status: 'applied', payload: { campId: 'NEW' } }); await flush(); await flush()
+    lateCreation.resolve({ status: 'applied', payload: { threadId: 'NEW' } }); await flush(); await flush()
     check(document.querySelector('.memory-catalog-item.selected'), 'Late Camp creation must leave the newer memory page visible')
     check(!document.querySelector('.camp-topbar'), 'Late creation must not activate its new Camp')
     await back()
@@ -646,7 +646,7 @@ Object.assign(window, { startupTest: {
     await clickNavigation('记忆', '.unified-primary-nav button')
     failedCreation.reject(new Error('Fixture creation rejected')); await flush(); await flush()
     check(!document.querySelector('.new-camp-dialog'), 'Obsolete creation failure must not reopen its dialog over the newer page')
-    requestHandlers.set('camps.create', () => ({ status: 'applied', payload: { campId: 'NEW' } }))
+    requestHandlers.set('camps.create', () => ({ status: 'applied', payload: { threadId: 'NEW' } }))
     await clickNavigation('新对话', '.unified-primary-nav button')
     check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 NEW', 'Current creation intent still opens its new Camp')
     await back()
@@ -682,7 +682,7 @@ Object.assign(window, { startupTest: {
     let dialogBusy = false
     const creation = deferred<void>()
     const submissions: { draft: unknown; enableOneClick: boolean }[] = []
-    let preflight: CampCreationPreflight = {
+    let preflight: ThreadCreationPreflight = {
       admissible: true, blockers: [], initialLeadAgentId: 'agent-a',
       presentMembers: ['agent-a', 'agent-b', 'agent-c', 'agent-d'].map((agentId, index) => ({
         agentId, displayName: agentId, memberOrder: index, runtimeConfigured: true,
@@ -882,7 +882,7 @@ Object.assign(window, { startupTest: {
     document.documentElement.dataset.theme = theme
     if (root) flushSync(() => root!.unmount())
     root = createRoot(document.getElementById('root')!)
-    const preflight: CampCreationPreflight = {
+    const preflight: ThreadCreationPreflight = {
       admissible: true, blockers: [], initialLeadAgentId: '洛可',
       presentMembers: ['洛可', '沐瓦', '阿澈', '泽安'].map((displayName, index) => ({
         agentId: displayName, displayName, memberOrder: index, runtimeConfigured: state !== 'empty' && index < 2,

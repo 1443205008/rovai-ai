@@ -85,7 +85,7 @@ static TEAM_TOOL_PROCESS_SECRET: OnceLock<String> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CampMessageSendInput {
+pub struct ThreadMessageSendInput {
     #[serde(default)]
     pub body: String,
     #[serde(default)]
@@ -154,10 +154,11 @@ pub struct TeamListTasksInput {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CampMessageSendCommand {
+pub struct ThreadMessageSendCommand {
     native_binding_id: String,
     credential_digest: String,
     runtime_tool_call_id: String,
+    #[serde(rename = "threadId", alias = "campId")]
     camp_id: String,
     body: String,
     to: Vec<String>,
@@ -167,18 +168,18 @@ pub struct CampMessageSendCommand {
     files: Vec<String>,
 }
 
-impl sealed::Sealed for CampMessageSendCommand {}
-impl DomainCommand for CampMessageSendCommand {
+impl sealed::Sealed for ThreadMessageSendCommand {}
+impl DomainCommand for ThreadMessageSendCommand {
     const TYPE: &'static str = CAMP_MESSAGE_SEND_TOOL_NAME;
 }
 
 /// The raw credential is deliberately separate from the durable domain command.
 /// Command records contain only its digest, so the credential never reaches SQLite.
-pub struct CampMessageSendInvocation {
+pub struct ThreadMessageSendInvocation {
     pub native_binding_id: String,
     pub binding_credential: String,
     pub runtime_tool_call_id: String,
-    pub input: CampMessageSendInput,
+    pub input: ThreadMessageSendInput,
     pub source_files: Vec<LocalAttachmentSourceRef>,
 }
 
@@ -583,7 +584,7 @@ impl TeamToolService {
                 "assigneeAgentId": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Required Current CampMember who owns the responsibility. Creation does not notify, wake, or start this Assignee."
+                    "description": "Required Current ThreadMember who owns the responsibility. Creation does not notify, wake, or start this Assignee."
                 }
             }
         })
@@ -621,7 +622,7 @@ impl TeamToolService {
                 "assigneeAgentId": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Set an active Camp member, or omit to leave unchanged."
+                    "description": "Set an active Thread member, or omit to leave unchanged."
                 },
                 "clearAssignee": {
                     "type": "boolean",
@@ -1008,7 +1009,7 @@ impl TeamToolService {
     pub fn send_public_message(
         &self,
         database: &mut Database,
-        invocation: &CampMessageSendInvocation,
+        invocation: &ThreadMessageSendInvocation,
     ) -> Result<CommandExecution> {
         self.send_public_message_authorized(database, invocation, None)
     }
@@ -1016,7 +1017,7 @@ impl TeamToolService {
     pub fn send_public_message_attested(
         &self,
         database: &mut Database,
-        invocation: &CampMessageSendInvocation,
+        invocation: &ThreadMessageSendInvocation,
         agent_run_id: &str,
         execution_epoch: i64,
     ) -> Result<CommandExecution> {
@@ -1036,7 +1037,7 @@ impl TeamToolService {
     fn send_public_message_authorized(
         &self,
         database: &mut Database,
-        invocation: &CampMessageSendInvocation,
+        invocation: &ThreadMessageSendInvocation,
         attested_run: Option<(&str, i64)>,
     ) -> Result<CommandExecution> {
         validate_public_send_invocation(invocation)?;
@@ -1058,7 +1059,7 @@ impl TeamToolService {
                     "Recorded public send belongs to a different attested AgentRun",
                 ));
             }
-            let command = CampMessageSendCommand {
+            let command = ThreadMessageSendCommand {
                 native_binding_id: invocation.native_binding_id.clone(),
                 credential_digest: supplied_credential_digest.clone(),
                 runtime_tool_call_id: invocation.runtime_tool_call_id.clone(),
@@ -1107,7 +1108,7 @@ impl TeamToolService {
             &invocation.input.to,
             &command_id,
         )?;
-        let command = CampMessageSendCommand {
+        let command = ThreadMessageSendCommand {
             native_binding_id: invocation.native_binding_id.clone(),
             credential_digest: supplied_credential_digest.clone(),
             runtime_tool_call_id: invocation.runtime_tool_call_id.clone(),
@@ -1435,7 +1436,7 @@ impl TeamToolService {
     }
 }
 
-fn validate_public_send_invocation(invocation: &CampMessageSendInvocation) -> Result<()> {
+fn validate_public_send_invocation(invocation: &ThreadMessageSendInvocation) -> Result<()> {
     validate_invocation_identity(
         &invocation.native_binding_id,
         &invocation.binding_credential,
@@ -1724,10 +1725,10 @@ fn rejected(code: &str, message: &str) -> CommandHandlerResult {
 mod tests {
     use super::*;
     use crate::{
-        camp_attachment_view::CampAttachmentViewStore,
+        camp_attachment_view::ThreadAttachmentViewStore,
         collaboration::{
-            AddCampMemberCommand, CollaborationService, CreateCampCommand, CreateTaskCommand,
-            ExecutionRequest, TestCampMessageAddress, TestCampMessageCommand,
+            AddThreadMemberCommand, CollaborationService, CreateTaskCommand, CreateThreadCommand,
+            ExecutionRequest, TestThreadMessageAddress, TestThreadMessageCommand,
         },
         command::{CommandGatewayError, CommandResultStatus},
         memory::{
@@ -1746,7 +1747,7 @@ mod tests {
     };
     #[cfg(feature = "slow-tests")]
     use crate::{
-        collaboration::{RemoveCampMemberCommand, end_camp_membership},
+        collaboration::{RemoveThreadMemberCommand, end_camp_membership},
         context::{
             CharterDeliveryMode, ContextMaterialization, ContextService,
             DEFAULT_MAX_CONTEXT_PAYLOAD_BYTES, MaterializeContextRequest,
@@ -1834,7 +1835,7 @@ mod tests {
                     &user_envelope(
                         "create-team-camp",
                         None,
-                        CreateCampCommand::for_test_with_members(
+                        CreateThreadCommand::for_test_with_members(
                             workspace.to_string_lossy().to_string(),
                             member_agent_ids,
                             "agent_1",
@@ -1842,8 +1843,11 @@ mod tests {
                     ),
                 )
                 .expect("Camp should be created");
-            let camp_id = camp.result.payload["campId"].as_str().unwrap().to_string();
-            let view = CampAttachmentViewStore::for_test(&database)
+            let camp_id = camp.result.payload["threadId"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let view = ThreadAttachmentViewStore::for_test(&database)
                 .expect("Runtime Camp Files Root should be admitted");
             view.ensure_empty_camp_ready(&mut database, &camp_id)
                 .expect("new Camp should have its production attachment root");
@@ -1855,7 +1859,7 @@ mod tests {
                         &user_envelope(
                             &format!("add-member-{index}"),
                             Some(&camp_id),
-                            AddCampMemberCommand {
+                            AddThreadMemberCommand {
                                 camp_id: camp_id.clone(),
                                 agent_id: (*agent_id).to_string(),
                                 expected_membership_generation: 1,
@@ -1888,12 +1892,12 @@ mod tests {
                     &user_envelope(
                         "queue-source-run",
                         Some(&camp_id),
-                        TestCampMessageCommand {
+                        TestThreadMessageCommand {
                             camp_id: camp_id.clone(),
                             draft_revision: None,
                             body: "Start the collaboration".to_string(),
                             prepared_attachment_ids: Vec::new(),
-                            address: TestCampMessageAddress::Explicit {
+                            address: TestThreadMessageAddress::Explicit {
                                 agent_ids: vec!["agent_1".to_string()],
                             },
                             reply_to_camp_message_id: None,
@@ -1999,12 +2003,12 @@ mod tests {
                     &user_envelope(
                         command_id,
                         Some(&self.camp_id),
-                        TestCampMessageCommand {
+                        TestThreadMessageCommand {
                             camp_id: self.camp_id.clone(),
                             draft_revision: None,
                             body: format!("Keep {agent_id} busy"),
                             prepared_attachment_ids: Vec::new(),
-                            address: TestCampMessageAddress::Explicit {
+                            address: TestThreadMessageAddress::Explicit {
                                 agent_ids: vec![agent_id.to_string()],
                             },
                             reply_to_camp_message_id: None,
@@ -2059,7 +2063,7 @@ mod tests {
                     &user_envelope(
                         command_id,
                         Some(&self.camp_id),
-                        RemoveCampMemberCommand {
+                        RemoveThreadMemberCommand {
                             camp_id: self.camp_id.clone(),
                             agent_id: agent_id.to_string(),
                             expected_membership_generation: preview.membership_generation,
@@ -2078,7 +2082,7 @@ mod tests {
             call_id: &str,
             body: &str,
             to: &[&str],
-        ) -> CampMessageSendInvocation {
+        ) -> ThreadMessageSendInvocation {
             self.public_send_invocation_for(&self.credential, call_id, body, to)
         }
 
@@ -2088,12 +2092,12 @@ mod tests {
             call_id: &str,
             body: &str,
             to: &[&str],
-        ) -> CampMessageSendInvocation {
-            CampMessageSendInvocation {
+        ) -> ThreadMessageSendInvocation {
+            ThreadMessageSendInvocation {
                 native_binding_id: credential.native_binding_id.clone(),
                 binding_credential: credential.binding_credential.clone(),
                 runtime_tool_call_id: call_id.to_string(),
-                input: CampMessageSendInput {
+                input: ThreadMessageSendInput {
                     body: body.to_string(),
                     to: to.iter().map(|value| (*value).to_string()).collect(),
                     mention_user: false,
@@ -2107,7 +2111,7 @@ mod tests {
 
         fn prepare_agent_source_attachment(
             &mut self,
-            invocation: &mut CampMessageSendInvocation,
+            invocation: &mut ThreadMessageSendInvocation,
             file_name: &str,
             bytes: &[u8],
         ) -> String {
@@ -2119,7 +2123,7 @@ mod tests {
 
         fn prepare_agent_source_attachments(
             &mut self,
-            invocation: &mut CampMessageSendInvocation,
+            invocation: &mut ThreadMessageSendInvocation,
             files: &[(&str, &[u8])],
         ) -> Vec<String> {
             let workspace = self.directory.join("workspace");
@@ -2779,7 +2783,7 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"edited replacement");
         // External, temporary, default-output and directory sources use the same
         // public send boundary; none enters the historical ingest/view tables.
-        let output = crate::storage_layout::CampOutputDirectory::prepare(
+        let output = crate::storage_layout::ThreadOutputDirectory::prepare(
             &fixture.database,
             &fixture.camp_id,
         )
@@ -4036,7 +4040,7 @@ mod tests {
             false
         );
 
-        let message_id = completed.result.payload["finalCampMessageId"]
+        let message_id = completed.result.payload["finalThreadMessageId"]
             .as_str()
             .expect("recovery must link the public message");
         let message: (
@@ -4144,7 +4148,7 @@ mod tests {
                 &user_envelope(
                     "terminal-publication-membership-readded",
                     Some(&fixture.camp_id),
-                    AddCampMemberCommand {
+                    AddThreadMemberCommand {
                         camp_id: fixture.camp_id.clone(),
                         agent_id: "agent_1".to_string(),
                         expected_membership_generation: membership_generation,
@@ -4412,7 +4416,7 @@ mod tests {
             recovered.result.payload["missingSendRecovery"]["decision"],
             "published"
         );
-        let recovery_message_id = recovered.result.payload["finalCampMessageId"]
+        let recovery_message_id = recovered.result.payload["finalThreadMessageId"]
             .as_str()
             .unwrap();
         let recovery_fact: (String, String, i64) = fixture
@@ -4716,7 +4720,7 @@ mod tests {
             let properties = schema["properties"].as_object().unwrap();
             assert_eq!(properties["assigneeAgentId"]["type"], "string");
             for forbidden in [
-                "campId",
+                "threadId",
                 "agentId",
                 "sourceAgentRunId",
                 "executionEpoch",
@@ -4973,7 +4977,7 @@ mod tests {
                 &user_envelope(
                     "team-tool-membership-readd",
                     Some(&fixture.camp_id),
-                    AddCampMemberCommand {
+                    AddThreadMemberCommand {
                         camp_id: fixture.camp_id.clone(),
                         agent_id: "agent_1".to_string(),
                         expected_membership_generation: membership_generation,
@@ -5046,7 +5050,7 @@ mod tests {
                 &user_envelope(
                     "add-member-after-source-context-freeze",
                     Some(&fixture.camp_id),
-                    AddCampMemberCommand {
+                    AddThreadMemberCommand {
                         camp_id: fixture.camp_id.clone(),
                         agent_id: "agent_3".to_string(),
                         expected_membership_generation: 1,
@@ -5279,7 +5283,7 @@ mod tests {
                 &user_envelope(
                     "readd-delivery-recipient",
                     Some(&fixture.camp_id),
-                    AddCampMemberCommand {
+                    AddThreadMemberCommand {
                         camp_id: fixture.camp_id.clone(),
                         agent_id: "agent_2".to_string(),
                         expected_membership_generation:
@@ -5331,7 +5335,7 @@ mod tests {
                 &user_envelope(
                     "remove-public-send-recipient",
                     Some(&fixture.camp_id),
-                    RemoveCampMemberCommand {
+                    RemoveThreadMemberCommand {
                         camp_id: fixture.camp_id.clone(),
                         agent_id: "agent_2".to_string(),
                         expected_membership_generation: preview.membership_generation,
@@ -5366,7 +5370,7 @@ mod tests {
                 &user_envelope(
                     "add-new-public-send-recipient-membership",
                     Some(&fixture.camp_id),
-                    AddCampMemberCommand {
+                    AddThreadMemberCommand {
                         camp_id: fixture.camp_id.clone(),
                         agent_id: "agent_2".to_string(),
                         expected_membership_generation:

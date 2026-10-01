@@ -7,7 +7,7 @@ use rovai_core::{
     action::ActionResultOutcome,
     agent_profile::{AdapterKind, FrozenAgentRuntimeConfig},
     command::canonical_json_digest,
-    storage_layout::CampOutputDirectory,
+    storage_layout::ThreadOutputDirectory,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -220,7 +220,7 @@ impl PiTextState {
 pub(crate) fn runtime_compatibility_digest(
     frozen_runtime: &FrozenAgentRuntimeConfig,
     cwd: &Path,
-    _attachment_authorization: &CampOutputDirectory,
+    _attachment_authorization: &ThreadOutputDirectory,
 ) -> Result<String> {
     let cwd = cwd
         .canonicalize()

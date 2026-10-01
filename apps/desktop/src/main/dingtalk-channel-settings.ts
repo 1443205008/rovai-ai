@@ -197,7 +197,7 @@ type CoreDingTalkSnapshot = {
     chatId: string
     topicKey: ''
     conversationKind: 'group'
-    campId: string | null
+    threadId: string | null
   }>
   pendingAggregates: Array<{
     aggregateId: string
@@ -268,8 +268,8 @@ type ClaimedDelivery = {
 }
 
 export type DingTalkExecutionConsoleSource = ExecutionConsoleSnapshot & {
-  campId: string
-  campTurnId: string
+  threadId: string
+  threadTurnId: string
   channelConversationId: string
   agentId: string
   runCreatedAt: string
@@ -1304,7 +1304,7 @@ export class DingTalkChannelSettingsService {
       let reconciliation = Number(result.payload.nextReconciliationGeneration)
       for (const agentId of stringArray(result.payload.agentIds)) {
         const added = await this.#command('channels.membership.add', {
-          campId: String(result.payload.campId),
+          threadId: String(result.payload.threadId),
           agentId,
           expectedMembershipGeneration: membership,
           capabilityOverrides: {},
@@ -1589,18 +1589,18 @@ export class DingTalkChannelSettingsService {
           })
         externalId = deliveryMessageId
       } else if (delivery.deliveryKind === 'agent_attachment') {
-        const campId = requiredPayloadString(delivery.payload, 'campId')
+        const threadId = requiredPayloadString(delivery.payload, 'threadId')
         const attachmentId = requiredPayloadString(delivery.payload, 'attachmentId')
         const target = await this.#dependencies.core.request<{
           attachmentId: string
           kind: 'file'
           mediaType: string
           path: string
-        } | null>('camp.attachments.desktopOpenTarget',
+        } | null>('thread.attachments.desktopOpenTarget',
           delivery.payload.storage === 'source_ref'
-            ? { owner: 'message', campId, attachmentRefId: attachmentId,
-                messageId: requiredPayloadString(delivery.payload, 'sourceCampMessageId') }
-            : { campId, attachmentId })
+            ? { owner: 'message', threadId, attachmentRefId: attachmentId,
+                messageId: requiredPayloadString(delivery.payload, 'sourceThreadMessageId') }
+            : { threadId, attachmentId })
         if (!target || target.kind !== 'file' || target.attachmentId !== attachmentId) {
           throw new Error('channel_attachment_unavailable')
         }
@@ -1701,7 +1701,7 @@ export class DingTalkChannelSettingsService {
                 ?.createExecutionViewUrl({
                   channelConversationId: source.channelConversationId,
                   targetAppId: source.targetAppId,
-                  campId: source.campId,
+                  threadId: source.threadId,
                   agentId: source.agentId,
                   focusRunId: source.agentRunId,
                   maxRunCreatedAt: source.runCreatedAt

@@ -18,7 +18,7 @@ import { builtinMemberPresetsForLanguage, type BuiltinMemberPreset } from './mem
 type InProgress = Extract<OnboardingSnapshot, { status: 'in_progress' }>
 
 describe('first-run provisioning', () => {
-  it('retains the selected built-in member, applies adapter defaults, creates a durable Camp, then completes', async () => {
+  it('retains the selected built-in member, applies adapter defaults, creates a durable Thread, then completes', async () => {
     const events: string[] = []
     const harness = onboardingHarness(events)
 
@@ -30,7 +30,7 @@ describe('first-run provisioning', () => {
 
     expect(result).toMatchObject({
       memberAgentId: 'agent-luoke',
-      quickChatCampId: 'camp-first',
+      quickChatThreadId: 'camp-first',
       snapshot: {
         status: 'completed',
         origin: 'onboarding',
@@ -57,7 +57,7 @@ describe('first-run provisioning', () => {
       }
     })
     expect(harness.requests[2]).toEqual({
-      method: 'camps.create',
+      method: 'threads.create',
       params: {
         commandId: 'camp-command',
         name: FIRST_RUN_CAMP_TITLE,
@@ -74,7 +74,7 @@ describe('first-run provisioning', () => {
       'checkpoint:member',
       'request:members.runtime.set',
       'checkpoint:runtime',
-      'request:camps.create',
+      'request:threads.create',
       'checkpoint:camp',
       'commit:camp-first',
       'complete'
@@ -91,17 +91,17 @@ describe('first-run provisioning', () => {
 
     await provisionFirstRun(harness.api, harness.snapshot, [], () => undefined, 'en')
 
-    expect(harness.requests.map(({ method }) => method)).toEqual(['camps.create'])
+    expect(harness.requests.map(({ method }) => method)).toEqual(['threads.create'])
     expect(events).toEqual([
       'begin',
-      'request:camps.create',
+      'request:threads.create',
       'checkpoint:camp',
       'commit:camp-first',
       'complete'
     ])
   })
 
-  it('creates the selected English preset once without changing the Camp workflow', async () => {
+  it('creates the selected English preset once without changing the Thread workflow', async () => {
     const harness = onboardingHarness([], {}, [])
     await provisionFirstRun(harness.api, harness.snapshot, [codexInstallation()], () => undefined, 'en')
 
@@ -115,7 +115,7 @@ describe('first-run provisioning', () => {
       }
     })
     expect(harness.requests.filter(({ method }) => method === 'members.create')).toHaveLength(1)
-    expect(harness.requests.find(({ method }) => method === 'camps.create')?.params).toMatchObject({
+    expect(harness.requests.find(({ method }) => method === 'threads.create')?.params).toMatchObject({
       name: '初次集结',
       memberAgentIds: ['agent-first']
     })
@@ -177,7 +177,7 @@ describe('first-run provisioning', () => {
         }
       }
     }])
-    expect(harness.requests.find(({ method }) => method === 'camps.create')?.params).toMatchObject({
+    expect(harness.requests.find(({ method }) => method === 'threads.create')?.params).toMatchObject({
       memberAgentIds: [selectedMember.agentId], defaultLeadAgentId: selectedMember.agentId
     })
   })
@@ -245,7 +245,7 @@ describe('first-run provisioning', () => {
     const result = await provisionFirstRun(harness.api, harness.snapshot, [codexInstallation()], () => undefined, 'en')
 
     expect(result.memberAgentId).toBe(seed.agentId)
-    expect(harness.requests.map(({ method }) => method)).toEqual(['members.list', 'members.runtime.set', 'camps.create'])
+    expect(harness.requests.map(({ method }) => method)).toEqual(['members.list', 'members.runtime.set', 'threads.create'])
   })
 
   it('recovers an identity commit before its checkpoint without repeating the update', async () => {
@@ -298,7 +298,7 @@ describe('first-run provisioning', () => {
       memberAgentId: 'agent-first',
       memberVersionBeforeRuntime: 1,
       memberVersionAfterRuntime: 2,
-      quickChatCampId: 'camp-first'
+      quickChatThreadId: 'camp-first'
     })
     harness.api.desktopSession.commitRestorableLocation = vi.fn(async () => {
       events.push('commit:failed')
@@ -331,7 +331,7 @@ function onboardingHarness(
     memberAgentId: null,
     memberVersionBeforeRuntime: null,
     memberVersionAfterRuntime: null,
-    quickChatCampId: null,
+    quickChatThreadId: null,
     ...checkpoints
   }
   let current: OnboardingSnapshot = {
@@ -343,7 +343,7 @@ function onboardingHarness(
       adapterKind: 'codex-cli',
       model: { mode: 'runtime_default' }
     },
-    provisioning: checkpoints.memberAgentId || checkpoints.quickChatCampId ? operation : null
+    provisioning: checkpoints.memberAgentId || checkpoints.quickChatThreadId ? operation : null
   }
   const snapshot = current as InProgress
   const requests: Array<{ method: CoreMethod; params: unknown }> = []
@@ -357,7 +357,7 @@ function onboardingHarness(
         ? commandResult(method, { agentId: 'agent-first', version: 1 }, 'agent_profile', 'agent-first')
         : method === 'members.runtime.set' || method === 'members.update'
           ? commandResult(method, { agentId: command.agentId, version: command.expectedVersion + 1 }, 'agent_profile', command.agentId)
-          : commandResult(method, { campId: 'camp-first' }, 'camp', 'camp-first')
+          : commandResult(method, { threadId: 'camp-first' }, 'camp', 'camp-first')
       return result as T
     },
     onboarding: {
@@ -386,14 +386,14 @@ function onboardingHarness(
         current = updateOperation(current, { memberVersionAfterRuntime: version })
         return current
       },
-      async recordProvisionedCamp(campId): Promise<OnboardingSnapshot> {
+      async recordProvisionedThread(threadId): Promise<OnboardingSnapshot> {
         events.push('checkpoint:camp')
-        current = updateOperation(current, { quickChatCampId: campId })
+        current = updateOperation(current, { quickChatThreadId: threadId })
         return current
       },
       async complete(): Promise<OnboardingSnapshot> {
         events.push('complete')
-        if (current.status !== 'in_progress' || !current.provisioning?.memberAgentId || !current.provisioning.quickChatCampId) {
+        if (current.status !== 'in_progress' || !current.provisioning?.memberAgentId || !current.provisioning.quickChatThreadId) {
           throw new Error('incomplete')
         }
         current = {
@@ -403,14 +403,14 @@ function onboardingHarness(
           completedAt: '2026-08-17T00:00:00.000Z',
           selectedMemberRole: current.selectedMemberRole,
           memberAgentId: current.provisioning.memberAgentId,
-          quickChatCampId: current.provisioning.quickChatCampId
+          quickChatThreadId: current.provisioning.quickChatThreadId
         }
         return current
       }
     },
     desktopSession: {
       async commitRestorableLocation(location): Promise<void> {
-        events.push(`commit:${location.kind === 'camp' ? location.campId : location.kind}`)
+        events.push(`commit:${location.kind === 'camp' ? location.threadId : location.kind}`)
       }
     }
   }

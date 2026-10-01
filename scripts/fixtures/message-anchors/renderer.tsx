@@ -1,28 +1,28 @@
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { AgentProfile, CampMessageView, CampOpenMessageCoverage, CampSnapshot } from '@contracts'
+import type { AgentProfile, ThreadMessageView, ThreadOpenMessageCoverage, ThreadSnapshot } from '@contracts'
 import { AppHeader } from '../../../apps/desktop/src/renderer/src/App'
-import { CampWorkspace } from '../../../apps/desktop/src/renderer/src/CampWorkspace'
+import { ThreadWorkspace } from '../../../apps/desktop/src/renderer/src/ThreadWorkspace'
 import '../../../apps/desktop/src/renderer/src/styles.css'
 
 // Closed Renderer fixture: no Core, SQLite, Skill Library, model, or daily bridge is started.
 const now = '2026-09-30T10:00:00Z'
-const campId = 'rvcamp_01m3rs4y3gfjssw5nstbzbdx7g'
+const threadId = 'rvcamp_01m3rs4y3gfjssw5nstbzbdx7g'
 const agent: AgentProfile = { agentId: 'agent-fixture', displayName: '爱丽丝', avatarRef: null, accent: null,
   teamRole: '五号街卖花女', professionalResponsibilities: '', personalityTraits: [], workingPrinciples: '',
   growthTopic: '', defaultCapabilities: [], presence: 'present', runtimeConfiguration: null,
   runtimeReadiness: { status: 'ready', blockers: [] }, memberOrder: 0, version: 1,
   createdAt: now, updatedAt: now, removedAt: null }
-function message(id: string, sequence: number, authorType: CampMessageView['authorType'], body: string,
-  replyToCampMessageId: string | null = null): CampMessageView {
+function message(id: string, sequence: number, authorType: ThreadMessageView['authorType'], body: string,
+  replyToThreadMessageId: string | null = null): ThreadMessageView {
   return { id, sequence, authorType, authorId: authorType === 'agent' ? agent.agentId : 'local_user',
     timelineGlobalSequence: null, sourceAgentRunId: null, body, content: [{ kind: 'text', text: body }],
-    attachments: [], quotes: [], addressMode: 'default', addressedAgentIds: [], replyToCampMessageId,
-    campTurnId: null, presentation: null, createdAt: now, withdrawn: false, canWithdraw: false, version: 1 }
+    attachments: [], quotes: [], addressMode: 'default', addressedAgentIds: [], replyToThreadMessageId,
+    threadTurnId: null, presentation: null, createdAt: now, withdrawn: false, canWithdraw: false, version: 1 }
 }
 const longTitle = '请保留现有会话风格，补充左侧用户消息锚点，并确认长标题、首条回复、紧凑间距和窗口宽度变化时的呈现。'.repeat(3)
 const firstReply = '第一条回复：保持原有的 Porcelain Day 与 Steel Night 视觉；每条用户消息对应一个短横线，悬浮才变长。'.repeat(5)
-function messages(count: number, start = 1): CampMessageView[] {
+function messages(count: number, start = 1): ThreadMessageView[] {
   return Array.from({ length: count }, (_, offset) => {
     const n = start + offset
     const user = message(`user-${n}`, n * 3, 'user', n === 1 ? longTitle : `第 ${n} 个问题：确认阅读位置与会话交互。`)
@@ -31,8 +31,8 @@ function messages(count: number, start = 1): CampMessageView[] {
       ...(n === 1 ? [message('second-reply', 5, 'agent', '第二条回复不应进入预览。', user.id)] : [])]
   }).flat()
 }
-const initial: CampSnapshot = { schemaVersion: 34, throughGlobalSequence: 1,
-  camp: { id: campId, title: '会话内消息锚点', activationState: 'active', projectBindingKind: 'directory',
+const initial: ThreadSnapshot = { schemaVersion: 34, throughGlobalSequence: 1,
+  thread: { id: threadId, title: '会话内消息锚点', activationState: 'active', projectBindingKind: 'directory',
     projectPath: '/fixture/workspace', defaultLeadAgentId: agent.agentId, membershipGeneration: 1,
     version: 1, createdAt: now, updatedAt: now },
   members: [{ agentId: agent.agentId, displayName: agent.displayName, avatarRef: null, teamRole: agent.teamRole,
@@ -46,27 +46,27 @@ Object.assign(window, { rovai: {
   request: async (method: string) => {
     requests.push(method)
     if (method === 'skills.list' || method === 'skills.deliveryGroups.list') return []
-    if (method === 'camp.pendingInputs.get') return { campId, executionActive: false, items: [], editSession: null, submissionOutcomes: [] }
+    if (method === 'camp.pendingInputs.get') return { threadId, executionActive: false, items: [], editSession: null, submissionOutcomes: [] }
     throw new Error(`Unexpected anchor fixture request: ${method}`)
   }
 } })
-let updateSnapshot: React.Dispatch<React.SetStateAction<CampSnapshot>>
+let updateSnapshot: React.Dispatch<React.SetStateAction<ThreadSnapshot>>
 let updateWidth: React.Dispatch<React.SetStateAction<number | undefined>>
-let updateHistory: React.Dispatch<React.SetStateAction<CampOpenMessageCoverage | null>>
+let updateHistory: React.Dispatch<React.SetStateAction<ThreadOpenMessageCoverage | null>>
 function Fixture(): React.JSX.Element {
   const [snapshot, setSnapshot] = useState(initial)
   const [paneWidth, setPaneWidth] = useState<number>()
-  const [history, setHistory] = useState<CampOpenMessageCoverage | null>(null)
+  const [history, setHistory] = useState<ThreadOpenMessageCoverage | null>(null)
   const [entryHost, setEntryHost] = useState<HTMLElement | null>(null)
   updateSnapshot = setSnapshot
   updateWidth = setPaneWidth
   updateHistory = setHistory
   return <div className="app-shell app-shell-camp">
     <aside style={{ gridRow: '1 / -1', padding: '48px 24px', background: 'var(--rail)' }}>Rovai AI</aside>
-    <AppHeader campTitle={snapshot.camp.title} contextLabel="rovai-ai" camp={snapshot}
+    <AppHeader threadTitle={snapshot.thread.title} contextLabel="rovai-ai" thread={snapshot}
       detailEntryHostRef={setEntryHost} onFocusApprovals={() => {}} />
     <main className="content task-content" style={{ width: paneWidth }}>
-      <CampWorkspace snapshot={snapshot} projectName="rovai-ai" agents={[agent]} busy={false} stopping={false}
+      <ThreadWorkspace snapshot={snapshot} projectName="rovai-ai" agents={[agent]} busy={false} stopping={false}
         onSend={async () => {}} onChangeLead={async () => {}} onTasksChanged={async () => {}}
         onResolveApproval={() => {}} worldMapEnabled={false} detailEntryHost={entryHost}
         messageHistory={history} onLoadEarlierMessages={async () => {

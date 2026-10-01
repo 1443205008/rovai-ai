@@ -15,4 +15,4 @@ function Fixture(): React.JSX.Element {
   useEffect(() => { Object.assign(window, { previewAcceptance: preview }) }, [preview])
   return <div id="preview-fixture" style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column' }}><style>{'.file-preview-anchor{width:100%;min-height:0;flex:1}'}</style><FilePreviewTabs /><FilePreviewPane /></div>
 }
-createRoot(document.getElementById('root')!).render(<FilePreviewProvider campId="preview-test" resolvedTheme="day"><Fixture /></FilePreviewProvider>)
+createRoot(document.getElementById('root')!).render(<FilePreviewProvider threadId="preview-test" resolvedTheme="day"><Fixture /></FilePreviewProvider>)

@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { readErrorMessage } from './error-message'
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -6,8 +6,8 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Popover from '@radix-ui/react-popover'
 import type {
   AgentProfile,
-  CampCreationPreflight,
-  CreateCampRequest,
+  ThreadCreationPreflight,
+  CreateThreadRequest,
   NewConversationDefaults,
   MissionCreate,
   ProjectNavigationGroup,
@@ -35,7 +35,7 @@ import {
 import { displayProjectPath } from '../../shared/project-display-name'
 import { UiText, uiAttribute } from './interface-language'
 
-type CreateCampDraft = Omit<CreateCampRequest, 'commandId' | 'activationState'>
+type CreateThreadDraft = Omit<CreateThreadRequest, 'commandId' | 'activationState'>
 type WorkspaceChoice = WorkspaceSelection | WorkspaceInspection
 type GitInspectionStatus = 'idle' | 'loading' | 'ready' | 'failed'
 
@@ -67,16 +67,16 @@ export function NewConversationDialog({
   attentionMessage?: string | null
   projects: ProjectNavigationGroup[]
   missionTagCatalog?: string[]
-  preflight: CampCreationPreflight
+  preflight: ThreadCreationPreflight
   agents: AgentProfile[]
   busy: boolean
   projectAccessReady: boolean
   onOpenChange(open: boolean): void
   onChooseWorkspaceDirectory(): Promise<WorkspaceSelection | null>
   onWorkspaceSelected(workspace: WorkspaceSelection): Promise<void>
-  onCreate(draft: CreateCampDraft, enableOneClick: boolean, mission?: {description:string; start:boolean; tags:string[]; attachments:ReturnType<typeof missionAttachmentDrafts>}): Promise<void>
+  onCreate(draft: CreateThreadDraft, enableOneClick: boolean, mission?: {description:string; start:boolean; tags:string[]; attachments:ReturnType<typeof missionAttachmentDrafts>}): Promise<void>
 }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const mobile = useMobileLayout()
   const [submitting, setSubmitting] = useState(false)
   const busy = creationBusy || submitting
@@ -113,7 +113,7 @@ export function NewConversationDialog({
   )
   const preferredInitialSelection = initialSelection ?? null
   const initialSelectionPlan = useMemo(
-    () => planInitialCampSelection(preflight, preferredInitialSelection),
+    () => planInitialThreadSelection(preflight, preferredInitialSelection),
     [preferredInitialSelection, preflight.presentMembers]
   )
   const availableMembers = preflight.presentMembers.filter(isNewConversationMemberAvailable)
@@ -195,7 +195,7 @@ export function NewConversationDialog({
   const toggleMember = (agentId: string): void => {
     if (busy || !availableMembers.some((member) => member.agentId === agentId)) return
     setMemberError(null)
-    const next = toggleCampMemberSelection({
+    const next = toggleThreadMemberSelection({
       memberIds: selectedMemberIds,
       leadId,
       toggledMemberId: agentId,
@@ -468,7 +468,7 @@ export function NewConversationDialog({
   )
 }
 
-type MissionMember = CampCreationPreflight['presentMembers'][number]
+type MissionMember = ThreadCreationPreflight['presentMembers'][number]
 
 function MissionProjectPicker({
   open,
@@ -699,26 +699,26 @@ function hasGitObservation(
   return workspace !== null && 'gitObservation' in workspace
 }
 
-export function initialCampSelection(
-  preflight: CampCreationPreflight,
+export function initialThreadSelection(
+  preflight: ThreadCreationPreflight,
   preferred: NewConversationDefaults | null = null
 ): {
   memberIds: string[]
   leadId: string
 } {
-  const { memberIds, leadId } = planInitialCampSelection(preflight, preferred)
+  const { memberIds, leadId } = planInitialThreadSelection(preflight, preferred)
   return { memberIds, leadId }
 }
 
-export interface InitialCampSelectionPlan {
+export interface InitialThreadSelectionPlan {
   memberIds: string[]
   leadId: string
 }
 
-export function planInitialCampSelection(
-  preflight: CampCreationPreflight,
+export function planInitialThreadSelection(
+  preflight: ThreadCreationPreflight,
   preferred: NewConversationDefaults | null = null
-): InitialCampSelectionPlan {
+): InitialThreadSelectionPlan {
   const presentMemberIds = preflight.presentMembers.filter(isNewConversationMemberAvailable).map((member) => member.agentId)
   const preferredMemberIds = preferred?.memberAgentIds.filter((agentId) =>
     presentMemberIds.includes(agentId)
@@ -743,7 +743,7 @@ export function limitDraftNameInput(value: string): string {
   return Array.from(normalized).slice(0, 80).join('')
 }
 
-export function toggleCampMemberSelection({
+export function toggleThreadMemberSelection({
   memberIds,
   leadId,
   toggledMemberId,

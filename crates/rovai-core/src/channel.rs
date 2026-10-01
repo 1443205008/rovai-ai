@@ -14,14 +14,14 @@ use uuid::Uuid;
 use crate::{
     agent_run_file_change::{AgentRunFileChangesView, list_completed_run_file_changes},
     camp_content::{
-        ExternalQuoteAttachmentSummary, StructuredCampMessageContent, StructuredCampMessageSegment,
-        canonical_content_digest, mentions_current_user, normalize_content,
-        render_current_plain_text, validate_content,
+        ExternalQuoteAttachmentSummary, StructuredThreadMessageContent,
+        StructuredThreadMessageSegment, canonical_content_digest, mentions_current_user,
+        normalize_content, render_current_plain_text, validate_content,
     },
-    camp_id::CampId,
+    camp_id::ThreadId,
     collaboration::{
-        AddCampMemberCommand, CampMembershipMutationSource, CollaborationService,
-        DEFAULT_CAMP_TITLE, ExternalChannelAdmissionInput, RemoveCampMemberCommand,
+        AddThreadMemberCommand, CollaborationService, DEFAULT_CAMP_TITLE,
+        ExternalChannelAdmissionInput, RemoveThreadMemberCommand, ThreadMembershipMutationSource,
         append_domain_event,
     },
     command::{
@@ -508,7 +508,7 @@ impl DomainCommand for StartNewFeishuDmCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ResolvePendingCampBindingCommand {
+pub struct ResolvePendingThreadBindingCommand {
     pub pending_binding_id: String,
     pub app_id: String,
     pub external_picker_message_id: String,
@@ -521,8 +521,8 @@ pub struct ResolvePendingCampBindingCommand {
     pub operator_union_id: Option<String>,
 }
 
-impl sealed::Sealed for ResolvePendingCampBindingCommand {}
-impl DomainCommand for ResolvePendingCampBindingCommand {
+impl sealed::Sealed for ResolvePendingThreadBindingCommand {}
+impl DomainCommand for ResolvePendingThreadBindingCommand {
     const TYPE: &'static str = "pending_camp_binding.resolve";
 }
 
@@ -711,6 +711,7 @@ pub struct ChannelTransportConversationView {
     pub chat_id: String,
     pub topic_key: String,
     pub conversation_kind: String,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: Option<String>,
 }
 
@@ -961,8 +962,10 @@ pub struct ChannelExecutionConsoleRunView {
 pub struct ChannelExecutionConsoleSourceView {
     pub sequence: i64,
     pub agent_run_id: String,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "threadTurnId", alias = "campTurnId")]
     pub camp_turn_id: Option<String>,
     pub channel_conversation_id: String,
     pub agent_id: String,
@@ -983,6 +986,7 @@ pub struct ChannelExecutionConsoleSourceView {
 pub struct ChannelExecutionWebScope {
     pub channel_conversation_id: String,
     pub target_app_id: String,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub agent_id: String,
     pub focus_run_id: String,
@@ -1003,6 +1007,7 @@ pub struct ChannelExecutionWebTriggerView {
 pub struct ChannelExecutionWebRunView {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "threadTurnId", alias = "campTurnId")]
     pub camp_turn_id: Option<String>,
     pub purpose: String,
     pub invocation_kind: String,
@@ -1024,14 +1029,15 @@ pub struct ChannelExecutionWebRunView {
 pub struct ChannelExecutionWebSnapshotView {
     pub schema_version: i64,
     pub focus_run_id: String,
-    pub camp: ChannelExecutionWebCampView,
+    #[serde(rename = "thread", alias = "camp")]
+    pub camp: ChannelExecutionWebThreadView,
     pub agent: ChannelExecutionWebAgentView,
     pub runs: Vec<ChannelExecutionWebRunView>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ChannelExecutionWebCampView {
+pub struct ChannelExecutionWebThreadView {
     pub id: String,
     pub title: String,
 }
@@ -1427,7 +1433,7 @@ impl ChannelService {
         for (value, field) in [
             (&scope.channel_conversation_id, "channelConversationId"),
             (&scope.target_app_id, "targetAppId"),
-            (&scope.camp_id, "campId"),
+            (&scope.camp_id, "threadId"),
             (&scope.agent_id, "agentId"),
             (&scope.focus_run_id, "focusRunId"),
             (&scope.max_run_created_at, "maxRunCreatedAt"),
@@ -1659,7 +1665,7 @@ impl ChannelService {
         Ok(Some(ChannelExecutionWebSnapshotView {
             schema_version: 1,
             focus_run_id: scope.focus_run_id.clone(),
-            camp: ChannelExecutionWebCampView {
+            camp: ChannelExecutionWebThreadView {
                 id: scope.camp_id.clone(),
                 title: camp_title,
             },
@@ -4679,8 +4685,8 @@ impl ChannelService {
                 json!({
                     "conversationId": conversation_id,
                     "bindingId": binding_id,
-                    "campId": camp_id,
-                    "campCreated": true,
+                    "threadId": camp_id,
+                    "threadCreated": true,
                     "generation": generation,
                 }),
                 Some(EntityReference {
@@ -5584,7 +5590,7 @@ impl ChannelService {
                 return Ok(CommandHandlerResult::rejected(
                     "channel.membership_sync_required",
                     json!({
-                        "campId": camp_id,
+                        "threadId": camp_id,
                         "bindingId": binding.binding_id,
                         "agentIds": missing_members,
                         "expectedMembershipGeneration": membership_generation,
@@ -5638,8 +5644,8 @@ impl ChannelService {
                 json!({
                     "aggregateId": aggregate.id,
                     "requestId": request_id,
-                    "campId": camp_id,
-                    "campCreated": camp_created,
+                    "threadId": camp_id,
+                    "threadCreated": camp_created,
                     "queuePosition": queue_position,
                     "status": request_status,
                 }),
@@ -5657,7 +5663,7 @@ impl ChannelService {
         &self,
         database: &mut Database,
         quick_chat_path: &Path,
-        envelope: &CommandEnvelope<ResolvePendingCampBindingCommand>,
+        envelope: &CommandEnvelope<ResolvePendingThreadBindingCommand>,
     ) -> Result<CommandExecution> {
         validate_nonempty(&envelope.payload.pending_binding_id, "pendingBindingId")?;
         validate_nonempty(&envelope.payload.app_id, "appId")?;
@@ -6123,8 +6129,8 @@ impl ChannelService {
                     "projectId": project_id,
                     "projectDisplayName": project_display_name,
                     "bindingId": binding_id,
-                    "campId": camp_id,
-                    "campCreated": true,
+                    "threadId": camp_id,
+                    "threadCreated": true,
                     "promotedMessageCount": queued.len(),
                     "version": pending.version + 2,
                 }),
@@ -6508,9 +6514,9 @@ impl ChannelService {
                 settlement.terminal_code,
                 json!({
                     "agentRunId": envelope.payload.agent_run_id,
-                    "campId": projection.camp_id,
-                    "campTurnId": projection.camp_turn_id,
-                    "campTurnStatus": camp_turn_status,
+                    "threadId": projection.camp_id,
+                    "threadTurnId": projection.camp_turn_id,
+                    "threadTurnStatus": camp_turn_status,
                     "status": settlement.terminal_status,
                 }),
                 Some(EntityReference {
@@ -6988,7 +6994,7 @@ impl ChannelService {
 }
 
 #[derive(Debug)]
-struct BoundGroupCamp {
+struct BoundGroupThread {
     binding_id: String,
     camp_id: String,
     conversation_kind: String,
@@ -7018,7 +7024,7 @@ fn reconcile_bound_group_memberships(
         "#,
         params![provider, tenant_key, chat_id],
         |row| {
-            Ok(BoundGroupCamp {
+            Ok(BoundGroupThread {
                 binding_id: row.get(0)?,
                 camp_id: row.get(1)?,
                 conversation_kind: row.get(2)?,
@@ -7084,12 +7090,12 @@ fn reconcile_bound_group_memberships(
                     camp_id: Some(camp.camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: AddCampMemberCommand {
+                    payload: AddThreadMemberCommand {
                         camp_id: camp.camp_id.clone(),
                         agent_id: agent_id.clone(),
                         expected_membership_generation: membership_generation,
                         capability_overrides: json!({}),
-                        source: Some(CampMembershipMutationSource {
+                        source: Some(ThreadMembershipMutationSource {
                             namespace: provider.to_string(),
                             binding_id: camp.binding_id.clone(),
                             reconciliation_generation,
@@ -7145,7 +7151,7 @@ fn reconcile_bound_group_memberships(
                     camp_id: Some(camp.camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: RemoveCampMemberCommand {
+                    payload: RemoveThreadMemberCommand {
                         camp_id: camp.camp_id.clone(),
                         agent_id: agent_id.clone(),
                         expected_membership_generation: preview.membership_generation,
@@ -7154,7 +7160,7 @@ fn reconcile_bound_group_memberships(
                             .next_default_lead_agent_id
                             .clone(),
                         reason: Some(format!("removed_from_{provider}_group")),
-                        source: Some(CampMembershipMutationSource {
+                        source: Some(ThreadMembershipMutationSource {
                             namespace: provider.to_string(),
                             binding_id: camp.binding_id.clone(),
                             reconciliation_generation,
@@ -7221,7 +7227,7 @@ struct FrozenInboundPayload {
     conversation_id: String,
     principal_id: String,
     binding_id_at_observation: Option<String>,
-    structured_content: StructuredCampMessageContent,
+    structured_content: StructuredThreadMessageContent,
     target_agent_ids: Vec<String>,
     acknowledgement_app_id: String,
     #[serde(default)]
@@ -7373,7 +7379,7 @@ struct PendingMessageRecord {
     aggregate_id: String,
     external_principal_id: String,
     ack_app_id: String,
-    structured_content: StructuredCampMessageContent,
+    structured_content: StructuredThreadMessageContent,
     target_agent_ids: Vec<String>,
 }
 
@@ -9033,7 +9039,7 @@ fn insert_channel_turn_request(
     aggregate_id: &str,
     principal_id: &str,
     ack_app_id: &str,
-    structured_content: &StructuredCampMessageContent,
+    structured_content: &StructuredThreadMessageContent,
     target_agent_ids: &[String],
     now: &str,
 ) -> Result<(String, i64)> {
@@ -9230,7 +9236,7 @@ fn create_channel_camp(
         .pop_first()
         .context("channel Camp requires a Default Lead")?;
     unique_targets.insert(default_lead.clone());
-    let camp_id = CampId::new().to_string();
+    let camp_id = ThreadId::new().to_string();
     transaction.execute(
         r#"
         INSERT INTO camp(
@@ -9377,7 +9383,7 @@ fn try_admit_request(
     if !attachments.ready() {
         return Ok(AdmissionAttempt::Deferred);
     }
-    let content: StructuredCampMessageContent = serde_json::from_str(&content_json)?;
+    let content: StructuredThreadMessageContent = serde_json::from_str(&content_json)?;
     let targets: Vec<String> = serde_json::from_str(&targets_json)?;
     for agent_id in &targets {
         let bot_state = transaction
@@ -10269,7 +10275,7 @@ fn project_active_request_deliveries_for_turn(
             },
         )?;
         for (message_id, agent_id, body, structured_content_json) in outputs {
-            let content: StructuredCampMessageContent =
+            let content: StructuredThreadMessageContent =
                 serde_json::from_str(&structured_content_json)?;
             if let Some(author_app_id) = bot_app_id(transaction, &provider, &agent_id)? {
                 if !body.trim().is_empty() {
@@ -10343,7 +10349,7 @@ fn feishu_agent_output_projection(
     message_id: &str,
     agent_id: &str,
     author_app_id: &str,
-    content: &[StructuredCampMessageSegment],
+    content: &[StructuredThreadMessageSegment],
 ) -> Result<Value> {
     feishu_agent_output_projection_with_spec(
         &FEISHU_SPEC,
@@ -10361,7 +10367,7 @@ fn feishu_agent_output_projection_with_spec(
     message_id: &str,
     agent_id: &str,
     author_app_id: &str,
-    content: &[StructuredCampMessageSegment],
+    content: &[StructuredThreadMessageSegment],
 ) -> Result<Value> {
     // This is a Feishu-only presentation, not a rewrite of the Camp message or
     // Agent context. In particular, literal "@你" text is never string-stripped.
@@ -10370,7 +10376,7 @@ fn feishu_agent_output_projection_with_spec(
         .filter(|segment| {
             !matches!(
                 segment,
-                StructuredCampMessageSegment::CurrentUserMention { .. }
+                StructuredThreadMessageSegment::CurrentUserMention { .. }
             )
         })
         .cloned()
@@ -10501,7 +10507,7 @@ fn dingtalk_agent_output_projection(
     message_id: &str,
     agent_id: &str,
     body: &str,
-    content: &[StructuredCampMessageSegment],
+    content: &[StructuredThreadMessageSegment],
 ) -> Result<Value> {
     Ok(json!({
         "kind": "agent_output",
@@ -10565,7 +10571,7 @@ fn channel_agent_reply_projection(
         return Ok(Value::Null);
     };
     let Some(content) = parent_content_json
-        .and_then(|json| serde_json::from_str::<StructuredCampMessageContent>(&json).ok())
+        .and_then(|json| serde_json::from_str::<StructuredThreadMessageContent>(&json).ok())
     else {
         return Ok(json!({"status": "unavailable"}));
     };
@@ -10576,8 +10582,8 @@ fn channel_agent_reply_projection(
         .filter(|segment| {
             !matches!(
                 segment,
-                StructuredCampMessageSegment::CurrentUserMention { .. }
-                    | StructuredCampMessageSegment::ExternalQuote { .. }
+                StructuredThreadMessageSegment::CurrentUserMention { .. }
+                    | StructuredThreadMessageSegment::ExternalQuote { .. }
             )
         })
         .collect();
@@ -10635,7 +10641,7 @@ fn upgrade_legacy_feishu_output_claim(
         [&claim.delivery_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
-    let content: StructuredCampMessageContent = serde_json::from_str(&content_json)?;
+    let content: StructuredThreadMessageContent = serde_json::from_str(&content_json)?;
     claim.payload = feishu_agent_output_projection_with_spec(
         ChannelProviderSpec::for_provider(&claim.provider)
             .context("unsupported output provider")?,
@@ -10923,7 +10929,7 @@ pub(crate) fn enqueue_bound_camp_agent_message(
     message_id: &str,
     agent_id: &str,
     body: &str,
-    content: &StructuredCampMessageContent,
+    content: &StructuredThreadMessageContent,
     now: &str,
 ) -> Result<()> {
     let binding = transaction
@@ -10955,7 +10961,7 @@ pub(crate) fn enqueue_bound_camp_agent_message(
             message_id,
             &json!({
                 "kind": "agent_output",
-                "sourceCampMessageId": message_id,
+                "sourceThreadMessageId": message_id,
                 "sourceAgentId": agent_id,
                 "failureCode": "channel.author_bot_unpublished",
                 "text": body,
@@ -11077,9 +11083,9 @@ fn materialize_agent_attachments(
         let dedupe_key = format!("agent_attachment:{message_id}:{ordinal}:{attachment_id}");
         let payload = json!({
             "kind": "agent_attachment",
-            "sourceCampMessageId": message_id,
+            "sourceThreadMessageId": message_id,
             "sourceAgentId": agent_id,
-            "campId": camp_id,
+            "threadId": camp_id,
             "attachmentId": attachment_id,
             "ordinal": ordinal,
             "attachmentKind": attachment_kind,
@@ -11130,8 +11136,8 @@ fn materialize_agent_attachments(
         }
         let dedupe_key = format!("agent_attachment:{message_id}:{ordinal}:{}", source.id);
         let payload = json!({
-            "kind": "agent_attachment", "sourceCampMessageId": message_id, "sourceAgentId": agent_id,
-            "campId": camp_id, "attachmentId": source.id, "ordinal": ordinal,
+            "kind": "agent_attachment", "sourceThreadMessageId": message_id, "sourceAgentId": agent_id,
+            "threadId": camp_id, "attachmentId": source.id, "ordinal": ordinal,
             "attachmentKind": if source.media_type.as_deref().is_some_and(|mime| mime.starts_with("image/")) { "image" } else { "file" },
             "fileName": source.display_name, "mediaType": source.media_type,
             "storage": "source_ref", "requiresBodyDelivery": requires_body_delivery,
@@ -11631,6 +11637,13 @@ fn claim_deliveries(
             },
         )?;
         upgrade_legacy_feishu_output_claim(transaction, &mut claim)?;
+        // Existing outbox bytes remain frozen; only the claimed host view uses current names.
+        crate::thread_compat::project_command_result("channel.outbox.claim", &mut claim.payload)?;
+        crate::thread_compat::alias(
+            &mut claim.payload,
+            "sourceCampMessageId",
+            "sourceThreadMessageId",
+        )?;
         claims.push(claim);
     }
     Ok(claims)
@@ -11799,7 +11812,7 @@ fn resolve_observation_targets(
 fn build_external_content(
     command: &ObserveChannelInboundCommand,
     target_agent_ids: &[String],
-) -> Result<StructuredCampMessageContent> {
+) -> Result<StructuredThreadMessageContent> {
     let content = assemble_external_content(command, target_agent_ids)?;
     validate_content(&content)?;
     let _ = canonical_content_digest(&content)?;
@@ -11810,7 +11823,7 @@ fn build_observed_external_content(
     transaction: &Transaction<'_>,
     command: &ObserveChannelInboundCommand,
     target_agent_ids: &[String],
-) -> Result<StructuredCampMessageContent> {
+) -> Result<StructuredThreadMessageContent> {
     if command.provider != DINGTALK_PROVIDER || command.conversation_kind != "group" {
         return build_external_content(command, target_agent_ids);
     }
@@ -11857,7 +11870,7 @@ fn remove_dingtalk_target_mentions(body: &str, bot_names: &[String]) -> String {
 fn assemble_external_content(
     command: &ObserveChannelInboundCommand,
     target_agent_ids: &[String],
-) -> Result<StructuredCampMessageContent> {
+) -> Result<StructuredThreadMessageContent> {
     let mut content = Vec::new();
     if let Some(quote) = &command.quote {
         let sender_display_name = normalize_display_name(&quote.sender_display_name)?;
@@ -11878,25 +11891,25 @@ fn assemble_external_content(
                 "attachmentSummaries": attachment_summaries,
             }))?
         );
-        content.push(StructuredCampMessageSegment::ExternalQuote {
+        content.push(StructuredThreadMessageSegment::ExternalQuote {
             sender_display_name,
             body,
             attachment_summaries,
             content_digest,
         });
-        content.push(StructuredCampMessageSegment::Text {
+        content.push(StructuredThreadMessageSegment::Text {
             text: "\n\n".to_string(),
         });
     }
     for agent_id in target_agent_ids {
-        content.push(StructuredCampMessageSegment::MemberMention {
+        content.push(StructuredThreadMessageSegment::MemberMention {
             agent_id: agent_id.clone(),
         });
-        content.push(StructuredCampMessageSegment::Text {
+        content.push(StructuredThreadMessageSegment::Text {
             text: " ".to_string(),
         });
     }
-    content.push(StructuredCampMessageSegment::Text {
+    content.push(StructuredThreadMessageSegment::Text {
         text: command.body.clone(),
     });
     let content = normalize_content(content);
@@ -13773,7 +13786,7 @@ mod tests {
                             &actor_envelope(
                                 &actor,
                                 wrong("resolve"),
-                                ResolvePendingCampBindingCommand {
+                                ResolvePendingThreadBindingCommand {
                                     pending_binding_id: world.pending_binding_id.clone(),
                                     app_id: world.app_id.clone(),
                                     external_picker_message_id: "om_picker".to_string(),
@@ -16059,10 +16072,10 @@ mod tests {
             )
             .unwrap();
         let content = vec![
-            StructuredCampMessageSegment::CurrentUserMention {
+            StructuredThreadMessageSegment::CurrentUserMention {
                 user_id: CURRENT_USER_ID.to_string(),
             },
-            StructuredCampMessageSegment::Text {
+            StructuredThreadMessageSegment::Text {
                 text: "文字里的 @你 和 @其他人 不能被当成寻址。".to_string(),
             },
         ];
@@ -17396,7 +17409,7 @@ mod tests {
         pending_binding_id: &str,
         command_id: &str,
         provider: &str,
-    ) -> ResolvePendingCampBindingCommand {
+    ) -> ResolvePendingThreadBindingCommand {
         let existing_picker = database
             .connection()
             .query_row(
@@ -17489,7 +17502,7 @@ mod tests {
                     .unwrap();
                 (app_id, payload, picker_message_id)
             };
-        ResolvePendingCampBindingCommand {
+        ResolvePendingThreadBindingCommand {
             pending_binding_id: pending_binding_id.to_string(),
             app_id,
             external_picker_message_id: picker_message_id,
@@ -17514,7 +17527,7 @@ mod tests {
         database: &mut Database,
         kind: &str,
         chat_id: &str,
-    ) -> ResolvePendingCampBindingCommand {
+    ) -> ResolvePendingThreadBindingCommand {
         let quick_chat_path = quick_chat_path(database);
         service
             .reconcile_feishu_group_roster(
@@ -17727,7 +17740,7 @@ mod tests {
             assert!(resolved.result.payload["projectId"].is_null());
             assert!(resolved.result.payload["projectDisplayName"].is_null());
             assert_eq!(resolved.result.payload["promotedMessageCount"], 2);
-            let camp_id = resolved.result.payload["campId"].as_str().unwrap();
+            let camp_id = resolved.result.payload["threadId"].as_str().unwrap();
             let binding_id = resolved.result.payload["bindingId"].as_str().unwrap();
             let persisted: (String, String, String, Option<String>, Option<String>) = database.connection().query_row(
                 "SELECT camp.project_binding_kind, camp.project_path, binding.execution_scope_kind,
@@ -17837,7 +17850,7 @@ mod tests {
                     ),
                 )
                 .unwrap();
-            assert_eq!(next.result.payload["campId"], camp_id);
+            assert_eq!(next.result.payload["threadId"], camp_id);
             assert_eq!(
                 database
                     .connection()
@@ -18435,7 +18448,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(started.result.status, CommandResultStatus::Applied);
-        let camp_id = started.result.payload["campId"].as_str().unwrap();
+        let camp_id = started.result.payload["threadId"].as_str().unwrap();
         assert_channel_camp_name(
             &mut database,
             camp_id,
@@ -19155,7 +19168,7 @@ mod tests {
             .structured_content
             .iter()
             .filter_map(|segment| match segment {
-                StructuredCampMessageSegment::Text { text } => Some(text.as_str()),
+                StructuredThreadMessageSegment::Text { text } => Some(text.as_str()),
                 _ => None,
             })
             .collect::<String>();
@@ -19576,7 +19589,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        let camp_id = resolved.result.payload["campId"].as_str().unwrap();
+        let camp_id = resolved.result.payload["threadId"].as_str().unwrap();
         assert_channel_camp_name(
             &mut database,
             camp_id,
@@ -20192,8 +20205,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(finalized.result.code, "channel.turn.admitted");
-        assert_eq!(finalized.result.payload["campCreated"], true);
-        let camp_id = finalized.result.payload["campId"].as_str().unwrap();
+        assert_eq!(finalized.result.payload["threadCreated"], true);
+        let camp_id = finalized.result.payload["threadId"].as_str().unwrap();
         let stored_path: String = database
             .connection()
             .query_row(
@@ -20260,11 +20273,15 @@ mod tests {
             .unwrap();
         assert_eq!(first_generation.result.payload["generation"], 1);
         assert_eq!(second_generation.result.payload["generation"], 2);
-        assert_eq!(first_generation.result.payload["campCreated"], true);
-        assert_eq!(second_generation.result.payload["campCreated"], true);
+        assert_eq!(first_generation.result.payload["threadCreated"], true);
+        assert_eq!(second_generation.result.payload["threadCreated"], true);
         // /new creates default names only; closed generations retain their source.
-        let first_camp_id = first_generation.result.payload["campId"].as_str().unwrap();
-        let second_camp_id = second_generation.result.payload["campId"].as_str().unwrap();
+        let first_camp_id = first_generation.result.payload["threadId"]
+            .as_str()
+            .unwrap();
+        let second_camp_id = second_generation.result.payload["threadId"]
+            .as_str()
+            .unwrap();
         assert_channel_camp_name(
             &mut database,
             first_camp_id,
@@ -20329,7 +20346,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(finalized.result.code, "channel.turn.admitted");
-        assert_eq!(finalized.result.payload["campCreated"], false);
+        assert_eq!(finalized.result.payload["threadCreated"], false);
         assert_channel_camp_name(
             &mut database,
             second_camp_id,
@@ -20523,7 +20540,7 @@ mod tests {
             )
             .unwrap();
         let failed_at = Utc::now().to_rfc3339();
-        let output_content = vec![StructuredCampMessageSegment::Text {
+        let output_content = vec![StructuredThreadMessageSegment::Text {
             text: "partial channel output".to_string(),
         }];
         let output_content_json = serde_json::to_string(&output_content).unwrap();
@@ -21815,7 +21832,7 @@ mod tests {
             )
             .unwrap();
         let a2a_at = Utc::now().to_rfc3339();
-        let a2a_content = vec![StructuredCampMessageSegment::Text {
+        let a2a_content = vec![StructuredThreadMessageSegment::Text {
             text: "请继续处理".to_string(),
         }];
         restarted.connection().execute(
@@ -22319,7 +22336,7 @@ mod tests {
                 &quick_chat_path,
                 &host_envelope(
                     "resolve-stale-picker-message",
-                    ResolvePendingCampBindingCommand {
+                    ResolvePendingThreadBindingCommand {
                         pending_binding_id: pending_binding_id.clone(),
                         app_id: picker_app_id.clone(),
                         external_picker_message_id: "om_not_authoritative".to_string(),
@@ -22341,7 +22358,7 @@ mod tests {
                 &quick_chat_path,
                 &host_envelope(
                     "resolve-picker-non-owner",
-                    ResolvePendingCampBindingCommand {
+                    ResolvePendingThreadBindingCommand {
                         pending_binding_id: pending_binding_id.clone(),
                         app_id: picker_app_id.clone(),
                         external_picker_message_id: picker_message_id.clone(),
@@ -22383,7 +22400,7 @@ mod tests {
                 &quick_chat_path,
                 &host_envelope(
                     "resolve-picker-project-became-unavailable",
-                    ResolvePendingCampBindingCommand {
+                    ResolvePendingThreadBindingCommand {
                         pending_binding_id: pending_binding_id.clone(),
                         app_id: picker_app_id.clone(),
                         external_picker_message_id: picker_message_id.clone(),
@@ -22449,7 +22466,7 @@ mod tests {
         );
         assert_eq!(resolved.result.code, "channel.binding.resolved");
         assert_eq!(resolved.result.payload["promotedMessageCount"], 2);
-        let camp_id = resolved.result.payload["campId"].as_str().unwrap();
+        let camp_id = resolved.result.payload["threadId"].as_str().unwrap();
         assert_channel_camp_name(
             &mut database,
             camp_id,
@@ -22550,7 +22567,7 @@ mod tests {
                 &quick_chat_path,
                 &host_envelope(
                     "resolve-picker-replay-after-commit",
-                    ResolvePendingCampBindingCommand {
+                    ResolvePendingThreadBindingCommand {
                         pending_binding_id: pending_binding_id.clone(),
                         app_id: picker_app_id,
                         external_picker_message_id: picker_message_id,
@@ -22671,7 +22688,7 @@ mod tests {
                     camp_id: Some(camp_id.to_string()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: crate::collaboration::RenameCampCommand {
+                    payload: crate::collaboration::RenameThreadCommand {
                         camp_id: camp_id.to_string(),
                         title: "OAuth 登录问题".to_string(),
                         expected_version: version,
@@ -22896,7 +22913,7 @@ mod tests {
                 &quick_chat_path,
                 &host_envelope(
                     "reject-legacy-private-picker",
-                    ResolvePendingCampBindingCommand {
+                    ResolvePendingThreadBindingCommand {
                         pending_binding_id: pending_binding_id.to_string(),
                         app_id: "cli_app_1".to_string(),
                         external_picker_message_id: "om_legacy_private".to_string(),
@@ -23532,7 +23549,7 @@ mod tests {
         let pending_id = pending.result.payload["pendingBindingId"].as_str().unwrap();
         let resolved = resolve_pending(&service, &mut database, pending_id, "group-resolve");
         assert_eq!(resolved.result.code, "channel.binding.resolved");
-        let camp_id = resolved.result.payload["campId"].as_str().unwrap();
+        let camp_id = resolved.result.payload["threadId"].as_str().unwrap();
         assert_eq!(
             database
                 .connection()
@@ -23635,7 +23652,7 @@ mod tests {
         assert_eq!(pending.result.code, "channel.binding.pending");
         let pending_id = pending.result.payload["pendingBindingId"].as_str().unwrap();
         let resolved = resolve_pending(&service, &mut database, pending_id, "topic-resolve");
-        let camp_id = resolved.result.payload["campId"].as_str().unwrap();
+        let camp_id = resolved.result.payload["threadId"].as_str().unwrap();
         assert_channel_camp_name(
             &mut database,
             camp_id,
@@ -23945,30 +23962,30 @@ mod tests {
         .unwrap();
         assert!(matches!(
             content.first(),
-            Some(StructuredCampMessageSegment::ExternalQuote { body, attachment_summaries, .. })
+            Some(StructuredThreadMessageSegment::ExternalQuote { body, attachment_summaries, .. })
                 if body == "原始问题" && attachment_summaries.len() == 1
         ));
         assert!(matches!(
             content.get(1),
-            Some(StructuredCampMessageSegment::Text { text }) if text == "\n\n"
+            Some(StructuredThreadMessageSegment::Text { text }) if text == "\n\n"
         ));
         assert!(matches!(
             content.get(2),
-            Some(StructuredCampMessageSegment::MemberMention { agent_id }) if agent_id == "agent_1"
+            Some(StructuredThreadMessageSegment::MemberMention { agent_id }) if agent_id == "agent_1"
         ));
         let serialized = serde_json::to_value(&content).unwrap();
         assert!(!serialized.to_string().contains("externalMessageId"));
         let current_text = content
             .iter()
             .filter_map(|segment| match segment {
-                StructuredCampMessageSegment::Text { text } => Some(text.as_str()),
+                StructuredThreadMessageSegment::Text { text } => Some(text.as_str()),
                 _ => None,
             })
             .collect::<String>();
         assert_eq!(current_text, "\n\n 继续");
 
         let mut tampered = content.clone();
-        let Some(StructuredCampMessageSegment::ExternalQuote { content_digest, .. }) =
+        let Some(StructuredThreadMessageSegment::ExternalQuote { content_digest, .. }) =
             tampered.first_mut()
         else {
             panic!("the first segment must remain the external quote");

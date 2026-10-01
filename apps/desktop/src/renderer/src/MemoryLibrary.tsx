@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { MobileBack, useMobileLayout } from './MobileLayout'
 import { newCommandId } from '../../shared/command-id'
 import { readErrorMessage } from './error-message'
@@ -129,7 +129,7 @@ export function MemoryLibrary({
   onReady?(): void
   startupFeedbackVisible?: boolean
 }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const libraryGeneration = useRef(0)
   const reviewGeneration = useRef(0)
   useEffect(() => () => { libraryGeneration.current++; reviewGeneration.current++ }, [client])

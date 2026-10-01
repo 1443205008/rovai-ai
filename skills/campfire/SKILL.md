@@ -1,6 +1,6 @@
 ---
 name: campfire
-description: Run a Camp discussion with several members to compare perspectives, options or tradeoffs and produce shared notes. Applies to the host and invited contributors throughout that discussion; excludes solo work, unrelated messages and closed discussions.
+description: Run a Thread discussion with several members to compare perspectives, options or tradeoffs and produce shared notes. Applies to the host and invited contributors throughout that discussion; excludes solo work, unrelated messages and closed discussions.
 ---
 
 # Campfire
@@ -17,7 +17,7 @@ The current Default Lead hosts independent views, at most one focused response r
 | Host receives an invited member's current-round reply | Follow [Lead](references/lead.md) |
 | Notes, late contributions or unrelated messages | Do not restart the discussion |
 
-Use trusted roles and request/reply relationships, not message titles. One Lead may host only one unfinished Campfire per Camp. This workflow needs at least two contributors and is not for sustained two-person questioning or strict information isolation.
+Use trusted roles and request/reply relationships, not message titles. One Lead may host only one unfinished Campfire per Thread. This workflow needs at least two contributors and is not for sustained two-person questioning or strict information isolation.
 
 ## Discussion bounds
 

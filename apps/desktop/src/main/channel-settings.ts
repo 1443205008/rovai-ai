@@ -136,7 +136,7 @@ type CoreChannelSnapshot = {
     chatId: string
     topicKey: string
     conversationKind: 'group' | 'topic'
-    campId: string | null
+    threadId: string | null
   }>
   pendingAggregates: Array<{
     aggregateId: string
@@ -189,8 +189,8 @@ type DesktopAttachmentTarget = {
 }
 
 type ExecutionConsoleSource = ExecutionConsoleSnapshot & {
-  campId: string
-  campTurnId: string
+  threadId: string
+  threadTurnId: string
   channelConversationId: string
   agentId: string
   runCreatedAt: string
@@ -2045,14 +2045,14 @@ export class ChannelSettingsService {
       }, false)
     }
     if (finalized.code === 'channel.membership_sync_required') {
-      const campId = stringPayload(finalized, 'campId')
+      const threadId = stringPayload(finalized, 'threadId')
       const bindingId = stringPayload(finalized, 'bindingId')
       const agentIds = arrayPayload(finalized, 'agentIds')
       let membershipGeneration = numberPayload(finalized, 'expectedMembershipGeneration')
       let reconciliationGeneration = numberPayload(finalized, 'nextReconciliationGeneration')
       for (const agentId of agentIds) {
         const added = await this.#commandWithId('channels.membership.add', randomUUID(), {
-          campId,
+          threadId,
           agentId,
           expectedMembershipGeneration: membershipGeneration,
           capabilityOverrides: {},
@@ -2465,7 +2465,7 @@ export class ChannelSettingsService {
                 ?.createExecutionViewUrl({
                   channelConversationId: source.channelConversationId,
                   targetAppId: source.targetAppId,
-                  campId: source.campId,
+                  threadId: source.threadId,
                   agentId: source.agentId,
                   focusRunId: source.agentRunId,
                   maxRunCreatedAt: source.runCreatedAt
@@ -2504,13 +2504,13 @@ export class ChannelSettingsService {
             : 'chat_id'
         })
       } else if (delivery.deliveryKind === 'agent_attachment') {
-        const campId = requiredPayloadString(delivery.payload, 'campId')
+        const threadId = requiredPayloadString(delivery.payload, 'threadId')
         const attachmentId = requiredPayloadString(delivery.payload, 'attachmentId')
         const target = await this.#dependencies!.core.request<DesktopAttachmentTarget | null>(
-          'camp.attachments.desktopOpenTarget',
+          'thread.attachments.desktopOpenTarget',
           delivery.payload.storage === 'source_ref'
-            ? { owner: 'message', campId, attachmentRefId: attachmentId, messageId: requiredPayloadString(delivery.payload, 'sourceCampMessageId') }
-            : { campId, attachmentId }
+            ? { owner: 'message', threadId, attachmentRefId: attachmentId, messageId: requiredPayloadString(delivery.payload, 'sourceThreadMessageId') }
+            : { threadId, attachmentId }
         )
         if (!target || target.kind !== 'file' || target.attachmentId !== attachmentId) {
           throw new Error('channel_attachment_unavailable')

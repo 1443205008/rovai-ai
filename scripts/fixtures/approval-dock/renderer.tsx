@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { ActionApprovalView, GeneralPreferencesApi, InterfaceLanguage } from '@contracts'
-import { ApprovalDock } from '../../../apps/desktop/src/renderer/src/CampWorkspace'
+import { ApprovalDock } from '../../../apps/desktop/src/renderer/src/ThreadWorkspace'
 import { MobileLayoutProvider } from '../../../apps/desktop/src/renderer/src/MobileLayout'
 import { changeInterfaceLanguage } from '../../../apps/desktop/src/renderer/src/interface-language'
 import { DEFAULT_GENERAL_PREFERENCES } from '../../../apps/desktop/src/shared/general-preferences-model'

@@ -1,8 +1,8 @@
-import type { CampCreationPreflight } from '@contracts'
+import type { ThreadCreationPreflight } from '@contracts'
 import { uiAttribute } from './interface-language'
 
 type ConversationCandidate = Pick<
-  CampCreationPreflight['presentMembers'][number],
+  ThreadCreationPreflight['presentMembers'][number],
   'runtimeConfigured' | 'runtimeReadiness'
 >
 

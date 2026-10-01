@@ -29,4 +29,4 @@ Fill gaps from the name, role, and stated requirements. Without evidence about a
 
 ## Check before presentation
 
-The role and responsibilities should agree; principles should guide that work; growth should be trainable and respectful. Remove duplicate or contradictory traits. Check all length, count, and control-character limits. Do not imply that Runtime, permissions, Camp membership, or Lead status is configured.
+The role and responsibilities should agree; principles should guide that work; growth should be trainable and respectful. Remove duplicate or contradictory traits. Check all length, count, and control-character limits. Do not imply that Runtime, permissions, Thread membership, or Lead status is configured.

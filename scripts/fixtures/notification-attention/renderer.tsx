@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import type { NotificationEpisodeChange, NotificationEpisodeView, NotificationSemantic, NotificationActionView } from '@contracts'
 import { NotificationSettings } from '../../../apps/desktop/src/renderer/src/NotificationSettings'
 import { NotificationAttentionController } from '../../../apps/desktop/src/renderer/src/NotificationAttentionController'
-import type { VisibleNotificationSources } from '../../../apps/desktop/src/renderer/src/CampWorkspace'
+import type { VisibleNotificationSources } from '../../../apps/desktop/src/renderer/src/ThreadWorkspace'
 import '../../../apps/desktop/src/renderer/src/styles.css'
 
 let attentive = true
@@ -18,7 +18,7 @@ let showSettings: (visible: boolean) => void
 let failPreferenceSave = false
 let setSources: (source: VisibleNotificationSources | null) => void
 let sequence = 0
-const read = () => ({ campId: 'camp-other', surfaceVisible: true, snapshotSequence: 0,
+const read = () => ({ threadId: 'camp-other', surfaceVisible: true, snapshotSequence: 0,
   messageIds: [], campTurnIds: [], agentRunIds: [], approvalIds: [] })
 Object.assign(window, { rovai: {
   request: async (method: string, request: any) => {
@@ -44,13 +44,13 @@ Object.assign(window, { rovai: {
 function admit(semantic: NotificationSemantic, privateId: string | null = null, episodeId = `episode-${sequence + 1}`, agentDisplayName = '洛克') {
   const n = ++sequence
   const action: NotificationActionView = { actionId: `action-${n}`, kind: privateId ? 'open_single_chat' : semantic === 'approval_pending' ? 'open_approval' : 'open_camp_turn',
-    available: true, campId: 'camp-target', campTurnId: 'turn-target', agentRunId: null, messageId: null,
+    available: true, threadId: 'camp-target', threadTurnId: 'turn-target', agentRunId: null, messageId: null,
     approvalId: semantic === 'approval_pending' ? `approval-${n}` : null,
     acknowledgementId: `occurrence-${n}`, observedEpisodeVersion: n,
     singleChat: privateId ? { conversationId: privateId, agentId: 'agent-1', agentDisplayName, agentRunId: 'private-run' } : null }
   const episode: NotificationEpisodeView = { id: episodeId, kind: semantic === 'approval_pending' ? 'approval' : 'collaboration',
     episodeVersion: n, attentionRevision: n, changeSequence: n,
-    camp: { id: 'camp-target', title: '通知交互与单聊来源定位方案'.repeat(3) }, campTurnId: 'turn-target', agentRunId: null,
+    thread: { id: 'camp-target', title: '通知交互与单聊来源定位方案'.repeat(3) }, threadTurnId: 'turn-target', agentRunId: null,
     primarySemantic: semantic, unread: true, resolved: false, satisfied: false, pendingApprovalCount: 0, mentionCount: 0,
     unacknowledgedMentionCount: 0, mention: null, reasons: [], primaryAction: action, secondaryActions: [], createdAt: '2026-09-07', updatedAt: '2026-09-07' }
   journal.push({ changeSequence: n, episodeId, episodeVersion: n, attentionRevision: n, operation: 'upsert',
@@ -65,7 +65,7 @@ function Fixture() {
   showSettings = setSettings
   if (settings) return <main className="settings-panel settings-panel-notifications" style={{ padding: 28, height: '100vh', overflow: 'auto' }}><NotificationSettings /></main>
   return <main style={{ padding: 40 }}><h1>通知交互验证</h1><input id="draft" aria-label="消息草稿" defaultValue="继续阅读" />
-    <NotificationAttentionController enabled activeCampId={sources?.campId ?? 'camp-other'} activeCampVisible navigationActive={false}
+    <NotificationAttentionController enabled activeThreadId={sources?.threadId ?? 'camp-other'} activeCampVisible navigationActive={false}
       visibleSources={sources?.conversationId ? null : sources} singleChatSources={sources?.conversationId ? sources : null}
       onNavigate={async (_episode, action) => { navigations.push(action); return { status: 'navigated' } }}
       onPresentNavigation={async () => true} onCancelNavigation={() => undefined}
@@ -77,7 +77,7 @@ Object.assign(window, { notificationTest: {
   settings: (visible: boolean) => showSettings(visible),
   preference: () => preference,
   failPreferenceSave: () => { failPreferenceSave = true },
-  source: (conversationId: string | null, visible = true, turnVisible = false) => setSources({ ...read(), campId: 'camp-target',
+  source: (conversationId: string | null, visible = true, turnVisible = false) => setSources({ ...read(), threadId: 'camp-target',
     conversationId, surfaceVisible: visible, campTurnIds: turnVisible ? ['turn-target'] : [] }),
   away: () => setSources(read()),
   attentive: (value: boolean) => { attentive = value; window.dispatchEvent(new Event(value ? 'focus' : 'blur')) },

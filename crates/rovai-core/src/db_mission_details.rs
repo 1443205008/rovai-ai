@@ -436,7 +436,7 @@ mod tests {
             )
             .unwrap();
         let mission_id = created.result.payload["missionId"].as_str().unwrap();
-        let camp_id = created.result.payload["campId"].as_str().unwrap();
+        let camp_id = created.result.payload["threadId"].as_str().unwrap();
         let host: String = database
             .connection()
             .query_row(

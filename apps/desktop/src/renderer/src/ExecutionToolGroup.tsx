@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { ExecutionContentContext, ExecutionVirtualList, useExecutionRetainedState } from './ExecutionVirtualList'
 import { createContext, useContext, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react'
 import type { AgentRunExecutionEvidenceView, AgentRunView, CanonicalRuntimeActivityView } from '@contracts'
@@ -125,7 +125,7 @@ function handleToolResultKeyDown(
 }
 
 function ToolCallDetail({
-  campId,
+  threadId,
   detail,
   completeEvidence,
   expanded,
@@ -134,7 +134,7 @@ function ToolCallDetail({
   summaryRef,
   inputOnly = false
 }: {
-  campId: string
+  threadId: string
   detail: string
   completeEvidence?: PresentableExecutionEvidence
   expanded: boolean
@@ -144,7 +144,7 @@ function ToolCallDetail({
   inputOnly?: boolean
 }): JSX.Element {
   const t = useUiText()
-  const client = useCampClient()
+  const client = useThreadClient()
   const evidenceId = completeEvidence?.id ?? null
   const outputWasTruncated = !inputOnly && completeEvidence?.outputTruncated === true
   const resultLabel = outputWasTruncated ? t('结果') : t('完整结果')
@@ -198,7 +198,7 @@ function ToolCallDetail({
     try {
       const response = await client.request<{ payload: unknown }>(
         'agentRunEvidence.getContent',
-        { campId, evidenceId: completeEvidence.id }
+        { threadId, evidenceId: completeEvidence.id }
       )
       const fullText = executionEvidenceResultText(
         completeEvidence.eventType,
@@ -221,7 +221,7 @@ function ToolCallDetail({
         errorDetail: readErrorMessage(error, '').trim()
       })
     }
-  }, [client, campId, completeEvidence])
+  }, [client, threadId, completeEvidence])
 
   useEffect(() => {
     if (
@@ -317,8 +317,8 @@ function ToolCallDetail({
 
 export type ToolCallStep = Extract<LiveExecutionProgress['items'][number], { kind: 'tool' }>['step']
 
-export function ModifiedFileRow({ campId, change, semanticKind, completeEvidence, itemKey, onFileOpenError }: {
-  campId: string
+export function ModifiedFileRow({ threadId, change, semanticKind, completeEvidence, itemKey, onFileOpenError }: {
+  threadId: string
   change: NonNullable<ToolCallStep['fileChanges']>[number]
   semanticKind: ToolCallStep['fileChangeSemantics']
   completeEvidence?: PresentableExecutionEvidence
@@ -326,7 +326,7 @@ export function ModifiedFileRow({ campId, change, semanticKind, completeEvidence
   onFileOpenError(message: string): void
 }): JSX.Element {
   const t = useUiText()
-  const client = useCampClient()
+  const client = useThreadClient()
   const filePreview = useOptionalFilePreview()
   const [expanded, setExpanded] = useExecutionRetainedState(`file-expanded:${itemKey ?? change.path}`, false)
   const diffId = useId()
@@ -342,14 +342,14 @@ export function ModifiedFileRow({ campId, change, semanticKind, completeEvidence
     let disposed = false
     setDiffError(false)
     void client.request<{ canonical?: CanonicalRuntimeActivityView | null }>(
-      'agentRunEvidence.getContent', { campId, evidenceId: completeEvidence.id }
+      'agentRunEvidence.getContent', { threadId, evidenceId: completeEvidence.id }
     ).then(response => {
       const entry = response.canonical?.diffProjection?.entries?.find(item => item.path === change.path)
       if (!entry) throw new Error(uiAttribute('文件差异不可用'))
       if (!disposed) setLoadedDiff({ evidenceId: completeEvidence.id, diff: entry.diff })
     }).catch(() => { if (!disposed) setDiffError(true) })
     return () => { disposed = true }
-  }, [client, expanded, deferred, campId, completeEvidence?.id, change.path, diff, retry])
+  }, [client, expanded, deferred, threadId, completeEvidence?.id, change.path, diff, retry])
   const fileName = change.path.split('/').filter(Boolean).at(-1) ?? change.path
   const verb = change.changeKind === 'add' ? t('新增') : t('编辑')
   const exactMutation = semanticKind === 'exact_mutation'
@@ -360,7 +360,7 @@ export function ModifiedFileRow({ campId, change, semanticKind, completeEvidence
   const openFile = async (): Promise<void> => {
     await openAgentRunActivityFilePreview({
       filePreview,
-      campId,
+      threadId,
       evidence: completeEvidence,
       path: change.path,
       allowLegacyWorkspaceFallback: true,
@@ -448,8 +448,8 @@ export function ModifiedFileRow({ campId, change, semanticKind, completeEvidence
   )
 }
 
-export function FileOperationRow({ campId, step, runStatus, completeEvidence, onFileOpenError }: {
-  campId: string
+export function FileOperationRow({ threadId, step, runStatus, completeEvidence, onFileOpenError }: {
+  threadId: string
   step: ToolCallStep & { fileOperation: NonNullable<ToolCallStep['fileOperation']> }
   runStatus: AgentRunView['status']
   completeEvidence?: PresentableExecutionEvidence
@@ -463,7 +463,7 @@ export function FileOperationRow({ campId, step, runStatus, completeEvidence, on
   const status = activityStatusForAgentRun(step.status, runStatus)
   const openFile = async (): Promise<void> => {
     await openAgentRunActivityFilePreview({
-      filePreview, campId, evidence: completeEvidence, path, onError: onFileOpenError
+      filePreview, threadId, evidence: completeEvidence, path, onError: onFileOpenError
     })
   }
   return (
@@ -493,14 +493,14 @@ export function FileOperationRow({ campId, step, runStatus, completeEvidence, on
 }
 
 export function ToolCallRow({
-  campId,
+  threadId,
   step,
   runId,
   runStatus,
   completeEvidence,
   onFileOpenError
 }: {
-  campId: string
+  threadId: string
   step: ToolCallStep
   runId: string
   runStatus: AgentRunView['status']
@@ -522,7 +522,7 @@ export function ToolCallRow({
       return
     }
     const outcome = await filePreview.open(
-      { kind: 'camp_workspace', campId, rawReference: path },
+      { kind: 'camp_workspace', threadId, rawReference: path },
       undefined,
       undefined,
       { commitOnSuccess: true, previewOnly: true }
@@ -597,7 +597,7 @@ export function ToolCallRow({
       <summary ref={summaryRef} aria-expanded={expanded} className={`tool-call-summary${readSummary ? ' has-shell-read-summary' : ''}`}>{summary}</summary>
       {activated && (
         <ToolCallDetail
-          campId={campId}
+          threadId={threadId}
           detail={step.detail}
           completeEvidence={inputOnly ? undefined : completeEvidence}
           inputOnly={inputOnly}
@@ -630,13 +630,13 @@ function CompactionEventIcon(): JSX.Element {
 }
 
 export function CompactionEventRow({
-  campId,
+  threadId,
   compaction,
   runId,
   runStatus,
   completeEvidence
 }: {
-  campId: string
+  threadId: string
   compaction: RuntimeCompactionDisplayItem
   runId: string
   runStatus: AgentRunView['status']
@@ -683,7 +683,7 @@ export function CompactionEventRow({
       <summary ref={summaryRef} aria-expanded={expanded} className="tool-call-summary">{summary}</summary>
       {activated && (
         <ToolCallDetail
-          campId={campId}
+          threadId={threadId}
           detail={detail}
           completeEvidence={completeEvidence}
           expanded={expanded}
@@ -723,7 +723,7 @@ function ToolActivityGroupState({ status, label }: { status: string; label: stri
 }
 
 export function ToolActivityGroup({
-  campId,
+  threadId,
   items,
   liveTail,
   cancelling,
@@ -732,7 +732,7 @@ export function ToolActivityGroup({
   completeEvidence,
   onFileOpenError
 }: {
-  campId: string
+  threadId: string
   items: ToolProgressItem[]
   liveTail: boolean
   cancelling: boolean
@@ -829,7 +829,7 @@ export function ToolActivityGroup({
           if (step.fileChanges?.length) {
             return step.fileChanges.map((change, index) => (
               <ModifiedFileRow
-                campId={campId}
+                threadId={threadId}
                 change={change}
                 completeEvidence={completeEvidence.byToolId.get(step.id)}
                 itemKey={`${item.key}:file:${index}`}
@@ -843,7 +843,7 @@ export function ToolActivityGroup({
             return (
               <FileOperationRow
                 key={item.key}
-                campId={campId}
+                threadId={threadId}
                 step={step as ToolCallStep & { fileOperation: NonNullable<ToolCallStep['fileOperation']> }}
                 runStatus={runStatus}
                 completeEvidence={completeEvidence.byFileOperationToolId?.get(step.id)}
@@ -854,7 +854,7 @@ export function ToolActivityGroup({
           return (
             <ToolCallRow
               key={item.key}
-              campId={campId}
+              threadId={threadId}
               step={step}
               runId={runId}
               runStatus={runStatus}

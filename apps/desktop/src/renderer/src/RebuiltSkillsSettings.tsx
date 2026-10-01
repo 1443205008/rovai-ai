@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import * as Menu from '@radix-ui/react-dropdown-menu'
 import * as Dialog from '@radix-ui/react-dialog'
 import type { AdapterKind, AgentProfile, NativeSkillScan, NativeSkillView, SkillContentView, StoredCommandResult, ToolboxSkillView } from '@contracts'
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { useCapabilitySplitter } from './useCapabilitySplitter'
 import { MemberAvatar } from './MemberAvatar'
 import { RuntimeGlyph } from './MemberRuntimePicker'
@@ -18,7 +18,7 @@ import { UiText, uiAttribute } from './interface-language'
 export function NativeSkillsSettings(): React.JSX.Element {
   const id = useId()
   const { root, compact, separator } = useCapabilitySplitter('rovai.native-skills-list-width.v1', `${id}-list ${id}-detail`)
-  const client = useCampClient()
+  const client = useThreadClient()
   const [runtime, setRuntime] = useState<AdapterKind>('codex-cli')
   const [scan, setScan] = useState<NativeSkillScan | null>(null)
   const [loading, setLoading] = useState(false)
@@ -115,7 +115,7 @@ export function NativeSkillsSettings(): React.JSX.Element {
 export function ToolboxSettings({ agents }: { agents: AgentProfile[] }): React.JSX.Element {
   const id = useId()
   const { root, compact, separator } = useCapabilitySplitter('rovai.toolbox-list-width.v1', `${id}-list ${id}-detail`)
-  const client = useCampClient()
+  const client = useThreadClient()
   const [skills, setSkills] = useState<ToolboxSkillView[] | null>(null)
   const [selectedName, setSelectedName] = useState<string | null>(null)
   const [memberQuery, setMemberQuery] = useState('')

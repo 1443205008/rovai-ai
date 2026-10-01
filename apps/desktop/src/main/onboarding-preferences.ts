@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { isCampId } from '@contracts'
+import { isThreadId } from '@contracts'
 import type {
   AdapterPermissionConfig,
   AdapterKind,
@@ -48,6 +48,8 @@ export function parseOnboardingSnapshot(value: unknown): OnboardingSnapshot | nu
     || (value.schemaVersion !== 1 && value.schemaVersion !== 2)
     || typeof value.status !== 'string'
   ) return null
+  value = normalizeQuickChatId(value)
+  if (!isRecord(value)) return null
   const sourceSchemaVersion = value.schemaVersion
   if (value.status === 'uninitialized') {
     return hasExactKeys(value, ['schemaVersion', 'status'])
@@ -99,7 +101,7 @@ export function parseOnboardingSnapshot(value: unknown): OnboardingSnapshot | nu
       'completedAt',
       'selectedMemberRole',
       'memberAgentId',
-      'quickChatCampId'
+      'quickChatThreadId'
     ])) return null
     if (
       value.origin !== 'onboarding'
@@ -110,16 +112,16 @@ export function parseOnboardingSnapshot(value: unknown): OnboardingSnapshot | nu
     if (!isTimestamp(value.completedAt)) return null
     if (value.selectedMemberRole !== null && !isMemberRole(value.selectedMemberRole)) return null
     if (value.memberAgentId !== null && !isStableId(value.memberAgentId)) return null
-    if (value.quickChatCampId !== null && !isCampId(value.quickChatCampId)) return null
+    if (value.quickChatThreadId !== null && !isThreadId(value.quickChatThreadId)) return null
     if (value.origin === 'onboarding' && (
       value.selectedMemberRole === null
       || value.memberAgentId === null
-      || value.quickChatCampId === null
+      || value.quickChatThreadId === null
     )) return null
     if ((value.origin === 'existing_installation' || value.origin === 'runtime_deferred') && (
       value.selectedMemberRole !== null
       || value.memberAgentId !== null
-      || value.quickChatCampId !== null
+      || value.quickChatThreadId !== null
     )) return null
     return {
       schemaVersion: 2,
@@ -128,7 +130,7 @@ export function parseOnboardingSnapshot(value: unknown): OnboardingSnapshot | nu
       completedAt: value.completedAt,
       selectedMemberRole: value.selectedMemberRole,
       memberAgentId: value.memberAgentId,
-      quickChatCampId: value.quickChatCampId
+      quickChatThreadId: value.quickChatThreadId
     }
   }
   return null
@@ -216,7 +218,7 @@ export class OnboardingStore {
             completedAt: new Date().toISOString(),
             selectedMemberRole: null,
             memberAgentId: null,
-            quickChatCampId: null
+            quickChatThreadId: null
           }
         : inProgress('welcome')
       if (options.persist === false) {
@@ -306,7 +308,7 @@ export class OnboardingStore {
         completedAt: new Date().toISOString(),
         selectedMemberRole: null,
         memberAgentId: null,
-        quickChatCampId: null
+        quickChatThreadId: null
       })
     })
   }
@@ -346,7 +348,7 @@ export class OnboardingStore {
           memberAgentId: null,
           memberVersionBeforeRuntime: null,
           memberVersionAfterRuntime: null,
-          quickChatCampId: null
+          quickChatThreadId: null
         }
       }
     })
@@ -382,16 +384,16 @@ export class OnboardingStore {
     })
   }
 
-  recordProvisionedCamp(campId: unknown): Promise<OnboardingSnapshot> {
-    if (!isCampId(campId)) return Promise.reject(new Error('Invalid provisioned Camp checkpoint'))
+  recordProvisionedThread(threadId: unknown): Promise<OnboardingSnapshot> {
+    if (!isThreadId(threadId)) return Promise.reject(new Error('Invalid provisioned Thread checkpoint'))
     return this.#mutateProvisioning((operation) => {
       if (operation.memberVersionAfterRuntime === null) {
         throw new Error('首次引导 Runtime 尚未保存')
       }
-      if (operation.quickChatCampId && operation.quickChatCampId !== campId) {
+      if (operation.quickChatThreadId && operation.quickChatThreadId !== threadId) {
         throw new Error('首次引导快速对话检查点不一致')
       }
-      return { ...operation, quickChatCampId: campId }
+      return { ...operation, quickChatThreadId: threadId }
     })
   }
 
@@ -403,7 +405,7 @@ export class OnboardingStore {
         !current.selectedMemberRole
         || !operation?.memberAgentId
         || operation.memberVersionAfterRuntime === null
-        || !operation.quickChatCampId
+        || !operation.quickChatThreadId
       ) throw new Error('首次引导初始化尚未完成')
       return this.#commit({
         schemaVersion: 2,
@@ -412,7 +414,7 @@ export class OnboardingStore {
         completedAt: new Date().toISOString(),
         selectedMemberRole: current.selectedMemberRole,
         memberAgentId: operation.memberAgentId,
-        quickChatCampId: operation.quickChatCampId
+        quickChatThreadId: operation.quickChatThreadId
       })
     })
   }
@@ -499,6 +501,7 @@ function parseModelSelection(value: unknown): ModelSelection | null {
 }
 
 function parseProvisioning(value: unknown): OnboardingProvisioningOperation | null {
+  value = normalizeQuickChatId(value)
   if (!hasExactKeys(value, [
     'memberCommandId',
     'runtimeCommandId',
@@ -507,7 +510,7 @@ function parseProvisioning(value: unknown): OnboardingProvisioningOperation | nu
     'memberAgentId',
     'memberVersionBeforeRuntime',
     'memberVersionAfterRuntime',
-    'quickChatCampId'
+    'quickChatThreadId'
   ])) return null
   if (!isUuid(value.memberCommandId) || !isUuid(value.runtimeCommandId) || !isUuid(value.campCommandId)) return null
   const runtimePermissions = parseRuntimePermissions(value.runtimePermissions)
@@ -515,10 +518,10 @@ function parseProvisioning(value: unknown): OnboardingProvisioningOperation | nu
   if (value.memberAgentId !== null && !isStableId(value.memberAgentId)) return null
   if (value.memberVersionBeforeRuntime !== null && !isPositiveVersion(value.memberVersionBeforeRuntime)) return null
   if (value.memberVersionAfterRuntime !== null && !isPositiveVersion(value.memberVersionAfterRuntime)) return null
-  if (value.quickChatCampId !== null && !isCampId(value.quickChatCampId)) return null
+  if (value.quickChatThreadId !== null && !isThreadId(value.quickChatThreadId)) return null
   if ((value.memberAgentId === null) !== (value.memberVersionBeforeRuntime === null)) return null
   if (value.memberVersionAfterRuntime !== null && value.memberVersionBeforeRuntime === null) return null
-  if (value.quickChatCampId !== null && value.memberVersionAfterRuntime === null) return null
+  if (value.quickChatThreadId !== null && value.memberVersionAfterRuntime === null) return null
   return {
     memberCommandId: value.memberCommandId,
     runtimeCommandId: value.runtimeCommandId,
@@ -527,8 +530,16 @@ function parseProvisioning(value: unknown): OnboardingProvisioningOperation | nu
     memberAgentId: value.memberAgentId,
     memberVersionBeforeRuntime: value.memberVersionBeforeRuntime,
     memberVersionAfterRuntime: value.memberVersionAfterRuntime,
-    quickChatCampId: value.quickChatCampId
+    quickChatThreadId: value.quickChatThreadId
   }
+}
+
+// Accept an existing checkpoint without resetting onboarding. Mixed spellings are invalid.
+function normalizeQuickChatId(value: unknown): unknown {
+  if (!isRecord(value) || !('quickChatCampId' in value)) return value
+  if ('quickChatThreadId' in value) return null
+  const { quickChatCampId, ...rest } = value
+  return { ...rest, quickChatThreadId: quickChatCampId }
 }
 
 function parseRuntimePermissions(value: unknown): AdapterPermissionConfig | null {

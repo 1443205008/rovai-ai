@@ -1,4 +1,4 @@
-import type { CampSnapshot } from '@contracts'
+import type { ThreadSnapshot } from '@contracts'
 import type { ReactNode, Ref } from 'react'
 import { PanelToggleIcon } from './PanelToggleIcon'
 import { MobileBack } from './MobileLayout'
@@ -9,9 +9,9 @@ import { FileFindButton } from './FilePreviewFind'
 import { UiText, uiAttribute } from './interface-language'
 
 export function AppHeader({
-  campTitle,
+  threadTitle,
   contextLabel,
-  camp,
+  thread,
   detailEntryHostRef,
   onFocusApprovals,
   onBack,
@@ -23,9 +23,9 @@ export function AppHeader({
   conversationActions,
   previewTabsInPane = false
 }: {
-  campTitle: string | null
+  threadTitle: string | null
   contextLabel: string | null
-  camp: CampSnapshot | null
+  thread: ThreadSnapshot | null
   detailEntryHostRef?(host: HTMLDivElement | null): void
   onFocusApprovals(): void
   onBack?(): void
@@ -40,8 +40,8 @@ export function AppHeader({
   const filePreview = useOptionalFilePreview()
   const previewLayout = useOptionalFilePreviewLayout()
   const previewVisible = Boolean(filePreview?.paneVisible)
-  const title = campTitle ?? uiAttribute('正在打开对话')
-  const pendingApprovals = camp?.approvals.filter((approval) => approval.status === 'pending').length ?? 0
+  const title = threadTitle ?? uiAttribute('正在打开对话')
+  const pendingApprovals = thread?.approvals.filter((approval) => approval.status === 'pending').length ?? 0
   const previewControls = filePreview && <div className="file-preview-toggle-group">
     {filePreview.activeTab?.kind !== 'mission_activity' && filePreview.activeTab?.kind !== 'execution' && <FileFindButton />}
     <button className="file-preview-toggle" type="button" aria-label={previewVisible ? uiAttribute("收起文件预览") : uiAttribute("展开文件预览")}

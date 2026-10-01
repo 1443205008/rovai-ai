@@ -43,7 +43,7 @@ const PREFERRED_INTERFACE = /^(?:en[01]|wlan|wifi|ethernet|eth)/iu
 export type ExecutionViewScope = {
   channelConversationId: string
   targetAppId: string
-  campId: string
+  threadId: string
   agentId: string
   focusRunId: string
   maxRunCreatedAt: string
@@ -51,7 +51,7 @@ export type ExecutionViewScope = {
 
 type CoreExecutionWebRun = {
   id: string
-  campTurnId: string
+  threadTurnId: string
   purpose: string
   invocationKind: string
   status: PublicExecutionRunStatus
@@ -81,7 +81,7 @@ type CoreExecutionWebRun = {
 type CoreExecutionWebSnapshot = {
   schemaVersion: 1
   focusRunId: string
-  camp: { id: string; title: string }
+  thread: { id: string; title: string }
   agent: { id: string; displayName: string }
   runs: CoreExecutionWebRun[]
 }
@@ -606,7 +606,7 @@ function publicExecutionSnapshot(raw: CoreExecutionWebSnapshot): PublicExecution
     schemaVersion: 1,
     focusRunId: raw.focusRunId,
     terminal: Boolean(focus && isTerminal(focus.status)),
-    camp: { id: raw.camp.id, title: bounded(raw.camp.title, 120) },
+    thread: { id: raw.thread.id, title: bounded(raw.thread.title, 120) },
     agent: { id: raw.agent.id, displayName: bounded(raw.agent.displayName, 80) },
     runs
   }

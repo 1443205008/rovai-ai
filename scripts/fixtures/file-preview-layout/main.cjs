@@ -914,7 +914,7 @@ app.whenReady().then(async () => {
     assert.match(review.selectedTab, /^File Change·very-long-file-preview-name\.tsx$/)
     assert.match(review.text, /历史新内容/)
     assert.equal(review.fileReads, reads, 'Historical review never reads the working file')
-    assert.deepEqual(review.reviewRequests, [{ campId: 'camp-1', agentRunId: 'run-1', executionEpoch: 1 }])
+    assert.deepEqual(review.reviewRequests, [{ threadId: 'camp-1', agentRunId: 'run-1', executionEpoch: 1 }])
     assert.deepEqual(review.tabs.map(tab => tab.icon), ['code', 'file_change'])
     assert.ok(review.tabs.every(tab => tab.iconVisible && tab.noDrag))
     assert.equal(review.headerDrag, 'drag')
@@ -946,7 +946,7 @@ app.whenReady().then(async () => {
     assert.equal(current.tabs.length, 3)
     assert.equal((await snapshot()).focused, 'file-preview-tab-activate', 'Opening from a hidden review transfers keyboard focus to the current file tab')
     assert.deepEqual(current.fileOpens.at(-1), {
-      kind: 'run_evidence', campId: 'camp-1', agentRunId: 'run-1', executionEpoch: 1,
+      kind: 'run_evidence', threadId: 'camp-1', agentRunId: 'run-1', executionEpoch: 1,
       evidenceFileId: 'file-1', action: 'open_current'
     })
     await click('[role="tab"][aria-label="File Change·styles.css"]')
@@ -1158,7 +1158,7 @@ app.whenReady().then(async () => {
     assert.equal(opened.selectedTab, 'path-only.ts')
     assert.equal(opened.reviewRequests.length, before.reviewRequests.length, 'Direct current-file preview does not read immutable detail')
     assert.deepEqual(opened.fileRestores.at(-1), {
-      kind: 'run_evidence', campId: 'camp-1', agentRunId: 'run-operation-only', executionEpoch: 1,
+      kind: 'run_evidence', threadId: 'camp-1', agentRunId: 'run-operation-only', executionEpoch: 1,
       evidenceFileId: 'file-operation-only', action: 'open_current'
     })
     const tabCount = opened.tabs.length
@@ -1303,7 +1303,7 @@ app.whenReady().then(async () => {
     for (const [index, path] of ['src/index.ts', 'tests/index.ts'].entries()) {
       await click(`${read} [role="listitem"]:nth-child(${index + 1}) button`)
       const state = await run('window.previewTest.toolState()')
-      assert.deepEqual(state.requests.at(-1), { kind: 'camp_workspace', campId: 'camp-1', rawReference: path })
+      assert.deepEqual(state.requests.at(-1), { kind: 'camp_workspace', threadId: 'camp-1', rawReference: path })
       assert.equal(await run(`document.querySelector('${read} details').open`), false)
     }
     await click(`${read} .shell-read-summary-title`)

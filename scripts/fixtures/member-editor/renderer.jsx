@@ -103,7 +103,7 @@ window.rovai = {
         removable: true,
         currentCampMembershipCount: 0,
         openAssignedTaskCount: 0,
-        defaultLeadCampCount: 0,
+        defaultLeadThreadCount: 0,
         nonTerminalAgentRunCount: 0
       }
     if (method === 'members.reorder') {

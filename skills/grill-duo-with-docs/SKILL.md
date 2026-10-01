@@ -1,17 +1,17 @@
 ---
 name: grill-duo-with-docs
-description: Clarify a plan or design with one fixed Camp reviewer while maintaining confirmed domain language, current specifications and version decisions. Applies to the initiator and invited reviewer during that exchange; excludes solo questions, group debates and questioning without documentation work.
+description: Clarify a plan or design with one fixed Thread reviewer while maintaining confirmed domain language, current specifications and version decisions. Applies to the initiator and invited reviewer during that exchange; excludes solo questions, group debates and questioning without documentation work.
 ---
 
 # Grill Duo with Docs
 
-The initiator questions and maintains documents; one fixed partner independently advises without editing project documents. Investigate facts available from code, authoritative documents, tools, current input or Camp history. Ask the user for real choices. Use the user's language.
+The initiator questions and maintains documents; one fixed partner independently advises without editing project documents. Investigate facts available from code, authoritative documents, tools, current input or Thread history. Ask the user for real choices. Use the user's language.
 
 ## Roles and partner
 
 Use trusted sender identity, the triggering request and direct replies. A user start/answer or the current partner's direct reply to the valid invitation resumes the initiator. A direct request for this documentation variant makes you its reviewer only. Plain Grill Duo, old, invalid and late replies cannot advance, roll back or reopen this exchange.
 
-Choose a relevant, available Camp partner other than yourself; address a trusted Agent ID and keep them throughout. Change only at the user's request, departure/unavailability, or a shift beyond their useful expertise; explain why. With none available, disclose solo questioning and keep the same round and documentation rules.
+Choose a relevant, available Thread partner other than yourself; address a trusted Agent ID and keep them throughout. Change only at the user's request, departure/unavailability, or a shift beyond their useful expertise; explain why. With none available, disclose solo questioning and keep the same round and documentation rules.
 
 ## One open round
 

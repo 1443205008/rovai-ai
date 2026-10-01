@@ -29,7 +29,7 @@ export interface OnboardingProvisioningApi {
     | 'beginProvisioning'
     | 'recordProvisionedMember'
     | 'recordProvisionedRuntime'
-    | 'recordProvisionedCamp'
+    | 'recordProvisionedThread'
     | 'complete'
   >
   desktopSession: {
@@ -40,7 +40,7 @@ export interface OnboardingProvisioningApi {
 export interface OnboardingProvisioningResult {
   snapshot: CompletedOnboarding
   memberAgentId: string
-  quickChatCampId: string
+  quickChatThreadId: string
 }
 
 export async function provisionFirstRun(
@@ -176,8 +176,8 @@ export async function provisionFirstRun(
     onCheckpoint(current)
   }
 
-  if (!current.provisioning.quickChatCampId) {
-    const result = await api.request<StoredCommandResult>('camps.create', {
+  if (!current.provisioning.quickChatThreadId) {
+    const result = await api.request<StoredCommandResult>('threads.create', {
       commandId: current.provisioning.campCommandId,
       name: FIRST_RUN_CAMP_TITLE,
       workspace: null,
@@ -187,26 +187,26 @@ export async function provisionFirstRun(
       activationState: 'active'
     })
     assertApplied(result, uiAttribute('创建首次快速对话'))
-    const campId = result.resultEntity?.entityId ?? stringField(result.payload, 'campId')
-    if (!campId) throw new Error(uiAttribute('快速对话已创建，但返回的 Camp ID 不完整。'))
+    const threadId = result.resultEntity?.entityId ?? stringField(result.payload, 'threadId')
+    if (!threadId) throw new Error(uiAttribute('快速对话已创建，但返回的 Thread ID 不完整。'))
     current = requireProvisioningSnapshot(
-      await api.onboarding.recordProvisionedCamp(campId)
+      await api.onboarding.recordProvisionedThread(threadId)
     )
     onCheckpoint(current)
   }
 
-  const quickChatCampId = current.provisioning.quickChatCampId
-  if (!quickChatCampId) throw new Error(uiAttribute('快速对话检查点不完整。'))
+  const quickChatThreadId = current.provisioning.quickChatThreadId
+  if (!quickChatThreadId) throw new Error(uiAttribute('快速对话检查点不完整。'))
 
   // The fourth page is optional. Persist its real Core location before marking
   // the mandatory training complete so a restart always has a durable place to resume.
-  await api.desktopSession.commitRestorableLocation({ kind: 'camp', campId: quickChatCampId })
+  await api.desktopSession.commitRestorableLocation({ kind: 'camp', threadId: quickChatThreadId })
   const completed = await api.onboarding.complete()
   if (completed.status !== 'completed' || completed.origin !== 'onboarding') {
     throw new Error(uiAttribute('首次引导完成状态不完整。'))
   }
   onCheckpoint(completed)
-  return { snapshot: completed, memberAgentId, quickChatCampId }
+  return { snapshot: completed, memberAgentId, quickChatThreadId }
 }
 
 function presetIdentity(preset: BuiltinMemberPreset): AgentProfileIdentityInput {

@@ -11,11 +11,11 @@ Use `rovai --help` to find an operation and its exact `--help` for syntax. Read 
 
 | Need | Operation family |
 | --- | --- |
-| Public answer, progress, question or one-time collaboration | CampMessage |
+| Public answer, progress, question or one-time collaboration | ThreadMessage |
 | Shared objective or whole-Mission status | Mission |
-| Default Lead requests independent work from several members | One CampMessage with repeated `--to`; replies return separately |
+| Default Lead requests independent work from several members | One ThreadMessage with repeated `--to`; replies return separately |
 | Responsibility that survives Runs and can be handed off and accepted independently | Task |
-| Camp or message evidence | Camp/History |
+| Thread or message evidence | Thread/History |
 | Durable collaboration preference, agreement or lesson | Memory governance |
 
 Choose the smallest object that fully serves the request. Tasks own durable responsibilities; project sources and history own their facts.
@@ -25,7 +25,7 @@ Choose the smallest object that fully serves the request. Tasks own durable resp
 1. Read the authoritative state needed for the decision.
 2. Use one supported input source per call, following that operation's help.
 3. Inspect the committed business result before taking the next step.
-4. Publish any required Camp-visible answer before ending the Run.
+4. Publish any required Thread-visible answer before ending the Run.
 
 A successful operation proves its own commit, not downstream execution, validation or completion of the user's objective.
 
@@ -34,6 +34,6 @@ A successful operation proves its own commit, not downstream execution, validati
 - [Send](references/send.md): public messages, Agent routing, parallel invitations and Principal attention.
 - [Task](references/task.md): durable responsibility and Task-linked messages.
 - [Mission](references/mission.md): objective, status and public explanation.
-- [Camp/History](references/camp-history.md): search scope, exact reads and pagination.
+- [Thread/History](references/camp-history.md): search scope, exact reads and pagination.
 - [Memory](references/memory.md): route durable information to `memory-stewardship`.
 - [Recovery](references/recovery.md): follow `error.recovery`, especially uncertain outcomes.

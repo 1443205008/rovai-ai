@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type {
   AgentProfile,
@@ -109,7 +109,7 @@ export function McpSettings({
   agents: AgentProfile[]
   platform?: NodeJS.Platform
 }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const members = useMemo(
     () =>
       agents

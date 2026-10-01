@@ -1,9 +1,9 @@
 import { AttachmentLocationItems, useAttachmentLocation } from './attachment-location'
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { useEffect, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import type { CampMessageAttachmentView, LocalAttachmentAvailability, LocalAttachmentOwnerLocator } from '@contracts'
+import type { ThreadMessageAttachmentView, LocalAttachmentAvailability, LocalAttachmentOwnerLocator } from '@contracts'
 import { useOptionalFilePreview } from './FilePreviewContext'
 import { formatByteSize } from './ui-model'
 import {
@@ -33,30 +33,30 @@ function AttachmentFolderGlyph(): JSX.Element {
 
 function localAttachmentLocatorKey(locator: LocalAttachmentOwnerLocator): string {
   if (locator.owner === 'composer') {
-    return `composer:${locator.campId}:${locator.attachmentRefId}`
+    return `composer:${locator.threadId}:${locator.attachmentRefId}`
   }
   if (locator.owner === 'message') {
-    return `message:${locator.campId}:${locator.messageId}:${locator.attachmentRefId}`
+    return `message:${locator.threadId}:${locator.messageId}:${locator.attachmentRefId}`
   }
   if (locator.owner === 'mission') {
-    return `mission:${locator.campId}:${locator.missionId}:${locator.attachmentRefId}`
+    return `mission:${locator.threadId}:${locator.missionId}:${locator.attachmentRefId}`
   }
   if (locator.owner === 'pending') {
-    return `pending:${locator.campId}:${locator.pendingInputId}:${locator.attachmentRefId}`
+    return `pending:${locator.threadId}:${locator.pendingInputId}:${locator.attachmentRefId}`
   }
   if (locator.owner === 'pending_edit') {
-    return `pending-edit:${locator.campId}:${locator.pendingInputId}:${locator.editToken}:${locator.attachmentRefId}`
+    return `pending-edit:${locator.threadId}:${locator.pendingInputId}:${locator.editToken}:${locator.attachmentRefId}`
   }
   if (locator.owner === 'single_chat_composer') {
-    return `single-chat-composer:${locator.campId}:${locator.conversationId}:${locator.attachmentRefId}`
+    return `single-chat-composer:${locator.threadId}:${locator.conversationId}:${locator.attachmentRefId}`
   }
   if (locator.owner === 'single_chat_message') {
-    return `single-chat-message:${locator.campId}:${locator.conversationId}:${locator.conversationMessageId}:${locator.attachmentRefId}`
+    return `single-chat-message:${locator.threadId}:${locator.conversationId}:${locator.conversationMessageId}:${locator.attachmentRefId}`
   }
   if (locator.owner === 'single_chat_pending') {
-    return `single-chat-pending:${locator.campId}:${locator.conversationId}:${locator.pendingInputId}:${locator.attachmentRefId}`
+    return `single-chat-pending:${locator.threadId}:${locator.conversationId}:${locator.pendingInputId}:${locator.attachmentRefId}`
   }
-  return `single-chat-pending-edit:${locator.campId}:${locator.conversationId}:${locator.pendingInputId}:${locator.editToken}:${locator.attachmentRefId}`
+  return `single-chat-pending-edit:${locator.threadId}:${locator.conversationId}:${locator.pendingInputId}:${locator.editToken}:${locator.attachmentRefId}`
 }
 
 export function AttachmentCard({
@@ -68,7 +68,7 @@ export function AttachmentCard({
   menuItems,
   presentation = 'composer'
 }: {
-  attachment: CampMessageAttachmentView
+  attachment: ThreadMessageAttachmentView
   onRemove?: () => void
   locator: LocalAttachmentOwnerLocator
   onNotify?: (message: string) => void
@@ -76,7 +76,7 @@ export function AttachmentCard({
   menuItems?: ReactNode
   presentation?: 'composer' | 'user-timeline' | 'agent-timeline'
 }): JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const filePreview = useOptionalFilePreview()
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewFailed, setPreviewFailed] = useState(false)
@@ -138,7 +138,7 @@ export function AttachmentCard({
         if (!forceSystem && attachment.kind === 'file' && filePreview) {
           const outcome = await filePreview.open({
             kind: 'attachment',
-            campId: locator.campId,
+            threadId: locator.threadId,
             locator
           }, undefined, { fileName: attachment.displayName })
           if (outcome.kind === 'error') {

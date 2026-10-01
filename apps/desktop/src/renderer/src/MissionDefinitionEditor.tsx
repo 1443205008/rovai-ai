@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ButtonHTMLAttributes, type DragEvent, type ReactNode, type RefObject } from 'react'
 import * as Popover from '@radix-ui/react-popover'
-import type { CampMessageAttachmentView, LocalAttachmentSourceView, MissionAttachmentDraft } from '@contracts'
+import type { ThreadMessageAttachmentView, LocalAttachmentSourceView, MissionAttachmentDraft } from '@contracts'
 import { newCommandId } from '../../shared/command-id'
 import { AttachmentCard, ComposerAttachmentStrip } from './AttachmentCard'
 import { Icon, TagColorDot, tagStyle } from './MissionControls'
@@ -55,7 +55,7 @@ function LocalImage({ file }: { file: File }): React.JSX.Element {
 
 export function missionLocalAttachmentView(
   attachment: Extract<MissionDraftAttachment, {kind: 'local'}>
-): CampMessageAttachmentView {
+): ThreadMessageAttachmentView {
   const directory = attachment.kindHint === 'directory'
   return {
     id: attachment.id,
@@ -89,7 +89,7 @@ function MissionLocalAttachmentItem({ attachment, disabled, onRemove }: {
 
 function MissionAttachmentItem({ attachment, mission, disabled, onRemove, onNotify }: {
   attachment: MissionDraftAttachment
-  mission?: {campId: string; missionId: string}
+  mission?: {threadId: string; missionId: string}
   disabled: boolean
   onRemove(): void
   onNotify(message: string): void
@@ -110,7 +110,7 @@ export const MissionWritingPlane = forwardRef<MissionWritingPlaneHandle, {
   titleInputRef?: RefObject<HTMLInputElement | null>
   titleError?: string
   descriptionError?: string
-  mission?: {campId: string; missionId: string}
+  mission?: {threadId: string; missionId: string}
   onTitleChange(value: string): void
   onDescriptionChange(value: string): void
   onAttachmentsChange(value: MissionDraftAttachment[]): void

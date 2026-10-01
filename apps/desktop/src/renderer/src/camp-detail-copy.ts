@@ -1,6 +1,6 @@
 import { translateUi, useInterfaceLanguage } from './interface-language'
 
-// Contextual labels for the current Camp header and detail panels.
+// Contextual labels for the current Thread header and detail panels.
 const campDetailCopy = {
   'zh-CN': {
     tasks: '任务',
@@ -16,7 +16,7 @@ const campDetailCopy = {
   }
 }
 
-export function useCampDetailCopy(): typeof campDetailCopy['zh-CN'] & { execution: string } {
+export function useThreadDetailCopy(): typeof campDetailCopy['zh-CN'] & { execution: string } {
   const language = useInterfaceLanguage()
   return { ...campDetailCopy[language], execution: translateUi(language, '执行') }
 }

@@ -2,12 +2,12 @@ import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { CampDetailEntries, CampDetailPopover, type RunningCampMember } from './CampDetailPopover'
+import { ThreadDetailEntries, ThreadDetailPopover, type RunningThreadMember } from './ThreadDetailPopover'
 import { MobileLayoutProvider } from './MobileLayout'
 
-const source = readFileSync(new URL('./CampDetailPopover.tsx', import.meta.url), 'utf8')
+const source = readFileSync(new URL('./ThreadDetailPopover.tsx', import.meta.url), 'utf8')
 
-describe('Camp detail popover dismissal', () => {
+describe('Thread detail popover dismissal', () => {
   it('stays open when pointer or focus moves outside', () => {
     expect(source).not.toContain("addEventListener('pointerdown'")
     expect(source).not.toContain("addEventListener('focusin'")
@@ -16,7 +16,7 @@ describe('Camp detail popover dismissal', () => {
   it('keeps Escape and the explicit close control available', () => {
     expect(source).toContain("addEventListener('keydown', dismissOnEscape)")
 
-    const markup = renderToStaticMarkup(createElement(CampDetailPopover, {
+    const markup = renderToStaticMarkup(createElement(ThreadDetailPopover, {
       activeTab: 'tasks',
       visible: true,
       showExecution: true,
@@ -34,11 +34,11 @@ describe('Camp detail popover dismissal', () => {
   })
 })
 
-describe('Camp execution entry', () => {
-  const members: RunningCampMember[] = ['叮叮', '咕咕', '小兔', '小鹿', '小熊'].map((displayName, index) => ({
+describe('Thread execution entry', () => {
+  const members: RunningThreadMember[] = ['叮叮', '咕咕', '小兔', '小鹿', '小熊'].map((displayName, index) => ({
     agentId: `agent-${index}`, displayName, avatarRef: null
   }))
-  const render = (count: number, visible = false): string => renderToStaticMarkup(createElement(CampDetailEntries, {
+  const render = (count: number, visible = false): string => renderToStaticMarkup(createElement(ThreadDetailEntries, {
     activeTab: 'execution', visible, panelId: 'details', showExecution: true,
     runningMembers: members.slice(0, count), executionCount: 2, taskCount: 4, memberCount: members.length,
     onSelect: () => undefined
@@ -69,7 +69,7 @@ describe('Camp execution entry', () => {
 
   it.each([0, 1, 2, 3, 5])('limits the phone execution entry to two avatars for %i running members', count => {
     const markup = renderToStaticMarkup(createElement(MobileLayoutProvider, { value: true, children:
-      createElement(CampDetailPopover, {
+      createElement(ThreadDetailPopover, {
         activeTab: 'execution', visible: false, showExecution: true, runningMembers: members.slice(0, count),
         executionCount: 2, taskCount: 4, memberCount: 5,
         onOpen: () => undefined, onClose: () => undefined, children: null

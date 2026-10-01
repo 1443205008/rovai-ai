@@ -6,6 +6,8 @@ last_updated: 2026-09-28
 
 # 当前规范与决定理由导航
 
+公开 Thread 命名与无 Session 轮换：当前规范为 [Thread Naming v1](../contracts/thread-naming-v1.md)、[ContextManifest v32](../contracts/context-manifest-evidence-v32.md)、[Built-in Tool Transport v33](../contracts/builtin-tool-transport-v33.md)；理由见 [V1.72-D07](../versions/v1.72/decisions.md#v1-72-d07)。
+
 结果 Judge 来源材料当前规范：[Semantic Judge Views v12](../contracts/semantic-judge-views-v12.md)；理由：[V1.58-D02](../versions/v1.58/decisions.md#v1-58-d02)、[V1.58-D03](../versions/v1.58/decisions.md#v1-58-d03)、[V1.58-D04](../versions/v1.58/decisions.md#v1-58-d04)。
 
 本页先连接当前规范，再连接形成这些边界的重要理由。历史版本决定不证明代码已经实现；实现状态仍需检查代码、Migration、测试和当前版本验收。
@@ -26,9 +28,9 @@ last_updated: 2026-09-28
   [Camp History v10](../contracts/camp-history-v10.md)；理由：[V1.69-D01](../versions/v1.69/decisions.md#v1-69-d01)、[V1.60-D03](../versions/v1.60/decisions.md#v1-60-d03)、
   [V1.60-D08](../versions/v1.60/decisions.md#v1-60-d08)、
   [V1.60-D10](../versions/v1.60/decisions.md#v1-60-d10)。
-- 多输入 Context 与完整运输：[ContextManifest v30](../contracts/context-manifest-evidence-v30.md)、
+- 多输入 Context 与完整运输：[ContextManifest v32](../contracts/context-manifest-evidence-v32.md)、
   [Profile 10](../contracts/context-delivery-profile-v10.md)、[Run Facts v7](../contracts/run-facts-v7.md)、
-  [Built-in Transport v32](../contracts/builtin-tool-transport-v32.md)；理由：
+  [Built-in Transport v33](../contracts/builtin-tool-transport-v33.md)；理由：
   [V1.60-D04](../versions/v1.60/decisions.md#v1-60-d04) 与
   [V1.68-D01](../versions/v1.68/decisions.md#v1-68-d01)。
 - Channel/Automation 复用普通消息：[Channel Message Bridge v1](../contracts/channel-message-bridge-v1.md)、
@@ -99,7 +101,7 @@ last_updated: 2026-09-28
 
 ## Mission
 
-- 当前规范：[Mission 架构](../architecture/missions.md)、[Mission v11](../contracts/mission-v11.md)、[使命板 UI](../ui/components/mission-board.md)、[ContextManifest v30](../contracts/context-manifest-evidence-v30.md)及 [`CONTEXT.md`](../../CONTEXT.md)。
+- 当前规范：[Mission 架构](../architecture/missions.md)、[Mission v11](../contracts/mission-v11.md)、[使命板 UI](../ui/components/mission-board.md)、[ContextManifest v32](../contracts/context-manifest-evidence-v32.md)及 [`CONTEXT.md`](../../CONTEXT.md)。
 - 复用 Camp、preparing 才创建持久工作区、固定基准与无模型业务版本的理由：[V1.59-D11](../versions/v1.59/decisions.md#v1-59-d11)；稳定公开编号、无历史正文与 accepted 投递水位的理由：[V1.59-D12](../versions/v1.59/decisions.md#v1-59-d12)；附件原路径读取的初始理由：[V1.59-D13](../versions/v1.59/decisions.md#v1-59-d13)；删除默认保留与最小双检查点的原始理由：[V1.59-D14](../versions/v1.59/decisions.md#v1-59-d14)；内部 ID 贯通 Agent/模型、UI 展示编号、全局发现和当前 Mission 写入边界的理由：[V1.61-D01](../versions/v1.61/decisions.md#v1-61-d01)；状态操作与消息发布解耦的当前理由：[V1.62-D01](../versions/v1.62/decisions.md#v1-62-d01)；持久清理意图、后台执行与先删使命的当前理由：[V1.62-D02](../versions/v1.62/decisions.md#v1-62-d02)；状态列独立纵向滚动与拖拽边缘滚动的理由：[V1.62-D03](../versions/v1.62/decisions.md#v1-62-d03)；受管分支与实时 checkout 分离、分支不作为执行门禁的理由：[V1.62-D04](../versions/v1.62/decisions.md#v1-62-d04)。
 
 ## Single Chat

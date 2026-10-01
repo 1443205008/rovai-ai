@@ -18,17 +18,17 @@ import type {
   AppUpdatePrompt as AppUpdatePromptValue,
   AppearancePreferences,
   AppearanceSnapshot,
-  CampActivationState,
-  CampCreationPreflight,
-  CampComposerDraftView,
-  CampDeletionIssue,
-  CampMessagePage,
-  CampMessageAroundSnapshot,
-  CampMessageView,
-  CampMemberRemovalPreview,
-  CampOpenProjection,
-  CampSnapshot,
-  CreateCampRequest,
+  ThreadActivationState,
+  ThreadCreationPreflight,
+  ThreadComposerDraftView,
+  ThreadDeletionIssue,
+  ThreadMessagePage,
+  ThreadMessageAroundSnapshot,
+  ThreadMessageView,
+  ThreadMemberRemovalPreview,
+  ThreadOpenProjection,
+  ThreadSnapshot,
+  CreateThreadRequest,
   CoreEvent,
   DesktopStartupSnapshot,
   EventBatch,
@@ -42,10 +42,10 @@ import type {
   MissionAttachmentDraft,
   MissionRecord,
   MissionCreate,
-  NavigationCampItem,
-  NavigationCampTarget,
-  NavigationCampRows,
-  CampViewedAcknowledgement,
+  NavigationThreadItem,
+  NavigationThreadTarget,
+  NavigationThreadRows,
+  ThreadViewedAcknowledgement,
   NavigationPin,
   NavigationPreferencesSnapshot,
   NavigationSnapshot,
@@ -53,7 +53,7 @@ import type {
   RestorableLocation,
   RovaiApi,
   HearthReviewItem,
-  SendCampMessageResult,
+  SendThreadMessageResult,
   StoredCommandResult,
   SupervisorSnapshot,
   ThemePreference,
@@ -67,25 +67,25 @@ import {
 } from './MemberManagement'
 import type { MemberWorkspaceTab } from './MemberSidebar'
 import {
-  CampWorkspace,
+  ThreadWorkspace,
   QuickChatWorkspace,
   composerHasSendablePayload,
-  type CampMessageSendReceipt,
-  type CampLeaveGuard,
-  type CampLeavePreparation,
-  type CampMemberAddOutcome,
-  type CampMemberRemoveOutcome,
-  type CampInspectorTab,
-  type CampRuntimeRecovery,
+  type ThreadMessageSendReceipt,
+  type ThreadLeaveGuard,
+  type ThreadLeavePreparation,
+  type ThreadMemberAddOutcome,
+  type ThreadMemberRemoveOutcome,
+  type ThreadInspectorTab,
+  type ThreadRuntimeRecovery,
   type NotificationFocusTarget,
   type VisibleNotificationSources
-} from './CampWorkspace'
+} from './ThreadWorkspace'
 import { composerDocumentToStructuredContent } from './composer-document'
-import { clearLocalCampComposerDraft } from './camp-composer-local-store'
+import { clearLocalThreadComposerDraft } from './camp-composer-local-store'
 import {
-  CampNavigation,
+  ThreadNavigation,
   type NavigationSettingsSection
-} from './CampNavigation'
+} from './ThreadNavigation'
 import { NewConversationDialog } from './NewConversationDialog'
 import { MissionBoard, MissionInteractionProvider, MissionIntro } from './MissionBoard'
 import { MissionActivityDocument } from './MissionDelivery'
@@ -127,13 +127,13 @@ import {
 import { DiagnosticsCenter } from './DiagnosticsCenter'
 import { RuntimeMonitoring } from './RuntimeMonitoring'
 import { localizeExecutionEngineTerms } from './product-copy'
-import { formatCampTitle } from './camp-title'
+import { formatThreadTitle } from './camp-title'
 import {
   applyAppearanceSnapshot,
   initialAppearanceSnapshot
 } from './theme'
 import {
-  allNavigationCamps,
+  allNavigationThreads,
   liveRuntimeEventFromCore,
   type LiveRuntimeEvent
 } from './ui-model'
@@ -146,7 +146,7 @@ import { provisionFirstRun } from './onboarding-provisioning'
 import { UiText, changeInterfaceLanguage, initializeInterfaceLanguage, uiAttribute, useInterfaceLanguage } from './interface-language'
 import {
   currentProjectAccessDecision,
-  currentProjectForCamp,
+  currentProjectForThread,
   currentProjectGroup,
   currentProjectWorkspace,
   navigationIncludingCurrentWorkspace,
@@ -165,10 +165,10 @@ import { createNavigationWindowReader, type NavigationGroupLimits } from './navi
 import { createMemberRosterReader } from './member-roster-reader'
 import { appendLiveRuntimeEventBatch, createLiveRuntimeEventBuffer } from './live-runtime-event-buffer'
 
-export { allNavigationCamps }
+export { allNavigationThreads }
 
 const ACTIVE_CAMP_INVALIDATION_EVENTS = new Set([
-  'camp.member.fast.updated',
+  'thread.member.fast.updated',
   'camp.member_added',
   'camp.member_removed',
   'camp.membership_reconciliation_started',
@@ -191,36 +191,36 @@ export function shouldRefreshNavigationForCoreEvent(
   return !shuttingDown && event.method === 'navigation.invalidated'
 }
 
-export function shouldRefreshActiveCampForCoreEvent(
+export function shouldRefreshActiveThreadForCoreEvent(
   event: CoreEvent,
-  activeCampId: string | null,
+  activeThreadId: string | null,
   shuttingDown = false
 ): boolean {
-  if (shuttingDown || !activeCampId || !ACTIVE_CAMP_INVALIDATION_EVENTS.has(event.method)) {
+  if (shuttingDown || !activeThreadId || !ACTIVE_CAMP_INVALIDATION_EVENTS.has(event.method)) {
     return false
   }
-  const eventCampId = stringField(asRecord(event.params), 'campId')
+  const eventThreadId = stringField(asRecord(event.params), 'threadId')
   if (event.method === 'agent_run.runtime_model_observed') {
-    return eventCampId === activeCampId
+    return eventThreadId === activeThreadId
   }
-  return !eventCampId || eventCampId === activeCampId
+  return !eventThreadId || eventThreadId === activeThreadId
 }
 
-export interface ActiveCampRefreshCoordinator {
-  refresh(campId: string): Promise<void>
+export interface ActiveThreadRefreshCoordinator {
+  refresh(threadId: string): Promise<void>
 }
 
-export function createActiveCampRefreshCoordinator(
-  refreshOnce: (campId: string) => Promise<void>
-): ActiveCampRefreshCoordinator {
+export function createActiveThreadRefreshCoordinator(
+  refreshOnce: (threadId: string) => Promise<void>
+): ActiveThreadRefreshCoordinator {
   const activeRefreshes = new Map<string, {
     dirty: boolean
     completion: Promise<void>
   }>()
 
   return {
-    refresh(campId: string): Promise<void> {
-      const active = activeRefreshes.get(campId)
+    refresh(threadId: string): Promise<void> {
+      const active = activeRefreshes.get(threadId)
       if (active) {
         active.dirty = true
         return active.completion
@@ -230,7 +230,7 @@ export function createActiveCampRefreshCoordinator(
         dirty: false,
         completion: Promise.resolve()
       }
-      activeRefreshes.set(campId, entry)
+      activeRefreshes.set(threadId, entry)
       entry.completion = Promise.resolve()
         .then(async () => {
           try {
@@ -238,7 +238,7 @@ export function createActiveCampRefreshCoordinator(
             do {
               entry.dirty = false
               try {
-                await refreshOnce(campId)
+                await refreshOnce(threadId)
                 lastError = null
               } catch (nextError) {
                 lastError = nextError
@@ -246,7 +246,7 @@ export function createActiveCampRefreshCoordinator(
             } while (entry.dirty)
             if (lastError !== null) throw lastError
           } finally {
-            if (activeRefreshes.get(campId) === entry) activeRefreshes.delete(campId)
+            if (activeRefreshes.get(threadId) === entry) activeRefreshes.delete(threadId)
           }
         })
       return entry.completion
@@ -254,23 +254,23 @@ export function createActiveCampRefreshCoordinator(
   }
 }
 
-export function refreshActiveCampForCoreEvent(
+export function refreshActiveThreadForCoreEvent(
   event: CoreEvent,
-  activeCampId: string | null,
-  coordinator: ActiveCampRefreshCoordinator,
+  activeThreadId: string | null,
+  coordinator: ActiveThreadRefreshCoordinator,
   shuttingDown = false
 ): Promise<void> | null {
-  return shouldRefreshActiveCampForCoreEvent(event, activeCampId, shuttingDown) && activeCampId
-    ? coordinator.refresh(activeCampId)
+  return shouldRefreshActiveThreadForCoreEvent(event, activeThreadId, shuttingDown) && activeThreadId
+    ? coordinator.refresh(activeThreadId)
     : null
 }
 
-export function requestAuthoritativeCampOpenProjection(
+export function requestAuthoritativeThreadOpenProjection(
   api: Pick<RovaiApi, 'request'>,
-  campId: string,
+  threadId: string,
   traceId: string
-): Promise<CampOpenProjection> {
-  return api.request<CampOpenProjection>('camps.open', { traceId, campId })
+): Promise<ThreadOpenProjection> {
+  return api.request<ThreadOpenProjection>('threads.open', { traceId, threadId })
 }
 
 type LoadState = 'loading' | 'ready' | 'error'
@@ -278,34 +278,34 @@ export type StartupStatus = 'loading' | 'waiting' | 'resolved'
 export const STARTUP_FEEDBACK_DELAY_MS = 400
 export const SHUTDOWN_FEEDBACK_DELAY_MS = 400
 export type View = 'compose' | 'camp' | 'members' | 'automations' | 'missions' | 'memory' | 'settings'
-type ActivateCampOptions = {
+type ActivateThreadOptions = {
   memberPrepared?: boolean
   reconcileDefaultLead?: boolean
   initializeComposerDraft?: boolean
   preserveNotificationFocus?: boolean
   missionPresentation?: 'drawer'
   suppressErrors?: boolean
-  anchoredMessages?: readonly CampMessageView[]
+  anchoredMessages?: readonly ThreadMessageView[]
   anchoredAgentRuns?: readonly AgentRunView[]
   anchoredTasks?: readonly import('@contracts').TaskView[]
 }
 
-export function activeCampSurfaceNeedsLeaveGuard(
+export function activeThreadSurfaceNeedsLeaveGuard(
   view: View,
-  activeCampId: string | null
-): activeCampId is string {
-  return view === 'camp' && activeCampId !== null
+  activeThreadId: string | null
+): activeThreadId is string {
+  return view === 'camp' && activeThreadId !== null
 }
 
-export async function prepareActiveCampForAppQuit(
+export async function prepareActiveThreadForAppQuit(
   view: View,
-  activeCampId: string | null,
-  registration: { campId: string; guard: CampLeaveGuard } | null
+  activeThreadId: string | null,
+  registration: { threadId: string; guard: ThreadLeaveGuard } | null
 ): Promise<void> {
   if (
     view !== 'camp'
-    || !activeCampId
-    || registration?.campId !== activeCampId
+    || !activeThreadId
+    || registration?.threadId !== activeThreadId
   ) {
     return
   }
@@ -369,83 +369,83 @@ export function startupFeedbackShouldBeVisible(
 
 export function campViewIsVisibleForReadAcknowledgement(
   view: View,
-  activeCampId: string | null,
-  snapshotCampId: string | null,
+  activeThreadId: string | null,
+  snapshotThreadId: string | null,
   visibilityState: DocumentVisibilityState,
   hasFocus: boolean
 ): boolean {
   return view === 'camp'
-    && activeCampId !== null
-    && snapshotCampId === activeCampId
+    && activeThreadId !== null
+    && snapshotThreadId === activeThreadId
     && visibilityState === 'visible'
     && hasFocus
 }
 
-interface OptimisticCampMessageEntry {
-  campId: string
+interface OptimisticThreadMessageEntry {
+  threadId: string
   commandId: string
-  message: CampMessageView
+  message: ThreadMessageView
 }
 
-type CampSurfaceSnapshot = CampSnapshot & {
-  openCoverage?: CampOpenProjection['coverage']
+type ThreadSurfaceSnapshot = ThreadSnapshot & {
+  openCoverage?: ThreadOpenProjection['coverage']
 }
 
 const CAMP_SNAPSHOT_CACHE_LIMIT = 5
 export const CAMP_OPEN_FEEDBACK_DELAY_MS = 400
 
-export function rememberCampSnapshot(
-  cache: Map<string, CampSurfaceSnapshot>,
-  snapshot: CampSurfaceSnapshot,
+export function rememberThreadSnapshot(
+  cache: Map<string, ThreadSurfaceSnapshot>,
+  snapshot: ThreadSurfaceSnapshot,
   limit = CAMP_SNAPSHOT_CACHE_LIMIT
 ): void {
-  cache.delete(snapshot.camp.id)
+  cache.delete(snapshot.thread.id)
   if (limit <= 0) {
     cache.clear()
     return
   }
-  cache.set(snapshot.camp.id, snapshot)
+  cache.set(snapshot.thread.id, snapshot)
   while (cache.size > limit) {
-    const oldestCampId = cache.keys().next().value
-    if (oldestCampId === undefined) break
-    cache.delete(oldestCampId)
+    const oldestThreadId = cache.keys().next().value
+    if (oldestThreadId === undefined) break
+    cache.delete(oldestThreadId)
   }
 }
 
-export function recentCampSnapshot(
-  cache: Map<string, CampSurfaceSnapshot>,
-  campId: string
-): CampSurfaceSnapshot | null {
-  const snapshot = cache.get(campId) ?? null
+export function recentThreadSnapshot(
+  cache: Map<string, ThreadSurfaceSnapshot>,
+  threadId: string
+): ThreadSurfaceSnapshot | null {
+  const snapshot = cache.get(threadId) ?? null
   if (!snapshot) return null
-  cache.delete(campId)
-  cache.set(campId, snapshot)
+  cache.delete(threadId)
+  cache.set(threadId, snapshot)
   return snapshot
 }
 
-export function campActivationPreview<T extends CampSnapshot>(
+export function campActivationPreview<T extends ThreadSnapshot>(
   currentSnapshot: T | null,
-  activeCampId: string | null,
+  activeThreadId: string | null,
   cachedSnapshot: T | null,
-  targetCampId: string
+  targetThreadId: string
 ): T | null {
-  if (activeCampId === targetCampId && currentSnapshot?.camp.id === targetCampId) {
+  if (activeThreadId === targetThreadId && currentSnapshot?.thread.id === targetThreadId) {
     return currentSnapshot
   }
-  return cachedSnapshot?.camp.id === targetCampId ? cachedSnapshot : null
+  return cachedSnapshot?.thread.id === targetThreadId ? cachedSnapshot : null
 }
 
 export function campOpenProjectionAsSnapshot(
-  projection: CampOpenProjection,
-  previous: CampSurfaceSnapshot | null = null
-): CampSurfaceSnapshot {
-  const previousEarlierMessages = previous?.camp.id === projection.camp.id
+  projection: ThreadOpenProjection,
+  previous: ThreadSurfaceSnapshot | null = null
+): ThreadSurfaceSnapshot {
+  const previousEarlierMessages = previous?.thread.id === projection.thread.id
     ? previous.messages.filter((message) =>
         projection.messages.length > 0
           && message.sequence < projection.messages[0].sequence
       )
     : []
-  const messagesById = new Map<string, CampMessageView>()
+  const messagesById = new Map<string, ThreadMessageView>()
   for (const message of previousEarlierMessages) messagesById.set(message.id, message)
   for (const message of projection.messages) messagesById.set(message.id, message)
   const messages = [...messagesById.values()]
@@ -457,7 +457,7 @@ export function campOpenProjectionAsSnapshot(
   return {
     schemaVersion: 34,
     throughGlobalSequence: projection.throughGlobalSequence,
-    camp: projection.camp,
+    thread: projection.thread,
     members: projection.members,
     membershipReconciliations: projection.membershipReconciliations,
     tasks: projection.tasks,
@@ -488,18 +488,18 @@ export function campOpenProjectionAsSnapshot(
   }
 }
 
-const CANCELLABLE_TURN_STATUSES = new Set<CampSnapshot['turns'][number]['status']>([
+const CANCELLABLE_TURN_STATUSES = new Set<ThreadSnapshot['turns'][number]['status']>([
   'running',
   'waiting'
 ])
-const CANCELLABLE_RUN_STATUSES = new Set<CampSnapshot['agentRuns'][number]['status']>([
+const CANCELLABLE_RUN_STATUSES = new Set<ThreadSnapshot['agentRuns'][number]['status']>([
   'queued',
   'running',
   'waiting'
 ])
 export function campActivationStateForCreation(
   source: 'one_click' | 'dialog'
-): CampActivationState {
+): ThreadActivationState {
   return source === 'one_click' ? 'pending' : 'active'
 }
 
@@ -517,8 +517,8 @@ export async function selectProjectDirectory(
 }
 
 export function cancellableTurnIds(snapshot: {
-  turns: Pick<CampSnapshot['turns'][number], 'id' | 'status'>[]
-  agentRuns: Pick<CampSnapshot['agentRuns'][number], 'campTurnId' | 'status'>[]
+  turns: Pick<ThreadSnapshot['turns'][number], 'id' | 'status'>[]
+  agentRuns: Pick<ThreadSnapshot['agentRuns'][number], 'threadTurnId' | 'status'>[]
 }, scope: 'current_execution' | 'camp_cleanup' = 'current_execution'): string[] {
   if (scope === 'camp_cleanup') {
     return snapshot.turns
@@ -527,7 +527,7 @@ export function cancellableTurnIds(snapshot: {
   }
   const executingTurnIds = new Set(snapshot.agentRuns
     .filter((run) => CANCELLABLE_RUN_STATUSES.has(run.status))
-    .map((run) => run.campTurnId))
+    .map((run) => run.threadTurnId))
   return snapshot.turns
     .filter((turn) =>
       CANCELLABLE_TURN_STATUSES.has(turn.status) && executingTurnIds.has(turn.id))
@@ -536,7 +536,7 @@ export function cancellableTurnIds(snapshot: {
 
 export function reconcileCancellingTurnIds(
   current: ReadonlySet<string>,
-  snapshot: Pick<CampSnapshot, 'turns'>
+  snapshot: Pick<ThreadSnapshot, 'turns'>
 ): Set<string> {
   const terminalTurnIds = new Set(snapshot.turns
     .filter((turn) => !CANCELLABLE_TURN_STATUSES.has(turn.status))
@@ -549,7 +549,7 @@ export function reconcileCancellingTurnIds(
 
 export function effectiveCancellingTurnIds(
   local: ReadonlySet<string>,
-  snapshot: Pick<CampSnapshot, 'turns'>
+  snapshot: Pick<ThreadSnapshot, 'turns'>
 ): Set<string> {
   const activeIds = new Set(snapshot.turns
     .filter((item) => CANCELLABLE_TURN_STATUSES.has(item.status))
@@ -591,9 +591,9 @@ export function effectiveCancellingRunIds(
 // Apply only terminal facts returned by Core, then refresh the complete projection.
 // Cleanup ACK is deliberately absent from this presentation boundary.
 export function applyCancellationResult(
-  snapshot: CampSnapshot,
+  snapshot: ThreadSnapshot,
   result: StoredCommandResult
-): CampSnapshot {
+): ThreadSnapshot {
   if (result.status !== 'applied') return snapshot
   const payload = result.payload
   const runs = new Map<string, {
@@ -618,7 +618,7 @@ export function applyCancellationResult(
       }
     }
   }
-  const turnStatus = payload.campTurnStatus
+  const turnStatus = payload.threadTurnStatus
   return {
     ...snapshot,
     agentRuns: snapshot.agentRuns.map((run) => {
@@ -632,7 +632,7 @@ export function applyCancellationResult(
           : run.hasUnsettledExternalEffects || settled.unknown
       } : run
     }),
-    turns: snapshot.turns.map((turn) => turn.id === payload.campTurnId
+    turns: snapshot.turns.map((turn) => turn.id === payload.threadTurnId
       && (turnStatus === 'completed' || turnStatus === 'failed' || turnStatus === 'cancelled')
       ? { ...turn, status: turnStatus } : turn)
   }
@@ -757,13 +757,13 @@ export function StartupWorkspace({
       className={view === 'camp' ? 'app-shell-camp' : ''}
       data-startup-frame={target?.kind ?? 'location'}
     >
-      <CampNavigation
+      <ThreadNavigation
         platform={window.rovai.platform}
         view={view}
         state="loading"
         disabled
         navigation={null}
-        activeCampId={null}
+        activeThreadId={null}
         pendingMemoryCount={0}
         onNewConversation={ignore}
         onMembers={ignore}
@@ -771,7 +771,7 @@ export function StartupWorkspace({
         onMemory={ignore}
         onSettings={ignore}
         onOpenProject={ignore}
-        onCamp={ignore}
+        onThread={ignore}
         onRemoveProject={ignoreAsync}
         onRename={ignoreAsync}
         onDelete={ignoreAsync}
@@ -779,9 +779,9 @@ export function StartupWorkspace({
         onError={ignore}
       />
       {view === 'camp' && <AppHeader
-        campTitle={uiAttribute("对话")}
+        threadTitle={uiAttribute("对话")}
         contextLabel={null}
-        camp={null}
+        thread={null}
         onFocusApprovals={ignore}
       />}
       {dragPage && <WindowDragStrip page={dragPage} />}
@@ -956,16 +956,16 @@ type AppToastValue = {
   persistent?: boolean
 }
 
-export function navigationWithoutDeletedCamps(
+export function navigationWithoutDeletedThreads(
   snapshot: NavigationSnapshot,
-  deletingCampIds: ReadonlySet<string>
+  deletingThreadIds: ReadonlySet<string>
 ): NavigationSnapshot {
-  const filterGroup = <T extends { totalCount: number; recentCamps: NavigationCampItem[] }>(group: T): T => {
-    const recentCamps = group.recentCamps.filter((camp) => !deletingCampIds.has(camp.id))
-    const removed = group.recentCamps.length - recentCamps.length
+  const filterGroup = <T extends { totalCount: number; recentThreads: NavigationThreadItem[] }>(group: T): T => {
+    const recentThreads = group.recentThreads.filter((thread) => !deletingThreadIds.has(thread.id))
+    const removed = group.recentThreads.length - recentThreads.length
     return removed === 0
       ? group
-      : { ...group, recentCamps, totalCount: Math.max(0, group.totalCount - removed) }
+      : { ...group, recentThreads, totalCount: Math.max(0, group.totalCount - removed) }
   }
   return {
     ...snapshot,
@@ -1025,7 +1025,7 @@ export function BusinessApp({
   }
   const initialTarget: RestorableLocation = initialStartupSnapshot
     ? startupTargetFromSnapshot(initialStartupSnapshot) : { kind: 'quick_chat' }
-  type NavigationContext = { campOptions?: ActivateCampOptions; beforeCommit?: () => void; prepared?: boolean; memberPrepared?: boolean }
+  type NavigationContext = { campOptions?: ActivateThreadOptions; beforeCommit?: () => void; prepared?: boolean; memberPrepared?: boolean }
   const applyNavigationRef = useRef<(target: NavigationTarget, transaction: NavigationTransaction, context?: NavigationContext) => Promise<void>>(async () => undefined)
   const desktopNavigation = useMemo(() => createDesktopNavigation<NavigationContext>(
     (target, transaction, context) => applyNavigationRef.current(target, transaction, context), environment.navigationHistory
@@ -1055,7 +1055,7 @@ export function BusinessApp({
   const [projectOrder, setProjectOrder] = useState<string[] | null>(null)
   const [projectNames, setProjectNames] = useState<Record<string, string>>({})
   const projectNamesGeneration = useRef(0)
-  const [pinnedCampItems, setPinnedCampItems] = useState<NavigationCampItem[]>([])
+  const [pinnedThreadItems, setPinnedThreadItems] = useState<NavigationThreadItem[]>([])
   const [pendingMemoryCount, setPendingMemoryCount] = useState(0)
   const [memoryReviewNotice, setMemoryReviewNotice] = useState(false)
   const [memoryAutoNotice, setMemoryAutoNotice] = useState<{
@@ -1066,17 +1066,17 @@ export function BusinessApp({
   const [memoryRefreshKey, setMemoryRefreshKey] = useState(0)
   const [memoryTarget, setMemoryTarget] = useState<MemoryNavigationTarget>({ kind: 'memory', memoryId: null })
   const [memoryReviewDrawerSignal, setMemoryReviewDrawerSignal] = useState(0)
-  const [campSnapshotState, setCampSnapshotState] = useState<{
-    snapshot: CampSurfaceSnapshot | null
+  const [campSnapshotState, setThreadSnapshotState] = useState<{
+    snapshot: ThreadSurfaceSnapshot | null
     entryPreview: boolean
-    initialComposerDraft: CampComposerDraftView | null
+    initialComposerDraft: ThreadComposerDraftView | null
   }>({ snapshot: null, entryPreview: false, initialComposerDraft: null })
   const campSnapshot = campSnapshotState.snapshot
-  const [campInspectorCampId, setCampInspectorCampId] = useState<string | null>(null)
-  const [campInspectorTab, setCampInspectorTab] = useState<CampInspectorTab>('tasks')
-  const [singleChatCampId, setSingleChatCampId] = useState<string | null>(null)
-  const [campDetailEntryHost, setCampDetailEntryHost] = useState<HTMLDivElement | null>(null)
-  const [optimisticCampMessages, setOptimisticCampMessages] = useState<OptimisticCampMessageEntry[]>([])
+  const [campInspectorThreadId, setThreadInspectorThreadId] = useState<string | null>(null)
+  const [campInspectorTab, setThreadInspectorTab] = useState<ThreadInspectorTab>('tasks')
+  const [singleChatThreadId, setSingleChatThreadId] = useState<string | null>(null)
+  const [campDetailEntryHost, setThreadDetailEntryHost] = useState<HTMLDivElement | null>(null)
+  const [optimisticThreadMessages, setOptimisticThreadMessages] = useState<OptimisticThreadMessageEntry[]>([])
   const [cancellingTurnIds, setCancellingTurnIds] = useState<Set<string>>(() => new Set())
   const [cancellingRunIds, setCancellingRunIds] = useState<Set<string>>(() => new Set())
   const [confirmingRunIds, setConfirmingRunIds] = useState<Set<string>>(() => new Set())
@@ -1114,16 +1114,16 @@ export function BusinessApp({
   }, [])
   const [currentProject, setCurrentProject] = useState<CurrentProject>(() => readCurrentProject())
   const [currentWorkspaceHint, setCurrentWorkspaceHint] = useState<WorkspaceSelection | null>(null)
-  const [activeCampId, setActiveCampId] = useState<string | null>(null)
-  const campInspectorVisible = activeCampId !== null && campInspectorCampId === activeCampId
-  const singleChatVisible = activeCampId !== null && singleChatCampId === activeCampId
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
+  const campInspectorVisible = activeThreadId !== null && campInspectorThreadId === activeThreadId
+  const singleChatVisible = activeThreadId !== null && singleChatThreadId === activeThreadId
   const [notificationFocus, setNotificationFocus] = useState<NotificationFocusTarget | null>(null)
   const [singleChatNotificationTarget, setSingleChatNotificationTarget] = useState<(NonNullable<NotificationActionView['singleChat']> & { requestId: number }) | null>(null)
   const [visibleSingleChatSources, setVisibleSingleChatSources] = useState<VisibleNotificationSources | null>(null)
   const [visibleNotificationSources, setVisibleNotificationSources] = useState<VisibleNotificationSources | null>(null)
   const [notificationAnchor, setNotificationAnchor] = useState<{
-    campId: string
-    messages: readonly CampMessageView[]
+    threadId: string
+    messages: readonly ThreadMessageView[]
     agentRuns: readonly AgentRunView[]
     tasks: readonly import('@contracts').TaskView[]
   } | null>(null)
@@ -1132,8 +1132,8 @@ export function BusinessApp({
   const [missionOpenRequest, setMissionOpenRequest] = useState(0)
   const [newMissionOpen, setNewMissionOpen] = useState(false)
   const missionCreation = useRef<{id: string; command: MissionCreate; attachments: MissionAttachmentDraft[]; attachmentSignature: string} | null>(null)
-  const activeMission = missionList.missions.find(m => m.campId === activeCampId)
-  const missionCamp = !!activeMission || !!(campSnapshot?.camp.id === activeCampId && campSnapshot?.camp.missionId)
+  const activeMission = missionList.missions.find(m => m.threadId === activeThreadId)
+  const missionThread = !!activeMission || !!(campSnapshot?.thread.id === activeThreadId && campSnapshot?.thread.missionId)
   const missionDrawer = !mobile && view === 'camp' && !!activeMission && missionPresentation === 'drawer'
   const [newConversationOpen, setNewConversationOpen] = useState(false)
   const [newConversationInitialWorkspace, setNewConversationInitialWorkspace] = useState<WorkspaceSelection | null>(null)
@@ -1150,26 +1150,26 @@ export function BusinessApp({
       ? current
       : { message, tone: 'danger', action, persistent })
   }, [])
-  const [openingCampId, setOpeningCampId] = useState<string | null>(null)
-  const [runtimeRecovery, setRuntimeRecovery] = useState<CampRuntimeRecovery | null>(null)
+  const [openingThreadId, setOpeningThreadId] = useState<string | null>(null)
+  const [runtimeRecovery, setRuntimeRecovery] = useState<ThreadRuntimeRecovery | null>(null)
   const [liveRuntimeEvents, setLiveRuntimeEvents] = useState<LiveRuntimeEvent[]>([])
   const campEventSequenceMarker = useRef(0)
   const campSelectionGeneration = useRef(0)
   const campOpenFeedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const campSnapshotCache = useRef(new Map<string, CampSurfaceSnapshot>())
-  const campSnapshotRef = useRef<CampSurfaceSnapshot | null>(null)
-  const activeCampIdRef = useRef<string | null>(null)
+  const campSnapshotCache = useRef(new Map<string, ThreadSurfaceSnapshot>())
+  const campSnapshotRef = useRef<ThreadSurfaceSnapshot | null>(null)
+  const activeThreadIdRef = useRef<string | null>(null)
   const viewRef = useRef<View>('compose')
   const notificationFocusSequence = useRef(0)
   const notificationFocusRef = useRef<NotificationFocusTarget | null>(null)
   const notificationPresentationRef = useRef<NotificationPresentationCoordinator | null>(null)
   const campViewedAcknowledgements = useRef(new Map<string, number>())
-  const [openedNavigationRow, setOpenedNavigationRow] = useState<NavigationCampItem | null>(null)
-  const pinnedCampIdsRef = useRef<string[]>([])
-  pinnedCampIdsRef.current = navigationPins.filter(pin => pin.kind === 'camp').map(pin => pin.targetKey)
+  const [openedNavigationRow, setOpenedNavigationRow] = useState<NavigationThreadItem | null>(null)
+  const pinnedThreadIdsRef = useRef<string[]>([])
+  pinnedThreadIdsRef.current = navigationPins.filter(pin => pin.kind === 'camp').map(pin => pin.targetKey)
   const healthRequest = useRef<Promise<HealthStatus> | null>(null)
   const navigationSnapshotRef = useRef<NavigationSnapshot | null>(null)
-  const deletingCampIdsRef = useRef(new Set<string>())
+  const deletingThreadIdsRef = useRef(new Set<string>())
   const shownDeletionIssuesRef = useRef(new Set<string>())
   const projectOrderSyncGeneration = useRef(0)
   const overviewRequest = useRef<Promise<boolean> | null>(null)
@@ -1182,9 +1182,9 @@ export function BusinessApp({
   const runtimeHealthRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const runtimeHealthRefreshIncludesMembers = useRef(false)
   const membersViewRef = useRef<MembersViewHandle>(null)
-  const campLeaveGuardRef = useRef<{ campId: string; guard: CampLeaveGuard } | null>(null)
-  const navigationCampPreparation = useRef<{
-    campId: string; guard: CampLeaveGuard; promise: Promise<CampLeavePreparation>; users: number; didLeave: boolean
+  const campLeaveGuardRef = useRef<{ threadId: string; guard: ThreadLeaveGuard } | null>(null)
+  const navigationThreadPreparation = useRef<{
+    threadId: string; guard: ThreadLeaveGuard; promise: Promise<ThreadLeavePreparation>; users: number; didLeave: boolean
   } | null>(null)
   const automationLeaveGuardRef = useRef<AutomationLeaveGuard | null>(null)
   const startupResolvedSessionId = useRef<string | null>(null)
@@ -1194,74 +1194,74 @@ export function BusinessApp({
     () => campCreationPreflightFromAgents(agents),
     [agents]
   )
-  activeCampIdRef.current = activeCampId
+  activeThreadIdRef.current = activeThreadId
   viewRef.current = view
   notificationFocusRef.current = notificationFocus
   if (notificationPresentationRef.current === null) {
     notificationPresentationRef.current = createNotificationPresentationCoordinator()
   }
 
-  const setCampSnapshot = useCallback((
-    snapshot: CampSurfaceSnapshot | null,
+  const setThreadSnapshot = useCallback((
+    snapshot: ThreadSurfaceSnapshot | null,
     entryPreview = false,
-    initialComposerDraft: CampComposerDraftView | null = null
+    initialComposerDraft: ThreadComposerDraftView | null = null
   ): void => {
     campSnapshotRef.current = snapshot
-    if (snapshot) rememberCampSnapshot(campSnapshotCache.current, snapshot)
-    setCampSnapshotState({ snapshot, entryPreview, initialComposerDraft })
+    if (snapshot) rememberThreadSnapshot(campSnapshotCache.current, snapshot)
+    setThreadSnapshotState({ snapshot, entryPreview, initialComposerDraft })
   }, [])
 
-  const consumeInitialComposerDraft = useCallback((draft: CampComposerDraftView): void => {
-    setCampSnapshotState((current) => current.initialComposerDraft === draft
+  const consumeInitialComposerDraft = useCallback((draft: ThreadComposerDraftView): void => {
+    setThreadSnapshotState((current) => current.initialComposerDraft === draft
       ? { ...current, initialComposerDraft: null }
       : current)
   }, [])
 
-  const clearCampOpenFeedback = useCallback((): void => {
+  const clearThreadOpenFeedback = useCallback((): void => {
     if (campOpenFeedbackTimer.current !== null) {
       clearTimeout(campOpenFeedbackTimer.current)
       campOpenFeedbackTimer.current = null
     }
-    setOpeningCampId(null)
+    setOpeningThreadId(null)
   }, [])
 
-  const registerCampLeaveGuard = useCallback((
-    campId: string,
-    guard: CampLeaveGuard | null
+  const registerThreadLeaveGuard = useCallback((
+    threadId: string,
+    guard: ThreadLeaveGuard | null
   ): void => {
     if (guard) {
-      campLeaveGuardRef.current = { campId, guard }
-    } else if (campLeaveGuardRef.current?.campId === campId) {
+      campLeaveGuardRef.current = { threadId, guard }
+    } else if (campLeaveGuardRef.current?.threadId === threadId) {
       campLeaveGuardRef.current = null
     }
   }, [])
 
-  const leaveActiveCamp = useCallback(async (
+  const leaveActiveThread = useCallback(async (
     transition: () => void | Promise<void>
   ): Promise<boolean> => {
-    const leavingCampId = activeCampIdRef.current
+    const leavingThreadId = activeThreadIdRef.current
     const registration = campLeaveGuardRef.current
     if (
-      !activeCampSurfaceNeedsLeaveGuard(viewRef.current, leavingCampId)
-      || registration?.campId !== leavingCampId
+      !activeThreadSurfaceNeedsLeaveGuard(viewRef.current, leavingThreadId)
+      || registration?.threadId !== leavingThreadId
     ) {
       await transition()
       return true
     }
 
-    let preparation = navigationCampPreparation.current
-    if (!preparation || preparation.campId !== leavingCampId || preparation.guard !== registration.guard) {
-      preparation = { campId: registration.campId, guard: registration.guard,
+    let preparation = navigationThreadPreparation.current
+    if (!preparation || preparation.threadId !== leavingThreadId || preparation.guard !== registration.guard) {
+      preparation = { threadId: registration.threadId, guard: registration.guard,
         promise: Promise.resolve().then(registration.guard), users: 0, didLeave: false }
-      navigationCampPreparation.current = preparation
+      navigationThreadPreparation.current = preparation
     }
     preparation.users += 1
-    let prepared: CampLeavePreparation | undefined
+    let prepared: ThreadLeavePreparation | undefined
     try {
       prepared = await preparation.promise
       await transition()
       await afterNextPaint()
-      preparation.didLeave ||= viewRef.current !== 'camp' || activeCampIdRef.current !== leavingCampId
+      preparation.didLeave ||= viewRef.current !== 'camp' || activeThreadIdRef.current !== leavingThreadId
     } catch (nextError) {
       setError(uiAttribute("离开当前会话前未能完成输入操作：{0}", String(errorMessage(nextError))))
       return false
@@ -1269,7 +1269,7 @@ export function BusinessApp({
       preparation.users -= 1
       if (preparation.users === 0) {
         prepared?.complete(preparation.didLeave)
-        if (navigationCampPreparation.current === preparation) navigationCampPreparation.current = null
+        if (navigationThreadPreparation.current === preparation) navigationThreadPreparation.current = null
       }
     }
     return true
@@ -1298,17 +1298,17 @@ export function BusinessApp({
     transition: () => void | Promise<void>
   ): Promise<boolean> => {
     let automationTransitioned = false
-    const campTransitioned = await leaveActiveCamp(async () => {
+    const campTransitioned = await leaveActiveThread(async () => {
       automationTransitioned = await leaveActiveAutomation(transition)
     })
     return campTransitioned && automationTransitioned
-  }, [leaveActiveAutomation, leaveActiveCamp])
+  }, [leaveActiveAutomation, leaveActiveThread])
 
   const prepareForAppQuit = useCallback(async (): Promise<void> => {
     try {
-      await prepareActiveCampForAppQuit(
+      await prepareActiveThreadForAppQuit(
         viewRef.current,
-        activeCampIdRef.current,
+        activeThreadIdRef.current,
         campLeaveGuardRef.current
       )
       await prepareActiveAutomationForAppQuit(
@@ -1326,31 +1326,31 @@ export function BusinessApp({
     [prepareForAppQuit]
   )
 
-  const cancelPendingCampActivation = useCallback((): void => {
+  const cancelPendingThreadActivation = useCallback((): void => {
     campSelectionGeneration.current += 1
-    clearCampOpenFeedback()
-  }, [clearCampOpenFeedback])
+    clearThreadOpenFeedback()
+  }, [clearThreadOpenFeedback])
 
-  const requestCampProjection = useCallback(async (
-    campId: string,
+  const requestThreadProjection = useCallback(async (
+    threadId: string,
     mode: 'enter' | 'open'
   ): Promise<{
-    snapshot: CampSurfaceSnapshot
+    snapshot: ThreadSurfaceSnapshot
     traceId: string
     startedAt: number
     receivedAt: number
   }> => {
     const traceId = newCommandId()
     const startedAt = performance.now()
-    const method = mode === 'enter' ? 'camps.enter' : 'camps.open'
+    const method = mode === 'enter' ? 'threads.enter' : 'threads.open'
     console.info(`[camp-open] trace=${traceId} stage=renderer_request method=${method}`)
     const projection = mode === 'enter'
-      ? await client.request<CampOpenProjection>('camps.enter', {
+      ? await client.request<ThreadOpenProjection>('threads.enter', {
           traceId,
           commandId: newCommandId(),
-          command: { campId }
+          command: { threadId }
         })
-      : await requestAuthoritativeCampOpenProjection(client, campId, traceId)
+      : await requestAuthoritativeThreadOpenProjection(client, threadId, traceId)
     if (projection.schemaVersion !== 8) throw new Error(uiAttribute('会话打开数据版本不兼容。'))
     const receivedAt = performance.now()
     console.info(
@@ -1393,9 +1393,9 @@ export function BusinessApp({
   }, [agents, selectedMemberId, view, memberTab, desktopNavigation, displayedEntry])
 
   useEffect(() => {
-    setCampInspectorCampId((current) => view === 'camp' && current === activeCampId ? current : null)
-    setSingleChatCampId((current) => view === 'camp' && current === activeCampId ? current : null)
-  }, [activeCampId, view])
+    setThreadInspectorThreadId((current) => view === 'camp' && current === activeThreadId ? current : null)
+    setSingleChatThreadId((current) => view === 'camp' && current === activeThreadId ? current : null)
+  }, [activeThreadId, view])
 
   const memberRosterReader = useMemo(() => createMemberRosterReader(
     () => client.request<AgentProfile[]>('members.list'),
@@ -1413,9 +1413,9 @@ export function BusinessApp({
     nextNavigation: NavigationSnapshot,
     groupLimits: NavigationGroupLimits
   ): void => {
-    const visibleNavigation = navigationWithoutDeletedCamps(
+    const visibleNavigation = navigationWithoutDeletedThreads(
       nextNavigation,
-      deletingCampIdsRef.current
+      deletingThreadIdsRef.current
     )
     navigationSnapshotRef.current = visibleNavigation
     setNavigation(visibleNavigation)
@@ -1429,12 +1429,12 @@ export function BusinessApp({
       commitNavigation,
       {
         initiallyVisible: document.visibilityState !== 'hidden',
-        readCamps: (campIds) => client.request<NavigationCampRows>('navigation.camps', { campIds }),
-        getPinnedCampIds: () => pinnedCampIdsRef.current,
+        readThreads: (threadIds) => client.request<NavigationThreadRows>('navigation.threads', { threadIds }),
+        getPinnedThreadIds: () => pinnedThreadIdsRef.current,
         onRows: (rows, requestedIds) => {
-          setPinnedCampItems(current => current.flatMap(camp =>
-            requestedIds.includes(camp.id) ? rows.camps.find(next => next.id === camp.id) ?? [] : camp))
-          const activeRow = rows.camps.find(camp => camp.id === activeCampIdRef.current)
+          setPinnedThreadItems(current => current.flatMap(thread =>
+            requestedIds.includes(thread.id) ? rows.threads.find(next => next.id === thread.id) ?? [] : thread))
+          const activeRow = rows.threads.find(thread => thread.id === activeThreadIdRef.current)
           if (activeRow) setOpenedNavigationRow(activeRow)
         },
         onError: () => setNavigationState('error')
@@ -1452,9 +1452,9 @@ export function BusinessApp({
     return snapshot
   }, [navigationRefreshCoordinator])
 
-  const retryCampDeletion = useCallback((operationId: string): void => {
+  const retryThreadDeletion = useCallback((operationId: string): void => {
     const retry = (): void => {
-      void client.request<StoredCommandResult>('camps.retryDeletion', {
+      void client.request<StoredCommandResult>('threads.retryDeletion', {
         commandId: newCommandId(),
         command: { operationId }
       }).then((result) => {
@@ -1467,8 +1467,8 @@ export function BusinessApp({
     retry()
   }, [client, notifyError])
 
-  const loadCampDeletionIssues = useCallback(async (): Promise<void> => {
-    const issues = await client.request<CampDeletionIssue[]>('camps.deletionIssues')
+  const loadThreadDeletionIssues = useCallback(async (): Promise<void> => {
+    const issues = await client.request<ThreadDeletionIssue[]>('threads.deletionIssues')
     const issue = issues.find(({ operationId, attentionRevision }) => (
       !shownDeletionIssuesRef.current.has(`${operationId}:${attentionRevision}`)
     ))
@@ -1476,10 +1476,10 @@ export function BusinessApp({
     shownDeletionIssuesRef.current.add(`${issue.operationId}:${issue.attentionRevision}`)
     notifyError(
       uiAttribute('删除未完成，请重试。'),
-      { label:uiAttribute("重试"), onSelect: () => retryCampDeletion(issue.operationId) },
+      { label:uiAttribute("重试"), onSelect: () => retryThreadDeletion(issue.operationId) },
       true
     )
-  }, [client, notifyError, retryCampDeletion])
+  }, [client, notifyError, retryThreadDeletion])
 
   const loadOnboarding = useCallback((): Promise<void> => {
     if (!desktop) return Promise.resolve()
@@ -1562,8 +1562,8 @@ export function BusinessApp({
             setProjectNames(resolvedNavigationPreferences.projectNames)
           }
           setRemovedProjectAuthorityReady(true)
-          setPinnedCampItems(
-            resolvedPins.camps.filter((camp) => !deletingCampIdsRef.current.has(camp.id))
+          setPinnedThreadItems(
+            resolvedPins.threads.filter((thread) => !deletingThreadIdsRef.current.has(thread.id))
           )
         })()
         const results = await Promise.allSettled([
@@ -1716,9 +1716,9 @@ export function BusinessApp({
         ])
         const target = startupTargetFromSnapshot(snapshot)
         desktopNavigation.reset()
-        cancelPendingCampActivation()
-        setActiveCampId(null)
-        setCampSnapshot(null)
+        cancelPendingThreadActivation()
+        setActiveThreadId(null)
+        setThreadSnapshot(null)
         setNotificationFocus(null)
         setStartupRouteTarget(target)
         if (target.kind === 'camp') {
@@ -1750,7 +1750,7 @@ export function BusinessApp({
       if (startupSnapshotRequest.current === request) startupSnapshotRequest.current = null
     }).catch(() => undefined)
     return request
-  }, [cancelPendingCampActivation, setCampSnapshot, desktopNavigation])
+  }, [cancelPendingThreadActivation, setThreadSnapshot, desktopNavigation])
 
   const completeStartup = useCallback((sessionId: string): void => {
     startupResolvedSessionId.current = sessionId
@@ -1774,29 +1774,29 @@ export function BusinessApp({
     }
   }, [])
 
-  const activateCampWithoutLeaveGuard = useCallback(async (
-    campId: string,
-    options: ActivateCampOptions,
+  const activateThreadWithoutLeaveGuard = useCallback(async (
+    threadId: string,
+    options: ActivateThreadOptions,
     selectionGeneration: number,
     transaction?: NavigationTransaction
   ): Promise<boolean> => {
     if (selectionGeneration !== campSelectionGeneration.current || (transaction && !transaction.isCurrent())) return false
-    const cachedSnapshot = activeCampIdRef.current === campId
+    const cachedSnapshot = activeThreadIdRef.current === threadId
       ? null
-      : recentCampSnapshot(campSnapshotCache.current, campId)
+      : recentThreadSnapshot(campSnapshotCache.current, threadId)
     const previewSnapshot = campActivationPreview(
       campSnapshotRef.current,
-      activeCampIdRef.current,
+      activeThreadIdRef.current,
       cachedSnapshot,
-      campId
+      threadId
     )
-    const commitCampSurface = (
-      snapshot: CampSurfaceSnapshot,
+    const commitThreadSurface = (
+      snapshot: ThreadSurfaceSnapshot,
       entryPreview = false,
-      initialComposerDraft: CampComposerDraftView | null = null
+      initialComposerDraft: ThreadComposerDraftView | null = null
     ): void => {
       if (transaction && !transaction.commit()) return
-      const snapshotProject = currentProjectForCamp(snapshot.camp)
+      const snapshotProject = currentProjectForThread(snapshot.thread)
       setCurrentProject(snapshotProject)
       persistCurrentProject(snapshotProject)
       campEventSequenceMarker.current = snapshot.throughGlobalSequence
@@ -1808,39 +1808,39 @@ export function BusinessApp({
         || (options.anchoredAgentRuns?.length ?? 0) > 0
         || (options.anchoredTasks?.length ?? 0) > 0) {
         setNotificationAnchor({
-          campId,
+          threadId,
           messages: options.anchoredMessages ?? [],
           agentRuns: options.anchoredAgentRuns ?? [],
           tasks: options.anchoredTasks ?? []
         })
       }
-      setActiveCampId(campId)
-      setCampSnapshot(snapshot, entryPreview, initialComposerDraft)
-      if (snapshot.camp.missionId && options.missionPresentation) {
+      setActiveThreadId(threadId)
+      setThreadSnapshot(snapshot, entryPreview, initialComposerDraft)
+      if (snapshot.thread.missionId && options.missionPresentation) {
         setMissionPresentation(options.missionPresentation)
       }
       setView('camp')
     }
     if (previewSnapshot) {
-      commitCampSurface(previewSnapshot, true)
+      commitThreadSurface(previewSnapshot, true)
     } else {
       campOpenFeedbackTimer.current = setTimeout(() => {
         campOpenFeedbackTimer.current = null
         if (selectionGeneration === campSelectionGeneration.current) {
-          setOpeningCampId(campId)
+          setOpeningThreadId(threadId)
         }
       }, CAMP_OPEN_FEEDBACK_DELAY_MS)
     }
     try {
-      const { snapshot, traceId, startedAt, receivedAt } = await requestCampProjection(
-        campId,
+      const { snapshot, traceId, startedAt, receivedAt } = await requestThreadProjection(
+        threadId,
         options.reconcileDefaultLead === false ? 'open' : 'enter'
       )
       if (selectionGeneration !== campSelectionGeneration.current || (transaction && !transaction.isCurrent())) {
         return false
       }
-      clearCampOpenFeedback()
-      commitCampSurface(snapshot, false, null)
+      clearThreadOpenFeedback()
+      commitThreadSurface(snapshot, false, null)
       await afterNextPaint()
       if (selectionGeneration !== campSelectionGeneration.current) return false
       const paintedAt = performance.now()
@@ -1850,7 +1850,7 @@ export function BusinessApp({
         + `paint_ms=${(paintedAt - receivedAt).toFixed(1)}`
       )
       void (async () => {
-        await navigationRefreshCoordinator.refreshCamps([campId], 'explicit')
+        await navigationRefreshCoordinator.refreshThreads([threadId], 'explicit')
         if (selectionGeneration !== campSelectionGeneration.current) return
         console.info(
           `[camp-open] trace=${traceId} stage=renderer_background_complete `
@@ -1864,42 +1864,42 @@ export function BusinessApp({
       return true
     } catch (nextError) {
       if (selectionGeneration !== campSelectionGeneration.current) return false
-      clearCampOpenFeedback()
+      clearThreadOpenFeedback()
       if (transaction && !transaction.isCurrent()) return false
       // A removed historical resource resolves to a real page by replacing this entry.
-      const exists = await client.request<boolean>('camps.exists', { campId }).catch(() => true)
+      const exists = await client.request<boolean>('threads.exists', { threadId }).catch(() => true)
       if (transaction && !transaction.isCurrent()) return false
       if (!exists && transaction?.commit({ kind: 'quick_chat' })) {
-        setActiveCampId(null)
-        setCampSnapshot(null)
+        setActiveThreadId(null)
+        setThreadSnapshot(null)
         setView('compose')
       } else if (!options.suppressErrors) {
         setError(errorMessage(nextError))
       }
       return false
     }
-  }, [clearCampOpenFeedback, navigationRefreshCoordinator, requestCampProjection, setCampSnapshot])
+  }, [clearThreadOpenFeedback, navigationRefreshCoordinator, requestThreadProjection, setThreadSnapshot])
 
-  const activateCamp = useCallback(async (
-    campId: string,
-    options: ActivateCampOptions = {}
+  const activateThread = useCallback(async (
+    threadId: string,
+    options: ActivateThreadOptions = {}
   ): Promise<boolean> => {
-    const activated = await desktopNavigation.push({ kind: 'camp', campId }, { campOptions: options, memberPrepared: options.memberPrepared })
+    const activated = await desktopNavigation.push({ kind: 'camp', threadId }, { campOptions: options, memberPrepared: options.memberPrepared })
     const state = desktopNavigation.getSnapshot()
     const target = state.entries[state.index]
-    if (target?.kind !== 'camp' || target.campId !== campId) return false
-    if (viewRef.current === 'camp' && activeCampIdRef.current === campId) {
+    if (target?.kind !== 'camp' || target.threadId !== threadId) return false
+    if (viewRef.current === 'camp' && activeThreadIdRef.current === threadId) {
       if ((options.anchoredMessages?.length ?? 0) > 0
         || (options.anchoredAgentRuns?.length ?? 0) > 0
         || (options.anchoredTasks?.length ?? 0) > 0) {
         setNotificationAnchor({
-          campId,
+          threadId,
           messages: options.anchoredMessages ?? [],
           agentRuns: options.anchoredAgentRuns ?? [],
           tasks: options.anchoredTasks ?? []
         })
       }
-      if (campSnapshotRef.current?.camp.missionId && options.missionPresentation) {
+      if (campSnapshotRef.current?.thread.missionId && options.missionPresentation) {
         setMissionPresentation(options.missionPresentation)
       }
       return true
@@ -1907,45 +1907,45 @@ export function BusinessApp({
     return activated
   }, [desktopNavigation])
 
-  useEffect(() => desktop?.userAutomation.onOpenCamp(({ campId }) => {
-    void activateCamp(campId, { reconcileDefaultLead: false })
-  }), [activateCamp])
+  useEffect(() => desktop?.userAutomation.onOpenThread(({ threadId }) => {
+    void activateThread(threadId, { reconcileDefaultLead: false })
+  }), [activateThread])
 
-  const refreshActiveCampSnapshotOnce = useCallback(async (campId: string): Promise<void> => {
-    const { snapshot } = await requestCampProjection(campId, 'open')
-    if (activeCampIdRef.current !== campId) return
+  const refreshActiveThreadSnapshotOnce = useCallback(async (threadId: string): Promise<void> => {
+    const { snapshot } = await requestThreadProjection(threadId, 'open')
+    if (activeThreadIdRef.current !== threadId) return
     if (snapshot.throughGlobalSequence < campEventSequenceMarker.current) return
     campEventSequenceMarker.current = snapshot.throughGlobalSequence
-    setCampSnapshot(snapshot)
+    setThreadSnapshot(snapshot)
     setConfirmingRunIds(new Set())
-  }, [requestCampProjection, setCampSnapshot])
+  }, [requestThreadProjection, setThreadSnapshot])
 
-  const activeCampRefreshCoordinator = useMemo(
-    () => createActiveCampRefreshCoordinator(refreshActiveCampSnapshotOnce),
-    [refreshActiveCampSnapshotOnce]
+  const activeThreadRefreshCoordinator = useMemo(
+    () => createActiveThreadRefreshCoordinator(refreshActiveThreadSnapshotOnce),
+    [refreshActiveThreadSnapshotOnce]
   )
 
-  const refreshActiveCampSnapshot = useCallback(
-    (campId: string): Promise<void> => activeCampRefreshCoordinator.refresh(campId),
-    [activeCampRefreshCoordinator]
+  const refreshActiveThreadSnapshot = useCallback(
+    (threadId: string): Promise<void> => activeThreadRefreshCoordinator.refresh(threadId),
+    [activeThreadRefreshCoordinator]
   )
 
-  const loadEarlierCampMessages = useCallback(async (): Promise<void> => {
+  const loadEarlierThreadMessages = useCallback(async (): Promise<void> => {
     const requestedSnapshot = campSnapshotRef.current
     const coverage = requestedSnapshot?.openCoverage?.messages
     const beforeSequence = coverage?.oldestLoadedSequence ?? null
     if (!requestedSnapshot || !coverage?.hasEarlier || beforeSequence === null) return
-    const campId = requestedSnapshot.camp.id
+    const threadId = requestedSnapshot.thread.id
     const selectionGeneration = campSelectionGeneration.current
-    const page = await client.request<CampMessagePage>('camp.messages.page', {
-      campId,
+    const page = await client.request<ThreadMessagePage>('thread.messages.page', {
+      threadId,
       beforeSequence,
       throughGlobalSequence: requestedSnapshot.throughGlobalSequence,
       limit: 50
     })
     if (
       page.schemaVersion !== 1
-      || page.campId !== campId
+      || page.threadId !== threadId
       || page.throughGlobalSequence !== requestedSnapshot.throughGlobalSequence
       || page.requestedBeforeSequence !== beforeSequence
       || page.hasMore !== (page.nextBeforeSequence !== null)
@@ -1955,7 +1955,7 @@ export function BusinessApp({
     }
     if (selectionGeneration !== campSelectionGeneration.current) return
     const current = campSnapshotRef.current
-    if (!current || current.camp.id !== campId) return
+    if (!current || current.thread.id !== threadId) return
     const messagesById = new Map(current.messages.map((message) => [message.id, message]))
     for (const message of page.messages) messagesById.set(message.id, message)
     const messages = [...messagesById.values()].sort((left, right) =>
@@ -1966,7 +1966,7 @@ export function BusinessApp({
       ? Math.max(current.openCoverage?.messages.totalCount ?? 0, loadedCount + 1)
       : loadedCount
     const omittedCount = Math.max(0, totalCount - loadedCount)
-    setCampSnapshot({
+    setThreadSnapshot({
       ...current,
       messages,
       openCoverage: current.openCoverage
@@ -1985,21 +1985,21 @@ export function BusinessApp({
           }
         : undefined
     })
-  }, [setCampSnapshot])
+  }, [setThreadSnapshot])
 
-  const refreshVisibleNotificationCamp = useCallback(async (
+  const refreshVisibleNotificationThread = useCallback(async (
     _episode: NotificationEpisodeView,
     action: NotificationActionView
   ): Promise<boolean> => {
     if (action.kind !== 'open_camp_message' || !action.messageId) return false
-    const campId = action.campId
-    if (activeCampIdRef.current !== campId || viewRef.current !== 'camp') return false
-    await refreshActiveCampSnapshot(campId)
+    const threadId = action.threadId
+    if (activeThreadIdRef.current !== threadId || viewRef.current !== 'camp') return false
+    await refreshActiveThreadSnapshot(threadId)
     await afterNextPaint()
-    if (activeCampIdRef.current !== campId || viewRef.current !== 'camp') return false
+    if (activeThreadIdRef.current !== threadId || viewRef.current !== 'camp') return false
     if (!action.available) return false
     return notificationMessageIsVisible(action.messageId)
-  }, [refreshActiveCampSnapshot])
+  }, [refreshActiveThreadSnapshot])
 
   useEffect(() => {
     if (!toast || toast.persistent) return undefined
@@ -2009,8 +2009,8 @@ export function BusinessApp({
 
   useEffect(() => {
     if (startupStatus !== 'resolved') return
-    void loadCampDeletionIssues().catch(() => undefined)
-  }, [loadCampDeletionIssues, startupStatus])
+    void loadThreadDeletionIssues().catch(() => undefined)
+  }, [loadThreadDeletionIssues, startupStatus])
 
   useEffect(() => {
     if (notificationFocus?.kind !== 'camp_message' && notificationFocus?.kind !== 'agent_run') {
@@ -2021,9 +2021,9 @@ export function BusinessApp({
   useEffect(() => {
     if (!campSnapshot) return
     const persistedIds = new Set(campSnapshot.messages.map((message) => message.id))
-    setOptimisticCampMessages((current) => {
+    setOptimisticThreadMessages((current) => {
       const next = current.filter((entry) =>
-        entry.campId !== campSnapshot.camp.id || !persistedIds.has(entry.message.id)
+        entry.threadId !== campSnapshot.thread.id || !persistedIds.has(entry.message.id)
       )
       return next.length === current.length ? current : next
     })
@@ -2137,9 +2137,9 @@ export function BusinessApp({
     let overviewTimer: number | null = null
 
     const showQuickChat = (): void => {
-      cancelPendingCampActivation()
-      setActiveCampId(null)
-      setCampSnapshot(null)
+      cancelPendingThreadActivation()
+      setActiveThreadId(null)
+      setThreadSnapshot(null)
       setNotificationFocus(null)
       setView('compose')
     }
@@ -2192,16 +2192,16 @@ export function BusinessApp({
         await logRouteContentPaint(target.kind)
         return
       } else {
-        const projectionRequest = requestCampProjection(target.campId, 'enter')
+        const projectionRequest = requestThreadProjection(target.threadId, 'enter')
         scheduleOverview()
-        let opened: Awaited<ReturnType<typeof requestCampProjection>>
+        let opened: Awaited<ReturnType<typeof requestThreadProjection>>
         try {
           opened = await projectionRequest
         } catch (snapshotError) {
           let exists: boolean
           try {
-            exists = await client.request<boolean>('camps.exists', {
-              campId: target.campId
+            exists = await client.request<boolean>('threads.exists', {
+              threadId: target.threadId
             })
           } catch {
             throw snapshotError
@@ -2217,14 +2217,14 @@ export function BusinessApp({
         }
         if (cancelled) return
         const { snapshot, traceId, startedAt, receivedAt } = opened
-        cancelPendingCampActivation()
+        cancelPendingThreadActivation()
         const selectionGeneration = campSelectionGeneration.current
         campEventSequenceMarker.current = snapshot.throughGlobalSequence
-        const snapshotProject = currentProjectForCamp(snapshot.camp)
+        const snapshotProject = currentProjectForThread(snapshot.thread)
         setCurrentProject(snapshotProject)
         persistCurrentProject(snapshotProject)
-        setActiveCampId(target.campId)
-        setCampSnapshot(snapshot)
+        setActiveThreadId(target.threadId)
+        setThreadSnapshot(snapshot)
         setNotificationFocus(null)
         setView('camp')
         completeStartup(startupSnapshot.sessionId)
@@ -2268,13 +2268,13 @@ export function BusinessApp({
       if (overviewTimer !== null) window.clearTimeout(overviewTimer)
     }
   }, [
-    cancelPendingCampActivation,
+    cancelPendingThreadActivation,
     completeStartup,
     loadAgents,
     loadNavigation,
     loadOverview,
-    requestCampProjection,
-    setCampSnapshot,
+    requestThreadProjection,
+    setThreadSnapshot,
     startupPrerequisitesReady,
     startupSnapshot
   ])
@@ -2288,13 +2288,13 @@ export function BusinessApp({
       }
       return
     }
-    const target: NavigationTarget = view === 'camp' && activeCampId
-      ? { kind: 'camp', campId: activeCampId }
+    const target: NavigationTarget = view === 'camp' && activeThreadId
+      ? { kind: 'camp', threadId: activeThreadId }
       : view === 'members' ? { kind: 'members', agentId: restoredMemberId(selectedMemberId, agents), tab: memberTab }
       : view === 'memory' ? memoryTarget
       : { kind: 'quick_chat' }
     desktopNavigation.reset(target)
-  }, [startupStatus, desktopNavigation, view, activeCampId, selectedMemberId, agents, memberTab, memoryTarget])
+  }, [startupStatus, desktopNavigation, view, activeThreadId, selectedMemberId, agents, memberTab, memoryTarget])
 
   useEffect(() => {
     if (startupStatus !== 'resolved' || view !== 'compose') return
@@ -2305,17 +2305,17 @@ export function BusinessApp({
     if (
       startupStatus !== 'resolved'
       || view !== 'camp'
-      || !activeCampId
-      || campSnapshot?.camp.id !== activeCampId
+      || !activeThreadId
+      || campSnapshot?.thread.id !== activeThreadId
     ) return
-    const activationState = campSnapshot.camp.activationState
+    const activationState = campSnapshot.thread.activationState
     const pendingDraftIsNavigable = activationState === 'pending' && navigation !== null
-      && allNavigationCamps(navigation).some((camp) =>
-        camp.id === activeCampId && camp.activationState === 'pending'
+      && allNavigationThreads(navigation).some((thread) =>
+        thread.id === activeThreadId && thread.activationState === 'pending'
       )
     if (activationState === 'pending' && !pendingDraftIsNavigable) return
-    void commitRestorableLocation({ kind: 'camp', campId: activeCampId })
-  }, [activeCampId, campSnapshot, commitRestorableLocation, navigation, startupStatus, view])
+    void commitRestorableLocation({ kind: 'camp', threadId: activeThreadId })
+  }, [activeThreadId, campSnapshot, commitRestorableLocation, navigation, startupStatus, view])
 
   useEffect(() => {
     if (startupStatus !== 'resolved' || view !== 'members') return
@@ -2411,68 +2411,68 @@ export function BusinessApp({
   useEffect(() => {
     if (
       view !== 'camp'
-      || !activeCampId
-      || campSnapshot?.camp.id !== activeCampId
+      || !activeThreadId
+      || campSnapshot?.thread.id !== activeThreadId
     ) return undefined
-    const campId = activeCampId
+    const threadId = activeThreadId
     const throughGlobalSequence = campSnapshot.throughGlobalSequence
     if (campSnapshotState.entryPreview) return undefined
-    const mission = campSnapshot.camp.missionId
-      ? missionList.missions.find(item => item.campId === campId) : null
-    const row = (navigation ? allNavigationCamps(navigation).find(camp => camp.id === campId) : null)
-      ?? (openedNavigationRow?.id === campId ? openedNavigationRow : null)
-      ?? pinnedCampItems.find(camp => camp.id === campId)
-    if (campSnapshot.camp.missionId ? !mission?.hasUnread
+    const mission = campSnapshot.thread.missionId
+      ? missionList.missions.find(item => item.threadId === threadId) : null
+    const row = (navigation ? allNavigationThreads(navigation).find(thread => thread.id === threadId) : null)
+      ?? (openedNavigationRow?.id === threadId ? openedNavigationRow : null)
+      ?? pinnedThreadItems.find(thread => thread.id === threadId)
+    if (campSnapshot.thread.missionId ? !mission?.hasUnread
       : !row || row.latestCompletionGlobalSequence <= (row.lastSeenGlobalSequence ?? 0)
         || row.latestCompletionGlobalSequence > throughGlobalSequence) return undefined
     // Missions use published Agent replies as their existing unread boundary.
     const observedCompletion = mission ? throughGlobalSequence : row!.latestCompletionGlobalSequence
     let cancelled = false
     let retryTimer: number | null = null
-    const acknowledgeVisibleCamp = async (): Promise<void> => {
+    const acknowledgeVisibleThread = async (): Promise<void> => {
       if (!campViewIsVisibleForReadAcknowledgement(
         view,
-        activeCampId,
-        campSnapshot.camp.id,
+        activeThreadId,
+        campSnapshot.thread.id,
         document.visibilityState,
         document.hasFocus()
       )) return
-      if ((campViewedAcknowledgements.current.get(campId) ?? 0) >= observedCompletion) return
-      campViewedAcknowledgements.current.set(campId, observedCompletion)
+      if ((campViewedAcknowledgements.current.get(threadId) ?? 0) >= observedCompletion) return
+      campViewedAcknowledgements.current.set(threadId, observedCompletion)
       try {
-        const acknowledgement = await client.request<CampViewedAcknowledgement>('navigation.campViewed', {
-          campId,
+        const acknowledgement = await client.request<ThreadViewedAcknowledgement>('navigation.campViewed', {
+          threadId,
           throughGlobalSequence
         })
         if (mission) void missionList.refresh()
         else navigationRefreshCoordinator.acceptRows(acknowledgement.navigation)
       } catch {
-        if (campViewedAcknowledgements.current.get(campId) === observedCompletion) {
-          campViewedAcknowledgements.current.delete(campId)
+        if (campViewedAcknowledgements.current.get(threadId) === observedCompletion) {
+          campViewedAcknowledgements.current.delete(threadId)
         }
         if (!cancelled) {
           retryTimer = window.setTimeout(() => {
             retryTimer = null
-            void acknowledgeVisibleCamp()
+            void acknowledgeVisibleThread()
           }, 2_500)
         }
       }
     }
-    void acknowledgeVisibleCamp()
-    window.addEventListener('focus', acknowledgeVisibleCamp)
-    document.addEventListener('visibilitychange', acknowledgeVisibleCamp)
+    void acknowledgeVisibleThread()
+    window.addEventListener('focus', acknowledgeVisibleThread)
+    document.addEventListener('visibilitychange', acknowledgeVisibleThread)
     return () => {
       cancelled = true
       if (retryTimer !== null) window.clearTimeout(retryTimer)
-      window.removeEventListener('focus', acknowledgeVisibleCamp)
-      document.removeEventListener('visibilitychange', acknowledgeVisibleCamp)
+      window.removeEventListener('focus', acknowledgeVisibleThread)
+      document.removeEventListener('visibilitychange', acknowledgeVisibleThread)
     }
   }, [
-    activeCampId,
-    campSnapshot?.camp.id,
+    activeThreadId,
+    campSnapshot?.thread.id,
     campSnapshot?.throughGlobalSequence,
     navigation,
-    pinnedCampItems,
+    pinnedThreadItems,
     openedNavigationRow,
     missionList.missions,
     missionList.refresh,
@@ -2543,52 +2543,52 @@ export function BusinessApp({
       }
       if (event.method === 'navigation.invalidated') {
         const reason = stringField(params, 'reason')
-        const deletingCampId = stringField(params, 'campId')
+        const deletingThreadId = stringField(params, 'threadId')
         if (reason === 'camps.deletion_attention') {
-          void loadCampDeletionIssues().catch(() => undefined)
+          void loadThreadDeletionIssues().catch(() => undefined)
         }
         if (
-          deletingCampId
+          deletingThreadId
           && (
             reason === 'camps.delete_accepted'
-            || reason === 'camp.deleted'
+            || reason === 'thread.deleted'
             || reason === 'camps.deletion_attention'
           )
         ) {
-          hideAcceptedCampDeletion(deletingCampId)
+          hideAcceptedThreadDeletion(deletingThreadId)
         }
       }
       if (shouldRefreshNavigationForCoreEvent(event, shuttingDownRef.current)) {
         void navigationRefreshCoordinator.invalidate({
           scope: params.scope === 'camp' || params.scope === 'group' ? params.scope : 'all',
-          campId: stringField(params, 'campId') ?? undefined,
+          threadId: stringField(params, 'threadId') ?? undefined,
           groupKeys: Array.isArray(params.groupKeys) ? params.groupKeys.filter((key): key is string => typeof key === 'string') : undefined
         }).catch(() => undefined)
       }
-      const campId = activeCampIdRef.current
-      const refresh = campId && deletingCampIdsRef.current.has(campId)
+      const threadId = activeThreadIdRef.current
+      const refresh = threadId && deletingThreadIdsRef.current.has(threadId)
         ? null
-        : refreshActiveCampForCoreEvent(
+        : refreshActiveThreadForCoreEvent(
             event,
-            campId,
-            activeCampRefreshCoordinator,
+            threadId,
+            activeThreadRefreshCoordinator,
             shuttingDownRef.current
           )
-      if (refresh && campId) {
+      if (refresh && threadId) {
         void refresh.catch((nextError) => {
-          if (activeCampIdRef.current === campId) setError(errorMessage(nextError))
+          if (activeThreadIdRef.current === threadId) setError(errorMessage(nextError))
         })
       }
     })
     return () => { unsubscribe?.(); liveEvents.dispose() }
   }, [
-    activeCampRefreshCoordinator,
+    activeThreadRefreshCoordinator,
     loadHealth,
     loadInstallations,
     loadAgents,
     loadMemberData,
     loadOverview,
-    loadCampDeletionIssues,
+    loadThreadDeletionIssues,
     navigationRefreshCoordinator
   ])
 
@@ -2607,8 +2607,8 @@ export function BusinessApp({
     currentProject,
     currentWorkspaceHint
   ), projectNames)
-  const activeCamp = navigation
-    ? allNavigationCamps(navigation).find((camp) => camp.id === activeCampId) ?? null
+  const activeThread = navigation
+    ? allNavigationThreads(navigation).find((thread) => thread.id === activeThreadId) ?? null
     : null
   const selectedCurrentProject = currentProjectGroup(displayNavigation, currentProject)
   const shellOnlyCurrentProjectPath = selectedCurrentProject
@@ -2617,67 +2617,67 @@ export function BusinessApp({
     : null
   const currentProjectKey = selectedCurrentProject?.projectKey ?? 'quick-chat'
   const currentProjectLabel = selectedCurrentProject?.name ?? uiAttribute('快速对话')
-  const activeProjectPath = activeCamp?.projectBindingKind === 'directory'
-    ? activeCamp.projectPath
-    : campSnapshot?.camp.id === activeCampId
-      && campSnapshot.camp.projectBindingKind === 'directory'
-      ? campSnapshot.camp.projectPath
+  const activeProjectPath = activeThread?.projectBindingKind === 'directory'
+    ? activeThread.projectPath
+    : campSnapshot?.thread.id === activeThreadId
+      && campSnapshot.thread.projectBindingKind === 'directory'
+      ? campSnapshot.thread.projectPath
       : null
-  const activeCampProject = activeProjectPath && displayNavigation
+  const activeThreadProject = activeProjectPath && displayNavigation
     ? displayNavigation.projects.find((project) => project.projectPath === activeProjectPath) ?? null
     : null
-  const firstRunCampId = onboardingSnapshot?.status === 'completed'
+  const firstRunThreadId = onboardingSnapshot?.status === 'completed'
     && onboardingSnapshot.origin === 'onboarding'
-    ? onboardingSnapshot.quickChatCampId
+    ? onboardingSnapshot.quickChatThreadId
     : null
-  const activeCampTitle = activeCamp
-    ? formatCampTitle(activeCamp, firstRunCampId)
-    : campSnapshot?.camp.id === activeCampId ? formatCampTitle(campSnapshot.camp, firstRunCampId) : ''
-  const activeCampContextLabel = activeCampProject?.name
+  const activeThreadTitle = activeThread
+    ? formatThreadTitle(activeThread, firstRunThreadId)
+    : campSnapshot?.thread.id === activeThreadId ? formatThreadTitle(campSnapshot.thread, firstRunThreadId) : ''
+  const activeThreadContextLabel = activeThreadProject?.name
     ?? (activeProjectPath === currentProjectPath ? currentProjectLabel : uiAttribute('快速对话'))
   const activeCancellingTurnIds = useMemo(
-    () => campSnapshot?.camp.id === activeCampId
+    () => campSnapshot?.thread.id === activeThreadId
       ? effectiveCancellingTurnIds(cancellingTurnIds, campSnapshot)
       : new Set<string>(),
-    [activeCampId, campSnapshot, cancellingTurnIds]
+    [activeThreadId, campSnapshot, cancellingTurnIds]
   )
-  const activeCampStopping = activeCancellingTurnIds.size > 0
+  const activeThreadStopping = activeCancellingTurnIds.size > 0
   const activeOptimisticMessages = useMemo(
-    () => optimisticCampMessages.filter((entry) => entry.campId === activeCampId).map((entry) => entry.message),
-    [activeCampId, optimisticCampMessages]
+    () => optimisticThreadMessages.filter((entry) => entry.threadId === activeThreadId).map((entry) => entry.message),
+    [activeThreadId, optimisticThreadMessages]
   )
   const activeCancellingRunIds = useMemo(
-    () => campSnapshot?.camp.id === activeCampId
+    () => campSnapshot?.thread.id === activeThreadId
       ? effectiveCancellingRunIds(cancellingRunIds, campSnapshot)
       : new Set<string>(),
-    [activeCampId, campSnapshot, cancellingRunIds]
+    [activeThreadId, campSnapshot, cancellingRunIds]
   )
   const activeConfirmingRunIds = useMemo(
-    () => campSnapshot?.camp.id === activeCampId
+    () => campSnapshot?.thread.id === activeThreadId
       ? reconcileRunCancellationIds(confirmingRunIds, campSnapshot)
       : new Set<string>(),
-    [activeCampId, campSnapshot, confirmingRunIds]
+    [activeThreadId, campSnapshot, confirmingRunIds]
   )
 
   useEffect(() => {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
-    if (client.onInvalidated || !activeCampId || campSnapshot?.camp.id !== activeCampId) return undefined
-    const campId = activeCampId
+    if (client.onInvalidated || !activeThreadId || campSnapshot?.thread.id !== activeThreadId) return undefined
+    const threadId = activeThreadId
 
     const refreshSnapshot = async (): Promise<void> => {
-      const { snapshot } = await requestCampProjection(campId, 'open')
+      const { snapshot } = await requestThreadProjection(threadId, 'open')
       if (cancelled) return
       if (snapshot.throughGlobalSequence < campEventSequenceMarker.current) return
       campEventSequenceMarker.current = snapshot.throughGlobalSequence
-      setCampSnapshot(snapshot)
+      setThreadSnapshot(snapshot)
       setConfirmingRunIds((current) => reconcileRunCancellationIds(current, snapshot))
     }
 
     const poll = async (): Promise<void> => {
       try {
         const batch = await client.request<EventBatch>('events.subscribe', {
-          campId,
+          threadId,
           afterGlobalSequence: campEventSequenceMarker.current,
           limit: 250
         })
@@ -2728,20 +2728,20 @@ export function BusinessApp({
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-  }, [activeCampId, campSnapshot?.camp.id, requestCampProjection, setCampSnapshot])
+  }, [activeThreadId, campSnapshot?.thread.id, requestThreadProjection, setThreadSnapshot])
 
   useEffect(() => client.onInvalidated?.(() => {
     campViewedAcknowledgements.current.clear()
     setOpenedNavigationRow(null)
     void uiPreferences.generalPreferences.get().then(setGeneralPreferences).catch((e) => setError(errorMessage(e)))
     void loadNavigation('invalidation').catch(() => undefined)
-    void loadCampDeletionIssues().catch(() => undefined)
-    const campId = activeCampIdRef.current
-    if (campId && !deletingCampIdsRef.current.has(campId)) {
-      void activeCampRefreshCoordinator.refresh(campId).catch((e) => setError(errorMessage(e)))
+    void loadThreadDeletionIssues().catch(() => undefined)
+    const threadId = activeThreadIdRef.current
+    if (threadId && !deletingThreadIdsRef.current.has(threadId)) {
+      void activeThreadRefreshCoordinator.refresh(threadId).catch((e) => setError(errorMessage(e)))
     }
     void loadAgents().catch(() => undefined)
-  }), [client, uiPreferences, loadNavigation, loadCampDeletionIssues, loadAgents, activeCampRefreshCoordinator])
+  }), [client, uiPreferences, loadNavigation, loadThreadDeletionIssues, loadAgents, activeThreadRefreshCoordinator])
 
   const chooseCurrentProject = (
     nextProject: CurrentProject,
@@ -2777,7 +2777,7 @@ export function BusinessApp({
       const defaults = resolveAvailableNewConversationDefaults(preferences, agents)
       if (preferences.oneClickNewConversationEnabled && defaults) {
         try {
-          await createCamp({
+          await createThread({
             name: null,
             workspace: workspace ? { projectPath: workspace.projectPath } : null,
             memberAgentIds: defaults.defaults.memberAgentIds,
@@ -2845,7 +2845,7 @@ export function BusinessApp({
       : nextView === 'memory' ? { kind: 'memory', memoryId: null }
       : nextView === 'automations' ? { kind: 'automations' }
       : nextView === 'missions' ? { kind: 'missions' }
-      : nextView === 'camp' && activeCampId ? { kind: 'camp', campId: activeCampId }
+      : nextView === 'camp' && activeThreadId ? { kind: 'camp', threadId: activeThreadId }
       : nextView === 'settings' ? { kind: 'settings', section: settingsSection }
       : { kind: 'quick_chat' }
     void (mobile ? desktopNavigation.replace(target) : desktopNavigation.push(target))
@@ -2893,17 +2893,17 @@ export function BusinessApp({
 
   applyNavigationRef.current = async (target, transaction, context) => {
     if (shuttingDownRef.current) return
-    // Invalidate older Camp reads immediately, including reads waiting behind a leave guard.
+    // Invalidate older Thread reads immediately, including reads waiting behind a leave guard.
     const selectionGeneration = ++campSelectionGeneration.current
-    clearCampOpenFeedback()
+    clearThreadOpenFeedback()
     const apply = async (): Promise<void> => {
       if (!transaction.isCurrent()) return
       if (target.kind === 'camp') {
-        if (viewRef.current === 'camp' && activeCampIdRef.current === target.campId) {
+        if (viewRef.current === 'camp' && activeThreadIdRef.current === target.threadId) {
           transaction.commit()
           return
         }
-        await activateCampWithoutLeaveGuard(target.campId, context?.campOptions ?? {}, selectionGeneration, transaction)
+        await activateThreadWithoutLeaveGuard(target.threadId, context?.campOptions ?? {}, selectionGeneration, transaction)
         return
       }
       const previous = desktopNavigation.getSnapshot()
@@ -2927,7 +2927,7 @@ export function BusinessApp({
     const leave = async (): Promise<void> => {
       if (!transaction.isCurrent()) return
       const sameSurface = target.kind === viewRef.current
-        && (target.kind !== 'camp' || target.campId === activeCampIdRef.current)
+        && (target.kind !== 'camp' || target.threadId === activeThreadIdRef.current)
       if (context?.prepared || sameSurface) await apply()
       else await leaveActiveSurface(() => Promise.race([apply(), transaction.superseded]))
     }
@@ -3012,13 +3012,13 @@ export function BusinessApp({
 
   const beginNewConversation = (): void => {
     void requestMemberTransition(async () => {
-      cancelPendingCampActivation()
+      cancelPendingThreadActivation()
       await requestNewConversation(currentProjectWorkspace(displayNavigation, currentProject))
     })
   }
 
-  const chooseCamp = (camp: NavigationCampTarget): void => {
-    void activateCamp(camp.id, { reconcileDefaultLead: camp.activationState !== 'pending' })
+  const chooseThread = (thread: NavigationThreadTarget): void => {
+    void activateThread(thread.id, { reconcileDefaultLead: thread.activationState !== 'pending' })
   }
 
   const navigateFromNotification = useCallback(async (
@@ -3046,7 +3046,7 @@ export function BusinessApp({
             conversationId: source.conversationId
           })
           if (!snapshot || snapshot.conversation.id !== source.conversationId || snapshot.conversation.status !== 'active'
-            || snapshot.conversation.campId !== action.campId
+            || snapshot.conversation.threadId !== action.threadId
             || snapshot.conversation.agentId !== source.agentId
             || !snapshot.agentRuns.some((run) => run.id === source.agentRunId)) {
             throw new Error(uiAttribute('原单聊已结束或来源不可用。'))
@@ -3061,14 +3061,14 @@ export function BusinessApp({
           if (!source || source.kind !== (action.kind === 'open_mission' ? 'mission' : 'task')) {
             throw new Error(uiAttribute('通知缺少原始事项标识。'))
           }
-          const snapshot = await client.request<CampSnapshot>('camps.snapshot', { campId: action.campId })
-          if (snapshot.camp.id !== action.campId
-            || (source.kind === 'mission' ? snapshot.camp.missionId !== source.id : !snapshot.tasks.some(task => task.taskId === source.id))) {
+          const snapshot = await client.request<ThreadSnapshot>('threads.snapshot', { threadId: action.threadId })
+          if (snapshot.thread.id !== action.threadId
+            || (source.kind === 'mission' ? snapshot.thread.missionId !== source.id : !snapshot.tasks.some(task => task.taskId === source.id))) {
             throw new Error(uiAttribute('原事项已删除或暂时不可用。'))
           }
           if (source.kind === 'task') anchoredTasks = snapshot.tasks.filter(task => task.taskId === source.id)
         }
-        let anchoredMessages: readonly CampMessageView[] = []
+        let anchoredMessages: readonly ThreadMessageView[] = []
         let anchoredAgentRuns: readonly AgentRunView[] = []
         if (action.kind === 'open_camp_message') {
           if (!action.messageId) {
@@ -3078,16 +3078,16 @@ export function BusinessApp({
             }
             return
           }
-          const around = await client.request<CampMessageAroundSnapshot>(
-            'camp.messages.around',
+          const around = await client.request<ThreadMessageAroundSnapshot>(
+            'thread.messages.around',
             {
-              campId: action.campId,
+              threadId: action.threadId,
               messageId: action.messageId
             }
           )
           if (
             around.schemaVersion !== 1
-            || around.campId !== action.campId
+            || around.threadId !== action.threadId
             || around.anchorMessageId !== action.messageId
           ) throw new Error(uiAttribute('消息定位合同不兼容。'))
           if (!around.sourceAvailable) {
@@ -3110,15 +3110,15 @@ export function BusinessApp({
             }
             return
           }
-          const availableSnapshot = campSnapshotRef.current?.camp.id === action.campId
+          const availableSnapshot = campSnapshotRef.current?.thread.id === action.threadId
             ? campSnapshotRef.current
-            : campSnapshotCache.current.get(action.campId) ?? null
+            : campSnapshotCache.current.get(action.threadId) ?? null
           let run = availableSnapshot?.agentRuns.find(({ id }) => id === action.agentRunId) ?? null
           if (!run) {
-            const fullSnapshot = await client.request<CampSnapshot>('camps.snapshot', {
-              campId: action.campId
+            const fullSnapshot = await client.request<ThreadSnapshot>('threads.snapshot', {
+              threadId: action.threadId
             })
-            if (fullSnapshot.schemaVersion !== 34 || fullSnapshot.camp.id !== action.campId) {
+            if (fullSnapshot.schemaVersion !== 34 || fullSnapshot.thread.id !== action.threadId) {
               throw new Error(uiAttribute('执行定位合同不兼容。'))
             }
             run = fullSnapshot.agentRuns.find(({ id }) => id === action.agentRunId) ?? null
@@ -3133,17 +3133,17 @@ export function BusinessApp({
           anchoredAgentRuns = [run]
         }
         const target: NotificationFocusTarget | null = (action.kind === 'open_mission' || action.kind === 'open_task') && action.subject
-          ? { requestId: ++notificationFocusSequence.current, kind: action.subject.kind === 'mission' ? 'mission' : 'task', subjectId: action.subject.id, campTurnId: null }
+          ? { requestId: ++notificationFocusSequence.current, kind: action.subject.kind === 'mission' ? 'mission' : 'task', subjectId: action.subject.id, threadTurnId: null }
           : action.kind === 'open_single_chat' && action.singleChat
           ? { requestId: ++notificationFocusSequence.current, kind: 'single_chat',
             conversationId: action.singleChat.conversationId, agentRunId: action.singleChat.agentRunId,
-            campTurnId: action.campTurnId, approvalId: action.approvalId ?? undefined }
+            threadTurnId: action.threadTurnId, approvalId: action.approvalId ?? undefined }
           : action.kind === 'open_camp_message'
           ? action.messageId
             ? {
               requestId: ++notificationFocusSequence.current,
               kind: 'camp_message',
-              campTurnId: action.campTurnId,
+              threadTurnId: action.threadTurnId,
               messageId: action.messageId
             }
             : null
@@ -3151,25 +3151,25 @@ export function BusinessApp({
             ? {
               requestId: ++notificationFocusSequence.current,
               kind: 'approval',
-              campTurnId: null,
+              threadTurnId: null,
               approvalId: action.approvalId ?? undefined
             }
-          : action.kind === 'open_camp_turn' && action.campTurnId
+          : action.kind === 'open_camp_turn' && action.threadTurnId
             ? {
               requestId: ++notificationFocusSequence.current,
               kind: 'camp_turn',
-              campTurnId: action.campTurnId
+              threadTurnId: action.threadTurnId
             }
           : action.kind === 'open_agent_run' && action.agentRunId
             ? {
               requestId: ++notificationFocusSequence.current,
               kind: 'agent_run',
               agentRunId: action.agentRunId,
-              campTurnId: null
+              threadTurnId: null
             }
             : null
         setNotificationFocus(target ? { ...target, active: false } : null)
-        const activated = await activateCamp(action.campId, {
+        const activated = await activateThread(action.threadId, {
           memberPrepared: true,
           preserveNotificationFocus: target !== null,
           missionPresentation: 'drawer',
@@ -3201,8 +3201,8 @@ export function BusinessApp({
         }
         if (action.kind === 'open_single_chat' && action.singleChat && target) {
           setSingleChatNotificationTarget({ ...action.singleChat, requestId: target.requestId })
-          setSingleChatCampId(action.campId)
-        } else setSingleChatCampId(null)
+          setSingleChatThreadId(action.threadId)
+        } else setSingleChatThreadId(null)
         result = { status: 'navigated' }
       } catch (nextError) {
         result = {
@@ -3217,13 +3217,13 @@ export function BusinessApp({
       status: 'failed',
       message:uiAttribute("请先处理当前队员页面中尚未保存的更改，再打开这条通知。")
     }
-  }, [activateCamp, requestMemberTransition])
+  }, [activateThread, requestMemberTransition])
 
   const presentNotificationNavigation = useCallback(async (
     _episode: NotificationEpisodeView,
     action: NotificationActionView
   ): Promise<boolean> => {
-    if (activeCampIdRef.current !== action.campId || viewRef.current !== 'camp') return false
+    if (activeThreadIdRef.current !== action.threadId || viewRef.current !== 'camp') return false
     if (action.kind === 'open_camp') return true
     const focus = notificationFocusRef.current
     if (!focus || !notificationFocusMatchesAction(focus, action)) return false
@@ -3251,7 +3251,7 @@ export function BusinessApp({
   const toggleNavigationPin = async (
     kind: NavigationPin['kind'],
     targetKey: string,
-    camp?: NavigationCampItem
+    thread?: NavigationThreadItem
   ): Promise<void> => {
     const existing = navigationPins.find((pin) =>
       pin.kind === kind && pin.targetKey === targetKey
@@ -3263,12 +3263,12 @@ export function BusinessApp({
       const snapshot = await uiPreferences.navigationPreferences.replacePins(nextPins)
       applyNavigationPreferences(snapshot)
       if (kind === 'camp') {
-        setPinnedCampItems((current) => existing
+        setPinnedThreadItems((current) => existing
           ? current.filter((item) => item.id !== targetKey)
           : [
               ...current.filter((item) => item.id !== targetKey),
-              camp ?? (navigation ? allNavigationCamps(navigation).find((item) => item.id === targetKey) : undefined)
-            ].filter((item): item is NavigationCampItem => Boolean(item)))
+              thread ?? (navigation ? allNavigationThreads(navigation).find((item) => item.id === targetKey) : undefined)
+            ].filter((item): item is NavigationThreadItem => Boolean(item)))
       }
     } catch (nextError) {
       setError(errorMessage(nextError))
@@ -3279,27 +3279,27 @@ export function BusinessApp({
     project: ProjectNavigationGroup
   ): Promise<void> => {
     const activeSnapshot = campSnapshotRef.current
-    const removingActiveCamp = activeSnapshot?.camp.id === activeCampIdRef.current
-      && activeSnapshot.camp.projectBindingKind === 'directory'
-      && activeSnapshot.camp.projectPath === project.projectPath
+    const removingActiveThread = activeSnapshot?.thread.id === activeThreadIdRef.current
+      && activeSnapshot.thread.projectBindingKind === 'directory'
+      && activeSnapshot.thread.projectPath === project.projectPath
     const remove = async (): Promise<void> => {
       setBusy(`remove-project-${project.projectKey}`)
       setError(null)
       try {
-        const relatedPinnedCampIds = pinnedCampItems
-          .filter((camp) => (
-            camp.projectBindingKind === 'directory'
-            && camp.projectPath === project.projectPath
+        const relatedPinnedThreadIds = pinnedThreadItems
+          .filter((thread) => (
+            thread.projectBindingKind === 'directory'
+            && thread.projectPath === project.projectPath
           ))
-          .map((camp) => camp.id)
+          .map((thread) => thread.id)
         const snapshot = await uiPreferences.navigationPreferences.removeProject(
           project.projectKey,
-          relatedPinnedCampIds
+          relatedPinnedThreadIds
         )
         applyNavigationPreferences(snapshot)
-        setPinnedCampItems((current) => current.filter((camp) => !(
-          camp.projectBindingKind === 'directory'
-          && camp.projectPath === project.projectPath
+        setPinnedThreadItems((current) => current.filter((thread) => !(
+          thread.projectBindingKind === 'directory'
+          && thread.projectPath === project.projectPath
         )))
 
         const removingCurrent = currentProject.kind === 'directory'
@@ -3310,11 +3310,11 @@ export function BusinessApp({
           setCurrentWorkspaceHint(null)
           persistCurrentProject(fallback)
         }
-        if (removingActiveCamp) {
-          if (activeCampId) forgetRemovedCampSurface(activeCampId)
+        if (removingActiveThread) {
+          if (activeThreadId) forgetRemovedThreadSurface(activeThreadId)
           setNotificationFocus(null)
         }
-        if (removingCurrent || removingActiveCamp) {
+        if (removingCurrent || removingActiveThread) {
           await commitRestorableLocation({ kind: 'quick_chat' })
         }
         notify(uiAttribute("已从侧栏移除“{0}”", String(project.name)))
@@ -3322,7 +3322,7 @@ export function BusinessApp({
         setBusy(null)
       }
     }
-    if (removingActiveCamp) {
+    if (removingActiveThread) {
       const transitioned = await leaveActiveSurface(remove)
       if (!transitioned) {
         throw new Error(uiAttribute('当前输入操作尚未完成，项目未从侧栏移除。请重试。'))
@@ -3340,55 +3340,55 @@ export function BusinessApp({
     notify(uiAttribute('项目名称已保存'))
   }
 
-  const renameCamp = async (camp: NavigationCampItem, title: string): Promise<void> => {
-    setBusy(`rename-camp-${camp.id}`)
+  const renameThread = async (thread: NavigationThreadItem, title: string): Promise<void> => {
+    setBusy(`rename-camp-${thread.id}`)
     setError(null)
     try {
-      const result = await client.request<StoredCommandResult>('camps.rename', {
+      const result = await client.request<StoredCommandResult>('threads.rename', {
         commandId: newCommandId(),
         command: {
-          campId: camp.id,
+          threadId: thread.id,
           title,
-          expectedVersion: camp.version
+          expectedVersion: thread.version
         }
       })
       if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
       await Promise.all([
-        navigationRefreshCoordinator.refreshCamps([camp.id], 'explicit'),
-        activeCampId === camp.id ? refreshActiveCampSnapshot(camp.id) : Promise.resolve()
+        navigationRefreshCoordinator.refreshThreads([thread.id], 'explicit'),
+        activeThreadId === thread.id ? refreshActiveThreadSnapshot(thread.id) : Promise.resolve()
       ])
     } finally {
       setBusy(null)
     }
   }
 
-  const deleteCampWithoutAutomationLeaveGuard = async (camp: NavigationCampItem): Promise<void> => {
-    setBusy(`delete-camp-${camp.id}`)
+  const deleteThreadWithoutAutomationLeaveGuard = async (thread: NavigationThreadItem): Promise<void> => {
+    setBusy(`delete-camp-${thread.id}`)
     setError(null)
     try {
-      const result = await client.request<StoredCommandResult>('camps.delete', {
+      const result = await client.request<StoredCommandResult>('threads.delete', {
         commandId: newCommandId(),
-        command: campDeleteCommand(camp)
+        command: campDeleteCommand(thread)
       })
       if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
-      hideAcceptedCampDeletion(camp.id)
-      void navigationRefreshCoordinator.refreshGroups([camp.projectBindingKind === 'directory' ? `directory:${camp.projectPath}` : 'quick-chat']).catch(() => undefined)
+      hideAcceptedThreadDeletion(thread.id)
+      void navigationRefreshCoordinator.refreshGroups([thread.projectBindingKind === 'directory' ? `directory:${thread.projectPath}` : 'quick-chat']).catch(() => undefined)
     } finally {
       setBusy(null)
     }
   }
 
-  const deleteCamp = async (camp: NavigationCampItem): Promise<void> => {
-    if (viewRef.current === 'automations' && activeCampIdRef.current === camp.id) {
-      await leaveActiveAutomation(() => deleteCampWithoutAutomationLeaveGuard(camp))
+  const deleteThread = async (thread: NavigationThreadItem): Promise<void> => {
+    if (viewRef.current === 'automations' && activeThreadIdRef.current === thread.id) {
+      await leaveActiveAutomation(() => deleteThreadWithoutAutomationLeaveGuard(thread))
       return
     }
-    await deleteCampWithoutAutomationLeaveGuard(camp)
+    await deleteThreadWithoutAutomationLeaveGuard(thread)
   }
 
   const cancelAgentRun = async (run: AgentRunView): Promise<void> => {
-    const campId = activeCampId
-    if (!campId || campSnapshotRef.current?.camp.id !== campId) return
+    const threadId = activeThreadId
+    if (!threadId || campSnapshotRef.current?.thread.id !== threadId) return
     setError(null)
     setConfirmingRunIds((current) => {
       const next = new Set(current)
@@ -3402,7 +3402,7 @@ export function BusinessApp({
       result = await client.request<StoredCommandResult>('agentRuns.cancel', {
         commandId: newCommandId(),
         command: {
-          campId,
+          threadId,
           agentRunId: run.id,
           expectedVersion: run.version
         }
@@ -3415,17 +3415,17 @@ export function BusinessApp({
       })
       setConfirmingRunIds((current) => new Set(current).add(run.id))
       try {
-        const { snapshot } = await requestCampProjection(campId, 'open')
-        if (activeCampIdRef.current === campId) {
+        const { snapshot } = await requestThreadProjection(threadId, 'open')
+        if (activeThreadIdRef.current === threadId) {
           campEventSequenceMarker.current = Math.max(
             campEventSequenceMarker.current,
             snapshot.throughGlobalSequence
           )
-          setCampSnapshot(snapshot)
+          setThreadSnapshot(snapshot)
         }
         setConfirmingRunIds((current) => reconcileRunCancellationIds(current, snapshot))
       } catch {
-        // Keep the uncertainty projection until a later authoritative Camp refresh converges it.
+        // Keep the uncertainty projection until a later authoritative Thread refresh converges it.
       }
       return
     }
@@ -3442,7 +3442,7 @@ export function BusinessApp({
         return next
       })
       try {
-        await refreshActiveCampSnapshot(campId)
+        await refreshActiveThreadSnapshot(threadId)
       } catch {
         // The deterministic command result remains authoritative even if this refresh fails.
       }
@@ -3450,35 +3450,35 @@ export function BusinessApp({
       return
     }
 
-    if (campSnapshotRef.current?.camp.id === campId) {
-      setCampSnapshot(applyCancellationResult(campSnapshotRef.current, result))
+    if (campSnapshotRef.current?.thread.id === threadId) {
+      setThreadSnapshot(applyCancellationResult(campSnapshotRef.current, result))
     }
     setCancellingRunIds((current) => new Set([...current].filter((id) => id !== run.id)))
     setConfirmingRunIds((current) => new Set([...current].filter((id) => id !== run.id)))
     try {
-      await refreshActiveCampSnapshot(campId)
+      await refreshActiveThreadSnapshot(threadId)
     } catch {
       // Core's terminal response already clears stopping; the next poll fills in the rest.
     }
   }
 
   const changeDefaultLead = async (agentId: string): Promise<void> => {
-    if (!activeCampId || campSnapshot?.camp.id !== activeCampId) return
+    if (!activeThreadId || campSnapshot?.thread.id !== activeThreadId) return
     setBusy('change-default-lead')
     setError(null)
     try {
-      const result = await client.request<StoredCommandResult>('camps.changeDefaultLead', {
+      const result = await client.request<StoredCommandResult>('threads.changeDefaultLead', {
         commandId: newCommandId(),
         command: {
-          campId: activeCampId,
+          threadId: activeThreadId,
           successorAgentId: agentId,
-          expectedVersion: campSnapshot.camp.version
+          expectedVersion: campSnapshot.thread.version
         }
       })
       if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
       await Promise.all([
-        refreshActiveCampSnapshot(activeCampId),
-        navigationRefreshCoordinator.refreshCamps([activeCampId], 'explicit')
+        refreshActiveThreadSnapshot(activeThreadId),
+        navigationRefreshCoordinator.refreshThreads([activeThreadId], 'explicit')
       ])
     } catch (nextError) {
       setError(errorMessage(nextError))
@@ -3488,28 +3488,28 @@ export function BusinessApp({
     }
   }
 
-  const addCampMembers = async (agentIds: string[]): Promise<CampMemberAddOutcome> => {
-    const campId = activeCampIdRef.current
+  const addThreadMembers = async (agentIds: string[]): Promise<ThreadMemberAddOutcome> => {
+    const threadId = activeThreadIdRef.current
     const currentSnapshot = campSnapshotRef.current
-    if (!campId || currentSnapshot?.camp.id !== campId) {
+    if (!threadId || currentSnapshot?.thread.id !== threadId) {
       throw new Error(uiAttribute('当前会话尚未准备好。'))
     }
     setBusy('camp-membership')
     setError(null)
-    const outcome: CampMemberAddOutcome = {
+    const outcome: ThreadMemberAddOutcome = {
       addedAgentIds: [],
       unchangedAgentIds: [],
       failures: []
     }
-    let membershipGeneration = currentSnapshot.camp.membershipGeneration
+    let membershipGeneration = currentSnapshot.thread.membershipGeneration
     try {
       for (let index = 0; index < agentIds.length; index += 1) {
         const agentId = agentIds[index]
         try {
-          const result = await client.request<StoredCommandResult>('camps.members.add', {
+          const result = await client.request<StoredCommandResult>('threads.members.add', {
             commandId: newCommandId(),
             command: {
-              campId,
+              threadId,
               agentId,
               expectedMembershipGeneration: membershipGeneration
             }
@@ -3540,8 +3540,8 @@ export function BusinessApp({
       }
       try {
         await Promise.all([
-          refreshActiveCampSnapshot(campId),
-          navigationRefreshCoordinator.refreshCamps([campId], 'explicit')
+          refreshActiveThreadSnapshot(threadId),
+          navigationRefreshCoordinator.refreshThreads([threadId], 'explicit')
         ])
       } catch {
         // The per-command outcomes are authoritative; normal event refresh will converge the surface.
@@ -3552,33 +3552,33 @@ export function BusinessApp({
     }
   }
 
-  const previewCampMemberRemoval = async (agentId: string): Promise<CampMemberRemovalPreview> => {
-    const campId = activeCampIdRef.current
-    if (!campId || campSnapshotRef.current?.camp.id !== campId) {
+  const previewThreadMemberRemoval = async (agentId: string): Promise<ThreadMemberRemovalPreview> => {
+    const threadId = activeThreadIdRef.current
+    if (!threadId || campSnapshotRef.current?.thread.id !== threadId) {
       throw new Error(uiAttribute('当前会话尚未准备好。'))
     }
-    const preview = await client.request<CampMemberRemovalPreview | null>(
-      'camps.members.removalPreview',
-      { campId, agentId }
+    const preview = await client.request<ThreadMemberRemovalPreview | null>(
+      'threads.members.removalPreview',
+      { threadId, agentId }
     )
     if (!preview) throw new Error(uiAttribute('这位队员已不在当前会话中。'))
     return preview
   }
 
-  const removeCampMember = async (
-    preview: CampMemberRemovalPreview
-  ): Promise<CampMemberRemoveOutcome> => {
-    const campId = activeCampIdRef.current
-    if (!campId || preview.campId !== campId || campSnapshotRef.current?.camp.id !== campId) {
+  const removeThreadMember = async (
+    preview: ThreadMemberRemovalPreview
+  ): Promise<ThreadMemberRemoveOutcome> => {
+    const threadId = activeThreadIdRef.current
+    if (!threadId || preview.threadId !== threadId || campSnapshotRef.current?.thread.id !== threadId) {
       return { status: 'conflict', message:uiAttribute("当前会话已发生变化，请重新读取影响。") }
     }
     setBusy('camp-membership')
     setError(null)
     try {
-      const result = await client.request<StoredCommandResult>('camps.members.remove', {
+      const result = await client.request<StoredCommandResult>('threads.members.remove', {
         commandId: newCommandId(),
         command: {
-          campId,
+          threadId,
           agentId: preview.agentId,
           expectedMembershipGeneration: preview.membershipGeneration,
           expectedMembershipVersion: preview.membershipVersion,
@@ -3588,7 +3588,7 @@ export function BusinessApp({
       })
       if (result.status === 'rejected') {
         try {
-          await refreshActiveCampSnapshot(campId)
+          await refreshActiveThreadSnapshot(threadId)
         } catch {
           // Keep the deterministic command result when the follow-up projection is unavailable.
         }
@@ -3599,8 +3599,8 @@ export function BusinessApp({
       }
       try {
         await Promise.all([
-          refreshActiveCampSnapshot(campId),
-          navigationRefreshCoordinator.refreshCamps([campId], 'explicit')
+          refreshActiveThreadSnapshot(threadId),
+          navigationRefreshCoordinator.refreshThreads([threadId], 'explicit')
         ])
       } catch {
         // The accepted cutover is authoritative; reconciliation events will refresh the surface.
@@ -3617,24 +3617,24 @@ export function BusinessApp({
     }
   }
 
-  async function createCamp(
-    draft: Omit<CreateCampRequest, 'commandId'>,
+  async function createThread(
+    draft: Omit<CreateThreadRequest, 'commandId'>,
     enableOneClick = false,
     intent: NavigationIntent = desktopNavigation.beginIntent()
   ): Promise<void> {
-    cancelPendingCampActivation()
+    cancelPendingThreadActivation()
     setBusy('create-camp')
     try {
       if (draft.workspace) {
         await restoreNavigationProject(draft.workspace.projectPath)
       }
-      const result = await client.request<StoredCommandResult>('camps.create', {
+      const result = await client.request<StoredCommandResult>('threads.create', {
         commandId: newCommandId(),
         ...draft
       })
       if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
-      const campId = stringField(result.payload, 'campId')
-      if (!campId) throw new Error(uiAttribute('会话已创建，但暂时无法打开。请刷新会话列表后重试。'))
+      const threadId = stringField(result.payload, 'threadId')
+      if (!threadId) throw new Error(uiAttribute('会话已创建，但暂时无法打开。请刷新会话列表后重试。'))
       setNewConversationOpen(false)
       let preferencesSaveFailed = false
       if (enableOneClick) {
@@ -3650,11 +3650,11 @@ export function BusinessApp({
       }
       try {
         if (intent.isCurrent()) {
-          await activateCamp(campId, { reconcileDefaultLead: false, initializeComposerDraft: true })
+          await activateThread(threadId, { reconcileDefaultLead: false, initializeComposerDraft: true })
         } else {
-          // Core owns the created Camp. Refresh its visibility without stealing focus;
-          // empty one-click drafts still follow the existing pending-Camp lifecycle.
-          await navigationRefreshCoordinator.invalidate({ scope: 'group', campId })
+          // Core owns the created Thread. Refresh its visibility without stealing focus;
+          // empty one-click drafts still follow the existing pending-Thread lifecycle.
+          await navigationRefreshCoordinator.invalidate({ scope: 'group', threadId })
         }
       } finally {
         if (preferencesSaveFailed) {
@@ -3666,128 +3666,128 @@ export function BusinessApp({
     }
   }
 
-  function forgetRemovedCampSurface(campId: string): void {
-    if (activeCampIdRef.current !== campId) return
-    setActiveCampId(null)
-    setCampSnapshot(null)
+  function forgetRemovedThreadSurface(threadId: string): void {
+    if (activeThreadIdRef.current !== threadId) return
+    setActiveThreadId(null)
+    setThreadSnapshot(null)
     const current = desktopNavigation.getSnapshot()
     const target = current.entries[current.index]
-    if (viewRef.current === 'camp' && target?.kind === 'camp' && target.campId === campId) {
-      // Correct the displayed resource without invalidating a newer Camp read.
+    if (viewRef.current === 'camp' && target?.kind === 'camp' && target.threadId === threadId) {
+      // Correct the displayed resource without invalidating a newer Thread read.
       if (desktopNavigation.captureCurrentEntry().update({ kind: 'quick_chat' })) setView('compose')
     }
   }
 
-  function hideAcceptedCampDeletion(campId: string): void {
-    deletingCampIdsRef.current.add(campId)
+  function hideAcceptedThreadDeletion(threadId: string): void {
+    deletingThreadIdsRef.current.add(threadId)
     const currentNavigation = navigationSnapshotRef.current
     if (currentNavigation) {
-      const nextNavigation = navigationWithoutDeletedCamps(
+      const nextNavigation = navigationWithoutDeletedThreads(
         currentNavigation,
-        deletingCampIdsRef.current
+        deletingThreadIdsRef.current
       )
       navigationSnapshotRef.current = nextNavigation
       setNavigation(nextNavigation)
     }
-    setPinnedCampItems((current) => current.filter((camp) => camp.id !== campId))
-    clearLocalCampComposerDraft(campId)
-    const discardComposerAttachments = client.composerAttachments.discard?.(campId)
+    setPinnedThreadItems((current) => current.filter((thread) => thread.id !== threadId))
+    clearLocalThreadComposerDraft(threadId)
+    const discardComposerAttachments = client.composerAttachments.discard?.(threadId)
     if (discardComposerAttachments) void discardComposerAttachments.catch(() => undefined)
-    forgetFilePreviewSession(campId, activeCampIdRef.current === campId)
-    campSnapshotCache.current.delete(campId)
-    forgetRemovedCampSurface(campId)
+    forgetFilePreviewSession(threadId, activeThreadIdRef.current === threadId)
+    campSnapshotCache.current.delete(threadId)
+    forgetRemovedThreadSurface(threadId)
   }
 
-  const refreshPendingCampNavigation = (): void => {
-    const campId = activeCampIdRef.current
-    if (campId) void navigationRefreshCoordinator.invalidate({ scope: 'group', campId }).catch(() => undefined)
+  const refreshPendingThreadNavigation = (): void => {
+    const threadId = activeThreadIdRef.current
+    if (threadId) void navigationRefreshCoordinator.invalidate({ scope: 'group', threadId }).catch(() => undefined)
   }
 
-  const settlePendingCampOnLeave = async (draft: CampComposerDraftView): Promise<void> => {
+  const settlePendingThreadOnLeave = async (draft: ThreadComposerDraftView): Promise<void> => {
     if (draft.body.trim() || draft.attachments.length > 0 || draft.replyIntent) {
-      await navigationRefreshCoordinator.invalidate({ scope: 'group', campId: draft.campId })
+      await navigationRefreshCoordinator.invalidate({ scope: 'group', threadId: draft.threadId })
       return
     }
-    const result = await client.request<StoredCommandResult>('camps.discardPending', {
+    const result = await client.request<StoredCommandResult>('threads.discardPending', {
       commandId: newCommandId(),
-      command: { campId: draft.campId }
+      command: { threadId: draft.threadId }
     })
     if (result.status === 'rejected' && result.code !== 'camp.pending_not_empty') {
       throw new Error(commandFailureMessage(result))
     }
-    if (result.status !== 'rejected') campSnapshotCache.current.delete(draft.campId)
-    if (result.status !== 'rejected') forgetRemovedCampSurface(draft.campId)
-    await navigationRefreshCoordinator.invalidate({ scope: 'group', campId: draft.campId })
+    if (result.status !== 'rejected') campSnapshotCache.current.delete(draft.threadId)
+    if (result.status !== 'rejected') forgetRemovedThreadSurface(draft.threadId)
+    await navigationRefreshCoordinator.invalidate({ scope: 'group', threadId: draft.threadId })
   }
 
-  const sendCampMessage = async (
-    draft: CampComposerDraftView
-  ): Promise<CampMessageSendReceipt | void> => {
+  const sendThreadMessage = async (
+    draft: ThreadComposerDraftView
+  ): Promise<ThreadMessageSendReceipt | void> => {
     const hasReadyAttachment = draft.attachments.length > 0
     const hasSendablePayload = composerHasSendablePayload(draft.body, hasReadyAttachment)
-    const campId = activeCampIdRef.current
-    if (!campId || draft.campId !== campId || !hasSendablePayload || draft.revision < 1) return
+    const threadId = activeThreadIdRef.current
+    if (!threadId || draft.threadId !== threadId || !hasSendablePayload || draft.revision < 1) return
     const commandId = newCommandId()
     const selectionGeneration = campSelectionGeneration.current
-    const optimisticMessage = optimisticCampMessage(
-      campSnapshotRef.current?.camp.id === campId ? campSnapshotRef.current : null,
+    const optimisticMessage = optimisticThreadMessage(
+      campSnapshotRef.current?.thread.id === threadId ? campSnapshotRef.current : null,
       commandId,
       draft
     )
     // Core decides direct publication versus private queue admission. Never expose
-    // a pending input as an optimistic public CampMessage before that decision.
+    // a pending input as an optimistic public ThreadMessage before that decision.
     setBusy('camp-message')
     setError(null)
     setToast((current) => current?.persistent ? current : null)
-    setRuntimeRecovery((current) => current?.campId === campId ? null : current)
+    setRuntimeRecovery((current) => current?.threadId === threadId ? null : current)
     let rejectedForRuntime = false
     try {
-      const result = await client.request<SendCampMessageResult>(
-        'camp.messages.send',
-        campMessageSendParams(commandId, campId, draft)
+      const result = await client.request<SendThreadMessageResult>(
+        'thread.messages.send',
+        campMessageSendParams(commandId, threadId, draft)
       )
       if (!result.commandResult) {
         throw new Error(uiAttribute('消息提交结果暂时不可用，请稍后重试。'))
       }
       if (result.commandResult.status === 'rejected') {
-        const recovery = runtimeRecoveryFromCommandResult(campId, result.commandResult)
+        const recovery = runtimeRecoveryFromCommandResult(threadId, result.commandResult)
         if (recovery) {
           rejectedForRuntime = true
           setRuntimeRecovery(recovery)
         }
         throw new Error(commandFailureMessage(result.commandResult))
       }
-      const campMessageId = stringField(result.commandResult.payload, 'campMessageId')
+      const threadMessageId = stringField(result.commandResult.payload, 'threadMessageId')
       const deliveryIds = stringArrayField(result.commandResult.payload, 'deliveryIds')
       const agentRunIds = stringArrayField(result.commandResult.payload, 'agentRunIds')
       const sequence = typeof result.commandResult.payload.sequence === 'number'
         ? result.commandResult.payload.sequence
         : optimisticMessage.sequence
-      if (campMessageId) {
-        setOptimisticCampMessages((current) => [...current, {
-          campId, commandId,
-          message: { ...optimisticMessage, id: campMessageId, sequence, campTurnId: null }
+      if (threadMessageId) {
+        setOptimisticThreadMessages((current) => [...current, {
+          threadId, commandId,
+          message: { ...optimisticMessage, id: threadMessageId, sequence, threadTurnId: null }
         }])
-        void refreshActiveCampSnapshot(campId)
+        void refreshActiveThreadSnapshot(threadId)
           .then(async () => {
             if (selectionGeneration !== campSelectionGeneration.current) return
-            setOptimisticCampMessages((current) =>
+            setOptimisticThreadMessages((current) =>
               current.filter((entry) => entry.commandId !== commandId)
             )
-            if (selectionGeneration === campSelectionGeneration.current) await navigationRefreshCoordinator.invalidate({ scope: 'group', campId })
+            if (selectionGeneration === campSelectionGeneration.current) await navigationRefreshCoordinator.invalidate({ scope: 'group', threadId })
           })
           .catch((nextError) => setError(errorMessage(nextError)))
       }
       return {
-        ...(campMessageId ? { campMessageId } : {}),
-        ...(campMessageId && typeof result.commandResult.payload.sequence === 'number'
+        ...(threadMessageId ? { threadMessageId } : {}),
+        ...(threadMessageId && typeof result.commandResult.payload.sequence === 'number'
           ? { publishedMessageSequence: sequence } : {}),
         deliveryIds,
         agentRunIds,
         addressedAgentIds: optimisticMessage.addressedAgentIds
       }
     } catch (nextError) {
-      setOptimisticCampMessages((current) =>
+      setOptimisticThreadMessages((current) =>
         current.filter((entry) => entry.commandId !== commandId)
       )
       if (!rejectedForRuntime) notify(errorMessage(nextError))
@@ -3797,42 +3797,42 @@ export function BusinessApp({
     }
   }
 
-  const withdrawCampMessage = async (message: CampMessageView): Promise<void> => {
-    const campId = activeCampIdRef.current
-    if (!campId || message.id.startsWith('optimistic:') || !message.canWithdraw) return
-    const result = await client.request<StoredCommandResult>('camp.messages.withdraw', {
+  const withdrawThreadMessage = async (message: ThreadMessageView): Promise<void> => {
+    const threadId = activeThreadIdRef.current
+    if (!threadId || message.id.startsWith('optimistic:') || !message.canWithdraw) return
+    const result = await client.request<StoredCommandResult>('thread.messages.withdraw', {
       commandId: newCommandId(),
       command: {
-        campId,
+        threadId,
         messageId: message.id,
         expectedVersion: message.version
       }
     })
     if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
-    setOptimisticCampMessages((current) => current.filter((entry) => entry.message.id !== message.id))
-    await refreshActiveCampSnapshot(campId)
+    setOptimisticThreadMessages((current) => current.filter((entry) => entry.message.id !== message.id))
+    await refreshActiveThreadSnapshot(threadId)
   }
 
   const resolveActionApproval = async (
     approval: ActionApprovalView,
     optionId: string
   ): Promise<void> => {
-    if (!activeCampId) return
+    if (!activeThreadId) return
     setBusy(`action-approval-${approval.id}`)
     setError(null)
     try {
       const result = await client.request<StoredCommandResult>('action.approvals.resolve', {
         commandId: newCommandId(),
-        campId: activeCampId,
+        threadId: activeThreadId,
         approvalId: approval.id,
         expectedVersion: approval.version,
         optionId,
         reason: `用户选择智能体原生选项：${optionId}。`
       })
       if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
-      const { snapshot } = await requestCampProjection(activeCampId, 'open')
+      const { snapshot } = await requestThreadProjection(activeThreadId, 'open')
       campEventSequenceMarker.current = snapshot.throughGlobalSequence
-      setCampSnapshot(snapshot)
+      setThreadSnapshot(snapshot)
     } catch (nextError) {
       setError(errorMessage(nextError))
     } finally {
@@ -3897,8 +3897,8 @@ export function BusinessApp({
       setAgents(nextAgents)
       setInstallations(nextInstallations)
       setState('ready')
-      const activated = await activateCamp(result.quickChatCampId, { reconcileDefaultLead: false })
-      // The new Camp resolves this startup; do not replay the initial home route afterward.
+      const activated = await activateThread(result.quickChatThreadId, { reconcileDefaultLead: false })
+      // The new Thread resolves this startup; do not replay the initial home route afterward.
       if (activated && startupSnapshot) completeStartup(startupSnapshot.sessionId)
       setOnboardingSnapshot(result.snapshot)
     } catch (nextError) {
@@ -3920,16 +3920,16 @@ export function BusinessApp({
     }
   }
 
-  const openCampInspector = (tab: CampInspectorTab): void => {
-    setCampInspectorTab(tab)
-    setSingleChatCampId(null)
-    setCampInspectorCampId(activeCampId)
+  const openThreadInspector = (tab: ThreadInspectorTab): void => {
+    setThreadInspectorTab(tab)
+    setSingleChatThreadId(null)
+    setThreadInspectorThreadId(activeThreadId)
   }
 
   const openSingleChat = (): void => {
     setSingleChatNotificationTarget(null)
-    setCampInspectorCampId(null)
-    setSingleChatCampId(activeCampId)
+    setThreadInspectorThreadId(null)
+    setSingleChatThreadId(activeThreadId)
   }
 
   const changeExecutionConsolePlacement = useCallback(async (
@@ -3940,45 +3940,45 @@ export function BusinessApp({
     return next.executionConsolePlacement
   }, [])
 
-  const focusCampApprovals = (): void => {
-    if (mobile) { setCampInspectorCampId(null); setSingleChatCampId(null) }
+  const focusThreadApprovals = (): void => {
+    if (mobile) { setThreadInspectorThreadId(null); setSingleChatThreadId(null) }
     setNotificationFocus({
       requestId: ++notificationFocusSequence.current,
       kind: 'approval',
-      campTurnId: null,
+      threadTurnId: null,
       active: true
     })
   }
 
   async function openMission(mission: MissionRecord): Promise<void> {
     setMissionPresentation('drawer')
-    await activateCamp(mission.campId, { reconcileDefaultLead: false })
-    if (activeCampIdRef.current === mission.campId && viewRef.current === 'camp') {
+    await activateThread(mission.threadId, { reconcileDefaultLead: false })
+    if (activeThreadIdRef.current === mission.threadId && viewRef.current === 'camp') {
       setMissionPresentation('drawer'); setMissionOpenRequest(value => value + 1)
     }
   }
-  const refreshMission = async (campId: string): Promise<void> => {
+  const refreshMission = async (threadId: string): Promise<void> => {
     await missionList.refresh()
-    if (activeCampIdRef.current === campId) await refreshActiveCampSnapshot(campId)
+    if (activeThreadIdRef.current === threadId) await refreshActiveThreadSnapshot(threadId)
   }
-  const refreshMissionAfterWorkspaceCleanup = async (campId: string): Promise<void> => {
+  const refreshMissionAfterWorkspaceCleanup = async (threadId: string): Promise<void> => {
     await Promise.all([
       missionList.refreshOrThrow(),
-      activeCampIdRef.current === campId ? refreshActiveCampSnapshot(campId) : Promise.resolve()
+      activeThreadIdRef.current === threadId ? refreshActiveThreadSnapshot(threadId) : Promise.resolve()
     ])
   }
-  const onMissionDeleted = async (campId: string): Promise<void> => {
-    const wasActive = activeCampIdRef.current === campId
-    hideAcceptedCampDeletion(campId)
+  const onMissionDeleted = async (threadId: string): Promise<void> => {
+    const wasActive = activeThreadIdRef.current === threadId
+    hideAcceptedThreadDeletion(threadId)
     if (wasActive) {
       await desktopNavigation.replace({ kind: 'missions' }, { prepared: true })
     }
     void missionList.refresh()
   }
   const missionSource = (messageId: string): void => {
-    setNotificationFocus({ requestId: ++notificationFocusSequence.current, kind: 'camp_message', campTurnId: null, messageId, active: true })
+    setNotificationFocus({ requestId: ++notificationFocusSequence.current, kind: 'camp_message', threadTurnId: null, messageId, active: true })
   }
-  async function createMission(draft: Omit<CreateCampRequest, 'commandId' | 'activationState'>, saveTeam: boolean, definition?: {description: string; start: boolean; tags: string[]; attachments: MissionAttachmentDraft[]}): Promise<void> {
+  async function createMission(draft: Omit<CreateThreadRequest, 'commandId' | 'activationState'>, saveTeam: boolean, definition?: {description: string; start: boolean; tags: string[]; attachments: MissionAttachmentDraft[]}): Promise<void> {
     if (!definition) throw new Error(uiAttribute('缺少使命定义'))
     const command: MissionCreate = { title: draft.name ?? '', description: definition.description, memberAgentIds: draft.memberAgentIds, defaultLeadAgentId: draft.defaultLeadAgentId, projectBindingKind: draft.workspace ? 'directory' : 'quick_chat', projectPath: draft.workspace?.projectPath ?? '', tags: definition.tags }
     const attachmentSignature = JSON.stringify(definition.attachments.map(({ id, file, kindHint }) => [id, file.name, file.size, file.lastModified, file.type, kindHint]))
@@ -3998,8 +3998,8 @@ export function BusinessApp({
             return stored
           })()
         : await missionCommand(client, 'missions.create', request.command, request.id)
-      const campId = stringField(result.payload, 'campId'), missionId = stringField(result.payload, 'missionId')
-      if (!campId || !missionId) throw new Error(uiAttribute('使命已保存，但返回的标识不完整。请刷新使命板。'))
+      const threadId = stringField(result.payload, 'threadId'), missionId = stringField(result.payload, 'missionId')
+      if (!threadId || !missionId) throw new Error(uiAttribute('使命已保存，但返回的标识不完整。请刷新使命板。'))
       missionCreation.current = null; setNewMissionOpen(false)
       if (saveTeam) {
         try { setGeneralPreferences(await uiPreferences.generalPreferences.setNewConversationDefaults({ memberAgentIds: draft.memberAgentIds, defaultLeadAgentId: draft.defaultLeadAgentId }, true)) }
@@ -4017,12 +4017,12 @@ export function BusinessApp({
   }
 
   const windowDragPage = windowDragStripPage(missionDrawer ? 'missions' : view)
-  const visibleCampSnapshot = campSnapshot && activeCampId
-    ? campSnapshotWithCurrentAnchor(campSnapshot, activeCampId, notificationAnchor)
+  const visibleThreadSnapshot = campSnapshot && activeThreadId
+    ? campSnapshotWithCurrentAnchor(campSnapshot, activeThreadId, notificationAnchor)
     : campSnapshot
-  const firstRunCamp = onboardingSnapshot?.status === 'completed'
+  const firstRunThread = onboardingSnapshot?.status === 'completed'
     && onboardingSnapshot.origin === 'onboarding'
-    && onboardingSnapshot.quickChatCampId === activeCampId
+    && onboardingSnapshot.quickChatThreadId === activeThreadId
     && onboardingSnapshot.memberAgentId
     && onboardingSnapshot.selectedMemberRole
     ? {
@@ -4032,7 +4032,7 @@ export function BusinessApp({
     : null
   const pageContentClassName: Record<View, string> = {
     compose: 'task-content compose-content',
-    camp: 'task-content camp-content',
+    'camp': 'task-content camp-content',
     members: 'members-content',
     automations: 'automation-content',
     missions: 'mission-board-content',
@@ -4162,23 +4162,23 @@ export function BusinessApp({
     )
   }
 
-  const renderNavigation = (drawer = false): React.JSX.Element => <CampNavigation
+  const renderNavigation = (drawer = false): React.JSX.Element => <ThreadNavigation
     navigationId={drawer ? 'mobile-conversation-navigation' : 'global-navigation'}
     platform={client.platform}
     footer={sidebarFooter}
-    view={view === 'camp' && missionCamp ? 'missions' : view}
+    view={view === 'camp' && missionThread ? 'missions' : view}
     state={startupStatus === 'resolved' ? navigationState : 'loading'}
     navigation={displayNavigation}
     groupLimits={navigationGroupLimits}
     onGroupLimitChange={navigationRefreshCoordinator.resizeGroup}
-    activeCampId={activeCampId}
-    firstRunCampId={firstRunCampId}
-    openingCampId={openingCampId}
+    activeThreadId={activeThreadId}
+    firstRunThreadId={firstRunThreadId}
+    openingThreadId={openingThreadId}
     currentProjectKey={currentProjectKey}
     shellOnlyProjectPath={shellOnlyCurrentProjectPath}
     creatingConversation={busy === 'create-camp'}
     pins={navigationPins}
-    pinnedCampItems={pinnedCampItems}
+    pinnedThreadItems={pinnedThreadItems}
     settingsSection={settingsSection}
     updateSnapshot={appUpdates.snapshot}
     onNewConversation={() => { setMobileConversationDrawerOpen(false); beginNewConversation() }}
@@ -4194,7 +4194,7 @@ export function BusinessApp({
     onSettingsBack={closeSettings}
     onOpenProject={() => { setMobileConversationDrawerOpen(false); void openProject() }}
     onSelectProject={(project) => {
-      cancelPendingCampActivation()
+      cancelPendingThreadActivation()
       chooseCurrentProject(
         project
           ? { kind: 'directory', projectPath: project.projectPath }
@@ -4205,29 +4205,29 @@ export function BusinessApp({
     onCreateInProject={(project) => {
       setMobileConversationDrawerOpen(false)
       void requestMemberTransition(async () => {
-        cancelPendingCampActivation()
+        cancelPendingThreadActivation()
         await requestNewConversation(project
           ? { name: project.name, projectPath: project.projectPath }
           : null)
       })
     }}
-    onCamp={(target) => { setMobileConversationDrawerOpen(false); chooseCamp(target) }}
+    onThread={(target) => { setMobileConversationDrawerOpen(false); chooseThread(target) }}
     onTogglePin={toggleNavigationPin}
     onRemoveProject={removeNavigationProject}
     onRenameProject={renameProject}
-    onCampIdCopied={() => {
+    onThreadIdCopied={() => {
       setError(null)
       notify(uiAttribute('已复制会话 ID'))
     }}
-    onRename={renameCamp}
-    onDelete={deleteCamp}
+    onRename={renameThread}
+    onDelete={deleteThread}
     onDeleteError={(nextError) => notifyError(errorMessage(nextError))}
     onError={(nextError) => setError(errorMessage(nextError))}
   />
 
   return (
     <MobileLayoutProvider value={mobile}>
-    <FilePreviewProvider api={environment.files} campId={view === 'camp' ? activeCampId : null} resolvedTheme={appearance.resolvedTheme}
+    <FilePreviewProvider api={environment.files} threadId={view === 'camp' ? activeThreadId : null} resolvedTheme={appearance.resolvedTheme}
       missionActivity={activeMission && view === 'camp' ? <MissionActivityDocument mission={activeMission} agents={agents} onSource={missionSource} onNotify={notify} onWorkspaceCleanupRequested={refreshMissionAfterWorkspaceCleanup}/> : null}>
     <MissionInteractionProvider missions={missionList.missions} projects={displayNavigation?.projects ?? []} agents={agents} onChanged={refreshMission} onWorkspaceCleaned={refreshMissionAfterWorkspaceCleanup} onDeleted={onMissionDeleted} onOpen={mission => { void openMission(mission).catch(error => notifyError(missionError(error))) }} onError={notifyError}>
     <NavigationShell platform={client.platform} settings={view === 'settings'} navigation={desktopNavigation} nativeWindowControls={desktop?.windowControls} browser={!desktop} disabled={startupStatus !== 'resolved' || shuttingDown} className={view === 'camp' && !missionDrawer ? 'app-shell-camp' : ''} data-mobile-view={mobile ? view : undefined} data-mobile-settings-list={mobile && view === 'settings' && mobileSettingsList || undefined}>
@@ -4235,18 +4235,18 @@ export function BusinessApp({
       {!startupGateVisible && mobile && ['compose', 'members', 'memory', 'automations'].includes(view) && <MobilePageHeader
         title={({ compose:uiAttribute("新对话"), members:uiAttribute("队员"), memory:uiAttribute("记忆"), automations:uiAttribute("定时任务") } as Record<string, string>)[view]}
         onOpenMenu={openMobileMenu} menuOpen={mobileConversationDrawerOpen} triggerRef={mobileConversationListButtonRef} />}
-      {!startupGateVisible && view === 'camp' && !missionCamp && <AppHeader
-        campTitle={activeCampTitle ||uiAttribute("对话")}
-        contextLabel={activeCampContextLabel}
-        camp={campSnapshot?.camp.id === activeCampId ? campSnapshot : null}
-        detailEntryHostRef={setCampDetailEntryHost}
-        onFocusApprovals={focusCampApprovals}
+      {!startupGateVisible && view === 'camp' && !missionThread && <AppHeader
+        threadTitle={activeThreadTitle ||uiAttribute("对话")}
+        contextLabel={activeThreadContextLabel}
+        thread={campSnapshot?.thread.id === activeThreadId ? campSnapshot : null}
+        detailEntryHostRef={setThreadDetailEntryHost}
+        onFocusApprovals={focusThreadApprovals}
         onOpenConversationList={mobile ? openMobileMenu : undefined}
         conversationListButtonRef={mobileConversationListButtonRef}
       />}
       {windowDragPage && <WindowDragStrip page={windowDragPage} />}
 
-      <main ref={mobilePageRef} className={`content ${pageContentClassName[missionDrawer ? 'missions' : view]}${missionCamp && view === 'camp' ? ' mission-active-content' : ''}`}>
+      <main ref={mobilePageRef} className={`content ${pageContentClassName[missionDrawer ? 'missions' : view]}${missionThread && view === 'camp' ? ' mission-active-content' : ''}`}>
         {startupGateVisible && startupStatus === 'waiting' && (
           <StartupGate
             waiting
@@ -4274,48 +4274,48 @@ export function BusinessApp({
           hidden={view !== 'missions' && !missionDrawer} selectedId={missionDrawer ? activeMission?.missionId : undefined} onRefresh={missionList.refresh}
           onOpenMenu={openMobileMenu} menuOpen={mobileConversationDrawerOpen} menuTriggerRef={mobileConversationListButtonRef}
           onNew={() => { setNewMissionOpen(true) }} onOpen={mission => { void openMission(mission).catch(error => notifyError(missionError(error))) }}/>} 
-        {!startupGateVisible && view === 'camp' && missionCamp && !activeMission && <section className="mission-section-empty" role={missionList.error ? 'alert' : 'status'}><p>{missionList.error || (missionList.loading ? uiAttribute("正在读取使命…") : uiAttribute("此使命当前不可用。"))}</p>{!missionList.loading && <button className="quiet-button" onClick={() => void missionList.refresh()}><UiText zh={"重试"} /></button>}<button className="quiet-button" onClick={returnToMissions}><UiText zh={"返回使命板"} /></button></section>}
-        {!startupGateVisible && generalPreferences && view === 'camp' && (!missionCamp || activeMission) && activeCampId && visibleCampSnapshot?.camp.id === activeCampId && (
-          <MissionSurface key={activeCampId} enabled={!!activeMission} full={!missionDrawer} onExpand={() => setMissionPresentation('full')} onClose={returnToMissions}>
-          {activeMission && <MissionHeader mission={activeMission} drawer={missionDrawer} camp={visibleCampSnapshot} projectName={activeCampProject?.name ?? activeCampContextLabel}
+        {!startupGateVisible && view === 'camp' && missionThread && !activeMission && <section className="mission-section-empty" role={missionList.error ? 'alert' : 'status'}><p>{missionList.error || (missionList.loading ? uiAttribute("正在读取使命…") : uiAttribute("此使命当前不可用。"))}</p>{!missionList.loading && <button className="quiet-button" onClick={() => void missionList.refresh()}><UiText zh={"重试"} /></button>}<button className="quiet-button" onClick={returnToMissions}><UiText zh={"返回使命板"} /></button></section>}
+        {!startupGateVisible && generalPreferences && view === 'camp' && (!missionThread || activeMission) && activeThreadId && visibleThreadSnapshot?.thread.id === activeThreadId && (
+          <MissionSurface key={activeThreadId} enabled={!!activeMission} full={!missionDrawer} onExpand={() => setMissionPresentation('full')} onClose={returnToMissions}>
+          {activeMission && <MissionHeader mission={activeMission} drawer={missionDrawer} thread={visibleThreadSnapshot} projectName={activeThreadProject?.name ?? activeThreadContextLabel}
             openRequest={missionOpenRequest} onExpand={() => setMissionPresentation('full')} onFold={() => setMissionPresentation('drawer')}
             executionTakesPreviewPriority={generalPreferences.executionConsolePlacement === 'right'
-              && visibleCampSnapshot.agentRuns.some((run) => run.status === 'running')}
-            onClose={returnToMissions} onFocusApprovals={focusCampApprovals} detailEntryHostRef={setCampDetailEntryHost}/>}
-          <CampWorkspace
-            key={activeCampId}
+              && visibleThreadSnapshot.agentRuns.some((run) => run.status === 'running')}
+            onClose={returnToMissions} onFocusApprovals={focusThreadApprovals} detailEntryHostRef={setThreadDetailEntryHost}/>}
+          <ThreadWorkspace
+            key={activeThreadId}
             missionBoard={activeMission ? <MissionIntro mission={activeMission} projects={displayNavigation?.projects ?? []}/> : null}
             previewTabsInPane={false}
             suppressExecutionAutoOpen={missionDrawerSuppressesExecutionAutoOpen(
               missionDrawer,
               generalPreferences.executionConsolePlacement
             )}
-            snapshot={visibleCampSnapshot}
+            snapshot={visibleThreadSnapshot}
             initialComposerDraft={campSnapshotState.initialComposerDraft}
             onInitialComposerDraftConsumed={consumeInitialComposerDraft}
-            openCoverage={campSnapshot?.camp.id === activeCampId
+            openCoverage={campSnapshot?.thread.id === activeThreadId
               ? campSnapshot.openCoverage ?? null
               : null}
-            messageHistory={campSnapshot?.camp.id === activeCampId
+            messageHistory={campSnapshot?.thread.id === activeThreadId
               ? campSnapshot.openCoverage?.messages ?? null
               : null}
-            onLoadEarlierMessages={loadEarlierCampMessages}
+            onLoadEarlierMessages={loadEarlierThreadMessages}
             optimisticMessages={activeOptimisticMessages}
-            projectName={activeCampProject?.name ?? null}
+            projectName={activeThreadProject?.name ?? null}
             agents={agents}
             installations={installations}
             liveRuntimeEvents={liveRuntimeEvents}
             busy={busy === 'camp-message' || busy === 'change-default-lead' || busy === 'camp-membership' || busy?.startsWith('action-approval-') === true}
-            onSend={sendCampMessage}
-            onWithdrawMessage={withdrawCampMessage}
-            onPendingDraftPersisted={refreshPendingCampNavigation}
-            onPendingCampLeave={settlePendingCampOnLeave}
-            onCampLeaveGuardChange={registerCampLeaveGuard}
+            onSend={sendThreadMessage}
+            onWithdrawMessage={withdrawThreadMessage}
+            onPendingDraftPersisted={refreshPendingThreadNavigation}
+            onPendingThreadLeave={settlePendingThreadOnLeave}
+            onThreadLeaveGuardChange={registerThreadLeaveGuard}
             onChangeLead={changeDefaultLead}
-            onAddMembers={addCampMembers}
-            onPreviewMemberRemoval={previewCampMemberRemoval}
-            onRemoveMember={removeCampMember}
-            onTasksChanged={() => refreshActiveCampSnapshot(activeCampId)}
+            onAddMembers={addThreadMembers}
+            onPreviewMemberRemoval={previewThreadMemberRemoval}
+            onRemoveMember={removeThreadMember}
+            onTasksChanged={() => refreshActiveThreadSnapshot(activeThreadId)}
             onResolveApproval={(approval, decision) => {
               void resolveActionApproval(approval, decision)
             }}
@@ -4323,28 +4323,28 @@ export function BusinessApp({
             cancellingRunIds={activeCancellingRunIds}
             confirmingRunIds={activeConfirmingRunIds}
             onCancelAgentRun={cancelAgentRun}
-            stopping={activeCampStopping}
+            stopping={activeThreadStopping}
             executionPlacement={mobile ? 'inspector' : generalPreferences.executionConsolePlacement}
             onExecutionPlacementChange={changeExecutionConsolePlacement}
             worldMapEnabled={!mobile && generalPreferences.worldMapEnabled}
             workspaceEntrySnapshotReady={!campSnapshotState.entryPreview}
-            inspectorVisible={visibleCampSnapshot.camp.activationState === 'active' && campInspectorVisible}
+            inspectorVisible={visibleThreadSnapshot.thread.activationState === 'active' && campInspectorVisible}
             inspectorTab={campInspectorTab}
             detailEntryHost={campDetailEntryHost}
-            singleChatVisible={visibleCampSnapshot.camp.activationState === 'active' && singleChatVisible}
+            singleChatVisible={visibleThreadSnapshot.thread.activationState === 'active' && singleChatVisible}
             onOpenSingleChat={openSingleChat}
-            onCloseSingleChat={() => setSingleChatCampId(null)}
-            onCloseInspector={() => setCampInspectorCampId(null)}
-            onInspectorTabChange={setCampInspectorTab}
-            onOpenInspector={openCampInspector}
+            onCloseSingleChat={() => setSingleChatThreadId(null)}
+            onCloseInspector={() => setThreadInspectorThreadId(null)}
+            onInspectorTabChange={setThreadInspectorTab}
+            onOpenInspector={openThreadInspector}
             notificationFocus={notificationFocus}
             onNotificationFocusPresented={completeNotificationNavigation}
             singleChatTarget={singleChatNotificationTarget}
             onVisibleSingleChatSources={setVisibleSingleChatSources}
             onVisibleNotificationSources={setVisibleNotificationSources}
-            runtimeRecovery={runtimeRecovery?.campId === activeCampId ? runtimeRecovery : null}
-            firstRunCamp={firstRunCamp}
-            firstRunCampId={firstRunCampId}
+            runtimeRecovery={runtimeRecovery?.threadId === activeThreadId ? runtimeRecovery : null}
+            firstRunThread={firstRunThread}
+            firstRunThreadId={firstRunThreadId}
             onConfigureRuntime={configureMemberRuntime}
             onDismissRuntimeRecovery={() => setRuntimeRecovery(null)}
             onNotify={notify}
@@ -4356,9 +4356,9 @@ export function BusinessApp({
         {!startupGateVisible && view === 'compose' && (
           <QuickChatWorkspace
             agents={agents}
-            firstRunCampId={firstRunCampId}
-            recentCamps={visibleNavigation ? allNavigationCamps(visibleNavigation).slice(0, 5) : []}
-            onOpenCamp={chooseCamp}
+            firstRunThreadId={firstRunThreadId}
+            recentThreads={visibleNavigation ? allNavigationThreads(visibleNavigation).slice(0, 5) : []}
+            onOpenThread={chooseThread}
             onNewConversation={beginNewConversation}
             onOpenMembers={() => chooseView('members')}
             onOpenRuntimeSettings={() => {
@@ -4372,11 +4372,11 @@ export function BusinessApp({
           <AutomationWorkspace
             agents={agents}
             projects={displayNavigation?.projects ?? []}
-            defaultMemberId={campSnapshot?.camp.defaultLeadAgentId
+            defaultMemberId={campSnapshot?.thread.defaultLeadAgentId
               ?? agents.find((agent) => agent.presence === 'present')?.agentId
               ?? ''}
             topNotices={inlineNotices}
-            onOpenCamp={(campId) => void activateCamp(campId, { reconcileDefaultLead: false })}
+            onOpenThread={(threadId) => void activateThread(threadId, { reconcileDefaultLead: false })}
             onNotify={notify}
             onLeaveGuardChange={registerAutomationLeaveGuard}
           />
@@ -4521,7 +4521,7 @@ export function BusinessApp({
         onOpenChange={setNewConversationOpen}
         onChooseWorkspaceDirectory={chooseWorkspaceDirectory}
         onWorkspaceSelected={(workspace) => restoreNavigationProject(workspace.projectPath)}
-        onCreate={(draft, enableOneClick) => createCamp({
+        onCreate={(draft, enableOneClick) => createThread({
           ...draft,
           activationState: campActivationStateForCreation('dialog')
         }, enableOneClick)}
@@ -4536,10 +4536,10 @@ export function BusinessApp({
         onCreate={createMission}/>
       <NotificationAttentionController
         enabled={startupStatus === 'resolved'}
-        activeCampId={activeCampId}
-        firstRunCampId={firstRunCampId}
-        activeCampVisible={view === 'camp'
-          && campSnapshot?.camp.id === activeCampId
+        activeThreadId={activeThreadId}
+        firstRunThreadId={firstRunThreadId}
+        activeThreadVisible={view === 'camp'
+          && campSnapshot?.thread.id === activeThreadId
           && !newConversationOpen
           && !newMissionOpen
           && !shuttingDown}
@@ -4547,7 +4547,7 @@ export function BusinessApp({
         onNavigate={navigateFromNotification}
         onPresentNavigation={presentNotificationNavigation}
         onCancelNavigation={cancelNotificationNavigation}
-        onRefreshVisibleCamp={refreshVisibleNotificationCamp}
+        onRefreshVisibleThread={refreshVisibleNotificationThread}
         onError={notify}
         singleChatSources={singleChatVisible ? visibleSingleChatSources : null}
         visibleSources={visibleNotificationSources}
@@ -4775,9 +4775,9 @@ export function SettingsView({
 }
 
 export function campSnapshotWithAnchoredMessages(
-  snapshot: CampSnapshot,
-  anchoredMessages: readonly CampMessageView[]
-): CampSnapshot {
+  snapshot: ThreadSnapshot,
+  anchoredMessages: readonly ThreadMessageView[]
+): ThreadSnapshot {
   if (anchoredMessages.length === 0) return snapshot
   const messagesById = new Map(snapshot.messages.map((message) => [message.id, message]))
   for (const message of anchoredMessages) {
@@ -4792,9 +4792,9 @@ export function campSnapshotWithAnchoredMessages(
 }
 
 export function campSnapshotWithAnchoredAgentRuns(
-  snapshot: CampSnapshot,
+  snapshot: ThreadSnapshot,
   anchoredAgentRuns: readonly AgentRunView[]
-): CampSnapshot {
+): ThreadSnapshot {
   if (anchoredAgentRuns.length === 0) return snapshot
   const runsById = new Map(snapshot.agentRuns.map((run) => [run.id, run]))
   for (const run of anchoredAgentRuns) {
@@ -4804,16 +4804,16 @@ export function campSnapshotWithAnchoredAgentRuns(
 }
 
 export function campSnapshotWithCurrentAnchor(
-  snapshot: CampSnapshot,
-  campId: string,
+  snapshot: ThreadSnapshot,
+  threadId: string,
   anchor: {
-    campId: string
-    messages?: readonly CampMessageView[]
+    threadId: string
+    messages?: readonly ThreadMessageView[]
     agentRuns?: readonly AgentRunView[]
     tasks?: readonly import('@contracts').TaskView[]
   } | null
-): CampSnapshot {
-  if (anchor?.campId !== campId) return snapshot
+): ThreadSnapshot {
+  if (anchor?.threadId !== threadId) return snapshot
   let withTasks = snapshot
   if (anchor.tasks?.length) {
     const tasks = new Map(snapshot.tasks.map(task => [task.taskId, task]))
@@ -4869,8 +4869,8 @@ export function notificationFocusMatchesAction(
   }
   if (focus.kind === 'camp_turn') {
     return action.kind === 'open_camp_turn'
-      && Boolean(focus.campTurnId)
-      && focus.campTurnId === action.campTurnId
+      && Boolean(focus.threadTurnId)
+      && focus.threadTurnId === action.threadTurnId
   }
   if (focus.kind === 'agent_run') {
     return action.kind === 'open_agent_run'
@@ -4885,22 +4885,22 @@ async function resolveNavigationPins(
   navigation: NavigationSnapshot,
   pins: NavigationPin[],
   client: Pick<RovaiApi, 'request'>
-): Promise<{ pins: NavigationPin[]; camps: NavigationCampItem[] }> {
-  const pinnedCampIds = new Set(
+): Promise<{ pins: NavigationPin[]; threads: NavigationThreadItem[] }> {
+  const pinnedThreadIds = new Set(
     pins.filter((pin) => pin.kind === 'camp').map((pin) => pin.targetKey)
   )
   const campById = new Map(
-    allNavigationCamps(navigation)
-      .filter((camp) => pinnedCampIds.has(camp.id))
-      .map((camp) => [camp.id, camp])
+    allNavigationThreads(navigation)
+      .filter((thread) => pinnedThreadIds.has(thread.id))
+      .map((thread) => [thread.id, thread])
   )
-  const unresolvedCampIds = new Set(
-    [...pinnedCampIds].filter((campId) => !campById.has(campId))
+  const unresolvedThreadIds = new Set(
+    [...pinnedThreadIds].filter((threadId) => !campById.has(threadId))
   )
 
-  if (unresolvedCampIds.size > 0) {
-    const rows = await client.request<NavigationCampRows>('navigation.camps', { campIds: [...unresolvedCampIds] })
-    for (const camp of rows.camps) campById.set(camp.id, camp)
+  if (unresolvedThreadIds.size > 0) {
+    const rows = await client.request<NavigationThreadRows>('navigation.threads', { threadIds: [...unresolvedThreadIds] })
+    for (const thread of rows.threads) campById.set(thread.id, thread)
   }
 
   const validProjectKeys = new Set(navigation.projects.map((project) => project.projectKey))
@@ -4911,18 +4911,18 @@ async function resolveNavigationPins(
   )
   return {
     pins: validPins,
-    camps: validPins
+    threads: validPins
       .filter((pin) => pin.kind === 'camp')
       .flatMap((pin) => campById.get(pin.targetKey) ?? [])
   }
 }
 
-export function optimisticCampMessage(
-  snapshot: CampSnapshot | null,
+export function optimisticThreadMessage(
+  snapshot: ThreadSnapshot | null,
   commandId: string,
-  draft: CampComposerDraftView,
+  draft: ThreadComposerDraftView,
   createdAt = new Date().toISOString()
-): CampMessageView {
+): ThreadMessageView {
   const defaultLeadId = snapshot?.members.find((member) => member.isDefaultLead)?.agentId
   const explicitlyMentionedIds = [...new Set(draft.content.segments.flatMap((segment) =>
     segment.kind === 'atom' && segment.atom.type === 'member'
@@ -4953,8 +4953,8 @@ export function optimisticCampMessage(
     attachments: draft.attachments,
     addressMode: broadcast ? 'broadcast' : explicitlyMentionedIds.length > 0 ? 'explicit' : 'default',
     addressedAgentIds,
-    replyToCampMessageId: draft.replyIntent?.replyToCampMessageId ?? null,
-    campTurnId: null,
+    replyToThreadMessageId: draft.replyIntent?.replyToThreadMessageId ?? null,
+    threadTurnId: null,
     presentation: null,
     createdAt,
     withdrawn: false,
@@ -4965,12 +4965,12 @@ export function optimisticCampMessage(
 
 export function campMessageSendParams(
   commandId: string,
-  campId: string,
-  draft: CampComposerDraftView
+  threadId: string,
+  draft: ThreadComposerDraftView
 ): {
   commandId: string
-  campId: string
-  content: CampComposerDraftView['content']
+  threadId: string
+  content: ThreadComposerDraftView['content']
   sourceAttachments: Array<{
     id: string
     sourcePath: string
@@ -4979,8 +4979,8 @@ export function campMessageSendParams(
     mediaType: string | null
     observedByteSize: number | null
   }>
-  quotes: CampComposerDraftView['quotes']
-  replyToCampMessageId: string | null
+  quotes: ThreadComposerDraftView['quotes']
+  replyToThreadMessageId: string | null
   execution: {
     taskId: null
     purpose: string
@@ -5000,11 +5000,11 @@ export function campMessageSendParams(
   })
   return {
     commandId,
-    campId,
+    threadId,
     content: draft.content,
     sourceAttachments,
     quotes: draft.quotes,
-    replyToCampMessageId: draft.replyIntent?.replyToCampMessageId ?? null,
+    replyToThreadMessageId: draft.replyIntent?.replyToThreadMessageId ?? null,
     execution: {
       taskId: null,
       purpose: campMessageExecutionPurpose(draft),
@@ -5013,13 +5013,13 @@ export function campMessageSendParams(
   }
 }
 
-export function campMessageExecutionPurpose(draft: CampComposerDraftView): string {
-  return draft.body.trim() || 'Camp attachment-only message'
+export function campMessageExecutionPurpose(draft: ThreadComposerDraftView): string {
+  return draft.body.trim() || 'Thread attachment-only message'
 }
 
 export function campCreationPreflightFromAgents(
   agents: AgentProfile[]
-): CampCreationPreflight {
+): ThreadCreationPreflight {
   const presentMembers = agents
     .filter((agent) => agent.presence === 'present')
     .sort((left, right) => left.memberOrder - right.memberOrder || left.agentId.localeCompare(right.agentId))
@@ -5035,7 +5035,7 @@ export function campCreationPreflightFromAgents(
     ?.agentId ?? presentMembers
     .find((member) => member.runtimeReadiness === 'light_ready')
     ?.agentId ?? presentMembers[0]?.agentId ?? null
-  const blockers: CampCreationPreflight['blockers'] = presentMembers.length === 0
+  const blockers: ThreadCreationPreflight['blockers'] = presentMembers.length === 0
     ? [{ code: 'no_present_members', detail:uiAttribute("当前没有在队的队员。") }]
     : []
   return {
@@ -5083,25 +5083,25 @@ function membershipConflictCode(code: string): boolean {
 }
 
 export function campDeleteCommand(
-  camp: Pick<NavigationCampItem, 'id' | 'version'>
-): { campId: string; expectedVersion: number; force: true } {
+  thread: Pick<NavigationThreadItem, 'id' | 'version'>
+): { threadId: string; expectedVersion: number; force: true } {
   return {
-    campId: camp.id,
-    expectedVersion: camp.version,
+    threadId: thread.id,
+    expectedVersion: thread.version,
     force: true
   }
 }
 
 export function runtimeRecoveryFromCommandResult(
-  campId: string,
+  threadId: string,
   result: StoredCommandResult
-): CampRuntimeRecovery | null {
+): ThreadRuntimeRecovery | null {
   if (result.status !== 'rejected' || result.code !== 'agent_run.runtime_not_ready') return null
   const agentId = stringField(result.payload, 'agentId')
   const blockerCode = stringField(result.payload, 'blockerCode')
   if (!agentId || !blockerCode) return null
   return {
-    campId,
+    threadId,
     targets: [{ agentId, blockerCode }]
   }
 }

@@ -51,7 +51,7 @@ describe('English interface catalog', () => {
     expect(malformed).toEqual([])
   })
 
-  it('covers shared Run states and wait explanations shown by the Camp Renderer', () => {
+  it('covers shared Run states and wait explanations shown by the Thread Renderer', () => {
     const run = (status: Parameters<typeof agentRunPresentation>[0]['status'], waitReason: string | null = null) =>
       ({ status, waitReason })
     const cases: Array<Parameters<typeof agentRunPresentation>[0]> = [

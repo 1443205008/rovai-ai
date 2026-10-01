@@ -1,7 +1,7 @@
 import { MobileBack, useMobileLayout } from './MobileLayout'
-import { desktopCampClient } from './desktop-camp-client'
+import { desktopThreadClient } from './desktop-camp-client'
 import { newCommandId } from '../../shared/command-id'
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { CurrentUserProfileEditor, CurrentUserRosterEntry } from './CurrentUserProfileEditor'
 import { readErrorMessage } from './error-message'
 import {
@@ -450,7 +450,7 @@ const MemberEditor = forwardRef<
   },
   ref
 ) {
-  const client = useCampClient()
+  const client = useThreadClient()
   const activeRef = useRef(active)
   activeRef.current = active
   const authoritative =
@@ -829,11 +829,11 @@ const MemberEditor = forwardRef<
                   )}
                   <AppDialogFactGrid>
                     <AppDialogFact label={uiAttribute("当前会话")}>
-                      {removal.preview.currentCampMembershipCount}<UiText zh={" 个"} /></AppDialogFact>
+                      {removal.preview.currentThreadMembershipCount}<UiText zh={" 个"} /></AppDialogFact>
                     <AppDialogFact label={uiAttribute("未完成任务")}>
                       {removal.preview.openAssignedTaskCount}<UiText zh={" 个将释放"} /></AppDialogFact>
                     <AppDialogFact label={uiAttribute("默认负责人")}>
-                      {removal.preview.defaultLeadCampCount}<UiText zh={" 个将重选"} /></AppDialogFact>
+                      {removal.preview.defaultLeadThreadCount}<UiText zh={" 个将重选"} /></AppDialogFact>
                   </AppDialogFactGrid>
                   {removal.preview.nonTerminalAgentRunCount > 0 && (
                     <div
@@ -1082,7 +1082,7 @@ export const MemberRuntimeForm = forwardRef<
   },
   ref
 ): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const runtimeSelectId = useId()
   const initialStateRef = useRef<MemberRuntimeEditorState | null>(null)
   if (!initialStateRef.current)
@@ -1419,7 +1419,7 @@ export function RuntimeInstallationsPanel({
   installations: AdapterInstallation[]
   onReload(): Promise<void>
 }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const [settingsRuntime, setSettingsRuntime] = useState<AdapterKind | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -1587,7 +1587,7 @@ export function RuntimeInstallationsPanel({
 // refresh, one resubmission. The original command (and expectedVersion) is frozen.
 export async function submitMemberRuntimeConfiguration(
   command: { adapterKind: AdapterKind },
-  request: import('@contracts').RovaiApi['request'] = desktopCampClient.request
+  request: import('@contracts').RovaiApi['request'] = desktopThreadClient.request
 ): Promise<StoredCommandResult> {
   const submit = async (): Promise<StoredCommandResult> => {
     try {

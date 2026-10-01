@@ -6,9 +6,9 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
-    camp_id::CampId,
+    camp_id::ThreadId,
     collaboration::{
-        CampActivationState, CampCollaborationMode, CreateCampCommand, ProjectBindingKind,
+        CreateThreadCommand, ProjectBindingKind, ThreadActivationState, ThreadCollaborationMode,
         actor_can_write_camp, admit_mission_start, append_domain_event, create_camp_in_tx,
     },
     command::{
@@ -137,6 +137,7 @@ pub struct MissionAgentAttachment {
 #[serde(rename_all = "camelCase")]
 pub struct MissionListItem {
     pub mission_id: String,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub title: String,
     pub status: MissionStatus,
@@ -157,6 +158,7 @@ pub struct MissionRecord {
     #[serde(flatten)]
     pub info: MissionInfo,
     pub number: i64,
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub project_path: String,
     pub project_binding_kind: ProjectBindingKind,
@@ -404,7 +406,7 @@ impl MissionService {
                 &mission.camp_id,
             )?;
             let result=if !start_available {
-                CommandHandlerResult::applied("mission.already_running",json!({"missionId":mission.info.mission_id,"campId":mission.camp_id,"alreadyRunning":true}),None)
+                CommandHandlerResult::applied("mission.already_running",json!({"missionId":mission.info.mission_id,"threadId":mission.camp_id,"alreadyRunning":true}),None)
             } else { admit_mission_start(tx,&envelope.actor,&envelope.command_id,&mission)? };
             if result.status==CommandResultStatus::Rejected { return Ok(result); }
             if start_available {
@@ -428,12 +430,12 @@ impl MissionService {
             let mission_id = format!("rvm_{}", Uuid::now_v7().simple());
             tx.execute("INSERT INTO mission_number_sequence DEFAULT VALUES", [])?;
             let number = tx.last_insert_rowid();
-            let camp_id = CampId::new();
-            let created = create_camp_in_tx(tx, &envelope.actor, envelope.execution_epoch, &CreateCampCommand {
+            let camp_id = ThreadId::new();
+            let created = create_camp_in_tx(tx, &envelope.actor, envelope.execution_epoch, &CreateThreadCommand {
                 name: Some(input.title.trim().chars().take(80).collect()),
                 project_binding_kind: input.project_binding_kind, project_path: input.project_path.clone(),
                 member_agent_ids: input.member_agent_ids.clone(), default_lead_agent_id: input.default_lead_agent_id.clone(),
-                collaboration_mode: CampCollaborationMode::Peer, activation_state: CampActivationState::Active,
+                collaboration_mode: ThreadCollaborationMode::Peer, activation_state: ThreadActivationState::Active,
             }, &camp_id)?;
             if created.status == CommandResultStatus::Rejected { return Ok(created); }
             let now = chrono::Utc::now().to_rfc3339();
@@ -448,7 +450,7 @@ impl MissionService {
             }
             record_activity(tx, &mission_id, "created", &envelope.actor, envelope.execution_epoch,
                 Value::Object(changes))?;
-            Ok(CommandHandlerResult::applied("mission.created", json!({"missionId":mission_id,"missionNumber":number,"campId":camp_id}),
+            Ok(CommandHandlerResult::applied("mission.created", json!({"missionId":mission_id,"missionNumber":number,"threadId":camp_id}),
                 Some(EntityReference { entity_type: "mission".into(), entity_id: mission_id })))
         })
     }
@@ -1254,12 +1256,12 @@ mod tests {
             camp_id: Some(ordinary.camp_id.clone()),
             expected_versions: vec![],
             execution_epoch: None,
-            payload: crate::collaboration::TestCampMessageCommand {
+            payload: crate::collaboration::TestThreadMessageCommand {
                 camp_id: ordinary.camp_id.clone(),
                 draft_revision: None,
                 body: "通过普通消息开始执行".into(),
                 prepared_attachment_ids: vec![],
-                address: crate::collaboration::TestCampMessageAddress::Default,
+                address: crate::collaboration::TestThreadMessageAddress::Default,
                 reply_to_camp_message_id: None,
                 execution: Some(crate::collaboration::ExecutionRequest {
                     task_id: None,
@@ -1811,7 +1813,7 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
-        let camp_id = created.result.payload["campId"]
+        let camp_id = created.result.payload["threadId"]
             .as_str()
             .unwrap()
             .to_string();
@@ -1890,7 +1892,7 @@ mod tests {
             )
             .unwrap();
         let other_mission_id = other.result.payload["missionId"].as_str().unwrap();
-        let other_camp_id = other.result.payload["campId"].as_str().unwrap();
+        let other_camp_id = other.result.payload["threadId"].as_str().unwrap();
         db.connection().execute(
             "INSERT INTO mission_workspace(id,mission_id,camp_id,execution_host_id,source_directory,repository_root,git_common_dir,worktree_path,working_directory,base_branch,branch,base_sha,preparation_token,state,created_at,updated_at) VALUES('projection-workspace-other',?1,?2,?3,?4,?4,?5,?6,?6,'main','rovai/mission/002','base','owner','ready','created','updated')",
             params![other_mission_id, other_camp_id, host, crate::test_support::absolute_test_path("/other/repo"), crate::test_support::absolute_test_path("/other/repo/.git"), crate::test_support::absolute_test_path("/other-worktree")],
@@ -2110,7 +2112,7 @@ mod tests {
                 }),
             )
             .unwrap();
-        let message_id = started.result.payload["campMessageId"].as_str().unwrap();
+        let message_id = started.result.payload["threadMessageId"].as_str().unwrap();
         let published_json: String = db
             .connection()
             .query_row(

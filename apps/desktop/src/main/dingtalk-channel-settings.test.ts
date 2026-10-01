@@ -600,7 +600,7 @@ describe('DingTalk channel account connection', () => {
         credentialRef: 'dingtalk-credential-a', chatId: 'owner-a', topicKey: '',
         conversationKind: 'p2p', attemptCount: 1, updateMessageId: null,
         recipientOpenId: 'owner-a',
-        payload: { campId: 'camp-1', attachmentId: 'attachment-1', fileName: 'report.pdf',
+        payload: { threadId: 'camp-1', attachmentId: 'attachment-1', fileName: 'report.pdf',
           attachmentKind: 'file', size: bytes.length,
           contentDigest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` }
       }]
@@ -637,7 +637,7 @@ describe('DingTalk channel account connection', () => {
         credentialRef: 'dingtalk-credential-a', chatId: 'group-1', topicKey: '',
         conversationKind: 'group', attemptCount: 1, updateMessageId: null,
         recipientOpenId: null,
-        payload: { campId: 'camp-1', sourceCampMessageId: 'message-1',
+        payload: { threadId: 'camp-1', sourceThreadMessageId: 'message-1',
           attachmentId: 'source-ref-1', fileName: 'image.jpg', attachmentKind: 'image',
           storage: 'source_ref' }
       }]
@@ -651,7 +651,7 @@ describe('DingTalk channel account connection', () => {
         command: expect.objectContaining({ deliveryId: 'delivery-image-1', outcome: 'sent',
           externalDeliveryMessageId: 'message-image-1' })
       }))
-      expect(fixture.attachmentLookups).toContainEqual({ owner: 'message', campId: 'camp-1',
+      expect(fixture.attachmentLookups).toContainEqual({ owner: 'message', threadId: 'camp-1',
         attachmentRefId: 'source-ref-1', messageId: 'message-1' })
       expect(upload).toHaveBeenCalledWith(bytes, 'image.jpg', 'image/jpeg')
       expect(send).toHaveBeenCalledWith({ openConversationId: 'group-1', robotCode: 'robot-a',
@@ -673,7 +673,7 @@ describe('DingTalk channel account connection', () => {
         credentialRef: 'dingtalk-credential-a', chatId: 'owner-a', topicKey: '',
         conversationKind: 'p2p', attemptCount: 1, updateMessageId: null,
         recipientOpenId: 'owner-a',
-        payload: { campId: 'camp-1', attachmentId: 'attachment-1',
+        payload: { threadId: 'camp-1', attachmentId: 'attachment-1',
           fileName: 'notes.txt', attachmentKind: 'file' }
       }]
     })
@@ -702,7 +702,7 @@ describe('DingTalk channel account connection', () => {
         credentialRef: 'dingtalk-credential-a', chatId: 'owner-a', topicKey: '',
         conversationKind: 'p2p', attemptCount: 1, updateMessageId: null,
         recipientOpenId: 'owner-a',
-        payload: { campId: 'camp-1', attachmentId: 'attachment-1',
+        payload: { threadId: 'camp-1', attachmentId: 'attachment-1',
           fileName: 'image.webp', attachmentKind: 'image' }
       }]
     })
@@ -735,7 +735,7 @@ describe('DingTalk channel account connection', () => {
         credentialRef: 'dingtalk-credential-a', chatId: 'owner-a', topicKey: '',
         conversationKind: 'p2p', attemptCount: 1, updateMessageId: null,
         recipientOpenId: 'owner-a',
-        payload: { campId: 'camp-1', attachmentId: 'attachment-1',
+        payload: { threadId: 'camp-1', attachmentId: 'attachment-1',
           fileName: 'oversize.pdf', attachmentKind: 'file' }
       }]
     })
@@ -1183,7 +1183,7 @@ function completedBotFixture(options: {
   const attachmentLookups: unknown[] = []
   const core = {
     async request(method: string, params: { command?: Record<string, unknown> }): Promise<unknown> {
-      if (method === 'camp.attachments.desktopOpenTarget') {
+      if (method === 'thread.attachments.desktopOpenTarget') {
         attachmentLookups.push(params)
         return options.attachmentTarget ?? null
       }
@@ -1300,8 +1300,8 @@ function executionSource(
   return {
     sequence: 1,
     agentRunId: 'run-1',
-    campId: 'camp-1',
-    campTurnId: 'turn-1',
+    threadId: 'camp-1',
+    threadTurnId: 'turn-1',
     channelConversationId: 'channel-conversation-1',
     agentId: 'agent-alice',
     agentDisplayName: '爱丽丝',

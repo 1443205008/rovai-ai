@@ -23,11 +23,11 @@ describe('Main Window Session registry', () => {
 
     sources.resolve({
       preferences: DEFAULT_GENERAL_PREFERENCES,
-      restorable: { status: 'valid', location: { kind: 'camp', campId: CAMP_ID } }
+      restorable: { status: 'valid', location: { kind: 'camp', threadId: CAMP_ID } }
     })
     await expect(reading).resolves.toMatchObject({
       sessionId: 'local-session',
-      restorableLocation: { kind: 'camp', campId: CAMP_ID }
+      restorableLocation: { kind: 'camp', threadId: CAMP_ID }
     })
   })
 
@@ -60,7 +60,7 @@ describe('Main Window Session registry', () => {
       worldMapEnabled: true
     }, {
       status: 'valid',
-      location: { kind: 'camp', campId: CAMP_ID }
+      location: { kind: 'camp', threadId: CAMP_ID }
     })
 
     const second = registry.create(22, {

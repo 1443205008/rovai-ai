@@ -1,6 +1,6 @@
 import { useEditingRecovery } from './camp-client'
 import { useMobileLayout } from './MobileLayout'
-import type { CampComposerDraftView, ComposerAtom, ComposerDocument } from '@contracts'
+import type { ThreadComposerDraftView, ComposerAtom, ComposerDocument } from '@contracts'
 import { LexicalExtensionComposer } from '@lexical/react/LexicalExtensionComposer'
 import { ContentEditable } from '@lexical/react/LexicalContentEditable'
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext'
@@ -72,7 +72,7 @@ export interface StructuredMentionMember {
   teamRole: string
   avatarRef?: string | null
   mentionable?: boolean
-  inCamp?: boolean
+  inThread?: boolean
 }
 
 export type StructuredMentionOption =
@@ -82,7 +82,7 @@ export type StructuredMentionOption =
   | { kind: 'back_to_camp' }
 
 export interface StructuredMentionComposerHandle {
-  flush(): Promise<ComposerFlushResult<CampComposerDraftView>>
+  flush(): Promise<ComposerFlushResult<ThreadComposerDraftView>>
   setInteractionLocked(locked: boolean): void
   replaceDocument(
     document: ComposerDocument,
@@ -100,7 +100,7 @@ export interface StructuredMentionComposerProps {
   draftIdentity: string
   document: ComposerDocument
   ready?: boolean
-  getAuthoritativeDraft?(): CampComposerDraftView | null
+  getAuthoritativeDraft?(): ThreadComposerDraftView | null
   members: readonly StructuredMentionMember[]
   skills?: readonly ComposerSkillOption[] | null
   skillCatalogStatus?: 'loading' | 'ready' | 'error'
@@ -145,8 +145,8 @@ export function structuredMentionOptions(
   const matches = (member: StructuredMentionMember): boolean =>
     member.mentionable !== false
       && `${member.displayName}\n${member.teamRole}`.toLocaleLowerCase().includes(normalizedQuery)
-  const current = members.filter((member) => member.inCamp !== false && matches(member))
-  const outside = members.filter((member) => member.inCamp === false && matches(member))
+  const current = members.filter((member) => member.inThread !== false && matches(member))
+  const outside = members.filter((member) => member.inThread === false && matches(member))
   if (inviteLayer) {
     options.push({ kind: 'back_to_camp' })
     options.push(...outside.slice(0, 49).map((member) => ({ kind: 'member' as const, member })))
@@ -159,7 +159,7 @@ export function structuredMentionOptions(
     .map((member) => ({ kind: 'member' as const, member })))
   if (normalizedQuery) options.push(...outside.slice(0, 50 - options.length)
     .map((member) => ({ kind: 'member' as const, member })))
-  else if (members.some((member) => member.inCamp === false && member.mentionable !== false)) {
+  else if (members.some((member) => member.inThread === false && member.mentionable !== false)) {
     options.push({ kind: 'invite_other' })
   }
   return options
@@ -286,7 +286,7 @@ function ComposerBridge({
   authorityDocument.current = document
   const recoveryAttempted = useRef(false)
   const generatedId = useId()
-  const syncRef = useRef<ComposerDraftSync<CampComposerDraftView> | null>(null)
+  const syncRef = useRef<ComposerDraftSync<ThreadComposerDraftView> | null>(null)
   const initializedRef = useRef(false)
   const readyRef = useRef(ready)
   const previousReadyRef = useRef(ready)
@@ -405,7 +405,7 @@ function ComposerBridge({
       $replaceEditorWithComposerDocument(initialDocument)
     }, { discrete: true, tag: ROVAI_COMPOSER_INITIALIZE_TAG })
     const sync = new ComposerDraftSync(editor, editor.getEditorState(), bindings())
-    const runtime: ComposerExtensionRuntime<CampComposerDraftView> = {
+    const runtime: ComposerExtensionRuntime<ThreadComposerDraftView> = {
       sync,
       submit: () => { void callbacks.current.onSubmit() },
       enterInsertsLineBreak: () => mobileRef.current,
@@ -668,11 +668,11 @@ function renderMentionMenu(
           key={option.kind === 'member' ? `member:${option.member.agentId}` : option.kind}
           aria-selected={selectedIndex === index}
           aria-label={option.kind === 'member'
-            ? `${option.member.displayName}${uiAttribute('，')}${structuredMentionMemberDescription(option.member)}${option.member.inCamp === false ? `${uiAttribute('，')}${pendingInviteIds.includes(option.member.agentId) ? uiAttribute('待邀请') : uiAttribute('邀请加入')}` : ''}`
+            ? `${option.member.displayName}${uiAttribute('，')}${structuredMentionMemberDescription(option.member)}${option.member.inThread === false ? `${uiAttribute('，')}${pendingInviteIds.includes(option.member.agentId) ? uiAttribute('待邀请') : uiAttribute('邀请加入')}` : ''}`
             : option.kind === 'all_members' ? uiAttribute('所有队员，仅本会话')
               : option.kind === 'invite_other' ? uiAttribute('邀请其他队员') : uiAttribute('返回本会话')}
           className={[selectedIndex === index ? 'active' : '',
-            option.kind === 'member' && option.member.inCamp === false ? 'is-invitable' : '',
+            option.kind === 'member' && option.member.inThread === false ? 'is-invitable' : '',
             option.kind === 'invite_other' || option.kind === 'back_to_camp' ? 'is-mention-action' : ''
           ].filter(Boolean).join(' ')}
           onMouseMove={() => setHighlightedIndex(index)}
@@ -690,7 +690,7 @@ function renderMentionMenu(
                 : option.kind === 'back_to_camp' ? uiAttribute('查看当前会话队员')
                   : structuredMentionMemberDescription(option.member)}</small>
           </span>
-          {option.kind === 'member' && option.member.inCamp === false
+          {option.kind === 'member' && option.member.inThread === false
             ? <span className="mention-option-state">{pendingInviteIds.includes(option.member.agentId)
               ? <UiText zh={'待邀请'} /> : <UiText zh={'邀请'} />}</span>
             : option.kind === 'invite_other'
@@ -766,11 +766,11 @@ function atomPresentation(
     const member = input.members.find((candidate) => candidate.agentId === atom.agentId)
     const available = Boolean(member && member.mentionable !== false)
     const label = member?.displayName ?? atom.labelFallback ?? uiAttribute('不可用队员')
-    const pendingInvite = available && member?.inCamp === false
+    const pendingInvite = available && member?.inThread === false
     return {
       label: label.startsWith('@') ? label : `@${label}`,
       availability: available ? 'available' : 'unavailable',
-      interactive: Boolean(available && member?.inCamp !== false && input.onActivateMemberMention),
+      interactive: Boolean(available && member?.inThread !== false && input.onActivateMemberMention),
       ariaLabel: pendingInvite ? uiAttribute('成员 {0} 待邀请，发送时加入', String(label))
         : available ? uiAttribute("成员 {0}", String(label)) : uiAttribute("成员 {0} 当前不可用", String(label))
     }

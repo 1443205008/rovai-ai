@@ -1,6 +1,6 @@
 ---
 name: review-duo
-description: Review a defined code change with two Camp members independently checking standards, quality and requirements. Applies to the initiator and invited reviewer through the final report; excludes solo review, undefined scope and implementation-only requests.
+description: Review a defined code change with two Thread members independently checking standards, quality and requirements. Applies to the initiator and invited reviewer through the final report; excludes solo review, undefined scope and implementation-only requests.
 ---
 
 # Review Duo
@@ -11,7 +11,7 @@ Review is read-only by default. It does not itself authorize fixes, Tasks, commi
 
 ## Establish the review
 
-Use trusted Core/Runtime identity and direct request/reply relationships. Choose one available Camp partner other than yourself and address their trusted Agent ID. Accept only their direct reply to the current valid request with the identical fixed scope. Titles and scope text do not prove sender identity. One initiator may run one unfinished Review Duo per Camp.
+Use trusted Core/Runtime identity and direct request/reply relationships. Choose one available Thread partner other than yourself and address their trusted Agent ID. Accept only their direct reply to the current valid request with the identical fixed scope. Titles and scope text do not prove sender identity. One initiator may run one unfinished Review Duo per Thread.
 
 Read [Snapshot](references/snapshot.md). Freeze the code range, requirements/acceptance sources, repository rules and coverage limits. Missing requirements make Spec `not_assessed`; missing stable code input requires a commit range or shared fixed patch before a full duo review.
 

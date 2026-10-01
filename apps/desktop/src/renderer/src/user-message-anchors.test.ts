@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentRunView, CampMessageView, CampTurnView } from '@contracts'
+import type { AgentRunView, ThreadMessageView, ThreadTurnView } from '@contracts'
 import { userAnchorStackHeight, userMessageAnchors } from './user-message-anchors'
 
-function message(id: string, sequence: number, authorType: CampMessageView['authorType'],
-  overrides: Partial<CampMessageView> = {}): CampMessageView {
+function message(id: string, sequence: number, authorType: ThreadMessageView['authorType'],
+  overrides: Partial<ThreadMessageView> = {}): ThreadMessageView {
   return { id, sequence, authorType, authorId: authorType === 'agent' ? 'teammate' : 'local_user',
     timelineGlobalSequence: null, sourceAgentRunId: null, body: id, content: [{ kind: 'text', text: id }],
-    attachments: [], quotes: [], addressMode: 'default', addressedAgentIds: [], replyToCampMessageId: null,
-    campTurnId: null, presentation: null, createdAt: '2026-09-30T00:00:00Z', withdrawn: false,
+    attachments: [], quotes: [], addressMode: 'default', addressedAgentIds: [], replyToThreadMessageId: null,
+    threadTurnId: null, presentation: null, createdAt: '2026-09-30T00:00:00Z', withdrawn: false,
     canWithdraw: false, version: 1, ...overrides }
 }
 const run = (id: string, inputMessageIds: string[]): Pick<AgentRunView,
-  'id' | 'inputMessageIds' | 'anchorMessageId' | 'campTurnId'> => ({ id, inputMessageIds, campTurnId: null })
+  'id' | 'inputMessageIds' | 'anchorMessageId' | 'threadTurnId'> => ({ id, inputMessageIds, threadTurnId: null })
 
 describe('loaded user-message anchor projection', () => {
   it('indexes human inputs in sequence order, excluding withdrawn and mission-start content', () => {
@@ -27,25 +27,25 @@ describe('loaded user-message anchor projection', () => {
 
   it('keeps the first actual reply per user despite interleaving, refresh order and multiple teammates', () => {
     const anchors = userMessageAnchors([
-      message('later-a', 8, 'agent', { replyToCampMessageId: 'a' }),
+      message('later-a', 8, 'agent', { replyToThreadMessageId: 'a' }),
       message('a', 1, 'user'), message('b', 2, 'user'),
-      message('b-first', 3, 'agent', { replyToCampMessageId: 'b' }),
+      message('b-first', 3, 'agent', { replyToThreadMessageId: 'b' }),
       message('unrelated', 4, 'agent'),
-      message('a-first', 5, 'agent', { replyToCampMessageId: 'a' }),
-      message('withdrawn-reply', 0, 'agent', { withdrawn: true, replyToCampMessageId: 'a' })
+      message('a-first', 5, 'agent', { replyToThreadMessageId: 'a' }),
+      message('withdrawn-reply', 0, 'agent', { withdrawn: true, replyToThreadMessageId: 'a' })
     ], [], [])
     expect(anchors.map(anchor => anchor.firstReply)).toEqual(['a-first', 'b-first'])
   })
 
   it('uses authoritative Run inputs and Turn triggers when public output has no reply reference', () => {
-    const turns: Pick<CampTurnView, 'id' | 'triggerType' | 'triggerId'>[] = [
+    const turns: Pick<ThreadTurnView, 'id' | 'triggerType' | 'triggerId'>[] = [
       { id: 'turn', triggerType: 'camp_message', triggerId: 'c' }
     ]
     const anchors = userMessageAnchors([
       message('a', 1, 'user'), message('b', 2, 'user'), message('c', 3, 'user'),
       message('batch-first', 4, 'agent', { sourceAgentRunId: 'batch' }),
-      message('turn-first', 5, 'agent', { campTurnId: 'turn' }),
-      message('explicit-b', 6, 'agent', { sourceAgentRunId: 'batch', replyToCampMessageId: 'c' })
+      message('turn-first', 5, 'agent', { threadTurnId: 'turn' }),
+      message('explicit-b', 6, 'agent', { sourceAgentRunId: 'batch', replyToThreadMessageId: 'c' })
     ], [run('batch', ['a', 'b', 'unloaded-user'])], turns)
     expect(anchors.map(anchor => anchor.firstReply)).toEqual(['batch-first', 'batch-first', 'turn-first'])
   })
@@ -53,9 +53,9 @@ describe('loaded user-message anchor projection', () => {
   it('does not attach an explicit reply to another message to a Run input or guess from adjacency', () => {
     const anchors = userMessageAnchors([
       message('a', 1, 'user'), message('b', 2, 'user'),
-      message('reply-b', 3, 'agent', { sourceAgentRunId: 'run-a', replyToCampMessageId: 'b' }),
+      message('reply-b', 3, 'agent', { sourceAgentRunId: 'run-a', replyToThreadMessageId: 'b' }),
       message('unlinked', 4, 'agent'),
-      message('peer-reply', 5, 'agent', { sourceAgentRunId: 'run-a', replyToCampMessageId: 'unlinked' })
+      message('peer-reply', 5, 'agent', { sourceAgentRunId: 'run-a', replyToThreadMessageId: 'unlinked' })
     ], [run('run-a', ['a'])], [])
     expect(anchors.map(anchor => anchor.firstReply)).toEqual([null, 'reply-b'])
   })

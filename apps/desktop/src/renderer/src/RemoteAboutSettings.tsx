@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AppUpdateSnapshot, AppUpdatesApi } from '@contracts'
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { AboutUpdatesSettingsView } from './AboutUpdatesSettings'
 import { useAppUpdates } from './useAppUpdates'
 import { currentReleaseFromBundledSources } from '../../shared/app-current-release'
@@ -8,7 +8,7 @@ import releaseNotes from '../../../../../build/release-notes.md?raw'
 import releaseMetadata from '../../../../../build/release-metadata.json'
 
 export function RemoteAboutSettings({ updatesApi }: { updatesApi?: AppUpdatesApi }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const desktopHosted = Boolean(client.channels)
   const updates = useAppUpdates(desktopHosted ? null : updatesApi ?? null)
   const [current, setCurrent] = useState<AppUpdateSnapshot | null>(null)

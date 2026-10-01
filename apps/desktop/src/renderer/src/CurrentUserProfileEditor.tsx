@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { currentUserDisplayName, currentUserNameError, type CurrentUserProfile, type MemberAvatarCrop } from '@contracts'
@@ -20,7 +20,7 @@ export type CurrentUserProfileEditorHandle = { discard(): void }
 export const CurrentUserProfileEditor = forwardRef<CurrentUserProfileEditorHandle, {
   onStateChange(dirty: boolean, busy: boolean): void
 }>(function CurrentUserProfileEditor({ onStateChange }, ref) {
-  const client = useCampClient()
+  const client = useThreadClient()
   const { profile: saved, ready, error: loadError, reload, save: saveProfile } = useCurrentUserProfile()
   const [draft, setDraft] = useState<CurrentUserProfile>(saved)
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')

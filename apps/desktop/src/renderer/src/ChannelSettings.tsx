@@ -1,4 +1,4 @@
-import { useCampClient, type CampClient } from './camp-client'
+import { useThreadClient, type ThreadClient } from './camp-client'
 import { feishuLoginFailureDetail } from '../../shared/feishu-login-progress'
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -100,14 +100,14 @@ function channelProvisioning(snapshot: ChannelSettingsSnapshot | null, kind: Cha
 }
 
 export function ChannelSettings({ agents }: { agents: AgentProfile[] }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   if (!client.channels) return <div className="channel-settings-page">
     <SettingsPageHeader eyebrow="Settings / Channels" title={uiAttribute("渠道")} description={uiAttribute("独立 Server 当前不支持飞书／钉钉渠道。渠道功能请使用 Rovai Desktop。")} />
   </div>
   return <ManagedChannelSettings agents={agents} channels={client.channels} />
 }
 
-function ManagedChannelSettings({ agents, channels }: { agents: AgentProfile[]; channels: NonNullable<CampClient['channels']> }): React.JSX.Element {
+function ManagedChannelSettings({ agents, channels }: { agents: AgentProfile[]; channels: NonNullable<ThreadClient['channels']> }): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<ChannelSettingsSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<ChannelActionError | null>(null)

@@ -432,7 +432,7 @@ pub struct ResolvedModelSelection {
 #[serde(rename_all = "camelCase")]
 pub struct FrozenAgentRuntimeConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub camp_fast: Option<crate::camp_fast::FrozenCampMemberFast>,
+    pub camp_fast: Option<crate::camp_fast::FrozenThreadMemberFast>,
     pub adapter_kind: AdapterKind,
     pub installation_id: String,
     pub installation_generation: i64,
@@ -743,7 +743,8 @@ pub struct AdapterRelocationAudit {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MemberCampMembershipView {
+pub struct MemberThreadMembershipView {
+    #[serde(rename = "threadId", alias = "campId")]
     pub camp_id: String,
     pub project_path: String,
     pub membership_status: String,
@@ -911,9 +912,15 @@ pub struct MemberRemovalPreview {
     pub display_name: String,
     pub version: i64,
     pub non_terminal_agent_run_count: i64,
+    #[serde(
+        rename = "currentThreadMembershipCount",
+        alias = "currentCampMembershipCount"
+    )]
     pub current_camp_membership_count: i64,
     pub open_assigned_task_count: i64,
+    #[serde(rename = "defaultLeadThreadCount", alias = "defaultLeadCampCount")]
     pub default_lead_camp_count: i64,
+    #[serde(rename = "soleMemberThreadCount", alias = "soleMemberCampCount")]
     pub sole_member_camp_count: i64,
     pub removable: bool,
 }
@@ -1173,7 +1180,7 @@ impl AgentProfileService {
         &self,
         database: &Database,
         agent_id: &str,
-    ) -> Result<Vec<MemberCampMembershipView>> {
+    ) -> Result<Vec<MemberThreadMembershipView>> {
         let mut statement = database.connection().prepare(
             r#"
             SELECT camp.id, camp.project_path, camp_member.status,
@@ -1187,7 +1194,7 @@ impl AgentProfileService {
         )?;
         statement
             .query_map([agent_id], |row| {
-                Ok(MemberCampMembershipView {
+                Ok(MemberThreadMembershipView {
                     camp_id: row.get(0)?,
                     project_path: row.get(1)?,
                     membership_status: row.get(2)?,
@@ -5520,7 +5527,7 @@ fn profile_updated_result(profile_id: &str, version: i64, code: &str) -> Command
 mod slow_tests {
     use super::*;
     use crate::{
-        collaboration::{AddCampMemberCommand, CollaborationService, CreateCampCommand},
+        collaboration::{AddThreadMemberCommand, CollaborationService, CreateThreadCommand},
         command::{ActorRef, CommandEnvelope, CommandResultStatus},
     };
 
@@ -6730,7 +6737,7 @@ mod slow_tests {
                 &mut database,
                 &user_command(
                     "create-membership-test-camp",
-                    CreateCampCommand::for_test_with_members(
+                    CreateThreadCommand::for_test_with_members(
                         directory.join("workspace").to_string_lossy().to_string(),
                         &["agent_2"],
                         "agent_2",
@@ -6738,13 +6745,13 @@ mod slow_tests {
                 ),
             )
             .expect("Camp should be created");
-        let camp_id = created.result.payload["campId"]
+        let camp_id = created.result.payload["threadId"]
             .as_str()
             .expect("Camp ID should be returned")
             .to_string();
         let mut add_member = user_command(
             "add-membership-test-member",
-            AddCampMemberCommand {
+            AddThreadMemberCommand {
                 camp_id: camp_id.clone(),
                 agent_id: "agent_2".to_string(),
                 expected_membership_generation: 1,
@@ -8355,13 +8362,13 @@ mod slow_tests {
                 &mut database,
                 &user_command(
                     "create-default-lead-camp",
-                    CreateCampCommand::for_test(
+                    CreateThreadCommand::for_test(
                         directory.join("quick-chat").to_string_lossy().to_string(),
                     ),
                 ),
             )
             .expect("Camp should be created");
-        let camp_id = camp.result.payload["campId"]
+        let camp_id = camp.result.payload["threadId"]
             .as_str()
             .expect("Camp ID should be returned")
             .to_string();
@@ -8376,7 +8383,7 @@ mod slow_tests {
                     camp_id: Some(camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: AddCampMemberCommand {
+                    payload: AddThreadMemberCommand {
                         camp_id: camp_id.clone(),
                         agent_id: "agent_1".to_string(),
                         expected_membership_generation: 1,
@@ -8397,7 +8404,7 @@ mod slow_tests {
                     camp_id: Some(camp_id.clone()),
                     expected_versions: Vec::new(),
                     execution_epoch: None,
-                    payload: AddCampMemberCommand {
+                    payload: AddThreadMemberCommand {
                         camp_id: camp_id.clone(),
                         agent_id: "agent_2".to_string(),
                         expected_membership_generation: 1,

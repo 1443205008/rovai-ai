@@ -32,7 +32,7 @@ use rovai_core::{
         RuntimeCompactionDisplayEvent, RuntimeCompactionDisplayPhase,
     },
     runtime_search_operation,
-    storage_layout::CampOutputDirectory,
+    storage_layout::ThreadOutputDirectory,
 };
 use serde_json::{Value, json};
 use tokio::{
@@ -1624,7 +1624,7 @@ impl CodexCliRuntimeAdapter {
 pub(crate) fn runtime_compatibility_digest(
     frozen_runtime: &FrozenAgentRuntimeConfig,
     cwd: &Path,
-    attachment_authorization: &CampOutputDirectory,
+    attachment_authorization: &ThreadOutputDirectory,
 ) -> Result<String> {
     let cwd = cwd
         .canonicalize()
@@ -2347,7 +2347,7 @@ mod tests {
             &executable,
             "#!/bin/sh\nIFS= read -r initialize || exit 1\nprintf '%s\\n' '{\"id\":1,\"result\":{}}'\nIFS= read -r initialized || exit 1\nwhile IFS= read -r ignored; do :; done\n",
         );
-        let attachment_authorization = CampOutputDirectory {
+        let attachment_authorization = ThreadOutputDirectory {
             camp_id: "camp-process-compatibility".to_string(),
             output_root: root.join("attachments"),
         };

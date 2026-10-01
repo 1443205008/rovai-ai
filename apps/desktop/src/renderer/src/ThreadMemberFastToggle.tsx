@@ -1,19 +1,19 @@
 import { uiAttribute } from './interface-language'
-import type { CampMemberFastView } from '@contracts'
+import type { ThreadMemberFastView } from '@contracts'
 
-export function effectiveCampMemberFast(value: CampMemberFastView): boolean {
+export function effectiveThreadMemberFast(value: ThreadMemberFastView): boolean {
   return value.fastOverride ?? value.runtimeDefaultFast ?? false
 }
 
-export function CampMemberFastToggle({
+export function ThreadMemberFastToggle({
   value, displayName, pending, onToggle
 }: {
-  value: CampMemberFastView
+  value: ThreadMemberFastView
   displayName: string
   pending: boolean
   onToggle(next: boolean): void
 }): React.JSX.Element {
-  const enabled = effectiveCampMemberFast(value)
+  const enabled = effectiveThreadMemberFast(value)
   const unknown = value.fastOverride === null && value.runtimeDefaultFast === null
   const stateLabel = unknown ? uiAttribute('跟随智能体默认') : enabled ? uiAttribute('后续执行请求 Fast') : uiAttribute('后续执行请求标准速度')
   return <span className="camp-fast-control">

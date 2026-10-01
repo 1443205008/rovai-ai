@@ -2,29 +2,29 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { AttachmentLocationItems, useAttachmentLocation } from './attachment-location'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { useCampClient, type CampClient } from './camp-client'
+import { useThreadClient, type ThreadClient } from './camp-client'
 import type {
   AgentRunImageContent,
   AgentRunImageView,
-  CampMessageAttachmentView,
+  ThreadMessageAttachmentView,
   LocalAttachmentOwnerLocator
 } from '@contracts'
 import { UiText, uiAttribute } from './interface-language'
 
 export type GalleryImage = {
   kind: 'runtime'
-  campId: string
+  threadId: string
   image: AgentRunImageView
 } | {
   kind: 'attachment'
-  campId: string
+  threadId: string
   locator: LocalAttachmentOwnerLocator
-  image: CampMessageAttachmentView
+  image: ThreadMessageAttachmentView
 }
 
 export type MessageAttachmentGroups = {
-  images: CampMessageAttachmentView[]
-  files: CampMessageAttachmentView[]
+  images: ThreadMessageAttachmentView[]
+  files: ThreadMessageAttachmentView[]
 }
 
 export type ImageGalleryVariant = 'agent-output' | 'user-attachment'
@@ -94,8 +94,8 @@ export class ImagePayloadCache {
 }
 
 type ClientImageState = { payloads: ImagePayloadCache; loading: Map<string, Promise<ImagePayload | null>> }
-let clientImageStates = new WeakMap<CampClient, ClientImageState>()
-function clientImages(client: CampClient): ClientImageState {
+let clientImageStates = new WeakMap<ThreadClient, ClientImageState>()
+function clientImages(client: ThreadClient): ClientImageState {
   let state = clientImageStates.get(client)
   if (!state) {
     state = { payloads: new ImagePayloadCache(MAX_IMAGE_PAYLOAD_CACHE_BYTES), loading: new Map() }
@@ -106,13 +106,13 @@ function clientImages(client: CampClient): ClientImageState {
 
 export function imageCacheKey(source: GalleryImage): string {
   return source.kind === 'runtime'
-    ? `runtime:${source.campId}:${source.image.id}`
-    : `attachment:${source.campId}:${attachmentOwnerKey(source.locator)}:${source.image.id}`
+    ? `runtime:${source.threadId}:${source.image.id}`
+    : `attachment:${source.threadId}:${attachmentOwnerKey(source.locator)}:${source.image.id}`
 }
 
 /** Preserve order within each kind while giving images and files independent layout regions. */
 export function partitionMessageAttachments(
-  attachments: CampMessageAttachmentView[]
+  attachments: ThreadMessageAttachmentView[]
 ): MessageAttachmentGroups {
   const groups: MessageAttachmentGroups = { images: [], files: [] }
   for (const attachment of attachments) {
@@ -145,8 +145,8 @@ export async function decodeImageUrl(bytes: Uint8Array, mediaType: string): Prom
 
 async function readImagePayload(
   source: GalleryImage,
-  client: CampClient,
-  onAttachmentAvailability?: (availability: CampMessageAttachmentView['availability']) => void
+  client: ThreadClient,
+  onAttachmentAvailability?: (availability: ThreadMessageAttachmentView['availability']) => void
 ): Promise<ImagePayload | null> {
   let blob: Blob
   if (source.kind === 'attachment') {
@@ -159,7 +159,7 @@ async function readImagePayload(
     )
   } else {
     const content = await client.request<AgentRunImageContent | null>('agentRunImages.read', {
-      campId: source.campId, imageId: source.image.id
+      threadId: source.threadId, imageId: source.image.id
     })
     if (!content) return null
     try {
@@ -175,8 +175,8 @@ async function readImagePayload(
 /** Always reaches the real source, while sharing an already-running read for the same image. */
 export function fetchImagePayload(
   source: GalleryImage,
-  client: CampClient,
-  onAttachmentAvailability?: (availability: CampMessageAttachmentView['availability']) => void
+  client: ThreadClient,
+  onAttachmentAvailability?: (availability: ThreadMessageAttachmentView['availability']) => void
 ): Promise<ImagePayload | null> {
   const key = imageCacheKey(source)
   const imageLoadCache = clientImages(client).loading
@@ -192,14 +192,14 @@ export function fetchImagePayload(
 /** Uses a completed payload when available; cold callers otherwise share the real source read. */
 export function getOrLoadImagePayload(
   source: GalleryImage,
-  client: CampClient,
-  onAttachmentAvailability?: (availability: CampMessageAttachmentView['availability']) => void
+  client: ThreadClient,
+  onAttachmentAvailability?: (availability: ThreadMessageAttachmentView['availability']) => void
 ): Promise<ImagePayload | null> {
   const cached = clientImages(client).payloads.get(imageCacheKey(source))
   return cached ? Promise.resolve(cached) : fetchImagePayload(source, client, onAttachmentAvailability)
 }
 
-export function cacheDecodedImagePayload(source: GalleryImage, payload: ImagePayload, client: CampClient): void {
+export function cacheDecodedImagePayload(source: GalleryImage, payload: ImagePayload, client: ThreadClient): void {
   clientImages(client).payloads.put(imageCacheKey(source), payload)
 }
 
@@ -228,15 +228,15 @@ export function ImageGallery({
 }
 
 function ImageTile({ source }: { source: GalleryImage }): JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const imagePayloadCache = clientImages(client).payloads
   const cacheKey = imageCacheKey(source)
-  const initialAvailability: CampMessageAttachmentView['availability'] = source.kind === 'attachment'
+  const initialAvailability: ThreadMessageAttachmentView['availability'] = source.kind === 'attachment'
     ? source.image.availability
     : 'available'
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
-  const [availability, setAvailability] = useState<CampMessageAttachmentView['availability']>(initialAvailability)
+  const [availability, setAvailability] = useState<ThreadMessageAttachmentView['availability']>(initialAvailability)
   const [open, setOpen] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [notice, setNotice] = useState<string | null>(null)

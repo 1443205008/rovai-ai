@@ -1,4 +1,4 @@
-import { useCampClient } from './camp-client'
+import { useThreadClient } from './camp-client'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { McpRevealResult } from '@contracts'
 import { NewConversationQuickHelp } from './NewConversationQuickHelp'
@@ -97,7 +97,7 @@ export function McpJsonEditor({
   onConcealed(concealed: boolean): void
   onError(message: string | null): void
 }): React.JSX.Element {
-  const client = useCampClient()
+  const client = useThreadClient()
   const [text, setText] = useState(() => maskMcpJson(value) ?? value)
   const latestText = useRef(text)
   latestText.current = text

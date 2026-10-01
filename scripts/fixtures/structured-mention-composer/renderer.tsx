@@ -1,4 +1,4 @@
-import { CampClientProvider, type CampClient } from '../../../apps/desktop/src/renderer/src/camp-client'
+import { ThreadClientProvider, type ThreadClient } from '../../../apps/desktop/src/renderer/src/camp-client'
 import type { ComposerDocument } from '@contracts'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -94,7 +94,7 @@ function normalizeInput(value: string | ComposerDocument): ComposerDocument {
 
 function Harness() {
   const composerRef = useRef<StructuredMentionComposerHandle>(null)
-  const [draftIdentity, setDraftIdentity] = useState('fixture-camp:draft-0')
+  const [draftIdentity, setDraftIdentity] = useState('fixture-thread:draft-0')
   const [initialDocument, setInitialDocument] = useState<ComposerDocument>(
     composerDocumentFromText('')
   )
@@ -278,5 +278,5 @@ function Harness() {
 }
 
 // The fixture has no Core or managed avatars; formal shared components still receive an explicit client.
-const fixtureClient = new Proxy({} as CampClient, { get: (_target, key) => { if (key === 'editingRecovery') return undefined; throw new Error(`Unexpected fixture capability: ${String(key)}`) } })
-createRoot(document.getElementById('root')!).render(<CampClientProvider client={fixtureClient}><Harness /></CampClientProvider>)
+const fixtureClient = new Proxy({} as ThreadClient, { get: (_target, key) => { if (key === 'editingRecovery') return undefined; throw new Error(`Unexpected fixture capability: ${String(key)}`) } })
+createRoot(document.getElementById('root')!).render(<ThreadClientProvider client={fixtureClient}><Harness /></ThreadClientProvider>)

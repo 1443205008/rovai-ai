@@ -2411,7 +2411,7 @@ describe('channel settings service', () => {
               chatId: 'oc_group',
               topicKey: '',
               conversationKind: 'group',
-              campId: null
+              threadId: null
             }]
           })
         }
@@ -2866,7 +2866,7 @@ describe('channel settings service', () => {
           }], transportConversations: [{
             channelConversationId: 'rvcc_topic', bindingId: null, provider: 'feishu',
             tenantKey: 'tenant-1', chatId: 'oc_topic_group', topicKey: 'om_topic_root',
-            conversationKind: 'topic', campId: null
+            conversationKind: 'topic', threadId: null
           }] })
         }
         if (method === 'channels.feishu.owner.verify') {
@@ -3909,8 +3909,8 @@ describe('channel settings service', () => {
           return {
             sequence: 1,
             agentRunId: 'run-1',
-            campId: 'camp-1',
-            campTurnId: 'turn-1',
+            threadId: 'camp-1',
+            threadTurnId: 'turn-1',
             channelConversationId: 'channel-1',
             agentId: 'agent-a',
             runCreatedAt: '2026-08-28T00:00:00Z',
@@ -4024,8 +4024,8 @@ describe('channel settings service', () => {
           return {
             sequence: 1,
             agentRunId: 'run-1',
-            campId: 'camp-1',
-            campTurnId: 'turn-1',
+            threadId: 'camp-1',
+            threadTurnId: 'turn-1',
             channelConversationId: 'channel-1',
             agentId: 'agent-a',
             runCreatedAt: '2026-08-28T00:00:00Z',
@@ -4047,9 +4047,9 @@ describe('channel settings service', () => {
             code: 'agent_run.cancelled',
             payload: {
               agentRunId: 'run-1',
-              campId: 'camp-1',
-              campTurnId: 'turn-1',
-              campTurnStatus: 'cancelled',
+              threadId: 'camp-1',
+              threadTurnId: 'turn-1',
+              threadTurnStatus: 'cancelled',
               status: 'cancelled'
             }
           }
@@ -4210,16 +4210,16 @@ describe('channel settings service', () => {
             topicKey: '', conversationKind: 'group', attemptCount: 1, updateMessageId: null,
             recipientOpenId: null,
             payload: {
-              kind: 'agent_attachment', campId: 'camp-1', attachmentId: 'attachment-1',
+              kind: 'agent_attachment', threadId: 'camp-1', attachmentId: 'attachment-1',
               attachmentKind: 'image', fileName: 'result.png',
               ...(storage === 'source_ref'
-                ? { storage, sourceCampMessageId: 'message-1' }
+                ? { storage, sourceThreadMessageId: 'message-1' }
                 : { size: bytes.byteLength, contentDigest }),
               requiresBodyDelivery: true, ordinal: 0
             }
           }] }
         }
-        if (method === 'camp.attachments.desktopOpenTarget') {
+        if (method === 'thread.attachments.desktopOpenTarget') {
           targets.push(rawParams)
           return {
             attachmentId: 'attachment-1', displayName: 'result.png', kind: 'file',
@@ -4244,8 +4244,8 @@ describe('channel settings service', () => {
       const imageCall = harness.send.mock.calls.find(([, input]) => 'image' in input)
       expect(imageCall?.[1]).toEqual({ image: { source: currentBytes } })
       expect(targets).toEqual([storage === 'source_ref'
-        ? { owner: 'message', campId: 'camp-1', attachmentRefId: 'attachment-1', messageId: 'message-1' }
-        : { campId: 'camp-1', attachmentId: 'attachment-1' }])
+        ? { owner: 'message', threadId: 'camp-1', attachmentRefId: 'attachment-1', messageId: 'message-1' }
+        : { threadId: 'camp-1', attachmentId: 'attachment-1' }])
       expect(settlements).toEqual(expect.arrayContaining([
         expect.objectContaining({ deliveryId: 'delivery-body', outcome: 'sent' }),
         expect.objectContaining({
