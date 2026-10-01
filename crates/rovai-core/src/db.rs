@@ -1,5 +1,7 @@
 #[path = "db_attachment_paths.rs"]
 mod attachment_paths;
+#[path = "db_member_creation.rs"]
+mod member_creation;
 #[path = "db_mission_context.rs"]
 mod mission_context;
 #[path = "db_mission_details.rs"]
@@ -295,7 +297,7 @@ impl MainThreadMigrationSource {
 }
 
 pub(crate) const CURRENT_DATA_CONTRACT_VERSION: &str = "v1.72";
-pub(crate) const CURRENT_PROJECTION_SCHEMA_VERSION: i64 = 128;
+pub(crate) const CURRENT_PROJECTION_SCHEMA_VERSION: i64 = 129;
 const V147_MIGRATION_SOURCE_DATA_CONTRACT_VERSION: &str = "v1.54";
 const V147_MIGRATION_SOURCE_PROJECTION_SCHEMA_VERSION: i64 = 96;
 const V145_MIGRATION_SOURCE_DATA_CONTRACT_VERSION: &str = "v1.53";
@@ -748,6 +750,7 @@ struct CurrentMigrationState {
     v176: bool,
     v177: bool,
     v178: bool,
+    v179: bool,
 }
 
 impl CurrentMigrationState {
@@ -769,11 +772,19 @@ impl CurrentMigrationState {
     }
 
     fn admits(&self, contract: &str, schema: i64, classifier: &str) -> bool {
+        if self.v179 {
+            let mut previous = *self;
+            previous.v179 = false;
+            return contract == CURRENT_DATA_CONTRACT_VERSION
+                && schema == CURRENT_PROJECTION_SCHEMA_VERSION
+                && self.v178
+                && previous.admits("v1.72", 128, classifier);
+        }
         if self.v178 {
             let mut previous = *self;
             previous.v178 = false;
-            return contract == CURRENT_DATA_CONTRACT_VERSION
-                && schema == CURRENT_PROJECTION_SCHEMA_VERSION
+            return contract == "v1.72"
+                && schema == 128
                 && self.v177
                 && previous.admits("v1.72", 127, classifier);
         }
@@ -3236,6 +3247,7 @@ pub(crate) fn classify_database_contract(
         || (migrations.v175 && !notification_model::schema_matches(connection)?)
         || (migrations.v176 && !lark_channel_v176_schema_matches(connection)?)
         || (migrations.v177 && !navigation_summary_schema_matches(connection)?)
+        || (migrations.v179 && !member_creation::schema_matches(connection)?)
         || (migrations.v156
             && !migrations.v157
             && !attachment_paths::schema_matches(connection)?
@@ -5022,7 +5034,8 @@ fn load_current_migration_state(
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 175),
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 176),
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 177),
-               EXISTS(SELECT 1 FROM schema_migration WHERE version = 178)
+               EXISTS(SELECT 1 FROM schema_migration WHERE version = 178),
+               EXISTS(SELECT 1 FROM schema_migration WHERE version = 179)
         "#,
         [],
         |row| {
@@ -5136,6 +5149,7 @@ fn load_current_migration_state(
                 v176: row.get(106)?,
                 v177: row.get(107)?,
                 v178: row.get(108)?,
+                v179: row.get(109)?,
             })
         },
     )
@@ -8223,6 +8237,9 @@ impl Database {
             if !self.schema_migration_applied(178)? {
                 migration_step!("migration_178", thread_names::migrate(self));
             }
+            if !self.schema_migration_applied(179)? {
+                migration_step!("migration_179", member_creation::migrate(self));
+            }
             if let Err(error) =
                 crate::notification::maintain_notification_episode_retention(self.connection())
             {
@@ -8972,6 +8989,9 @@ impl Database {
         }
         if !self.schema_migration_applied(178)? {
             migration_step!("migration_178", thread_names::migrate(self));
+        }
+        if !self.schema_migration_applied(179)? {
+            migration_step!("migration_179", member_creation::migrate(self));
         }
         if let Err(error) =
             crate::notification::maintain_notification_episode_retention(self.connection())
@@ -40008,6 +40028,7 @@ mod tests {
             v176: version >= 176,
             v177: version >= 177,
             v178: version >= 178,
+            v179: version >= 179,
         }
     }
 
@@ -40202,8 +40223,9 @@ mod tests {
                 "current",
                 CURRENT_DATA_CONTRACT_VERSION,
                 CURRENT_PROJECTION_SCHEMA_VERSION,
-                178,
+                179,
             ),
+            ("v1.72/schema 128 before member receipts", "v1.72", 128, 178),
             ("v1.72/schema 127 before Thread naming", "v1.72", 127, 177),
             (
                 "v1.72/schema 126 before navigation summaries",

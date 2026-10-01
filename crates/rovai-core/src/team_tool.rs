@@ -2445,6 +2445,48 @@ mod tests {
             growth_topic: "Shorten feedback loops.".to_string(),
             avatar_file: None,
         };
+        let original_messages: i64 = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM camp_message WHERE camp_id=?1",
+                [&fixture.camp_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        // A receipt failure must roll back the member and helper preference as one command.
+        fixture.database.connection().execute_batch("CREATE TEMP TRIGGER reject_member_receipt BEFORE INSERT ON member_creation BEGIN SELECT RAISE(ABORT,'receipt failure'); END").unwrap();
+        assert!(
+            crate::member_studio::create_member(
+                &mut fixture.database,
+                &fixture.directory,
+                &authenticated_run,
+                input.clone()
+            )
+            .is_err()
+        );
+        assert!(
+            crate::member_studio::last_creation_helper(fixture.database.connection())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            fixture
+                .database
+                .connection()
+                .query_row(
+                    "SELECT COUNT(*) FROM agent_profile WHERE display_name='Nova Test Member'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        fixture
+            .database
+            .connection()
+            .execute_batch("DROP TRIGGER reject_member_receipt")
+            .unwrap();
         let first = crate::member_studio::create_member(
             &mut fixture.database,
             &fixture.directory,
@@ -2466,6 +2508,63 @@ mod tests {
         assert_eq!(
             replay.execution.result.payload["agentId"],
             first.execution.result.payload["agentId"]
+        );
+        let receipts = crate::member_studio::list_member_creations(
+            fixture.database.connection(),
+            &fixture.camp_id,
+        )
+        .unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].display_name, "Nova Test Member");
+        assert_eq!(receipts[0].creator_agent_id, "agent_1");
+        assert_eq!(
+            crate::member_studio::last_creation_helper(fixture.database.connection())
+                .unwrap()
+                .as_deref(),
+            Some("agent_1")
+        );
+        assert_eq!(
+            fixture
+                .database
+                .connection()
+                .query_row(
+                    "SELECT COUNT(*) FROM camp_message WHERE camp_id=?1",
+                    [&fixture.camp_id],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            original_messages
+        );
+        let created_id = first.execution.result.payload["agentId"].as_str().unwrap();
+        assert_eq!(
+            fixture
+                .database
+                .connection()
+                .query_row(
+                    "SELECT COUNT(*) FROM camp_member WHERE agent_id=?1",
+                    [created_id],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        fixture.database.connection().execute("UPDATE agent_profile SET display_name='Changed later', profile_status='away' WHERE id=?1", [created_id]).unwrap();
+        assert_eq!(
+            crate::member_studio::list_member_creations(
+                fixture.database.connection(),
+                &fixture.camp_id
+            )
+            .unwrap()[0]
+                .display_name,
+            "Nova Test Member"
+        );
+        assert_eq!(
+            crate::read_model::ReadModelService
+                .camp_open_projection(&mut fixture.database, &fixture.camp_id)
+                .unwrap()
+                .member_creations
+                .len(),
+            1
         );
         let changed = crate::member_studio::create_member(
             &mut fixture.database,

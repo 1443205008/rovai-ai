@@ -487,3 +487,30 @@ Principal 确认 v3 HTML 后授权实施、创建 PR 并合入 main。本次范�
 
 本次可逆行操作沿用既有导航权威，无新增 Version Decision 准入事项。当前 Contract、Architecture 与 UI 同步更新，
 版本指针与 Runtime/Context 合同确认无需变化。
+
+## 2026-10-02 AI 优先添加队员
+
+Principal 确认实现并要求独立 worktree、PR 到 main 后合入。工作基线 `9028e5fb`，分支
+`rovai/ai-first-member-creation`。本切片保留队员页右侧信息/Runtime 表单与离队资料；只调整名册入口、
+直接排序、普通草稿会话的起步操作与静态成功卡片。合同与理由见
+[Member Creation Flow v1](../../contracts/member-creation-flow-v1.md)和[V1.72-D08](decisions.md#v1-72-d08)。
+
+实现采用单个可用协助者、窗口内草稿 overlay 和现有发送激活事务。Profile、静态回执及最近成功协助者在同一
+Gateway 事务中提交；Migration 179/schema 129 增加两张业务表，不改模型上下文或 Skill。
+
+测试准入：扩展现有 `team_tool` 的幂等创建 owner，覆盖回执失败导致 Profile 回滚、重试只出一张卡、改名/离队后快照
+不变、Open 可读且不增加消息/会话成员。新增迁移测试独立拥有 schema 128→129 原子边界；不复制旧 migration owner。
+Renderer 的纯函数覆盖可用性优先、回退和过滤后排序；Electron 使用 production BusinessApp 与隔离内存 transport，
+不启动真实 Core/Runtime，不读取日用 userData/Skill Library。
+
+已验证：
+
+- `pnpm typecheck`、`cargo test --workspace`。
+- 现有 member-create 扩展 owner 与新 Migration 179 owner。
+- `node --test scripts/lib/member-editor.test.mjs`：19 项，含排序保存失败回退、键盘操作、分隔线、设置表单及桌面双主题。
+- `pnpm test:member-creation`：14 项，含新空草稿、输入后侧栏、同窗口恢复、发送拒绝、普通激活、静态卡、离队配置跳转、
+  无可用协助者手动降级、手机原生触摸拖拽、英文 starter/Return 换行与明暗卡片。
+- 人工检查生产 fixture 的桌面入队卡、390px 英文名册及手机夜间入队卡，未见水平溢出或头像遮挡。
+
+完整 Node 回归、DB 扩展组、构建与文档门禁在收口时更新结果。真实模型执行及实体手机软键盘尚未在本切片验收；
+隔离 fixture 只证明交互和投影，不宣称模型端到端或发布安装完成。

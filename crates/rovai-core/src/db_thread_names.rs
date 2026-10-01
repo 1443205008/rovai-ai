@@ -123,7 +123,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
         anyhow::ensure!(
             matches!(
                 classify_database_contract(&tx)?,
-                DatabaseContractClassification::Current(_)
+                DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 128
             ),
             "Thread migration failed current schema admission"
         );
@@ -139,6 +139,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 // Reverse only synthetic test fixtures; no product path downgrades stored evidence.
 #[cfg(test)]
 pub(super) fn downgrade_for_test(connection: &Connection) {
+    super::member_creation::downgrade_for_test(connection);
     if !connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=178)",
@@ -235,7 +236,9 @@ mod tests {
     use super::*;
     #[test]
     fn thread_upgrade_preserves_existing_tables_and_rolls_back_on_receipt_failure() {
-        let (mut database, directory) = crate::test_support::fresh_schema_database();
+        let directory =
+            std::env::temp_dir().join(format!("rovai-thread-upgrade-{}", Uuid::new_v4()));
+        let mut database = crate::test_support::fresh_schema_database_at(&directory);
         downgrade_for_test(database.connection());
         let before = public_history_claim_preserved_evidence_digest(database.connection()).unwrap();
         database.connection().execute_batch("CREATE TEMP TRIGGER reject_thread_receipt BEFORE INSERT ON schema_migration WHEN NEW.version=178 BEGIN SELECT RAISE(ABORT,'thread receipt failure'); END;").unwrap();
@@ -263,7 +266,7 @@ mod tests {
         );
         assert!(matches!(
             classify_database_contract(database.connection()).unwrap(),
-            DatabaseContractClassification::Current(_)
+            DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 128
         ));
         drop(database);
         std::fs::remove_dir_all(directory).unwrap();

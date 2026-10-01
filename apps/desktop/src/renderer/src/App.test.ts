@@ -416,6 +416,10 @@ describe('active Thread event invalidation', () => {
     expect(shouldRefreshActiveThreadForCoreEvent(images, 'camp-1')).toBe(true)
     expect(shouldRefreshActiveThreadForCoreEvent(images, 'camp-2')).toBe(false)
     expect(shouldRefreshActiveThreadForCoreEvent(images, 'camp-1', true)).toBe(false)
+    const created = { method: 'thread.memberCreated', params: { threadId: 'camp-1' } }
+    expect(shouldRefreshActiveThreadForCoreEvent(created, 'camp-1')).toBe(true)
+    expect(shouldRefreshActiveThreadForCoreEvent(created, 'camp-2')).toBe(false)
+    expect(shouldRefreshActiveThreadForCoreEvent(created, 'camp-1', true)).toBe(false)
   })
 
   it('refreshes membership cutover and reconciliation projections', () => {

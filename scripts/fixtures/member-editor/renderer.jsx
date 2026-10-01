@@ -4,7 +4,7 @@ import '../../../apps/desktop/src/renderer/src/member-editor.css'
 import React, { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MembersView } from '../../../apps/desktop/src/renderer/src/MemberManagement'
-import { CampNavigation } from '../../../apps/desktop/src/renderer/src/CampNavigation'
+import { ThreadNavigation } from '../../../apps/desktop/src/renderer/src/ThreadNavigation'
 import { changeInterfaceLanguage, useInterfaceLanguage } from '../../../apps/desktop/src/renderer/src/interface-language'
 import {
   availability,
@@ -249,11 +249,11 @@ function Fixture() {
   }
   return (
     <div className="app-shell">
-      <CampNavigation
+      <ThreadNavigation
         view="members"
         state="ready"
         navigation={navigation}
-        activeCampId={null}
+        activeThreadId={null}
         currentProjectKey="prototype-project"
         pendingMemoryCount={0}
         onNewConversation={noop}
@@ -262,7 +262,7 @@ function Fixture() {
         onMemory={noop}
         onSettings={openSettings}
         onOpenProject={noop}
-        onCamp={noop}
+        onThread={noop}
         onCreateInProject={noop}
         onRemoveProject={async () => {}}
         onRename={() => navigationAction('navigation.rename')}

@@ -8,7 +8,7 @@ last_updated: 2026-09-28
 
 # Camp Open Read Path 架构
 
-字段与窗口见 [Camp Open Projection v24](../contracts/camp-open-projection-v24.md)与
+字段与窗口见 [Camp Open Projection v25](../contracts/camp-open-projection-v25.md)与
 [Camp Conversation Find v1](../contracts/camp-conversation-find-v1.md)。本架构把“进入会话”、
 “继续阅读”、“查找完整当前会话”和“检查运行详情”分成用途明确的接口，同时保持 SQLite Read Side
 为唯一权威。
@@ -190,6 +190,13 @@ Memory 仍分别拥有读取与错误状态，但冷启动可见反馈共用不�
 
 - [Core 受管内容不变量](foundational-invariants.md#core-managed-content)
 - [协作与执行准入不变量](foundational-invariants.md#collaboration-admission)
-- [Camp Open Projection v24](../contracts/camp-open-projection-v24.md)
+- [Camp Open Projection v25](../contracts/camp-open-projection-v25.md)
 - [Camp Conversation Find v1](../contracts/camp-conversation-find-v1.md)
 - [Desktop Navigation Refresh](desktop-navigation-refresh.md)
+
+## 队员创建回执
+
+Snapshot/Open 在同一读事务内按当前 Thread 索引读取 `member_creation` 的静态身份快照。它不读取当前队员状态、
+不回放工具 Evidence 或 `event_log`，不扩大消息/Run 窗口。`thread.memberCreated` 只提示重读当前会话；
+重开以表为准。卡片链接交给现有队员页处理实时状态。字段与原子边界见
+[Member Creation Flow v1](../contracts/member-creation-flow-v1.md)。

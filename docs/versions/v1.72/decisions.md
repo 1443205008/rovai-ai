@@ -189,3 +189,22 @@ Principal 希望在公开 Camp 正文中直接 `@` 队外成员，同时保留�
 ### 后果与替代方案
 
 不采用 Conversation 作为公开名称，不重命名 SQL 或路径、不重写旧上下文，不以换 Session 规避兼容。上下文与工具新版本单独留证，旧版严格恢复。Migration 178 仅扩展新格式准入，保留失败回滚。完整前后对照及升级矩阵见[确认稿 r2](model-context-change-thread-rename.md)。
+
+<a id="v1-72-d08"></a>
+## V1.72-D08：AI 创建队员使用普通草稿会话与独立静态入队回执
+
+- 状态：accepted
+- 日期：2026-10-02
+- 当前权威：[Member Creation Flow v1](../../contracts/member-creation-flow-v1.md)、[Pending Camp Activation v3](../../contracts/pending-camp-activation-v3.md)、[Camp Open Projection v25](../../contracts/camp-open-projection-v25.md)、[Camp Activation](../../architecture/camp-activation-lifecycle.md#ai-队员创建)
+
+### 背景与选择
+
+Principal 要求 AI 成为默认入口，同时保持标准会话和已有队员设置。成功卡片只确认曾经创建，不承担当前配置状态。
+创建回执与 Profile 使用同一事务、独立业务表和创建时快照；最近协助者偏好只在首次成功时更新。输入前不显示侧栏，
+输入后由窗口内 map 保存草稿，首条发送仍走普通激活事务。
+
+### 后果与替代方案
+
+不采用工具日志重放生成卡片，避免普通 Open 扫描 Evidence；不另发系统消息，避免改变公屏和模型输入。
+不持久化新草稿或在卡片订阅 Profile，接受刷新丢失草稿、历史卡片不反映当前状态的边界。资料删除与离队交给目标页。
+新增 Migration 179 与 schema 129；历史创建不补卡。

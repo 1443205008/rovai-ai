@@ -767,6 +767,7 @@ pub struct ThreadSnapshot {
     pub members: Vec<ThreadMemberView>,
     pub membership_reconciliations: Vec<ThreadMembershipReconciliationView>,
     pub tasks: Vec<TaskView>,
+    pub member_creations: Vec<crate::member_studio::MemberCreationView>,
     pub messages: Vec<ThreadMessageView>,
     pub message_deliveries: Vec<MessageDeliveryView>,
     pub turns: Vec<ThreadTurnView>,
@@ -822,6 +823,7 @@ pub struct ThreadOpenProjection {
     pub members: Vec<ThreadMemberView>,
     pub membership_reconciliations: Vec<ThreadMembershipReconciliationView>,
     pub tasks: Vec<TaskView>,
+    pub member_creations: Vec<crate::member_studio::MemberCreationView>,
     pub messages: Vec<ThreadMessageView>,
     pub message_deliveries: Vec<MessageDeliveryView>,
     pub turns: Vec<ThreadTurnView>,
@@ -1216,6 +1218,7 @@ impl ReadModelService {
         let members = load_members(&transaction, camp_id, camp.default_lead_agent_id.as_deref())?;
         let membership_reconciliations = load_membership_reconciliations(&transaction, camp_id)?;
         let tasks = load_tasks(&transaction, camp_id, None)?;
+        let member_creations = crate::member_studio::list_member_creations(&transaction, camp_id)?;
         let messages = load_messages(&transaction, camp_id, 1_000)?;
         let message_deliveries = load_message_deliveries(&transaction, camp_id, None)?;
         let turns = load_turns(&transaction, camp_id, None)?;
@@ -1249,6 +1252,7 @@ impl ReadModelService {
             members,
             membership_reconciliations,
             tasks,
+            member_creations,
             messages,
             message_deliveries,
             turns,
@@ -1275,6 +1279,7 @@ impl ReadModelService {
         let membership_reconciliations = load_membership_reconciliations(&transaction, camp_id)?;
         let counts = load_camp_open_counts(&transaction, camp_id)?;
         let tasks = load_tasks(&transaction, camp_id, Some(CAMP_OPEN_TASK_LIMIT))?;
+        let member_creations = crate::member_studio::list_member_creations(&transaction, camp_id)?;
         let messages = load_open_messages(&transaction, camp_id, CAMP_OPEN_MESSAGE_LIMIT)?;
         let message_deliveries =
             load_message_deliveries(&transaction, camp_id, Some(CAMP_OPEN_DELIVERY_LIMIT))?;
@@ -1305,6 +1310,7 @@ impl ReadModelService {
             members,
             membership_reconciliations,
             tasks,
+            member_creations,
             messages,
             message_deliveries,
             turns,

@@ -792,6 +792,7 @@ export interface ThreadCreationPreflight {
     runtimeReadiness: RuntimeReadinessStatus
   }>
   initialLeadAgentId: string | null
+  lastMemberCreationHelperAgentId?: string | null
   blockers: Array<{
     code: 'no_present_members'
     detail: string
@@ -1741,6 +1742,20 @@ export interface FilePreviewApi {
   onExternalUpdate(listener: (event: FilePreviewExternalUpdateEvent) => void): () => void
 }
 
+/** Creation-time snapshot, independent of the current member's configuration and presence. */
+export interface MemberCreationView {
+  creationId: string
+  agentId: string
+  displayName: string
+  avatarRef: string | null
+  teamRole: string
+  professionalResponsibilities: string
+  personalityTraits: string[]
+  creatorAgentId: string
+  creatorDisplayName: string
+  createdAt: string
+}
+
 export type ThreadTimelinePresentation =
   | {
       kind: 'task_event'
@@ -2320,6 +2335,7 @@ export interface ThreadSnapshot {
   members: ThreadMemberView[]
   membershipReconciliations: ThreadMembershipReconciliationView[]
   tasks: TaskView[]
+  memberCreations?: MemberCreationView[]
   messages: ThreadMessageView[]
   messageDeliveries: MessageDeliveryView[]
   turns: ThreadTurnView[]
@@ -2353,6 +2369,7 @@ export interface ThreadOpenProjection {
   members: ThreadMemberView[]
   membershipReconciliations: ThreadMembershipReconciliationView[]
   tasks: TaskView[]
+  memberCreations?: MemberCreationView[]
   messages: ThreadMessageView[]
   messageDeliveries: MessageDeliveryView[]
   turns: ThreadTurnView[]

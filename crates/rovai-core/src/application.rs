@@ -6766,6 +6766,13 @@ impl Core {
         .await;
         if result.is_ok() && member_roster_changed {
             emit_member_roster_invalidated(&self.output, MEMBER_CREATE_TOOL_NAME);
+            if let Some(authenticated_run) = evidence_run.as_ref() {
+                emit(
+                    &self.output,
+                    "camp.memberCreated",
+                    json!({ "threadId": authenticated_run.camp_id }),
+                );
+            }
         }
         if delivery_batch_state_changed {
             self.delivery_batch_scheduler_notify.notify_one();
@@ -9285,6 +9292,7 @@ impl Core {
                     "admissible": blockers.is_empty(),
                     "presentMembers": present_members,
                     "initialLeadAgentId": initial_lead_agent_id,
+                    "lastMemberCreationHelperAgentId": crate::member_studio::last_creation_helper(database.connection())?,
                     "blockers": blockers,
                 }))
             }

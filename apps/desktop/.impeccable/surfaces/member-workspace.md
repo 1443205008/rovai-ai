@@ -1,5 +1,5 @@
 ---
-version: 15
+version: 16
 slug: "member-workspace"
 primary_target: "apps/desktop/src/renderer/src/MemberManagement.tsx"
 related_targets:
@@ -33,14 +33,14 @@ All split boundaries, including the roster, highlight their full 1px line with `
 The roster shares the detail's workspace
 surface (white in Day), with a 1px divider separating the two reading planes. Its default width is 256px;
 expanded widths range from 192px to 360px and protect 400px for the detail when space permits.
-Dragging below 176px snaps to the same 76px avatar rail as the explicit collapse button; dragging a
+Dragging below 176px snaps to the 76px avatar rail; dragging a
 collapsed rail past 208px expands it. The different thresholds prevent jitter around the boundary.
 The 9px pointer target stays mounted through collapse so the gesture can reverse without losing capture.
-Expanding with the button restores the useful width before the collapse gesture. Remember width and
+Expanding restores the useful width before the collapse gesture. Remember width and
 collapse locally, accepting the previous collapse-only preference; viewport clamping does not overwrite
 the chosen width. Double-click or Home restores 256px, arrows resize and collapse/expand at the boundary,
-and Enter toggles collapse. The options menu provides click-based width presets. Reordering disables
-the splitter and collapse button. The detail scrolls internally instead of shrinking identity or actions below usability.
+and Enter toggles collapse. The separate collapse button and roster options menu are absent. A reorder gesture temporarily disables
+the splitter. The detail scrolls internally instead of shrinking identity or actions below usability.
 
 The header uses the controlled portrait plus a separate circular icon. Presence and Runtime are two
 distinct inline facts: “在队” is static; “{Runtime} →” uses arrow, hover, focus and an accessible name
@@ -58,8 +58,9 @@ Roster rows keep a 40px circular image, 13px name and 11px role in a 60px row wi
 Use a subtle selected surface, 2px selection rail and aligned Runtime column. The header shows the total
 once; omit the redundant “在队” group when every teammate is present. If any teammate is away, show
 the meaningful presence groups and their counts. Above eight members, offer compact name/role search;
-the title reports matching / total counts while filtering. Keep creation and collapse immediately available,
-with ordering and width presets in the restrained “名册选项” menu.
+the title reports matching / total counts while filtering. Keep one split Add action: AI conversation by default, manual creation in its dropdown. Reorder rows directly
+(on mobile, drag the avatar); preserve the portrait without an overlay handle. Alt+Up/Down and row context-menu
+actions provide keyboard movement within the same presence group. The resize divider remains available.
 Runtime shortcuts show the existing product logo in a 22px carrier; an unconfigured teammate uses a neutral
 minus glyph. Attention, unsupported and unqualified states add a small `!` marker. Loading retains the
 product identity with a checking label. Each shortcut has a full accessible label/status tooltip and scrolls

@@ -1,3 +1,4 @@
+import { memberCreationHelper, navigationWithMemberCreationDrafts, type MemberCreationDraft } from './member-creation-flow'
 import { navigationThreadReadState } from './navigation-unread'
 import { newCommandId } from '../../shared/command-id'
 import type { BusinessEnvironment } from './business-environment'
@@ -169,6 +170,7 @@ import { appendLiveRuntimeEventBatch, createLiveRuntimeEventBuffer } from './liv
 export { allNavigationThreads }
 
 const ACTIVE_CAMP_INVALIDATION_EVENTS = new Set([
+  'thread.memberCreated',
   'thread.member.fast.updated',
   'camp.member_added',
   'camp.member_removed',
@@ -462,6 +464,7 @@ export function campOpenProjectionAsSnapshot(
     members: projection.members,
     membershipReconciliations: projection.membershipReconciliations,
     tasks: projection.tasks,
+    memberCreations: projection.memberCreations ?? [],
     messages,
     messageDeliveries: projection.messageDeliveries,
     turns: projection.turns,
@@ -1114,6 +1117,7 @@ export function BusinessApp({
     initialTarget.kind === 'members' ? initialTarget.tab : 'identity'
   )
   const [memberRuntimeFocusRequest, setMemberRuntimeFocusRequest] = useState(0)
+  const [memberCreationDrafts, setMemberCreationDrafts] = useState(() => new Map<string, MemberCreationDraft>())
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general')
   const [remotePort, setRemotePort] = useState<string | null>(null)
   const newConversationRequestBusy = useRef(false)
@@ -1409,8 +1413,12 @@ export function BusinessApp({
     }
   }, [])
 
+  const [memberRosterEntryReady, setMemberRosterEntryReady] = useState(false)
+
   useEffect(() => {
     if (view !== 'members') return
+    // A newly created member may not be in the cached roster yet.
+    if (!memberRosterEntryReady) return
     const manageable = agents.filter((agent) => agent.presence !== 'removed' && agent.removedAt === null)
     if (selectedMemberId && manageable.some((agent) => agent.agentId === selectedMemberId)) return
     const next = manageable.find((agent) => agent.presence === 'present')
@@ -1421,7 +1429,7 @@ export function BusinessApp({
     if (desktopNavigation.getSnapshot().entries.length) {
       if (displayedEntry.update({ kind: 'members', agentId, tab: memberTab })) setSelectedMemberId(agentId)
     } else setSelectedMemberId(agentId)
-  }, [agents, selectedMemberId, view, memberTab, desktopNavigation, displayedEntry])
+  }, [agents, selectedMemberId, view, memberTab, desktopNavigation, displayedEntry, memberRosterEntryReady])
 
   useEffect(() => {
     setThreadInspectorThreadId((current) => view === 'camp' && current === activeThreadId ? current : null)
@@ -1436,8 +1444,14 @@ export function BusinessApp({
 
   useEffect(() => {
     if (startupStatus !== 'resolved' || view !== 'members') return
+    let cancelled = false
     // Enter the page with its current roster; the read must not block navigation.
-    void loadAgents().catch((nextError) => setError(errorMessage(nextError)))
+    void loadAgents().then(() => {
+      if (!cancelled) setMemberRosterEntryReady(true)
+    }).catch((nextError) => {
+      if (!cancelled) setError(errorMessage(nextError))
+    })
+    return () => { cancelled = true }
   }, [loadAgents, startupStatus, view])
 
   const commitNavigation = useCallback((
@@ -2640,7 +2654,7 @@ export function BusinessApp({
   }, [campSnapshot])
 
   const displayNavigation = navigationWithProjectNames(navigationIncludingCurrentWorkspace(
-    visibleNavigation,
+    navigationWithMemberCreationDrafts(visibleNavigation, memberCreationDrafts),
     currentProject,
     currentWorkspaceHint
   ), projectNames)
@@ -2955,6 +2969,7 @@ export function BusinessApp({
       switch (target.kind) {
         case 'settings': setSettingsSection(target.section); setMobileSettingsList(target.overview === true); setView('settings'); break
         case 'members':
+          if (viewRef.current !== 'members') setMemberRosterEntryReady(false)
           membersViewRef.current?.showSelectedMember()
           setSelectedMemberId(target.agentId); setMemberTab(target.tab); setView('members'); break
         case 'memory': setMemoryTarget(target); setView('memory'); break
@@ -3664,7 +3679,8 @@ export function BusinessApp({
   async function createThread(
     draft: Omit<CreateThreadRequest, 'commandId'>,
     enableOneClick = false,
-    intent: NavigationIntent = desktopNavigation.beginIntent()
+    intent: NavigationIntent = desktopNavigation.beginIntent(),
+    memberCreation = false
   ): Promise<void> {
     cancelPendingThreadActivation()
     setBusy('create-camp')
@@ -3679,6 +3695,13 @@ export function BusinessApp({
       if (result.status === 'rejected') throw new Error(commandFailureMessage(result))
       const threadId = stringField(result.payload, 'threadId')
       if (!threadId) throw new Error(uiAttribute('会话已创建，但暂时无法打开。请刷新会话列表后重试。'))
+      if (memberCreation) setMemberCreationDrafts((current) => new Map(current).set(threadId, {
+        draft: null,
+        navigation: { id: threadId, title: uiAttribute('新建队员'), activationState: 'pending',
+          projectBindingKind: 'quick_chat', projectPath: '', defaultLead: null, marker: 'none',
+          lastActivityAt: new Date().toISOString(), lastActivityGlobalSequence: 0,
+          latestCompletionGlobalSequence: 0, version: 1 }
+      }))
       setNewConversationOpen(false)
       let preferencesSaveFailed = false
       if (enableOneClick) {
@@ -3710,6 +3733,40 @@ export function BusinessApp({
     }
   }
 
+  const beginMemberCreation = async (): Promise<boolean> => {
+    if (newConversationRequestBusy.current) return true
+    newConversationRequestBusy.current = true
+    const intent = desktopNavigation.beginIntent()
+    try {
+      const [preflight, preferences] = await Promise.all([
+        client.request<ThreadCreationPreflight>('threads.creationPreflight'),
+        uiPreferences.generalPreferences.get()
+      ])
+      if (!intent.isCurrent()) return true
+      const helper = memberCreationHelper(preflight, preferences.newConversationDefaults?.defaultLeadAgentId ?? null)
+      if (!helper) return false
+      await createThread({ name: null, workspace: null, memberAgentIds: [helper],
+        defaultLeadAgentId: helper, collaborationMode: 'peer', activationState: 'pending' }, false, intent, true)
+    } catch (error) { notifyError(errorMessage(error)) }
+    finally { newConversationRequestBusy.current = false }
+    return true
+  }
+
+  const updateMemberCreationDraft = useCallback((draft: ThreadComposerDraftView): void => {
+    setMemberCreationDrafts((current) => {
+      const previous = current.get(draft.threadId)
+      if (!previous || previous.draft === draft) return current
+      return new Map(current).set(draft.threadId, { ...previous, draft })
+    })
+  }, [])
+
+  const forgetMemberCreationDraft = (threadId: string): void => {
+    setMemberCreationDrafts((current) => {
+      if (!current.has(threadId)) return current
+      const next = new Map(current); next.delete(threadId); return next
+    })
+  }
+
   function forgetRemovedThreadSurface(threadId: string): void {
     if (activeThreadIdRef.current !== threadId) return
     setActiveThreadId(null)
@@ -3735,6 +3792,7 @@ export function BusinessApp({
     }
     setPinnedThreadItems((current) => current.filter((thread) => thread.id !== threadId))
     clearLocalThreadComposerDraft(threadId)
+    forgetMemberCreationDraft(threadId)
     const discardComposerAttachments = client.composerAttachments.discard?.(threadId)
     if (discardComposerAttachments) void discardComposerAttachments.catch(() => undefined)
     forgetFilePreviewSession(threadId, activeThreadIdRef.current === threadId)
@@ -3759,7 +3817,7 @@ export function BusinessApp({
     if (result.status === 'rejected' && result.code !== 'camp.pending_not_empty') {
       throw new Error(commandFailureMessage(result))
     }
-    if (result.status !== 'rejected') campSnapshotCache.current.delete(draft.threadId)
+    if (result.status !== 'rejected') { campSnapshotCache.current.delete(draft.threadId); forgetMemberCreationDraft(draft.threadId) }
     if (result.status !== 'rejected') forgetRemovedThreadSurface(draft.threadId)
     await navigationRefreshCoordinator.invalidate({ scope: 'group', threadId: draft.threadId })
   }
@@ -3801,6 +3859,7 @@ export function BusinessApp({
         }
         throw new Error(commandFailureMessage(result.commandResult))
       }
+      forgetMemberCreationDraft(threadId)
       const threadMessageId = stringField(result.commandResult.payload, 'threadMessageId')
       const deliveryIds = stringArrayField(result.commandResult.payload, 'deliveryIds')
       const agentRunIds = stringArrayField(result.commandResult.payload, 'agentRunIds')
@@ -4339,7 +4398,9 @@ export function BusinessApp({
               generalPreferences.executionConsolePlacement
             )}
             snapshot={visibleThreadSnapshot}
-            initialComposerDraft={campSnapshotState.initialComposerDraft}
+            memberCreation={memberCreationDrafts.has(activeThreadId)}
+            initialComposerDraft={memberCreationDrafts.get(activeThreadId)?.draft ?? campSnapshotState.initialComposerDraft}
+            onPendingDraftChange={updateMemberCreationDraft}
             onInitialComposerDraftConsumed={consumeInitialComposerDraft}
             openCoverage={campSnapshot?.thread.id === activeThreadId
               ? campSnapshot.openCoverage ?? null
@@ -4519,6 +4580,7 @@ export function BusinessApp({
                         : [...current, profile]
                     ))}
                     onReload={loadMemberData}
+                    onCreateWithAI={beginMemberCreation}
                     onOpenRuntimeSettings={() => {
                       chooseSettingsSection('runtime')
                       void navigateToSettings('runtime')
