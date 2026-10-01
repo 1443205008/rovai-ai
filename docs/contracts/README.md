@@ -6,7 +6,9 @@ last_updated: 2026-09-27
 
 # 长期接口合同
 
-公开命名与历史合同的关系见 [Thread Naming v1](thread-naming-v1.md)；当前模型与 CLI 版本见 [ContextManifest v32](context-manifest-evidence-v32.md)、[Built-in Tool Transport v33](builtin-tool-transport-v33.md)。
+User 的主称呼、结构化提及及冻结恢复见 [User Naming v1](user-naming-v1.md)。
+
+公开命名与历史合同的关系见 [Thread Naming v1](thread-naming-v1.md)；当前模型与 CLI 版本见 [ContextManifest v32](context-manifest-evidence-v32.md)、[Built-in Tool Transport v34](builtin-tool-transport-v34.md)。
 
 本目录保存跨版本、字段级且可由测试直接验证的接口合同。[Version Decisions](../decisions/README.md)解释为什么选择某个边界，
 Architecture 解释组件如何组成，Version 概览记录交付范围；它们都不复制本目录的完整 wire shape。
@@ -309,7 +311,9 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Memory Capture v3（当前）](memory-capture-v3.md) | v2 边界加 complete exact-Scope View、copyable Revision target、active body aggregate quota、64 KiB production projection limit 与 Memory-domain clean break |
 | [Memory Capture v2 (historical)](memory-capture-v2.md) | v1 捕获/Review/Forget 边界加 flat Agent-relative Scope identity、revise target assertion、durable domain rejection 与 Supersession 原子顺序 |
 | [Memory Capture v1 (historical)](memory-capture-v1.md) | 初版 best-effort 在线捕获、actor-bounded add/revise、隔离 Hearth Review Item、双 CAS、候选清除与 Forget safeguard；不含 Scope-identified revise |
-| [Built-in Tool Transport v32（当前）](builtin-tool-transport-v32.md) | Task 无版本更新，四类 Agent 结果删除 availableActions，CLI/输出版本轮换 |
+| [Built-in Tool Transport v34（当前）](builtin-tool-transport-v34.md) | User 主称呼与双别名；新 Agent Output 7，旧 receipt 原字节复用 |
+| [Built-in Tool Transport v33（历史）](builtin-tool-transport-v33.md) | Thread 命名与冻结 Session 身份保持 |
+| [Built-in Tool Transport v32（历史）](builtin-tool-transport-v32.md) | Task 无版本更新，四类 Agent 结果删除 availableActions，CLI/输出版本轮换 |
 | [Built-in Tool Transport v31（历史）](builtin-tool-transport-v31.md) | 继承 v30；Task v4 输入/help/get projection、Agent Output 4、Charter revision 12 与 v31 capability clean break |
 | [Built-in Tool Transport v30（历史）](builtin-tool-transport-v30.md) | 继承 v29，Mission 状态来源改为可选、错误目录与实际 recovery 对齐；Task surface 由 v31 替代 |
 | [Built-in Tool Transport v29（历史）](builtin-tool-transport-v29.md) | 继承 v28，增加 `mission.list`、指定 Mission 读取、结构化附件与 v29 catalog/capability；其后 Charter revision 10 未改变 transport |

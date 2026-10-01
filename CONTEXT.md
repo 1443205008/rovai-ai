@@ -4,6 +4,10 @@ Rovai-ai is a local multi-Agent workbench in which long-lived Agent identities c
 
 ## Domain Glossary
 
+**User**:
+The human who owns the Thread objective. Agent instructions and new structured current-user projections use User / `@User`; `--to-user` requests message-local attention without scheduling an Agent or granting approval. Principal remains a compatibility spelling for old instructions and commands, not a separate role. Stored `local_user`, `mentionUser`, `external_principal` and authorization boundaries retain their identities. See [User Naming v1](docs/contracts/user-naming-v1.md).
+_Avoid_: Agent alias, approval token, replacement for channel Owner identity
+
 **Mission**:
 A durable purpose and independently maintained business status for exactly one public Thread. Core keeps one opaque internal relational ID plus a stable, monotonically allocated display number; programs and models use the internal ID, while the UI, Mission Git branch and worktree names derive from the number. Every effective authenticated AgentRun may discover and read any Mission, while update/status remain bound to the current public Mission and its write gate. A status source message is an optional same-Thread public association for every status, never a prerequisite or an implicit latest-message lookup; omission clears the prior association. The Thread retains ownership of membership, conversations, published messages and execution; public unsent Composer content remains Renderer-local. Mission completion does not stop Runs; a Run ending does not complete the Mission. Current members update only specified definition fields, with last-committed values winning and no model-visible revision. Only the latest title and description are retained.
 _Avoid_: Task alias, Run state, separate chat store, lead-only definition
@@ -637,7 +641,7 @@ One AgentProfile's private logical continuity inside one Thread, independent of 
 _Avoid_: Thread, Native Session, AgentRun, public chat transcript, external Runtime state container, physical filesystem isolation, one undifferentiated per-member Conversation
 
 **Single Chat**:
-The local User Principal's active private Conversation with one present Member inside one active Thread. A directly admitted message atomically creates one `ThreadTurn(kind=single_chat)` and one `AgentRun(invocation_kind=single_chat)` whose fixed Rovai Built-in policy and terminal destination are frozen at admission; input sent while that Conversation is busy instead enters its own durable FIFO and creates the Message/Turn/Run only when published. Attachments use the shared weakly durable `LocalAttachmentSourceRef` and Run-local resolver while remaining owned by the private ConversationMessage. The body, Source Refs, and final response never become ThreadMessages; workspace and Runtime side effects are not promised private. Stopping or restarting cancels only the current reply, while explicit End makes the Conversation ended and a later chat with the same Member starts with new Conversation, Binding, Session, transcript, queue, and public watermark without waiting for predecessor cleanup.
+The local User's active private Conversation with one present Member inside one active Thread. A directly admitted message atomically creates one `ThreadTurn(kind=single_chat)` and one `AgentRun(invocation_kind=single_chat)` whose fixed Rovai Built-in policy and terminal destination are frozen at admission; input sent while that Conversation is busy instead enters its own durable FIFO and creates the Message/Turn/Run only when published. Attachments use the shared weakly durable `LocalAttachmentSourceRef` and Run-local resolver while remaining owned by the private ConversationMessage. The body, Source Refs, and final response never become ThreadMessages; workspace and Runtime side effects are not promised private. Stopping or restarting cancels only the current reply, while explicit End makes the Conversation ended and a later chat with the same Member starts with new Conversation, Binding, Session, transcript, queue, and public watermark without waiting for predecessor cleanup.
 _Avoid_: Direct Message channel, private ThreadMessage, private attachment content store, Thread-wide pending queue, second execution system, Prompt-only privacy, Runtime sandbox, recoverable old Turn, cross-Conversation cleanup queue
 
 **Task**:
@@ -1636,17 +1640,17 @@ _Avoid_: A2A message, mutable current-state card, parsed English system body, Ex
 A published Agent-authored public Thread message that may address zero or more Thread Members. Subject to current authorization
 and recipient-specific suppression, it participates in public history, search and Shared Conversation and appears only
 once regardless of target count; delivery and target execution remain separate facts. Agent messages are not eligible for
-Principal original-text withdrawal.
+User original-text withdrawal.
 _Avoid_: private handoff, per-recipient message copy, delivery status message, user-only projection
 
-**Recallable Principal Message**:
-A local-Composer Principal ThreadMessage whose every target Delivery remains unclaimed and whose content has not entered any
-frozen Runtime input or ContextManifest. It is visible to the Principal but suppressed from every Agent-facing context,
+**Recallable User Message**:
+A local-Composer User ThreadMessage whose every target Delivery remains unclaimed and whose content has not entered any
+frozen Runtime input or ContextManifest. It is visible to the User but suppressed from every Agent-facing context,
 read, search, thread and quote path. The first target claim atomically and permanently closes recall.
 _Avoid_: unsent draft, Agent message, Channel inbound, Automation prompt, cognitive undo
 
 **Withdrawn Message**:
-The terminal identity left after a recallable Principal message is withdrawn. Rovai removes readable body, structured
+The terminal identity left after a recallable User message is withdrawn. Rovai removes readable body, structured
 content, own quotes, attachment links, search indexes and caches from its active data, cancels waiting Deliveries, and
 retains only non-plaintext identity/order/actor/time/cancellation facts. Human UI may show a withdrawal notice, but Agents
 receive no tombstone or pagination item. This is application-level logical erasure, not forensic deletion of WAL, backup,
@@ -1706,7 +1710,7 @@ _Avoid_: send-transaction preflight, truncated input, Runtime capacity wait, who
 **Thread Message Send**:
 The authenticated current-AgentRun action exposed as `camp.message.send` and `rovai send`, and the sole Agent-intent path
 for publishing into its Thread. Core resolves explicit targets, rejects self-send, atomically writes one public message and
-one waiting Delivery per target, may add independent Principal attention, and applies the Run's frozen anchor for display.
+one waiting Delivery per target, may add independent User attention, and applies the Run's frozen anchor for display.
 No caller-return, depth, fanout budget or Gather capture is inferred. In a Channel-bound Thread the same transaction creates
 one idempotent ChannelDelivery for the published Agent message.
 _Avoid_: Missing-Send Recovery Publication, Member Call, `team.call_member`, private message, user as Agent recipient, per-recipient public copy, compatibility alias

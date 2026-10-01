@@ -867,6 +867,7 @@ mod tests {
 
     #[test]
     fn every_operation_has_a_schema_valid_golden_projection() {
+        // v7 changes body projection, not result shape; keep the shared v6 shape fixture.
         let golden: Value = serde_json::from_str(include_str!(
             "../tests/fixtures/builtin-tool-agent-output-v6.json"
         ))
@@ -909,6 +910,21 @@ mod tests {
             projected["items"][0]["quotes"][0]["text"],
             "campId and Thread are quoted verbatim"
         );
+        let mut old_result = golden["thread.read"]["canonicalResult"].clone();
+        old_result["items"][0]["body"] = json!("@Principal old successful result");
+        let old_envelope = BuiltinToolInvocationEnvelope::success(
+            "thread.read",
+            "7b5db24c-4a43-4cab-9217-d982b08f7691",
+            old_result,
+        )
+        .unwrap();
+        assert_eq!(
+            project_envelope(old_envelope.clone()).unwrap()["items"][0]["body"],
+            "@Principal old successful result"
+        );
+        let mut tampered = old_envelope;
+        tampered.result.as_mut().unwrap()["items"][0]["body"] = json!("@User rewritten result");
+        assert!(project_envelope(tampered).is_err());
         let documents = golden.as_object().unwrap();
         assert_eq!(documents.len(), builtin_tool_definitions().len());
         for definition in builtin_tool_definitions() {

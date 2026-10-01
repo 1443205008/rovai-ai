@@ -31,7 +31,7 @@ A successful operation proves its own commit, not downstream execution, validati
 
 ## References
 
-- [Send](references/send.md): public messages, Agent routing, parallel invitations and Principal attention.
+- [Send](references/send.md): public messages, Agent routing, parallel invitations and User attention.
 - [Task](references/task.md): durable responsibility and Task-linked messages.
 - [Mission](references/mission.md): objective, status and public explanation.
 - [Thread/History](references/camp-history.md): search scope, exact reads and pagination.

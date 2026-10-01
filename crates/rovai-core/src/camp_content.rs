@@ -7,8 +7,17 @@ use serde::{Deserialize, Serialize};
 use crate::command::canonical_json_digest;
 use crate::current_user::{CURRENT_USER_ID, CurrentUserResolver};
 
-pub const AGENT_MESSAGE_PROJECTION_AUDIENCE: &str = "agent_v1";
-pub const AGENT_PRINCIPAL_DISPLAY_NAME: &str = "Principal";
+pub const AGENT_MESSAGE_PROJECTION_AUDIENCE: &str = "agent_v2";
+pub const LEGACY_AGENT_MESSAGE_PROJECTION_AUDIENCE: &str = "agent_v1";
+pub const AGENT_USER_DISPLAY_NAME: &str = "User";
+pub const LEGACY_AGENT_USER_DISPLAY_NAME: &str = "Principal";
+
+pub(crate) fn valid_agent_projection_audience(audience: &str) -> bool {
+    matches!(
+        audience,
+        AGENT_MESSAGE_PROJECTION_AUDIENCE | LEGACY_AGENT_MESSAGE_PROJECTION_AUDIENCE
+    )
+}
 
 pub type StructuredThreadMessageContent = Vec<StructuredThreadMessageSegment>;
 
@@ -513,8 +522,22 @@ pub fn render_plain_text(
 
 pub fn render_plain_text_with_current_user(
     content: &[StructuredThreadMessageSegment],
+    member_name: impl FnMut(&str) -> Option<String>,
+    current_user_display_name: &str,
+) -> Result<String> {
+    render_plain_text_with_user_offsets(
+        content,
+        member_name,
+        current_user_display_name,
+        &mut |_| {},
+    )
+}
+
+fn render_plain_text_with_user_offsets(
+    content: &[StructuredThreadMessageSegment],
     mut member_name: impl FnMut(&str) -> Option<String>,
     current_user_display_name: &str,
+    user_offset: &mut dyn FnMut(usize),
 ) -> Result<String> {
     if current_user_display_name.trim().is_empty() {
         anyhow::bail!("Current User display name must not be empty");
@@ -533,6 +556,7 @@ pub fn render_plain_text_with_current_user(
                 if user_id != CURRENT_USER_ID {
                     anyhow::bail!("Current User Mention identity does not exist");
                 }
+                user_offset(rendered.chars().count());
                 rendered.push('@');
                 rendered.push_str(current_user_display_name);
                 if index == 0 && content[index + 1..].iter().any(segment_projects_nonempty) {
@@ -601,29 +625,56 @@ pub fn render_current_plain_text(
         connection,
         content,
         current_user.display_name,
+        &mut |_| {},
     )
 }
 
 /// Renders Structured Camp Message Content for an Agent-owned surface.
 ///
 /// Current User Mentions remain structured at rest. Only this projection seam
-/// presents that identity as the stable Agent-facing `@Principal` token; human
+/// presents that identity as the stable Agent-facing `@User` token; human
 /// projections continue to use the localized current-user display name.
 pub fn render_agent_plain_text(
     connection: &Connection,
     content: &[StructuredThreadMessageSegment],
 ) -> Result<String> {
-    render_plain_text_for_connection_with_current_user(
+    render_agent_plain_text_for_audience(connection, content, AGENT_MESSAGE_PROJECTION_AUDIENCE)
+}
+
+/// Frozen evidence uses its recorded audience, never the current display token.
+pub(crate) fn render_agent_plain_text_for_audience(
+    connection: &Connection,
+    content: &[StructuredThreadMessageSegment],
+    audience: &str,
+) -> Result<String> {
+    let name = match audience {
+        AGENT_MESSAGE_PROJECTION_AUDIENCE => AGENT_USER_DISPLAY_NAME,
+        LEGACY_AGENT_MESSAGE_PROJECTION_AUDIENCE => LEGACY_AGENT_USER_DISPLAY_NAME,
+        _ => anyhow::bail!("Agent message projection audience is invalid"),
+    };
+    render_plain_text_for_connection_with_current_user(connection, content, name, &mut |_| {})
+}
+
+/// Search aliases apply only at these structured user offsets, never to literal text.
+pub(crate) fn render_agent_search_projection(
+    connection: &Connection,
+    content: &[StructuredThreadMessageSegment],
+) -> Result<(String, Vec<usize>)> {
+    let mut offsets = Vec::new();
+    let body = render_plain_text_for_connection_with_current_user(
         connection,
         content,
-        AGENT_PRINCIPAL_DISPLAY_NAME,
-    )
+        AGENT_USER_DISPLAY_NAME,
+        &mut |offset| offsets.push(offset),
+    )?;
+    Ok((body, offsets))
 }
 
 fn render_plain_text_for_connection_with_current_user(
     connection: &Connection,
     content: &[StructuredThreadMessageSegment],
     current_user_display_name: &str,
+    user_offset: &mut dyn FnMut(usize),
 ) -> Result<String> {
     let mut names = BTreeMap::new();
     for agent_id in member_mention_ids(content) {
@@ -638,10 +689,11 @@ fn render_plain_text_for_connection_with_current_user(
             names.insert(agent_id, display_name);
         }
     }
-    render_plain_text_with_current_user(
+    render_plain_text_with_user_offsets(
         content,
         |agent_id| names.get(agent_id).cloned(),
         current_user_display_name,
+        user_offset,
     )
 }
 
@@ -680,6 +732,7 @@ pub fn reproject_current_user_messages(
             transaction,
             &content,
             current_user_display_name,
+            &mut |_| {},
         )?;
         updated += transaction.execute(
             "UPDATE camp_message SET body = ?2 WHERE id = ?1 AND body IS NOT ?2",
@@ -1101,7 +1154,18 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         assert_eq!(
             render_agent_plain_text(&connection, &content).unwrap(),
+            "@User 请选择方案"
+        );
+        assert_eq!(
+            super::render_agent_plain_text_for_audience(&connection, &content, "agent_v1").unwrap(),
             "@Principal 请选择方案"
+        );
+        assert!(
+            super::render_agent_plain_text_for_audience(&connection, &content, "agent_v3").is_err()
+        );
+        assert_eq!(
+            super::render_agent_search_projection(&connection, &content).unwrap(),
+            ("@User 请选择方案".into(), vec![0])
         );
         assert_eq!(digest, canonical_content_digest(&content).unwrap());
     }

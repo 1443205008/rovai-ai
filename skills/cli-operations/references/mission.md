@@ -9,10 +9,10 @@ Choose status for the whole Mission:
 | Status | Meaning |
 | --- | --- |
 | `not_started` | Work has not begun or has returned to scheduling |
-| `in_progress` | Work is advancing, including normal waits without Principal intervention |
-| `needs_you` | The Principal must answer, decide or act |
+| `in_progress` | Work is advancing, including normal waits without User intervention |
+| `needs_you` | The User must answer, decide or act |
 | `completed` | The entire objective has been delivered |
 
-A local assignment or Run ending does not complete the Mission. Explaining an existing result does not reopen it. A public message or `--to-principal` does not itself change status; call `mission status` only when the whole Mission's state changes.
+A local assignment or Run ending does not complete the Mission. Explaining an existing result does not reopen it. A public message or `--to-user` does not itself change status; call `mission status` only when the whole Mission's state changes.
 
 On a request to start the Mission, read its full current definition with `mission get` first. For other messages, follow the actual current input. Submit only changed fields; later writes to the same field win, with no version parameter. Use [Recovery](recovery.md) for uncertain results.

@@ -6,6 +6,8 @@ last_updated: 2026-09-28
 
 # 当前规范与决定理由导航
 
+User 命名与旧 Session 恢复：当前规范为 [User Naming v1](../contracts/user-naming-v1.md)、[Built-in Tool Transport v34](../contracts/builtin-tool-transport-v34.md)；理由见 [V1.72-D08](../versions/v1.72/decisions.md#v1-72-d08)。
+
 公开 Thread 命名与无 Session 轮换：当前规范为 [Thread Naming v1](../contracts/thread-naming-v1.md)、[ContextManifest v32](../contracts/context-manifest-evidence-v32.md)、[Built-in Tool Transport v33](../contracts/builtin-tool-transport-v33.md)；理由见 [V1.72-D07](../versions/v1.72/decisions.md#v1-72-d07)。
 
 结果 Judge 来源材料当前规范：[Semantic Judge Views v12](../contracts/semantic-judge-views-v12.md)；理由：[V1.58-D02](../versions/v1.58/decisions.md#v1-58-d02)、[V1.58-D03](../versions/v1.58/decisions.md#v1-58-d03)、[V1.58-D04](../versions/v1.58/decisions.md#v1-58-d04)。

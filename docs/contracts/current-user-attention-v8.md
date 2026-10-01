@@ -9,6 +9,8 @@ last_updated: 2026-09-27
 
 # Current User Attention v8
 
+当前 User 主称呼、双别名与新旧冻结投影遵循 [User Naming v1](user-naming-v1.md)。该命名合同替代本文及继承合同的 Principal 主称呼／唯一 `agent_v1` 限制，其他规则保持。
+
 v8 inherits [v7](current-user-attention-v7.md)'s foreground Camp quiet scope and exact acknowledgement. The new
 [Notification Episode v9](notification-episode-v9.md) semantics, including Mission, Task and private replies, use the same
 quiet scope: entering a focused visible Camp removes its queued heads-up cards without reading their facts or replaying
