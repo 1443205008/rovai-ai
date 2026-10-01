@@ -14,6 +14,11 @@ import { querySqliteRows } from './lib/sqlite.mjs'
 
 const repository = resolve(import.meta.dirname, '..')
 const kind = process.argv[2]
+const coldRestart = process.env.ROVAI_OBSERVABLE_COLD_RESTART === '1'
+const compactAfterRestart = process.env.ROVAI_OBSERVABLE_GROK_COMPACT_AFTER_RESTART === '1'
+if (compactAfterRestart && (kind !== 'grok-build' || !coldRestart)) {
+  throw new Error('Native Grok compaction acceptance requires a cold restart')
+}
 const commands = {
   'codex-cli': ['codex', 'ROVAI_CODEX_BIN'],
   'claude-code-cli': ['claude', 'ROVAI_CLAUDE_CODE_BIN'],
@@ -140,10 +145,11 @@ if (kind === 'kimi-code-cli' && process.env.ROVAI_OBSERVABLE_SUB2API === '1') {
 let nativeExecutable = null
 if (commands[kind]) {
   const [command, override] = commands[kind]
-  nativeExecutable = await realpath(execFileSync('/usr/bin/which', [command], { encoding: 'utf8' }).trim())
+  nativeExecutable = await realpath(process.env[override]
+    ?? execFileSync('/usr/bin/which', [command], { encoding: 'utf8' }).trim())
   const wrapper = join(fixture, 'native-observer')
   await writeFile(wrapper, `#!/usr/bin/env python3
-import sys,subprocess,threading,json,time
+import sys,subprocess,threading,json,time,uuid
 child=subprocess.Popen([${JSON.stringify(nativeExecutable)}]+sys.argv[1:],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 def forward_input():
     try:
@@ -155,7 +161,8 @@ threading.Thread(target=forward_input,daemon=True).start()
 def discard_diagnostics():
     for line in child.stderr: pass
 threading.Thread(target=discard_diagnostics,daemon=True).start()
-numeric_keys={'input_tokens','output_tokens','prompt_tokens','completion_tokens','total_tokens','cached_tokens','cache_read_input_tokens','cache_creation_input_tokens','cache_write_input_tokens','reasoning_tokens','thinking_tokens','used','size','contextWindow','context_window','modelContextWindow','inputTokens','outputTokens','totalTokens','cachedInputTokens','cacheWriteInputTokens','cachedReadTokens','cachedWriteTokens','cacheReadTokens','cacheWriteTokens','thoughtTokens','cacheCreationTokens','reasoningTokens','context_usage_ratio','context_tokens','context_window_size','input','output','cacheRead','cacheWrite'}
+numeric_keys={'input_tokens','output_tokens','prompt_tokens','completion_tokens','total_tokens','cached_tokens','cache_read_input_tokens','cache_creation_input_tokens','cache_write_input_tokens','reasoning_tokens','thinking_tokens','used','size','contextWindow','context_window','modelContextWindow','inputTokens','outputTokens','totalTokens','cachedInputTokens','cacheWriteInputTokens','cachedReadTokens','cachedWriteTokens','cacheReadTokens','cacheWriteTokens','thoughtTokens','cacheCreationTokens','reasoningTokens','context_usage_ratio','context_tokens','context_window_size','input','output','cacheRead','cacheWrite','tokens_before','tokens_after','tokens_used','percentage','elapsed_ms'}
+observer_generation=str(uuid.uuid4())
 def numeric(v,path='',depth=0):
     if depth>6 or not isinstance(v,dict): return {}
     result={}
@@ -188,16 +195,16 @@ with open(${JSON.stringify(rawPath)},'a',buffering=1) as out:
             if isinstance(e,dict) and isinstance(e.get('delta'),dict): text=e['delta'].get('thinking') or e['delta'].get('text') or text
             if not isinstance(text,str): text=''
             item=p.get('item') or {}
-            out.write(json.dumps({'atMs':round(time.monotonic()*1000),'method':v.get('method'),'type':v.get('type') or p.get('type'),'sessionUpdate':u.get('sessionUpdate'),'deltaType':a.get('type') or d.get('type') or (e.get('delta') or {}).get('type'),'keys':sorted(v.keys()),'paramsKeys':sorted(p.keys()),'dataKeys':sorted((p.get('data') or {}).keys()),'nativeModel':(p.get('data') or {}).get('model') if isinstance((p.get('data') or {}).get('model'),str) else None,'nativeTimestamp':p.get('timestamp') if isinstance(p.get('timestamp'),str) and len(p['timestamp'])<=40 else None,'updateKeys':sorted(u.keys()),'contentKeys':sorted((u.get('content') or {}).keys()),'eventKeys':sorted(e.keys()),'itemId':identity(p.get('itemId') or item.get('id') or u.get('messageId') or (e.get('message') or {}).get('id')),'turnId':identity(p.get('turnId')),'summaryIndex':p.get('summaryIndex'),'contentIndex':p.get('contentIndex',a.get('contentIndex')),'textOffset':p.get('textOffset',u.get('textOffset')),'parentPresent':any(u.get(k)!=None for k in ['agentId','sourceAgentId','subagentId','parentAgentId','parentSessionId']) or v.get('parent_tool_use_id')!=None,'usageFields':numeric(v),'managedContext':managed_context(v),'bytes':len(text.encode('utf-8')),'scalars':len(text)})+'\\n')
+            out.write(json.dumps({'observerGeneration':observer_generation,'atMs':round(time.monotonic()*1000),'method':v.get('method'),'type':v.get('type') or p.get('type'),'itemType':item.get('type'),'sessionUpdate':u.get('sessionUpdate'),'deltaType':a.get('type') or d.get('type') or (e.get('delta') or {}).get('type'),'keys':sorted(v.keys()),'paramsKeys':sorted(p.keys()),'dataKeys':sorted((p.get('data') or {}).keys()),'nativeModel':(p.get('data') or {}).get('model') if isinstance((p.get('data') or {}).get('model'),str) else None,'nativeTimestamp':p.get('timestamp') if isinstance(p.get('timestamp'),str) and len(p['timestamp'])<=40 else None,'updateKeys':sorted(u.keys()),'contentKeys':sorted((u.get('content') or {}).keys()),'eventKeys':sorted(e.keys()),'itemId':identity(p.get('itemId') or item.get('id') or u.get('messageId') or (e.get('message') or {}).get('id')),'turnId':identity(p.get('turnId')),'summaryIndex':p.get('summaryIndex'),'contentIndex':p.get('contentIndex',a.get('contentIndex')),'textOffset':p.get('textOffset',u.get('textOffset')),'parentPresent':any(u.get(k)!=None for k in ['agentId','sourceAgentId','subagentId','parentAgentId','parentSessionId']) or v.get('parent_tool_use_id')!=None,'usageFields':numeric(v),'managedContext':managed_context(v),'bytes':len(text.encode('utf-8')),'scalars':len(text)})+'\\n')
         except Exception: pass
         sys.stdout.buffer.write(line);sys.stdout.buffer.flush()
 sys.exit(child.wait())
 `, { mode: 0o700 })
   process.env[override] = wrapper
 }
-const events = [], samples = [], displays = [], metrics = [], runs = []
+const events = [], samples = [], displays = [], metrics = [], runs = [], restartChecks = []
 const started = performance.now()
-const core = startQualificationCore({
+const startCore = () => startQualificationCore({
   coreExecutable: fixtureCore,
   dataDirectory: data, workingDirectory: repository, runtimeCacheDirectory: join(fixture, 'cache'),
   mcpConfigPath: join(data, 'mcp.json'), onNotification(event) {
@@ -206,6 +213,7 @@ const core = startQualificationCore({
     }
   }
 })
+let core = startCore()
 let run = null, campId = null, installation = null, failure = null
 let failureDetail = null
 try {
@@ -251,10 +259,33 @@ try {
         metrics.push({ atMs: Math.round(now - started), status: run.status, projection })
       }
       if (['succeeded', 'failed', 'cancelled'].includes(run.status)) {
-        runs.push({ id: run.id, executionEpoch: run.executionEpoch, status: run.status, projection })
-        if (process.env.ROVAI_OBSERVABLE_RESUME === '1' && runs.length === 1 && run.status === 'succeeded') {
+        const bindings = querySqliteRows(join(data, 'rovai.sqlite'),
+          'SELECT id AS conversationId, native_session_id AS nativeSessionId, native_binding_id AS nativeBindingId, native_binding_generation AS generation FROM conversation')
+        const nativeBinding = bindings.find(binding => binding.conversationId === run.conversationId) ?? null
+        if (coldRestart && (!nativeBinding?.nativeSessionId || (runs.length > 0
+          && JSON.stringify(nativeBinding) !== JSON.stringify(runs[0].nativeBinding)))) {
+          throw new Error('Cold restart did not retain the exact native Session binding')
+        }
+        runs.push({ id: run.id, executionEpoch: run.executionEpoch, status: run.status, nativeBinding, projection })
+        if ((process.env.ROVAI_OBSERVABLE_RESUME === '1' || coldRestart)
+          && runs.length === 1 && run.status === 'succeeded') {
+          if (coldRestart) {
+            const stopped = await core.stop()
+            if (stopped.code !== 0) throw new Error('First isolated Core did not stop cleanly')
+            if (compactAfterRestart) process.env.ROVAI_INTERNAL_GROK_COMPACTION_ACCEPTANCE = '1'
+            core = startCore()
+            await core.request('health.check')
+            const recovered = await core.request('monitoring.execution', { campId, agentRunIds: [run.id] })
+            const unchanged = JSON.stringify(recovered) === JSON.stringify(projection)
+            restartChecks.push({ previousRunId: run.id, previousProjection: projection,
+              recoveredProjection: recovered, unchanged, compactAfterRestart })
+            if (!unchanged) throw new Error('Isolated Core restart changed persisted metrics')
+          }
+          const followup = process.env.ROVAI_OBSERVABLE_FOLLOWUP_PROMPT_FILE
+            ? await readFile(process.env.ROVAI_OBSERVABLE_FOLLOWUP_PROMPT_FILE, 'utf8')
+            : 'Continue in this same native session for a second isolated metrics acceptance. Explain retry ownership in about 250 words, run sleep 3 once, then briefly describe recovery. Do not delegate or change files. Send a short completion with rovai send --public-only and finish normally.'
           await core.request('camp.messages.send', { commandId: crypto.randomUUID(), campId,
-            content: composerDocumentForAddress({ mode: 'default' }, 'Continue in this same native session for a second isolated metrics acceptance. Explain retry ownership in about 250 words, run sleep 3 once, then briefly describe recovery. Do not delegate or change files. Send a short completion with rovai send --public-only and finish normally.'),
+            content: composerDocumentForAddress({ mode: 'default' }, followup),
             sourceAttachments: [], quotes: [], replyToCampMessageId: null,
             execution: { taskId: null, purpose: 'Same Session successor Usage baseline', completionRole: 'required' } })
           meter = null
@@ -311,6 +342,7 @@ try {
     meterDisplayCount: displays.filter(s => s.value !== null).length,
     rendererVerified: false, stopped: stopped.code === 0 }
   report.runs = runs
+  report.restartChecks = restartChecks
   report.metrics = metrics
   report.failureDetail = failureDetail
   report.meteringDiagnosticFlags = [

@@ -4794,47 +4794,53 @@ mod tests {
         assert_eq!(grok[0].fields.context_used_tokens, Some(125));
         assert_eq!(grok[0].counter_mode, RuntimeUsageCounterMode::Gauge);
         assert!(!normalize_usage(&grok[0]).unwrap().any_observed());
-        let native_witness: Value = serde_json::from_str(include_str!(
-            "../../../docs/research/runtime-monitoring/fixtures/round6-native-context-ratio.json"
-        ))
-        .unwrap();
-        for entry in native_witness["entries"].as_array().unwrap() {
-            let adapter = match entry["runtime"].as_str().unwrap() {
-                "copilot-cli" => AdapterKind::CopilotCli,
-                "grok-build" => AdapterKind::GrokBuild,
-                _ => continue,
-            };
-            for run in entry["runs"].as_array().unwrap() {
-                for record in run["sourceRecords"].as_array().unwrap() {
-                    let raw = &record["raw"];
+        for source in [
+            include_str!(
+                "../../../docs/research/runtime-monitoring/fixtures/round6-native-context-ratio.json"
+            ),
+            include_str!(
+                "../../../docs/research/runtime-monitoring/fixtures/round7-native-boundaries.json"
+            ),
+        ] {
+            let native_witness: Value = serde_json::from_str(source).unwrap();
+            for entry in native_witness["entries"].as_array().unwrap() {
+                let adapter = match entry["runtime"].as_str().unwrap() {
+                    "copilot-cli" => AdapterKind::CopilotCli,
+                    "grok-build" => AdapterKind::GrokBuild,
+                    _ => continue,
+                };
+                for run in entry["runs"].as_array().unwrap() {
+                    for record in run["sourceRecords"].as_array().unwrap() {
+                        let raw = &record["raw"];
+                        let parsed = parse_acp_usage_message(
+                            adapter,
+                            entry["version"].as_str(),
+                            raw["method"].as_str().unwrap(),
+                            &raw["params"],
+                        );
+                        assert_eq!(parsed.len(), 1);
+                        let normalized = normalize_usage(&parsed[0]).unwrap();
+                        assert_eq!(
+                            json!({"promptInputTotalTokens":normalized.prompt_input_total_tokens,
+                            "outputTokens":normalized.output_tokens,
+                            "cacheReadTokens":normalized.cache_read_tokens,
+                            "cacheWriteTokens":normalized.cache_write_tokens}),
+                            record["expectedParsed"]
+                        );
+                    }
+                    let raw = &run["rawContext"];
                     let parsed = parse_acp_usage_message(
                         adapter,
                         entry["version"].as_str(),
                         raw["method"].as_str().unwrap(),
                         &raw["params"],
                     );
-                    assert_eq!(parsed.len(), 1);
-                    let normalized = normalize_usage(&parsed[0]).unwrap();
                     assert_eq!(
-                        json!({"promptInputTotalTokens":normalized.prompt_input_total_tokens,
-                            "outputTokens":normalized.output_tokens,
-                            "cacheReadTokens":normalized.cache_read_tokens,
-                            "cacheWriteTokens":normalized.cache_write_tokens}),
-                        record["expectedParsed"]
+                        parsed[0].fields.context_used_tokens.map(|n| json!(n)),
+                        Some(run["expectedContext"]["usedTokens"].clone())
                     );
+                    assert!(!normalize_usage(&parsed[0]).unwrap().any_observed());
                 }
-                let raw = &run["rawContext"];
-                let parsed = parse_acp_usage_message(
-                    adapter,
-                    entry["version"].as_str(),
-                    raw["method"].as_str().unwrap(),
-                    &raw["params"],
-                );
-                assert_eq!(
-                    parsed[0].fields.context_used_tokens.map(|n| json!(n)),
-                    Some(run["expectedContext"]["usedTokens"].clone())
-                );
-                assert!(!normalize_usage(&parsed[0]).unwrap().any_observed());
             }
         }
         let renderer_witness: Value = serde_json::from_str(include_str!(
@@ -5356,6 +5362,77 @@ mod tests {
             .unwrap();
         assert_eq!(run_usage.source_identities.len(), 1);
         assert_eq!(run_usage.usage.fields.input_tokens, Some(120));
+
+        // Actual native auto-compaction: cumulative consumption is unchanged,
+        // while last.totalTokens decreases. Repeating the frame must not add
+        // consumption or prevent the smaller current Context from winning.
+        let witness: Value = serde_json::from_str(include_str!(
+            "../../../docs/research/runtime-monitoring/fixtures/round7-native-boundaries.json"
+        ))
+        .unwrap();
+        let entry = witness["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["runtime"] == "codex-cli")
+            .unwrap();
+        let frames = entry["contextDecreasePair"]["frames"].as_array().unwrap();
+        let mut run = run;
+        run.runtime_version = Some("0.159.2".to_string());
+        run.model_key = Some("gpt-6.1-sol".to_string());
+        let mut buffer = RuntimeUsageBuffer::default();
+        let first = &frames[0]["params"];
+        let changed = &frames[1]["params"];
+        assert_eq!(
+            codex_usage_source_identity(first).unwrap(),
+            codex_usage_source_identity(changed).unwrap()
+        );
+        assert_ne!(
+            codex_context_source_identity(first).unwrap(),
+            codex_context_source_identity(changed).unwrap()
+        );
+        for params in [first, changed, changed] {
+            let parsed = parse_codex_usage_message("thread/tokenUsage/updated", params);
+            buffer
+                .observe_run(
+                    &run,
+                    &codex_usage_source_identity(params).unwrap(),
+                    &parsed[..1],
+                    Instant::now(),
+                )
+                .unwrap();
+            buffer
+                .observe_run(
+                    &run,
+                    &codex_context_source_identity(params).unwrap(),
+                    &parsed[1..],
+                    Instant::now(),
+                )
+                .unwrap();
+        }
+        let batches = buffer.drain(RuntimeUsageFlushTarget::Run {
+            agent_run_id: "run".to_string(),
+            execution_epoch: 1,
+        });
+        assert_eq!(batches.len(), 1);
+        let context = batches[0]
+            .records
+            .iter()
+            .find(|record| record.usage.scope == "session")
+            .unwrap();
+        assert_eq!(context.usage.fields.context_used_tokens, Some(13262));
+        assert_eq!(context.usage.fields.context_size_tokens, Some(258400));
+        assert_eq!(context.source_identities.len(), 2);
+        let run_usage = batches[0]
+            .records
+            .iter()
+            .find(|record| record.usage.scope == "turn")
+            .unwrap();
+        assert_eq!(run_usage.source_identities.len(), 1);
+        // Run consumption uses native last-call buckets; total identifies the
+        // call and establishes resume continuity, not this call's input amount.
+        assert_eq!(run_usage.usage.fields.input_tokens, Some(20592));
+        assert_eq!(run_usage.usage.fields.output_tokens, Some(28));
     }
 
     #[test]

@@ -1109,38 +1109,44 @@ mod tests {
                 }
             }
         }
-        let witness: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../docs/research/runtime-monitoring/fixtures/round6-native-context-ratio.json"
-        ))
-        .unwrap();
-        let entry = witness["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| entry["runtime"] == "qoder-cli")
-            .unwrap();
-        for run in entry["runs"].as_array().unwrap() {
-            for record in run["sourceRecords"].as_array().unwrap() {
-                let frame = serde_json::to_vec(&record["raw"]).unwrap();
-                let observations = parse_qoder(
-                    qoder_record(&frame, "session-1", "/workspace").unwrap(),
-                    "session-1",
-                );
-                let fields = &observations[0].usage.fields;
-                assert_eq!(
-                    json!({"promptInputTotalTokens":fields.input_tokens,
+        for source in [
+            include_str!(
+                "../../../docs/research/runtime-monitoring/fixtures/round6-native-context-ratio.json"
+            ),
+            include_str!(
+                "../../../docs/research/runtime-monitoring/fixtures/round7-native-boundaries.json"
+            ),
+        ] {
+            let witness: serde_json::Value = serde_json::from_str(source).unwrap();
+            let entry = witness["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["runtime"] == "qoder-cli")
+                .unwrap();
+            for run in entry["runs"].as_array().unwrap() {
+                for record in run["sourceRecords"].as_array().unwrap() {
+                    let frame = serde_json::to_vec(&record["raw"]).unwrap();
+                    let observations = parse_qoder(
+                        qoder_record(&frame, "session-1", "/workspace").unwrap(),
+                        "session-1",
+                    );
+                    let fields = &observations[0].usage.fields;
+                    assert_eq!(
+                        json!({"promptInputTotalTokens":fields.input_tokens,
                         "outputTokens":fields.output_tokens,
                         "cacheReadTokens":fields.cache_read_input_tokens,
                         "cacheWriteTokens":fields.cache_write_input_tokens}),
-                    record["expectedParsed"]
-                );
-                let context = &observations[1].usage.fields;
-                assert_eq!(
-                    json!({"usedTokens":context.context_used_tokens,
+                        record["expectedParsed"]
+                    );
+                    let context = &observations[1].usage.fields;
+                    assert_eq!(
+                        json!({"usedTokens":context.context_used_tokens,
                         "windowTokens":context.context_size_tokens,
                         "nativeRatio":context.native_context_ratio}),
-                    record["expectedContext"]
-                );
+                        record["expectedContext"]
+                    );
+                }
             }
         }
     }
@@ -1337,6 +1343,7 @@ mod tests {
         for (source_index, source) in [
             include_str!("../../../docs/research/runtime-monitoring/fixtures/round5-native-usage-context.json"),
             include_str!("../../../docs/research/runtime-monitoring/fixtures/round6-native-context-ratio.json"),
+            include_str!("../../../docs/research/runtime-monitoring/fixtures/round7-native-boundaries.json"),
         ].into_iter().enumerate() {
         let witness: serde_json::Value = serde_json::from_str(source).unwrap();
         let entry = witness["entries"]

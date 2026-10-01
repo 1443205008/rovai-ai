@@ -832,3 +832,10 @@ Copilot 逐调用／子 Agent／dataOmitted／缺失与终态累计排除，以�
 已安装 schema 128 → 129 的保留与 179 收据失败回滚。Grok 原生配置 owner 只扩展显式窗口和
 未知模型断言。未新增、删除、合并或停用 Rust owner；实际 App／字段证据见
 [本轮核验](../research/runtime-monitoring/native-context-ratio-verification-2026-10-01.md)。
+
+同日追加的边界验收继续扩展既有 owner：`codex_context_changes_independently_of_cumulative_run_usage`
+回放真实压缩时累计值不变而 last 占用下降的两帧，并重复第二帧，断言独立来源去重与较小 Context；
+原生 DTO／OpenCode SQLite／ACP parser owner 分别回放 9 个 Qoder 调用（真实与受控正值有明确标签）、
+11 个 OpenCode 调用及 Grok 两个终态聚合。原始形态、归一化数字和最终读取同时保留；
+没有新增、删除、合并或停用 Rust owner，亦未为真实网络请求添加单元测试。
+真实原生压缩、四类健康冷恢复、同次 Grok 思考 UI 与 App 重开见[边界证据](../research/runtime-monitoring/native-boundaries-verification-2026-10-01.md)。
