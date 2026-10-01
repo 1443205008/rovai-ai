@@ -115,8 +115,8 @@ export function createDesktopNavigation<Context = undefined>(
     connect(): () => void {
       return history?.listen(async next => await navigate({ kind: 'traverse', index: next.index, browserState: next }) ? state : null) ?? (() => undefined)
     },
-    restore(): Promise<boolean> {
-      return history?.initial ? navigate({ kind: 'traverse', index: history.initial.index, browserState: history.initial }) : Promise.resolve(false)
+    restore(context?: Context): Promise<boolean> {
+      return history?.initial ? navigate({ kind: 'traverse', index: history.initial.index, browserState: history.initial }, context) : Promise.resolve(false)
     },
     getSnapshot: (): NavigationState => state,
     subscribe: (listener: () => void): (() => void) => {

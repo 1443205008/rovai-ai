@@ -1,6 +1,7 @@
 import { useThreadClient } from './camp-client'
 import { useMobileLayout } from './MobileLayout'
 import { useNavigationPressMenu } from './useNavigationPressMenu'
+import { navigationThreadHasUnread } from './navigation-unread'
 import {
   useEffect,
   useMemo,
@@ -15,6 +16,7 @@ import type {
   AppUpdateSnapshot,
   NavigationPin,
   NavigationThreadItem,
+  NavigationThreadReadState,
   NavigationThreadTarget,
   NavigationSnapshot,
   ProjectNavigationGroup,
@@ -59,8 +61,10 @@ type NavigationAction = {
   project: ProjectNavigationGroup
 } | null
 
-export function campNavigationMenuLabels(pinned: boolean): string[] {
-  return [pinned ? uiAttribute('取消置顶') : uiAttribute('置顶'), uiAttribute('重命名'), uiAttribute('复制会话 ID'), uiAttribute('删除')]
+export function campNavigationMenuLabels(pinned: boolean, unread = false): string[] {
+  return [pinned ? uiAttribute('取消置顶') : uiAttribute('置顶'),
+    unread ? uiAttribute('标记已读') : uiAttribute('标记未读'),
+    uiAttribute('重命名'), uiAttribute('复制会话 ID'), uiAttribute('删除')]
 }
 
 export async function copyThreadIdToClipboard(
@@ -76,8 +80,10 @@ export async function copyThreadIdToClipboard(
   if (!copied) throw new Error(uiAttribute('无法复制会话 ID，请重试。'))
 }
 
-export function projectNavigationMenuLabels(pinned: boolean): string[] {
-  return [pinned ? uiAttribute('取消置顶项目') : uiAttribute('置顶项目'), uiAttribute('重命名'), uiAttribute('移除项目')]
+export function projectNavigationMenuLabels(pinned: boolean, platform: NodeJS.Platform = 'darwin'): string[] {
+  return [uiAttribute('新建对话'), pinned ? uiAttribute('取消置顶项目') : uiAttribute('置顶项目'),
+    uiAttribute('重命名'), platform === 'darwin' ? uiAttribute('在 Finder 中显示') : uiAttribute('在文件管理器中显示'),
+    uiAttribute('复制项目路径'), uiAttribute('移除项目')]
 }
 
 export function toggleNavigationGroup(groups: ReadonlySet<string>, groupKey: string): Set<string> {
@@ -123,6 +129,10 @@ export function ThreadNavigation({
   creatingConversation = false,
   pins = [],
   pinnedThreadItems = [],
+  threadReadStates = {},
+  onSetThreadUnread,
+  onRevealProject,
+  onProjectPathCopied = () => undefined,
   platform = 'darwin',
   settingsSection = 'general',
   updateSnapshot = null,
@@ -167,6 +177,10 @@ export function ThreadNavigation({
   creatingConversation?: boolean
   pins?: NavigationPin[]
   pinnedThreadItems?: NavigationThreadItem[]
+  threadReadStates?: Record<string, NavigationThreadReadState>
+  onSetThreadUnread?(thread: NavigationThreadItem, unread: boolean): Promise<void>
+  onRevealProject?(project: ProjectNavigationGroup): Promise<void>
+  onProjectPathCopied?(): void
   platform?: NodeJS.Platform
   settingsSection?: NavigationSettingsSection
   updateSnapshot?: AppUpdateSnapshot | null
@@ -290,6 +304,17 @@ export function ThreadNavigation({
     } catch (error) {
       onError(error)
     }
+  }
+
+  const copyProjectPath = async (project: ProjectNavigationGroup): Promise<void> => {
+    try {
+      if (!await writeClipboardText(project.projectPath)) throw new Error(uiAttribute('无法复制项目路径，请重试。'))
+      onProjectPathCopied()
+    } catch (error) { onError(error) }
+  }
+
+  const setThreadUnread = (thread: NavigationThreadItem, unread: boolean): void => {
+    void onSetThreadUnread?.(thread, unread).catch(onError)
   }
 
   const openAction = (kind: 'rename' | 'delete', thread: NavigationThreadItem): void => {
@@ -432,6 +457,8 @@ export function ThreadNavigation({
                 key={thread.id}
                 thread={thread}
                 firstRunThreadId={firstRunThreadId}
+                readState={threadReadStates[thread.id]}
+                onSetUnread={onSetThreadUnread ? (unread) => setThreadUnread(thread, unread) : undefined}
                 active={thread.id === activeThreadId}
                 opening={thread.id === openingThreadId}
                 pinned
@@ -473,6 +500,11 @@ export function ThreadNavigation({
                 onRemoveProject={() => openProjectRemoval(project)}
                 onToggleThreadPin={(thread) => void togglePin('camp', thread.id, thread)}
                 onCopyThreadId={(thread) => void copyThreadId(thread)}
+                threadReadStates={threadReadStates}
+                onSetThreadUnread={onSetThreadUnread ? setThreadUnread : undefined}
+                platform={platform}
+                onRevealProject={onRevealProject ? () => { void onRevealProject(project).catch(onError) } : undefined}
+                onCopyProjectPath={() => void copyProjectPath(project)}
                 onThread={onThread}
                 onAction={openAction}
               />
@@ -515,6 +547,11 @@ export function ThreadNavigation({
                 onRemoveProject={() => openProjectRemoval(project)}
                 onToggleThreadPin={(thread) => void togglePin('camp', thread.id, thread)}
                 onCopyThreadId={(thread) => void copyThreadId(thread)}
+                threadReadStates={threadReadStates}
+                onSetThreadUnread={onSetThreadUnread ? setThreadUnread : undefined}
+                platform={platform}
+                onRevealProject={onRevealProject ? () => { void onRevealProject(project).catch(onError) } : undefined}
+                onCopyProjectPath={() => void copyProjectPath(project)}
                 onThread={onThread}
                 onAction={openAction}
               />
@@ -542,6 +579,9 @@ export function ThreadNavigation({
             onCreate={() => onCreateInProject(null)}
             onToggleThreadPin={(thread) => void togglePin('camp', thread.id, thread)}
             onCopyThreadId={(thread) => void copyThreadId(thread)}
+            threadReadStates={threadReadStates}
+            onSetThreadUnread={onSetThreadUnread ? setThreadUnread : undefined}
+            platform={platform}
             onThread={onThread}
             onAction={openAction}
           />}
@@ -906,6 +946,11 @@ function ThreadGroup({
   onRenameProject,
   onToggleThreadPin,
   onCopyThreadId,
+  threadReadStates,
+  onSetThreadUnread,
+  platform,
+  onRevealProject,
+  onCopyProjectPath,
   onThread,
   onAction
 }: {
@@ -931,42 +976,53 @@ function ThreadGroup({
   onTogglePin?(): void
   onRenameProject?(): void
   onRemoveProject?(): void
+  threadReadStates: Record<string, NavigationThreadReadState>
+  onSetThreadUnread?(thread: NavigationThreadItem, unread: boolean): void
+  platform: NodeJS.Platform
+  onRevealProject?(): void
+  onCopyProjectPath?(): void
   onToggleThreadPin(thread: NavigationThreadItem): void
   onCopyThreadId(thread: NavigationThreadItem): void
   onThread(thread: NavigationThreadItem): void
   onAction(kind: 'rename' | 'delete', thread: NavigationThreadItem): void
 }): JSX.Element {
   const mobile = useMobileLayout()
-  const projectMenuLabels = projectNavigationMenuLabels(pinned)
-  const projectMenuItems: SidebarActionMenuItem[] = []
+  const projectMenuLabels = projectNavigationMenuLabels(pinned, platform)
+  const projectMenuItems: SidebarActionMenuItem[] = pinTargetKey
+    ? [{ key: 'new-chat', label: projectMenuLabels[0], icon: 'square-pen', onSelect: onCreate, disabled: createDisabled }]
+    : []
   if (onTogglePin) {
     projectMenuItems.push({
       key: 'toggle-pin',
-      label: projectMenuLabels[0],
+      label: projectMenuLabels[1],
+      separatorBefore: true,
       icon: 'pin',
       filled: pinned,
       onSelect: onTogglePin
     })
   }
   if (onRenameProject) {
-    projectMenuItems.push({ key: 'rename-project', label: projectMenuLabels[1], icon: 'edit', onSelect: onRenameProject })
+    projectMenuItems.push({ key: 'rename-project', label: projectMenuLabels[2], icon: 'edit', onSelect: onRenameProject })
   }
+  if (onRevealProject) projectMenuItems.push({ key: 'reveal-project', label: projectMenuLabels[3], icon: 'reveal', separatorBefore: true, onSelect: onRevealProject })
+  if (onCopyProjectPath) projectMenuItems.push({ key: 'copy-path', label: projectMenuLabels[4], icon: 'copy', separatorBefore: !onRevealProject, onSelect: onCopyProjectPath })
   if (onRemoveProject) {
     projectMenuItems.push({
       key: 'remove-project',
-      label: projectMenuLabels[2],
+      label: projectMenuLabels[5],
       icon: 'remove',
       danger: true,
       separatorBefore: projectMenuItems.length > 0,
       onSelect: onRemoveProject
     })
   }
-  const pressMenu = useNavigationPressMenu(mobile && !!pinTargetKey && projectMenuItems.length > 0)
+  const pressMenu = useNavigationPressMenu(!!pinTargetKey && projectMenuItems.length > 0)
   const contentId = `camp-group-content-${groupKey.replace(/[^a-zA-Z0-9_-]/g, '-')}`
   const paginationControls = navigationPaginationControls(visibleCount, totalCount)
   return (
     <section className="camp-nav-group" data-group={groupKey}>
-      <div className={`project-heading-row ${currentProject ? 'current-project' : ''}`} data-expanded={projectExpanded ? 'true' : 'false'}>
+      <div className={`project-heading-row ${currentProject ? 'current-project' : ''}`} data-menu-open={pressMenu.open || undefined}
+        onContextMenu={(event) => { if (!event.defaultPrevented) pressMenu.rowProps.onContextMenu?.(event) }} data-expanded={projectExpanded ? 'true' : 'false'}>
         <button
           {...pressMenu.rowProps}
           className="project-select-row"
@@ -996,10 +1052,11 @@ function ThreadGroup({
             label={uiAttribute("管理项目“{0}”", String(label))}
             triggerClassName="group-menu-trigger"
             items={projectMenuItems}
-            pressMenu={mobile ? pressMenu : undefined}
+            pressMenu={pressMenu}
+            mobile={mobile}
           />
         )}
-        <button className="group-create-button" type="button" aria-label={uiAttribute("在“{0}”中新建对话", String(label))} title={uiAttribute("新建对话")} disabled={createDisabled} onClick={onCreate}>{mobile ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg> : '＋'}</button>
+        <button className="group-create-button" type="button" aria-label={uiAttribute("在“{0}”中新建对话", String(label))} title={uiAttribute("新建对话")} disabled={createDisabled} onClick={onCreate}><NavigationIcon name="square-pen" /></button>
       </div>
       <div id={contentId} className="camp-group-children" hidden={!projectExpanded}>
         {projectExpanded && threads.map((thread) => (
@@ -1007,6 +1064,8 @@ function ThreadGroup({
             key={thread.id}
             thread={thread}
             firstRunThreadId={firstRunThreadId}
+            readState={threadReadStates[thread.id]}
+            onSetUnread={onSetThreadUnread ? (unread) => onSetThreadUnread(thread, unread) : undefined}
             active={thread.id === activeThreadId}
             opening={thread.id === openingThreadId}
             pinned={false}
@@ -1030,6 +1089,8 @@ function ThreadGroup({
 
 function ThreadRow({
   thread,
+  readState,
+  onSetUnread,
   firstRunThreadId,
   active,
   opening,
@@ -1040,6 +1101,8 @@ function ThreadRow({
   onAction
 }: {
   thread: NavigationThreadItem
+  readState?: NavigationThreadReadState
+  onSetUnread?(unread: boolean): void
   firstRunThreadId: string | null
   active: boolean
   opening: boolean
@@ -1050,12 +1113,12 @@ function ThreadRow({
   onAction(kind: 'rename' | 'delete', thread: NavigationThreadItem): void
 }): JSX.Element {
   const mobile = useMobileLayout()
-  const pressMenu = useNavigationPressMenu(mobile)
+  const pressMenu = useNavigationPressMenu(true)
   const title = formatThreadTitle(thread, firstRunThreadId)
-  const hasNewReply = thread.marker === 'unread_completed'
+  const hasNewReply = navigationThreadHasUnread(thread, readState)
   const loadingStatus = opening ? 'opening' : thread.marker === 'loading' ? 'loading' : null
-  const status = loadingStatus ?? (hasNewReply ? 'unread' : 'none')
-  const menuLabels = campNavigationMenuLabels(pinned)
+  const status = loadingStatus && hasNewReply ? `${loadingStatus}-unread` : loadingStatus ?? (hasNewReply ? 'unread' : 'none')
+  const menuLabels = campNavigationMenuLabels(pinned, hasNewReply)
   const menuItems: SidebarActionMenuItem[] = thread.activationState === 'pending'
     ? []
     : [{
@@ -1066,43 +1129,47 @@ function ThreadRow({
         onSelect: onTogglePin
       }, {
         key: 'rename',
-        label: menuLabels[1],
+        label: menuLabels[2],
         icon: 'edit',
         onSelect: () => onAction('rename', thread)
       }]
+  if (onSetUnread) menuItems.splice(1, 0, {
+    key: 'toggle-unread', label: menuLabels[1], icon: hasNewReply ? 'read' : 'unread',
+    onSelect: () => onSetUnread(!hasNewReply)
+  })
   menuItems.push({
     key: 'copy-id',
-    label: menuLabels[2],
+    label: menuLabels[3],
     icon: 'copy',
     onSelect: onCopyThreadId
   })
   menuItems.push({
     key: 'delete',
-    label: menuLabels[3],
+    label: menuLabels[4],
     icon: 'trash',
     danger: true,
     separatorBefore: true,
     onSelect: () => onAction('delete', thread)
   })
   return (
-    <div className={`camp-nav-row${active ? ' selected' : ''}${opening ? ' opening' : ''}`}>
+    <div className={`camp-nav-row${active ? ' selected' : ''}${opening ? ' opening' : ''}`} data-thread-id={thread.id} data-menu-open={pressMenu.open || undefined}
+      onContextMenu={(event) => { if (!event.defaultPrevented) pressMenu.rowProps.onContextMenu?.(event) }}>
       <button
         {...pressMenu.rowProps}
         className="camp-nav-open"
         type="button"
         aria-current={active ? 'page' : undefined}
         aria-busy={opening || undefined}
-        aria-label={`${title}${hasNewReply ? uiAttribute("，有新回复") : ''}${opening ? uiAttribute("，正在打开") : thread.marker === 'loading' ? uiAttribute("，正在运行") : ''}`}
-        title={hasNewReply ? uiAttribute("{0} · 有新回复", String(title)) : title}
+        aria-label={`${title}${hasNewReply ? readState?.manualUnread ? uiAttribute("，已标记未读") : uiAttribute("，有新回复") : ''}${opening ? uiAttribute("，正在打开") : thread.marker === 'loading' ? uiAttribute("，正在运行") : ''}`}
+        title={`${title}${hasNewReply ? uiAttribute(" · 未读") : ''}${opening ? uiAttribute(" · 正在打开") : loadingStatus ? uiAttribute(" · 正在运行") : ''}`}
         onClick={() => onThread(thread)}
       >
         {pinned && <span className="pinned-camp-icon" aria-hidden="true"><NavigationIcon name="messages" /></span>}
         <span className="truncate">{title}</span>
         {thread.activationState === 'pending' && <span className="camp-draft-badge"><UiText zh={"草稿"} /></span>}
-        <span className="camp-status-slot" data-status={status} aria-hidden="true">
-          {loadingStatus
-            ? <span className={`camp-loading-spinner ${opening ? 'camp-open-spinner' : 'camp-marker-loading'}`} />
-            : hasNewReply && <i className="camp-unread-dot" />}
+        <span className="camp-status-cluster" data-status={status} aria-hidden="true">
+          {hasNewReply && <span className="camp-status-slot"><i className="camp-unread-dot" /></span>}
+          {loadingStatus && <span className="camp-status-slot"><span className={`camp-loading-spinner ${opening ? 'camp-open-spinner' : 'camp-marker-loading'}`} /></span>}
         </span>
       </button>
       <SidebarActionMenu
@@ -1110,7 +1177,8 @@ function ThreadRow({
         label={uiAttribute("管理“{0}”", String(title))}
         triggerClassName="camp-menu-trigger"
         items={menuItems}
-        pressMenu={mobile ? pressMenu : undefined}
+        pressMenu={pressMenu}
+        mobile={mobile}
       />
     </div>
   )
@@ -1119,7 +1187,8 @@ function ThreadRow({
 type SidebarActionMenuItem = {
   key: string
   label: string
-  icon: 'pin' | 'edit' | 'copy' | 'trash' | 'remove'
+  icon: 'pin' | 'edit' | 'copy' | 'trash' | 'remove' | 'square-pen' | 'reveal' | 'read' | 'unread'
+  disabled?: boolean
   filled?: boolean
   danger?: boolean
   separatorBefore?: boolean
@@ -1131,40 +1200,49 @@ function SidebarActionMenu({
   label,
   triggerClassName,
   items,
-  pressMenu
+  pressMenu,
+  mobile = false
 }: {
   target: string
   label: string
   triggerClassName: string
   items: SidebarActionMenuItem[]
   pressMenu?: ReturnType<typeof useNavigationPressMenu>
+  mobile?: boolean
 }): JSX.Element {
+  const trigger = (
+    <button
+      className={`sidebar-menu-trigger ${triggerClassName}${mobile ? ' mobile-context-trigger' : ''}`}
+      type="button" aria-label={label} title={uiAttribute('更多操作')}
+      data-sidebar-menu-target={target}
+      data-state={pressMenu?.open ? 'open' : 'closed'}
+      aria-haspopup="menu" aria-expanded={pressMenu?.open ?? false}
+      onClick={pressMenu?.contextPoint ? () => pressMenu.setOpen(false) : undefined}
+    >
+      {mobile ? uiAttribute('操作') : <svg className="more-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" />
+      </svg>}
+    </button>
+  )
   return (
-    <DropdownMenu.Root key={pressMenu ? 'mobile' : 'desktop'} open={pressMenu?.open} onOpenChange={pressMenu?.setOpen}>
-      <DropdownMenu.Trigger asChild>
-        <button
-          className={`sidebar-menu-trigger ${triggerClassName}${pressMenu ? ' mobile-context-trigger' : ''}`}
-          type="button"
-          aria-label={label}
-          title={uiAttribute("更多操作")}
-          data-sidebar-menu-target={target}
-        >
-          {pressMenu ? uiAttribute("操作") : <svg className="more-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="5" cy="12" r="1.8" />
-            <circle cx="12" cy="12" r="1.8" />
-            <circle cx="19" cy="12" r="1.8" />
-          </svg>}
-        </button>
-      </DropdownMenu.Trigger>
+    <DropdownMenu.Root key={mobile ? 'mobile' : 'desktop'} open={pressMenu?.open} onOpenChange={pressMenu?.setOpen}>
+      {pressMenu?.contextPoint ? <>
+        {trigger}
+        <DropdownMenu.Trigger asChild>
+          <button className="sidebar-context-anchor" aria-hidden="true" tabIndex={-1}
+            style={{ left: pressMenu.contextPoint.x, top: pressMenu.contextPoint.y }} />
+        </DropdownMenu.Trigger>
+      </> : <DropdownMenu.Trigger asChild>{trigger}</DropdownMenu.Trigger>}
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           {...pressMenu?.menuProps}
           className="sidebar-action-menu"
           aria-label={label}
-          align="end"
-          sideOffset={4}
+          align={pressMenu?.contextPoint ? 'start' : 'end'}
+          sideOffset={pressMenu?.contextPoint ? 0 : 4}
           collisionPadding={8}
           loop
+          onEscapeKeyDown={() => pressMenu?.restoreRowFocus()}
           onCloseAutoFocus={(event) => event.preventDefault()}
         >
           {items.flatMap((item) => [
@@ -1174,6 +1252,7 @@ function SidebarActionMenu({
             <DropdownMenu.Item
               className={`sidebar-action-menu-item ${item.danger ? 'danger' : ''}`}
               key={item.key}
+              disabled={item.disabled}
               onSelect={() => {
                 item.onSelect()
               }}
@@ -1192,6 +1271,10 @@ function SidebarMenuIcon({ kind, filled = false }: {
   kind: SidebarActionMenuItem['icon']
   filled?: boolean
 }): JSX.Element {
+  if (kind === 'square-pen') return <NavigationIcon name="square-pen" />
+  if (kind === 'reveal') return <svg className="sidebar-action-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9V6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v3M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9" /><path d="M12 14h9m-3-3 3 3-3 3" /></svg>
+  if (kind === 'read') return <svg className="sidebar-action-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 9-6 9 6v10H3ZM3 9l9 6 9-6" /></svg>
+  if (kind === 'unread') return <svg className="sidebar-action-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /><circle cx="20" cy="5" r="3" fill="currentColor" stroke="var(--surface-raised)" strokeWidth="1.8" /></svg>
   if (kind === 'edit') {
     return <svg className="sidebar-action-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 19 3.8-.8L18 9l-3-3-9.2 9.2Z" /><path d="m13.8 7.2 3 3" /></svg>
   }

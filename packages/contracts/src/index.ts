@@ -3229,16 +3229,26 @@ export interface RemovedNavigationProject {
   removedAt: string
 }
 
+export interface NavigationThreadReadState {
+  /** Explicit local reminder; viewing new replies does not clear this intent. */
+  manualUnread: boolean
+  /** Explicit mark-read boundary; never changes Core's observed read cursor. */
+  readThroughGlobalSequence: number
+}
+
 export interface NavigationPreferencesSnapshot {
-  schemaVersion: 4
+  schemaVersion: 5
   pins: NavigationPin[]
   removedProjects: RemovedNavigationProject[]
   projectOrder: string[] | null
   projectNames: Record<string, string>
+  threadReadStates: Record<string, NavigationThreadReadState>
 }
 
 export interface NavigationPreferencesApi {
   get(): Promise<NavigationPreferencesSnapshot>
+  setThreadReadState(threadId: string, state: NavigationThreadReadState | null): Promise<NavigationPreferencesSnapshot>
+  onChanged(listener: (snapshot: NavigationPreferencesSnapshot) => void): () => void
   replacePins(pins: NavigationPin[]): Promise<NavigationPreferencesSnapshot>
   synchronizeProjectOrder(projectKeys: string[]): Promise<NavigationPreferencesSnapshot>
   setProjectName(targetKey: string, name: string | null): Promise<NavigationPreferencesSnapshot>
@@ -4189,6 +4199,7 @@ export interface RovaiApi {
     write(input: { text: string; html: string | null }): Promise<void>
   }
   selectWorkspaceDirectory(): Promise<WorkspaceSelection | null>
+  revealProjectDirectory(projectPath: string): Promise<void>
   selectRuntimeExecutable(): Promise<string | null>
   selectSkillImportDirectory(): Promise<string | null>
   revealSkill(skillId: string): Promise<void>

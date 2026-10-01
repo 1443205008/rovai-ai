@@ -1,3 +1,4 @@
+import { navigationThreadReadState } from './navigation-unread'
 import { newCommandId } from '../../shared/command-id'
 import type { BusinessEnvironment } from './business-environment'
 import { AppHeader } from './AppHeader'
@@ -1025,7 +1026,7 @@ export function BusinessApp({
   }
   const initialTarget: RestorableLocation = initialStartupSnapshot
     ? startupTargetFromSnapshot(initialStartupSnapshot) : { kind: 'quick_chat' }
-  type NavigationContext = { campOptions?: ActivateThreadOptions; beforeCommit?: () => void; prepared?: boolean; memberPrepared?: boolean }
+  type NavigationContext = { campOptions?: ActivateThreadOptions; beforeCommit?: () => void; prepared?: boolean; memberPrepared?: boolean; preserveUnreadReminder?: boolean }
   const applyNavigationRef = useRef<(target: NavigationTarget, transaction: NavigationTransaction, context?: NavigationContext) => Promise<void>>(async () => undefined)
   const desktopNavigation = useMemo(() => createDesktopNavigation<NavigationContext>(
     (target, transaction, context) => applyNavigationRef.current(target, transaction, context), environment.navigationHistory
@@ -1055,6 +1056,15 @@ export function BusinessApp({
   const [projectOrder, setProjectOrder] = useState<string[] | null>(null)
   const [projectNames, setProjectNames] = useState<Record<string, string>>({})
   const projectNamesGeneration = useRef(0)
+  const [threadReadStates, setThreadReadStates] = useState<NavigationPreferencesSnapshot['threadReadStates']>({})
+  const threadReadStatesRef = useRef(threadReadStates)
+  const threadReadGeneration = useRef(0)
+  const acceptThreadReadStates = useCallback((snapshot: NavigationPreferencesSnapshot): void => {
+    ++threadReadGeneration.current
+    threadReadStatesRef.current = snapshot.threadReadStates ?? {}
+    setThreadReadStates(threadReadStatesRef.current)
+  }, [])
+  useEffect(() => uiPreferences.navigationPreferences.onChanged?.(acceptThreadReadStates), [uiPreferences, acceptThreadReadStates])
   const [pinnedThreadItems, setPinnedThreadItems] = useState<NavigationThreadItem[]>([])
   const [pendingMemoryCount, setPendingMemoryCount] = useState(0)
   const [memoryReviewNotice, setMemoryReviewNotice] = useState(false)
@@ -1158,6 +1168,7 @@ export function BusinessApp({
   const campOpenFeedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const campSnapshotCache = useRef(new Map<string, ThreadSurfaceSnapshot>())
   const campSnapshotRef = useRef<ThreadSurfaceSnapshot | null>(null)
+  const campSnapshotEntryPreviewRef = useRef(false)
   const activeThreadIdRef = useRef<string | null>(null)
   const viewRef = useRef<View>('compose')
   const notificationFocusSequence = useRef(0)
@@ -1207,6 +1218,7 @@ export function BusinessApp({
     initialComposerDraft: ThreadComposerDraftView | null = null
   ): void => {
     campSnapshotRef.current = snapshot
+    campSnapshotEntryPreviewRef.current = entryPreview
     if (snapshot) rememberThreadSnapshot(campSnapshotCache.current, snapshot)
     setThreadSnapshotState({ snapshot, entryPreview, initialComposerDraft })
   }, [])
@@ -1216,6 +1228,25 @@ export function BusinessApp({
       ? { ...current, initialComposerDraft: null }
       : current)
   }, [])
+
+  const saveThreadReadState = useCallback(async (
+    threadId: string,
+    state: NavigationPreferencesSnapshot['threadReadStates'][string] | null
+  ): Promise<void> => {
+    const generation = ++threadReadGeneration.current
+    const snapshot = await uiPreferences.navigationPreferences.setThreadReadState(threadId, state)
+    if (generation === threadReadGeneration.current) acceptThreadReadStates(snapshot)
+  }, [uiPreferences, acceptThreadReadStates])
+
+  const clearThreadUnreadReminder = useCallback(async (threadId: string, generation: number): Promise<void> => {
+    const current = threadReadStatesRef.current[threadId]
+    // Only an explicit navigation with a full projection clears the reminder.
+    // Startup restoration and automatic observation never enter this transition.
+    if (campSnapshotRef.current?.thread.id === threadId && !campSnapshotEntryPreviewRef.current
+      && generation === threadReadGeneration.current && current?.manualUnread) {
+      await saveThreadReadState(threadId, { ...current, manualUnread: false })
+    }
+  }, [saveThreadReadState])
 
   const clearThreadOpenFeedback = useCallback((): void => {
     if (campOpenFeedbackTimer.current !== null) {
@@ -1529,6 +1560,7 @@ export function BusinessApp({
             return nextMemoryReviewItems
           })
         const namesGeneration = projectNamesGeneration.current
+        const readGeneration = threadReadGeneration.current
         const nextNavigationPreferencesPromise = uiPreferences.navigationPreferences.get()
 
         const navigationOverviewPromise = (async (): Promise<void> => {
@@ -1561,6 +1593,7 @@ export function BusinessApp({
           if (namesGeneration === projectNamesGeneration.current) {
             setProjectNames(resolvedNavigationPreferences.projectNames)
           }
+          if (readGeneration === threadReadGeneration.current) acceptThreadReadStates(resolvedNavigationPreferences)
           setRemovedProjectAuthorityReady(true)
           setPinnedThreadItems(
             resolvedPins.threads.filter((thread) => !deletingThreadIdsRef.current.has(thread.id))
@@ -1884,7 +1917,10 @@ export function BusinessApp({
     threadId: string,
     options: ActivateThreadOptions = {}
   ): Promise<boolean> => {
-    const activated = await desktopNavigation.push({ kind: 'camp', threadId }, { campOptions: options, memberPrepared: options.memberPrepared })
+    const readGeneration = threadReadGeneration.current
+    const navigate = campSnapshotEntryPreviewRef.current && activeThreadIdRef.current === threadId
+      ? desktopNavigation.replace : desktopNavigation.push
+    const activated = await navigate({ kind: 'camp', threadId }, { campOptions: options, memberPrepared: options.memberPrepared })
     const state = desktopNavigation.getSnapshot()
     const target = state.entries[state.index]
     if (target?.kind !== 'camp' || target.threadId !== threadId) return false
@@ -1902,10 +1938,11 @@ export function BusinessApp({
       if (campSnapshotRef.current?.thread.missionId && options.missionPresentation) {
         setMissionPresentation(options.missionPresentation)
       }
+      await clearThreadUnreadReminder(threadId, readGeneration)
       return true
     }
     return activated
-  }, [desktopNavigation])
+  }, [desktopNavigation, clearThreadUnreadReminder])
 
   useEffect(() => desktop?.userAutomation.onOpenThread(({ threadId }) => {
     void activateThread(threadId, { reconcileDefaultLead: false })
@@ -2284,7 +2321,7 @@ export function BusinessApp({
     if (environment.navigationHistory?.initial) {
       if (!restoredWebNavigation.current) {
         restoredWebNavigation.current = true
-        void desktopNavigation.restore().then(restored => { if (!restored) desktopNavigation.reset({ kind: 'quick_chat' }) })
+        void desktopNavigation.restore({ preserveUnreadReminder: true }).then(restored => { if (!restored) desktopNavigation.reset({ kind: 'quick_chat' }) })
       }
       return
     }
@@ -2893,17 +2930,19 @@ export function BusinessApp({
 
   applyNavigationRef.current = async (target, transaction, context) => {
     if (shuttingDownRef.current) return
+    const readGeneration = threadReadGeneration.current
     // Invalidate older Thread reads immediately, including reads waiting behind a leave guard.
     const selectionGeneration = ++campSelectionGeneration.current
     clearThreadOpenFeedback()
     const apply = async (): Promise<void> => {
       if (!transaction.isCurrent()) return
       if (target.kind === 'camp') {
-        if (viewRef.current === 'camp' && activeThreadIdRef.current === target.threadId) {
-          transaction.commit()
+        if (viewRef.current === 'camp' && activeThreadIdRef.current === target.threadId && !campSnapshotEntryPreviewRef.current) {
+          if (transaction.commit() && !context?.preserveUnreadReminder) await clearThreadUnreadReminder(target.threadId, readGeneration)
           return
         }
         await activateThreadWithoutLeaveGuard(target.threadId, context?.campOptions ?? {}, selectionGeneration, transaction)
+        if (transaction.isCurrent() && !context?.preserveUnreadReminder) await clearThreadUnreadReminder(target.threadId, readGeneration)
         return
       }
       const previous = desktopNavigation.getSnapshot()
@@ -3017,8 +3056,13 @@ export function BusinessApp({
     })
   }
 
+  const setThreadUnread = async (thread: NavigationThreadItem, unread: boolean): Promise<void> => {
+    await saveThreadReadState(thread.id, navigationThreadReadState(thread, unread, threadReadStatesRef.current[thread.id]))
+  }
+
   const chooseThread = (thread: NavigationThreadTarget): void => {
     void activateThread(thread.id, { reconcileDefaultLead: thread.activationState !== 'pending' })
+      .catch((nextError) => notifyError(errorMessage(nextError)))
   }
 
   const navigateFromNotification = useCallback(async (
@@ -4179,6 +4223,10 @@ export function BusinessApp({
     creatingConversation={busy === 'create-camp'}
     pins={navigationPins}
     pinnedThreadItems={pinnedThreadItems}
+    threadReadStates={threadReadStates}
+    onSetThreadUnread={setThreadUnread}
+    onRevealProject={environment.revealProjectDirectory ? project => environment.revealProjectDirectory!(project.projectPath) : undefined}
+    onProjectPathCopied={() => notify(uiAttribute('已复制项目路径'))}
     settingsSection={settingsSection}
     updateSnapshot={appUpdates.snapshot}
     onNewConversation={() => { setMobileConversationDrawerOpen(false); beginNewConversation() }}

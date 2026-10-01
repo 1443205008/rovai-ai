@@ -80,3 +80,8 @@ main 的更名和已安装指标分支都占用 Migration 178 / schema 128。保
 合并后的默认 Rust workspace 449 项通过／1 项既有忽略，Monitoring 扩展 12 项、数据库扩展 91 项和
 Thread 双路径升级 owner 1 项通过。TypeScript、Desktop／Web 构建、Product Contract 指纹、docs:test
 10 项及对 `4aa0e9ed` 的 diff-aware 文档门禁通过；没有通过测试的旧 Fast 脚本仍按上节单独记录。
+
+随后同步 main `a49594fc`（Sidecar 行操作）：Core 和执行指标组件的代码与前次合并相同，数据库迁移不变。
+该头上的 TypeScript、227 文件／2,441 项 Vitest、Desktop／Web 构建和 diff-aware 文档门禁通过；
+macOS namespace 夹具的冲突保留已验证的未标记基线，定向 owner 通过。上节 Renderer 截图仍对应
+合入 `4aa0e9ed` 后的执行指标组件，不作为新的 Sidecar 交互验收。
