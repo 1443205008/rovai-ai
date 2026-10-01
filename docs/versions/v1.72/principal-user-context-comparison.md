@@ -2,7 +2,7 @@
 document_type: design-proposal-appendix
 version: v1.72
 revision: 1
-last_updated: 2026-10-01
+last_updated: 2026-10-02
 ---
 
 # Principal 改为 User 的完整上下文前后对照
@@ -11,7 +11,8 @@ last_updated: 2026-10-01
 “变更前”取自源码基线 `4aa0e9ede69b035952afa1e032ee82dbc4666ca7`；“变更后”是供确认的完整替换文本。
 代码块完整保留正文；仅以文档代码块的末行换行排版，不把 Rust 字符串转义字符误当模型实际文本。
 
-公开 Bootstrap 两种基稿均完整展开共享 CLI Contract；Single Chat 使用自己的完整 Charter。
+当前入口为公开协作（batch）与 Single Chat；历史公开单输入模板另列，不代表第三种当前会话模式。
+两份公开 Bootstrap 基稿均完整展开共享 CLI Contract；Single Chat 使用自己的完整 Charter。
 可选渠道、Runtime 和 Mission 尾段只在原条件下出现，原文见末节，前后相同。
 本页不包含用户内容、真实身份或消息记录；唯一中文 Mention 例子是固定示例，非生产数据。
 
@@ -76,9 +77,27 @@ Rovai Built-in CLI Contract
 - A successful `rovai send` proves only that its message and effects were committed; it does not prove that recipient work has started or completed.
 ````
 
-## 非批次公开 Bootstrap
+## 历史公开单输入 Bootstrap（遗留路径）
 
 来源：[crates/rovai-core/src/context.rs](../../../crates/rovai-core/src/context.rs) · [crates/rovai-core/resources/charter-rovai-cli.md](../../../crates/rovai-core/resources/charter-rovai-cli.md) · [crates/rovai-core/resources/charter-message-quotes.md](../../../crates/rovai-core/resources/charter-message-quotes.md)。对应 `build_session_charter 非 batch 分支`。
+
+2026-10-02 入口核对：普通公开对话（包括单条消息）、Agent 协作、Mission、Automation 和渠道消息都创建
+`batch` Run；私聊创建 `single_chat` Run 并提前返回专用 Charter。这两类正常入口不选择本节模板。
+
+仍有一个具体的跨版本异常恢复窗口：旧 `direct` Run 已被 claim 为 `running`，但尚未生成 Bootstrap、
+ContextManifest 或 Runtime Input Delivery 时进程异常退出，随后升级。Migration 163 只把符合条件的旧
+`queued` Run 转入新队列，未覆盖这种 `running` 状态；`prepare_v2_recovery` 会将其改为
+`waiting/runtime_recovery`，非 batch Scheduler 仍可选中它。成员、CampTurn、Runtime 等既有准入条件
+通过后，新 Binding 没有 Bootstrap evidence 时，`prepare_session_bootstrap_evidence_for_snapshot` 会进入
+本节的生成分支。此结论来自现有控制流，不表示所有历史 Run 都可以恢复。
+
+使用源码原 SQL 在隔离内存 SQLite 中验证了三个相连节点：迁移的旧 Run 终态化语句不改变该 `running`
+行；启动恢复将其变为 `waiting/runtime_recovery`；非 batch 候选查询返回该 Run。该定向验证不启动真实
+Runtime，也不代替完整升级验收。依据：[Migration 与启动恢复](../../../crates/rovai-core/src/db.rs)、
+[非 batch 候选选择](../../../crates/rovai-core/src/runtime.rs)和[Bootstrap 准备](../../../crates/rovai-core/src/context.rs)。
+
+因此尚不满足“确认没有可达入口即可删除”的条件。旧 Native Session 复用已保存的 Bootstrap 会在生成前
+直接返回，与上述“旧执行尚无 Bootstrap”的窗口不同。本次只补充现状和命名，不改变 r1 的拟实施行为。
 
 引文权限说明已按真实 include_str 位置展开；该说明逐字不变。
 

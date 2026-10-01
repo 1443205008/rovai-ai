@@ -3,13 +3,13 @@ document_type: model-context-change
 version: v1.72
 revision: 1
 confirmation_status: pending
-last_updated: 2026-10-01
+last_updated: 2026-10-02
 ---
 
 # Principal 改为 User 的上下文变更说明
 
-本稿 r1 待审阅。[完整前后对照](principal-user-context-comparison.md)包含 20 组替换文本，覆盖三种
-Bootstrap、A2A 返回指导、结构化用户提及、CLI 教学与四项 Skill 的八份 Markdown；另列八段保持原文的相邻指令。
+本稿 r1 待审阅。[完整前后对照](principal-user-context-comparison.md)包含 20 组替换文本，覆盖当前公开协作、
+单聊及历史公开单输入 Bootstrap、A2A 返回指导、结构化用户提及、CLI 教学与四项 Skill 的八份 Markdown；另列八段保持原文的相邻指令。
 当前没有修改产品实现、Schema 或当前合同。
 
 本次将人类用户的主要称呼统一为 **User**，命令主用法改为 `--to-user`，Agent 提及主投影改为 `@User`。
@@ -64,7 +64,8 @@ Bootstrap、A2A 返回指导、结构化用户提及、CLI 教学与四项 Skill
 
 ### 上下文文字
 
-公开批次和非批次的新 Charter 统一用一行定义：
+当前公开批次和历史公开单输入分支的新 Charter 统一用一行定义；历史分支的可达条件见
+[完整对照中的入口核对](principal-user-context-comparison.md#历史公开单输入-bootstrap遗留路径)：
 
 ```text
 The User is the human who owns the Thread objective. --to-user requests their attention.
