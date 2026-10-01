@@ -9,6 +9,7 @@ export interface BusinessEnvironment {
   files: FilePreviewApi
   preferences: Pick<RovaiApi, 'appearance' | 'generalPreferences' | 'navigationPreferences'>
   selectWorkspaceDirectory: RovaiApi['selectWorkspaceDirectory']
+  revealProjectDirectory?: RovaiApi['revealProjectDirectory']
   serverUpdates?: RovaiApi['appUpdates']
   /** Native startup, updates, lifecycle and notification integration are absent on Web. */
   desktop?: Pick<RovaiApi, 'desktopSession' | 'onboarding' | 'appLifecycle' | 'userAutomation' | 'appUpdates' | 'exportDiagnostics' | 'windowControls' | 'hostWeb'>

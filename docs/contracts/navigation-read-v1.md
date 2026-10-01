@@ -3,7 +3,7 @@ document_type: contract
 contract: navigation-read
 version: v1
 status: accepted
-last_updated: 2026-09-27
+last_updated: 2026-10-02
 ---
 
 # Navigation Read v1
@@ -27,6 +27,8 @@ external_principal 消息推进。查看、重命名、队员消息和 Run 终�
 NavigationCampItem 延续 schema 3 字段，并提供 `lastSeenGlobalSequence`（读取旧 fixture 时可缺省为 0）。
 `lastActivityAt`、`lastActivityGlobalSequence`、`latestCompletionGlobalSequence` 来自 camp 摘要；
 `marker` 从现有活跃 Run 与 camp_view_state 推导，loading 优先于 unread_completed。
+Renderer 的运行环沿用 loading，而未读独立使用最新回复与查看水位计算，允许运行和未读同时显示；
+`latestCompletionGlobalSequence` 的 wire 名称保留，其事实为已发布且未撤回的 Agent 回复，不要求 Run 已结束。
 
 ## Observed read acknowledgement
 
@@ -37,6 +39,18 @@ NavigationCampItem 延续 schema 3 字段，并提供 `lastSeenGlobalSequence`�
 `navigation.camps` 结果。已读复用 camp_view_state，单调增加；重复/旧水位不写入、changed=false，
 不发侧栏失效通知。客户端已知没有新增可见完成内容时不重复请求；确需确认时应用 Core 返回的行，不能猜 marker。
 普通进入只请求目标投影和目标行，不触发全侧栏、其他分组、使命列表或技能目录扫描。
+
+## Explicit local read intent
+
+`navigationPreferences` schema 5 另存本机 `threadReadStates`，每个稳定 Thread ID 的值为
+`{ manualUnread: boolean, readThroughGlobalSequence: number }`；水位必须是非负安全整数。
+`setThreadReadState(threadId, state | null)` 原子保存并返回完整偏好快照；`null` 移除本机意图，非空值的 read-through
+与旧值取最大。`onChanged` 发布成功保存后的快照。schema 2/3/4 默认补空映射，不修改 Core schema 或已读存储。
+
+显式标记未读只设置 reminder；标记已读清除 reminder 并覆盖操作时已知回复，后续新增回复仍可未读。
+展示未读为 manualUnread 或 `latestCompletionGlobalSequence > max(lastSeenGlobalSequence, readThroughGlobalSequence)`。
+显式成功打开完整会话可清除 reminder，失败、缓存预览或自动刷新不清除。
+这些动作不调用 `navigation.campViewed` 冒充实际查看，也不能倒退 Core 水位。
 
 ## Notifications and recovery
 

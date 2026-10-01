@@ -3,7 +3,7 @@ document_type: architecture
 architecture: desktop-navigation-refresh
 authority: desktop-navigation-invalidation-and-refresh-boundaries
 status: accepted
-last_updated: 2026-09-28
+last_updated: 2026-10-02
 ---
 
 # Desktop Navigation Refresh 架构
@@ -17,7 +17,7 @@ Navigation Preferences 拥有本机项目顺序和显示名称。字段见 [Navi
 | --- | --- |
 | Core Navigation Read Model | 从 camp 摘要与现有业务表读取；目标行按 ID、分组按索引前缀；同一事务取得窗口与总数 |
 | Core mutation boundary | 事件序号确定后，同事务维护所属 Camp 的活动/完成摘要；提交后发带 scope 的失效提示 |
-| Electron Main | 原样转发，不组装业务状态；schema 4 私有原子 JSON 保存 projectOrder/projectNames |
+| Electron Main | 原样转发，不组装业务状态；schema 5 私有原子 JSON 保存 projectOrder/projectNames/threadReadStates |
 | Renderer window reader + refresh coordinator | 一处合并行/组/完整范围，串行执行、trailing、退避与窗口旧响应保护 |
 | Foreground safety refresh | 保留前台约 20 秒与聚焦完整性兜底，从摘要取完整快照；隐藏时停止 |
 | Overview loader | 首次建立完整导航与其他页面基础；普通 Camp 切换不调用 Overview |
@@ -102,7 +102,7 @@ Migration 177 接受经核验的 v1.72/schema 126，升级到 schema 127，新�
 
 ## Sidecar Project order synchronization
 
-`navigation.json` schema 4 的 `projectOrder: string[] | null` 只保存 canonical
+`navigation.json` schema 5 的 `projectOrder: string[] | null` 只保存 canonical
 `directory:<projectPath>` key。合法 schema 2 以 `null` 读取而不被视为损坏；`null` 与空数组不同，前者表示尚未
 首次冻结，后者表示已经在空列表上完成冻结。第一次同步按 Core 当前 Project 数组顺序写入所有未被本机移除的
 Project。后续每次同步执行同一确定性规则：
@@ -123,7 +123,7 @@ Navigation Snapshot 和协调器 generation 不回滚、不停止后续失效刷
 
 `projectNames: Record<string, string>` 使用既有 canonical `directory:<projectPath>` key 保存本机显示名称。
 合法 schema 2/3 在内存升级时补空映射，不因升级产生损坏提示，也不在读取时重写旧文件。schema 1 继续沿用
-已有恢复规则。后续成功写入输出 schema 4；名称与置顶、移除、恢复、顺序共用 Main 串行队列和原子文件写入。
+已有恢复规则。后续成功写入输出 schema 5；名称与置顶、移除、恢复、顺序共用 Main 串行队列和原子文件写入。
 写入失败保留旧快照；返回完整快照只发生在成功保存后。
 
 Main-owned `navigationPreferences.setProjectName(targetKey, name)` 接受字符串或 `null`；字符串去除首尾空白、
@@ -135,6 +135,23 @@ Renderer 在 Core 原始 Navigation Snapshot 之外建立名称展示投影，�
 已保存的显示名称。重命名不调用 Core mutation、Workspace inspection 或 Runtime；不修改项目路径、Camp ID、
 消息、队员、记忆、Native Session、执行状态、活动时间或排序。渠道项目目录仍由既有 Core 投影拥有，本机别名不进入
 模型上下文或渠道配置。旧 Overview 名称读取通过改名 generation 隔离；顺序和置顶写入的返回不更新名称状态。
+
+## Local Thread unread intent
+
+schema 5 增加 `threadReadStates: Record<ThreadId, { manualUnread: boolean, readThroughGlobalSequence: number }>`。
+合法 schema 2/3/4 在内存补空映射，读取不重写文件，也不产生损坏提示。该映射只保存展示意图，不进入 Core 或模型上下文。
+`navigationPreferences.setThreadReadState(threadId, state | null)` 校验稳定 ID 与非负安全整数；写入与其他导航偏好共用
+Main 串行事务和私有原子文件，保留单调的本机 read-through。失败保留旧状态，成功后广播
+`rovai:navigation-preferences-changed` 完整快照到所有窗口。Renderer 通过 generation 防止旧 Overview 或回复覆盖新意图。
+Web 使用当前主机作用域的 browser presentation storage，读取旧结构并监听跨标签页 storage 变更；失败不发布新状态。
+
+Renderer 独立计算运行与未读：Run 的 loading 与 `latestCompletionGlobalSequence > max(lastSeenGlobalSequence, localReadThrough)`
+分别显示，manualUnread 可以强制保留蓝点。显式标记已读把本机 read-through 推进到当前已知回复水位，后续回复不被遮蔽。
+显式打开只有在完整投影成功展示后才清除手动提醒；取消离开、失败、缓存预览、自动恢复与聚焦均不清除。
+真实查看仍由既有 `navigation.campViewed` 确认，手动操作不伪造查看或回退 Core 水位。
+
+Desktop 的 `revealProjectDirectory` 由 Main 验证绝对目录仍存在，然后调用系统文件管理器定位目录本身；
+此能力不暴露给远程 Web。复制项目路径沿用 Renderer 的剪贴板能力，失败反馈保持可恢复。
 
 ## Failure and lifecycle boundaries
 

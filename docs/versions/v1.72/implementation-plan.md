@@ -3,7 +3,7 @@ document_type: implementation-plan
 version: v1.72
 authority: version-implementation-and-acceptance
 status: in_progress
-last_updated: 2026-09-29
+last_updated: 2026-10-02
 ---
 
 # v1.72 实施与验收
@@ -459,3 +459,31 @@ ACP 原生标签和 Codex 的固定英文决定标签原样展示；Claude 同�
 375px 手机视口为两排；长标签、配置文件说明隐藏、原生决定身份、实际按钮点击与长选项列表滚动均通过。
 `pnpm typecheck`、`pnpm docs:test`、`pnpm docs:check` 与真实分支基线 `df7f7abd` 的文档 CI 门禁通过。
 上节 Claude Code `2.1.280` 真实 Desktop/发送证据属于布局调整前的 `69acb895`，不作为本次新布局的实际 Runtime 验收。
+
+
+## 2026-10-02 Sidecar v3 交互实现
+
+Principal 确认 v3 HTML 后授权实施、创建 PR 并合入 main。本次范围保留既有 Porcelain Day / Steel Night、
+270px 默认宽度与 200–420px 调宽、项目 34px / 对话 28px 行高，不替换视觉世界。
+
+- 项目和对话的右键、三点、Shift+F10 / ContextMenu 与触屏长按使用同一菜单；右键不导航或折叠，
+  Escape 恢复行焦点，滚动和失焦关闭。项目行的创建图标复用既有 New Chat，增加原生目录定位与复制路径。
+- 操作默认隐藏，选中行也不常驻。运行环与未读点独立并列，悬浮/可见焦点/菜单打开时隐藏状态簇，
+  最右侧显示三点；标题空间不变。运行环 Day 为 `#7a7d80`，Night 为 `#a2a6aa`。
+- 导航偏好 schema 5 保存手动提醒与本机 read-through；合法旧 schema 2/3/4 读取不重写或降级。
+  串行原子保存、失败保留旧值、重启恢复和其他窗口/标签页同步均保持。Core schema 与真实查看水位不变。
+- 标记已读仅覆盖当前已知回复。聚焦、后台刷新和 Run 结束不清除手动提醒；显式完整打开（含历史导航）
+  才清除。取消离开、打开失败与缓存预览保留提醒，再次打开预览可以重试完整投影。
+
+验证：`pnpm typecheck`、`pnpm test`（225 个 Vitest 文件，2428 项；随后 Node owner 328 通过、2 平台跳过）、
+`pnpm test:rust:pr`、`pnpm test:desktop-bridge`、`pnpm test:startup-presentation`、`pnpm test:navigation-shell`
+与 `pnpm build:desktop` 通过。Electron 验收使用独立临时 userData，不启动 Core、SQLite 或 Runtime。
+真实原生输入覆盖双状态、悬浮替换/标题稳定、菜单位置/边界、两种入口、键盘焦点、读状态切换/重启、
+目录定位传参、路径复制、远程 Web 缺少原生入口及 200px 布局；Day/Night、默认/悬浮、两类菜单和窄栏截图已人工核对。
+
+默认 Rust 门禁发现既有 namespace comparator 测试假设临时文件没有 `com.apple.provenance`，当前 macOS
+自动加标签会打破该假设。在原 owner 内显式构造无标签的旧观察值，继续使用真实带标签文件并保留 authority
+变更的拒绝断言；无新增、删除或禁用 Rust 测试，生产数据库 admission 逻辑不变。
+
+本次可逆行操作沿用既有导航权威，无新增 Version Decision 准入事项。当前 Contract、Architecture 与 UI 同步更新，
+版本指针与 Runtime/Context 合同确认无需变化。

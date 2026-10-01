@@ -1,9 +1,10 @@
 import { isThreadId } from '@contracts'
-import { EMPTY_SNAPSHOT, sanitizeSnapshot, isProjectTargetKey, isStableId, isTimestamp, isRecord } from '../shared/navigation-preferences-model'
+import { EMPTY_SNAPSHOT, sanitizeSnapshot, isProjectTargetKey, isStableId, isTimestamp, isRecord, isNavigationThreadReadState } from '../shared/navigation-preferences-model'
 import { readFile } from 'node:fs/promises'
 import type {
   NavigationPin,
   NavigationPreferencesSnapshot,
+  NavigationThreadReadState,
   RemovedNavigationProject,
   StructuredError
 } from '@contracts'
@@ -68,6 +69,12 @@ function sourceMatchesSupportedSnapshot(
       projectOrder: snapshot.projectOrder
     })
   }
+  if (source.schemaVersion === 4) {
+    return JSON.stringify(source) === JSON.stringify({
+      schemaVersion: 4, pins: snapshot.pins, removedProjects: snapshot.removedProjects,
+      projectOrder: snapshot.projectOrder, projectNames: snapshot.projectNames
+    })
+  }
   return JSON.stringify(source) === JSON.stringify(snapshot)
 }
 
@@ -121,6 +128,23 @@ export class NavigationPreferencesStore {
         pins
       })
       await this.#commit(next)
+      return this.get()
+    })
+  }
+
+  setThreadReadState(threadId: string, state: NavigationThreadReadState | null): Promise<NavigationPreferencesSnapshot> {
+    if (!isThreadId(threadId) || (state !== null && !isNavigationThreadReadState(state))) {
+      return Promise.reject(new Error('Invalid Thread read state'))
+    }
+    return this.#enqueue(async () => {
+      const threadReadStates = { ...this.#snapshot.threadReadStates }
+      if (state === null) delete threadReadStates[threadId]
+      else threadReadStates[threadId] = {
+        manualUnread: state.manualUnread,
+        readThroughGlobalSequence: Math.max(state.readThroughGlobalSequence,
+          threadReadStates[threadId]?.readThroughGlobalSequence ?? 0)
+      }
+      await this.#commit({ ...this.#snapshot, threadReadStates })
       return this.get()
     })
   }

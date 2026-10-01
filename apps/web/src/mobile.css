@@ -36,7 +36,7 @@ html[data-mobile-web="true"] .mobile-icon-button:disabled { opacity: .4; }
 html[data-mobile-web="true"] .navigation-scroll { flex: 1; min-height: 0; margin-right: 0; padding: 0 20px 12px; overscroll-behavior: contain; }
 html[data-mobile-web="true"] :is(.camp-nav-row, .camp-nav-open) { min-height: 44px; height: 44px; margin: 0; border: 0; }
 html[data-mobile-web="true"] .camp-nav-row { margin-inline: -12px; }
-html[data-mobile-web="true"] .camp-nav-open { position: relative; gap: 8px; padding: 0 12px; font-size: 14px; }
+html[data-mobile-web="true"] .camp-nav-open { position: relative; gap: 8px; padding: 0 56px 0 12px; font-size: 14px; }
 html[data-mobile-web="true"] .pinned-navigation > .camp-nav-row > .camp-nav-open { padding-left: 12px; }
 html[data-mobile-web="true"] .pinned-navigation > .camp-nav-row > .camp-nav-open > .pinned-camp-icon { display: inline-flex; flex: 0 0 20px; width: 20px; height: 20px; color: var(--muted); }
 html[data-mobile-web="true"] .pinned-navigation > .camp-nav-row > .camp-nav-open > .pinned-camp-icon > svg { width: 20px; height: 20px; flex: none; }
@@ -600,3 +600,6 @@ html[data-mobile-web="true"][data-motion-preference="reduce"] :is(.app-shell > .
 @media(prefers-reduced-motion:reduce) {
   html[data-mobile-web="true"] :is(.app-shell > .content,.mobile-settings-detail,.app-menu,.mobile-conversation-scrim) { animation: none !important; }
 }
+
+html[data-mobile-web="true"] .camp-nav-row .camp-status-cluster,
+html[data-mobile-web="true"] .camp-nav-row:is(:hover, :has(:focus-visible), [data-menu-open="true"]) .camp-status-cluster { right: 12px; visibility: visible; }

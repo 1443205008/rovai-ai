@@ -1,4 +1,4 @@
-import type { NavigationSnapshot } from '@contracts'
+import type { NavigationSnapshot, NavigationPreferencesSnapshot } from '@contracts'
 import type { ThreadCreationPreflight, CoreEvent, DesktopStartupSnapshot, HealthStatus, OnboardingSnapshot, RestorableLocation, RovaiApi, SupervisorSnapshot } from '@contracts'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -15,6 +15,7 @@ window.addEventListener('unhandledrejection', event => errors.push(String(event.
 const calls: string[] = []
 const listeners = new Set<(snapshot: SupervisorSnapshot) => void>()
 const coreListeners = new Set<(event: CoreEvent) => void>()
+const navigationPreferenceListeners = new Set<(snapshot: NavigationPreferencesSnapshot) => void>()
 const responses = new Map<string, unknown>()
 const requestHandlers = new Map<string, (params: any) => unknown>()
 let now = 0
@@ -74,6 +75,18 @@ function api(path = ''): unknown {
         coreListeners.add(args[0])
         return () => coreListeners.delete(args[0])
       }
+      if (path === 'navigationPreferences.onChanged') {
+        navigationPreferenceListeners.add(args[0])
+        return () => navigationPreferenceListeners.delete(args[0])
+      }
+      if (path === 'navigationPreferences.setThreadReadState') {
+        const previous = responses.get('navigationPreferences.get') as NavigationPreferencesSnapshot
+        const next = { ...previous, threadReadStates: { ...previous.threadReadStates, [args[0]]: args[1] } }
+        responses.set('navigationPreferences.get', next)
+        navigationPreferenceListeners.forEach(listener => listener(next))
+        calls.push(path)
+        return Promise.resolve(next)
+      }
       if (path.split('.').at(-1)?.startsWith('on')) return () => undefined
       if (path === 'supervisor.getSnapshot') return initialSupervisor.promise
       if (path === 'desktopSession.getStartupSnapshot') { calls.push(path); return localSession.promise }
@@ -118,6 +131,7 @@ async function reset(target: RestorableLocation | null = { kind: 'camp', threadI
   timers.clear()
   listeners.clear()
   coreListeners.clear()
+  navigationPreferenceListeners.clear()
   responses.clear()
   requestHandlers.clear()
   calls.length = 0
@@ -270,7 +284,7 @@ Object.assign(window, { startupTest: {
     await flush()
     check(document.querySelector('.onboarding-welcome'), 'A real first install proceeds immediately once ready; 400ms is not a minimum delay')
     check(!document.querySelector('.startup-loading-canvas, .bootstrap-shell'), 'Fast startup must not flash loading')
-    check(!calls.includes('camps.enter'), 'A fresh first-run flow must not enter an existing Camp')
+    check(!calls.includes('threads.enter'), 'A fresh first-run flow must not enter an existing Camp')
     cases.push('first-run authority gate stays intact without imposing a 400ms minimum delay')
 
     await reset()
@@ -290,8 +304,8 @@ Object.assign(window, { startupTest: {
     // The production restore path intentionally paints the route before entering
     // the Camp. Allow that additional pair of frames to complete.
     await flush()
-    check(calls.includes('camps.enter'), 'The restored Camp begins loading once authority and onboarding are ready')
-    check(!calls.includes('navigation.campViewed') && !calls.includes('desktopSession.commitRestorableLocation'),
+    check(calls.includes('threads.enter'), 'The restored Camp begins loading once authority and onboarding are ready')
+    check(!calls.includes('navigation.threadViewed') && !calls.includes('desktopSession.commitRestorableLocation'),
       'A candidate route is not a committed/read Camp')
     check(document.querySelector('.startup-loading-canvas[data-startup-route="camp"]'), 'The same brand canvas survives authority handoff')
     check(!document.querySelector('.bootstrap-shell, .onboarding-app-shell'), 'No intermediate recovery shell')
@@ -398,7 +412,7 @@ Object.assign(window, { startupTest: {
     responses.set('members.list', [])
     responses.set('runtime.installations.list', [])
     responses.set('navigation.snapshot', { schemaVersion: 3, projects: [], quickChat: { recentThreads: [], totalCount: 0 } })
-    const navPreferences = { pins: [], removedProjects: [], projectOrder: [], projectNames: {} }
+    const navPreferences: NavigationPreferencesSnapshot = { schemaVersion: 5, pins: [], removedProjects: [], projectOrder: [], projectNames: {}, threadReadStates: {} }
     responses.set('navigationPreferences.get', navPreferences)
     responses.set('navigationPreferences.synchronizeProjectOrder', navPreferences)
     responses.set('memory.hearthReviewItems.list', [])
@@ -471,27 +485,45 @@ Object.assign(window, { startupTest: {
     } })
     requestHandlers.set('navigation.threads', ({ threadIds }) => ({ throughGlobalSequence: 0, groupKeys: ['quick-chat'],
       threads: (responses.get('navigation.snapshot') as NavigationSnapshot).quickChat.recentThreads.filter(camp => threadIds.includes(camp.id)) }))
-    responses.set('navigation.campViewed', { changed: false, navigation: { throughGlobalSequence: 0, groupKeys: ['quick-chat'], threads: [] } })
+    responses.set('navigation.threadViewed', { changed: false, navigation: { throughGlobalSequence: 0, groupKeys: ['quick-chat'], threads: [] } })
     responses.set('skills.list', [])
     responses.set('skills.deliveryGroups.list', [])
     responses.set('skills.candidates', { skills: [], errors: [] })
-    responses.set('camps.exists', true)
-    requestHandlers.set('camp.composerDraft.get', ({ threadId }) => ({ threadId, body: '', content: { version: 2, segments: [] },
+    responses.set('threads.exists', true)
+    requestHandlers.set('thread.composerDraft.get', ({ threadId }) => ({ threadId, body: '', content: { version: 2, segments: [] },
       revision: 1, attachments: [], replyIntent: null, continuationIntent: null, updatedAt: stamp, expiresAt: null }))
-    requestHandlers.set('camp.pendingInputs.get', ({ threadId }) => ({ threadId, executionActive: false, editSession: null, items: [] }))
+    requestHandlers.set('thread.pendingInputs.get', ({ threadId }) => ({ threadId, executionActive: false, editSession: null, items: [] }))
     let campRequest = (id: string): unknown => campProjection(id)
-    requestHandlers.set('camps.enter', ({ command }) => campRequest(command.threadId))
-    requestHandlers.set('camps.open', ({ threadId }) => campRequest(threadId))
+    requestHandlers.set('threads.enter', ({ command }) => campRequest(command.threadId))
+    requestHandlers.set('threads.open', ({ threadId }) => campRequest(threadId))
     for (const listener of coreListeners) listener({ method: 'navigation.invalidated', params: {} } as CoreEvent)
     await advance(500); await flush()
     await clickNavigation('返回 App', '.settings-sidebar-back')
     await clickNavigation('导航会话 A', '.camp-nav-open')
     check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 A', 'Camp A is a real authoritative navigation destination')
+    const markUnread = async (id: string) => {
+      const next = { ...(responses.get('navigationPreferences.get') as NavigationPreferencesSnapshot),
+        threadReadStates: { [id]: { manualUnread: true, readThroughGlobalSequence: 0 } } }
+      responses.set('navigationPreferences.get', next)
+      navigationPreferenceListeners.forEach(listener => listener(next))
+      await flush(); await flush()
+    }
+    const manualUnread = (id: string) => (responses.get('navigationPreferences.get') as NavigationPreferencesSnapshot).threadReadStates[id]?.manualUnread
+    await markUnread('A')
+    window.dispatchEvent(new Event('focus'))
+    for (const listener of coreListeners) listener({ method: 'navigation.invalidated', params: {} } as CoreEvent)
+    await advance(500); await flush()
+    check(manualUnread('A') && document.querySelector('[data-thread-id="A"] .camp-unread-dot'),
+      'Manual unread on the active Thread survives focus and navigation refresh')
+    await clickNavigation('导航会话 A', '.camp-nav-open')
+    check(manualUnread('A') === false, 'Explicit successful reopening clears the manual reminder')
+    await markUnread('A')
+    cases.push('Manual unread survives automatic observation and clears only after an explicit successful open')
     const switchCallStart = calls.length
     await clickNavigation('导航会话 B', '.camp-nav-open')
     await flush(); await flush()
     const switchCalls = calls.slice(switchCallStart)
-    check(!switchCalls.some(method => ['navigation.snapshot', 'navigation.groupCamps', 'missions.list', 'skills.candidates', 'navigation.campViewed'].includes(method)),
+    check(!switchCalls.some(method => ['navigation.snapshot', 'navigation.groupThreads', 'missions.list', 'skills.candidates', 'navigation.threadViewed'].includes(method)),
       'An ordinary read Camp switch must not read the sidebar, Missions or Skill directories, or acknowledge again')
     check(switchCalls.includes('navigation.threads'), 'Camp switching validates only the target navigation row')
     cases.push('Ordinary Camp switching reads only the target row without unrelated queries')
@@ -508,6 +540,7 @@ Object.assign(window, { startupTest: {
     cases.push('The Skill picker loads its catalog on demand')
     check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 B', 'Camp switches share the same history')
     await back(); check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 A', 'Back restores the Camp ID and title')
+    check(manualUnread('A') === false, 'Explicit history navigation clears the reminder after the full projection opens')
     const delayedCamp = deferred<unknown>()
     campRequest = id => id === 'C' ? delayedCamp.promise : campProjection(id)
     await clickNavigation('导航会话 C', '.camp-nav-open')
@@ -518,15 +551,17 @@ Object.assign(window, { startupTest: {
     check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 A', 'A late read cannot override a renewed selection of the displayed Camp')
     await forward(); check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 B', 'Cancelling a pending push preserves the forward branch')
     campRequest = id => { if (id === 'C') throw new Error('Fixture Camp unavailable'); return campProjection(id) }
+    await markUnread('C')
     await clickNavigation('导航会话 C', '.camp-nav-open')
     check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 B', 'A failed Camp read keeps the displayed page')
+    check(manualUnread('C'), 'A failed explicit open must preserve the manual unread reminder')
     await back(); check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 A', 'Failed reads do not consume a history entry')
     campRequest = id => { if (id === 'B') throw new Error('Fixture Camp removed'); return campProjection(id) }
-    requestHandlers.set('camps.exists', ({ threadId }) => threadId !== 'B')
+    requestHandlers.set('threads.exists', ({ threadId }) => threadId !== 'B')
     await forward(); check(document.querySelector('.compose-content'), 'A deleted historical Camp resolves to the valid home page')
     await back(); check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 A', 'Deleted-resource fallback replaces the current entry')
     const pendingDiscard = deferred<unknown>()
-    requestHandlers.set('camps.discardPending', () => pendingDiscard.promise)
+    requestHandlers.set('threads.discardPending', () => pendingDiscard.promise)
     campRequest = id => {
       const projection = campProjection(id)
       return id === 'D' ? { ...projection, thread: { ...projection.thread, activationState: 'pending' } } : projection
@@ -535,12 +570,23 @@ Object.assign(window, { startupTest: {
     await flush(); await flush()
     await clickNavigation('导航会话 A', '.camp-nav-open')
     await flush(); await flush()
-    check(calls.includes('camps.discardPending'), 'Leaving the loaded empty Camp must initiate cleanup before the race is tested')
+    check(calls.includes('threads.discardPending'), 'Leaving the loaded empty Camp must initiate cleanup before the race is tested')
     await back(); check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 D', 'A blank pending Camp can be revisited before its leave cleanup finishes')
-    pendingDiscard.resolve({ status: 'applied', code: 'camp.pending_discarded', payload: {} }); await flush(); await flush()
+    pendingDiscard.resolve({ status: 'applied', code: 'thread.pending_discarded', payload: {} }); await flush(); await flush()
     check(document.querySelector('.compose-content'), 'Late cleanup of the revisited empty Camp replaces it with a valid page')
     await forward(); check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 A', 'Empty Camp cleanup preserves the forward branch')
     cases.push('Desktop Camp navigation preserves the forward branch, ignores stale reads and retains the page on failure')
+    campRequest = id => campProjection(id)
+    requestHandlers.delete('threads.exists')
+    await clickNavigation('导航会话 B', '.camp-nav-open')
+    await markUnread('B')
+    await clickNavigation('导航会话 A', '.camp-nav-open')
+    campRequest = id => { if (id === 'B') throw new Error('Fixture full projection unavailable'); return campProjection(id) }
+    await clickNavigation('导航会话 B', '.camp-nav-open')
+    check(manualUnread('B'), 'A cached preview after projection failure must retain manual unread')
+    campRequest = id => campProjection(id)
+    await clickNavigation('导航会话 A', '.camp-nav-open')
+    cases.push('Failed opens with and without cached projections retain manual unread')
     const navigationResponses = new Map(responses)
     const navigationHandlers = new Map(requestHandlers)
     captureNavigation = async (theme, collapsed, setup) => {
@@ -599,7 +645,7 @@ Object.assign(window, { startupTest: {
 
     await captureNavigation('day', false)
     const cleanup = deferred<unknown>(), afterCleanup = deferred<unknown>()
-    requestHandlers.set('camps.discardPending', () => cleanup.promise)
+    requestHandlers.set('threads.discardPending', () => cleanup.promise)
     campRequest = id => id === 'C' ? afterCleanup.promise : id === 'D'
       ? { ...campProjection(id), thread: { ...campProjection(id).thread, activationState: 'pending' } } : campProjection(id)
     await clickNavigation('导航会话 D', '.camp-nav-open')
@@ -608,9 +654,9 @@ Object.assign(window, { startupTest: {
     await flush(); await flush()
     await back()
     check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 D', 'Cleanup race must revisit D before opening C')
-    check(calls.includes('camps.discardPending'), 'Cleanup race must have a pending discard')
+    check(calls.includes('threads.discardPending'), 'Cleanup race must have a pending discard')
     await clickNavigation('导航会话 C', '.camp-nav-open')
-    cleanup.resolve({ status: 'applied', code: 'camp.pending_discarded', payload: {} }); await flush(); await flush()
+    cleanup.resolve({ status: 'applied', code: 'thread.pending_discarded', payload: {} }); await flush(); await flush()
     check(document.querySelector('.compose-content'), 'Deleted displayed pending Camp must resolve to home during a slow departure: ' + document.querySelector('.camp-topbar h1')?.textContent)
     afterCleanup.resolve(campProjection('C')); await flush(); await flush()
     check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 C', 'Pending Camp cleanup must not cancel a newer destination')
@@ -631,9 +677,9 @@ Object.assign(window, { startupTest: {
     }
     await captureNavigation('day', false, setupCreation)
     const lateCreation = deferred<unknown>()
-    requestHandlers.set('camps.create', () => lateCreation.promise)
+    requestHandlers.set('threads.create', () => lateCreation.promise)
     await clickNavigation('新对话', '.unified-primary-nav button')
-    check(calls.includes('camps.create'), 'One-click creation must reach Core before navigation moves')
+    check(calls.includes('threads.create'), 'One-click creation must reach Core before navigation moves')
     await clickNavigation('记忆', '.unified-primary-nav button')
     lateCreation.resolve({ status: 'applied', payload: { threadId: 'NEW' } }); await flush(); await flush()
     check(document.querySelector('.memory-catalog-item.selected'), 'Late Camp creation must leave the newer memory page visible')
@@ -641,12 +687,12 @@ Object.assign(window, { startupTest: {
     await back()
     check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 B', 'Late creation must not add a navigation step')
     const failedCreation = deferred<unknown>()
-    requestHandlers.set('camps.create', () => failedCreation.promise)
+    requestHandlers.set('threads.create', () => failedCreation.promise)
     await clickNavigation('新对话', '.unified-primary-nav button')
     await clickNavigation('记忆', '.unified-primary-nav button')
     failedCreation.reject(new Error('Fixture creation rejected')); await flush(); await flush()
     check(!document.querySelector('.new-camp-dialog'), 'Obsolete creation failure must not reopen its dialog over the newer page')
-    requestHandlers.set('camps.create', () => ({ status: 'applied', payload: { threadId: 'NEW' } }))
+    requestHandlers.set('threads.create', () => ({ status: 'applied', payload: { threadId: 'NEW' } }))
     await clickNavigation('新对话', '.unified-primary-nav button')
     check(document.querySelector('.camp-topbar h1')?.textContent === '导航会话 NEW', 'Current creation intent still opens its new Camp')
     await back()
