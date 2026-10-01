@@ -17,6 +17,24 @@ last_updated: 2026-10-01
 
 `sessions[]` 只返回该 Camp 目前 `Conversation.native_binding_id + native_binding_generation + native_session_id` 均匹配的最新上下文。每行包含 `conversationId`、`agentId`、`sessionGeneration`、`runtimeKind`、`modelKey`、`usedTokens`、`windowTokens`、`nativeRatio`、`source`、`dialectId`、`observedAt`。持久行还保存原生 Session ID、Runtime 版本、有效配置摘要、来源 Run/epoch。旧会话事件、旧绑定代次、较早观测不能覆盖当前值；后续 Run 的有效配置变化使旧观测在读取时失效。
 
+### Renderer 读取生命周期
+
+执行面板用实际可见性与页面可见性共同控制 UI 读取；隐藏时停止用量、Context 和临时速度请求，
+Core 的原生采集、落盘与临时计数继续运行。恢复可见、重新聚焦或连接失效通知后立即重读；
+重新挂载速度显示先以最新数值建立基线，再预热，不播放隐藏期间的积压。
+
+`monitoring.execution` 只请求当前活动、视口内卡片以及新展开的 Run；可见但收起的卡片仍读取 token
+入口。活动期间的 4 秒兜底只读取活动 Run。终态转换立即读取，并在 250ms／1s／4s 做有限尾读，
+不为稳定历史永久轮询；尾读之外的迟到 Usage／Context 由落盘后的 `monitoring.changed` 承接。
+通知按 80ms 合并，所有触发共享一个在途请求；在途期间到达的失效保留一次后续读取。
+隐藏时保留刷新意图，旧范围或旧执行代次的迟到响应不提交。失败保留已有值，仅以 1s／2s／5s 有限重试。
+
+每个 Camp／队员面板最多缓存 500 个 Run 行；只替换请求范围内的行，未请求的有效历史暂存复用，
+已移出当前 Run 集合或代次不符的行清理。请求中缺失的行恢复未知；`sessions[]` 每次整体承接当前
+Session 权威视图，不与历史 Run 缓存拼接。比较原始数值、代次、模型、来源、结算状态和观测时刻，
+相同条目保留对象和数组引用，整份相同不更新 state。数量的缺失、原生零与仅有比例继续区分。
+后端对指定 Run 执行一次参数化批量查询，保留 Camp／当前 collection／最大 500 条准入，不读取历史正文。
+
 只接受同一原生 Session 观测的明确 `used`、正数 `window` 或有限的原生 `nativeRatio`（0–1）。`nativeRatio` 独立保存，数量仍可为空；可靠 used/window 齐全时优先按两者计算比例，否则可展示原生比例，不反推任何 token 数。只有窗口上限时 used 和比例仍未知。每次有效观测整体替换数量与原生比例，不跨时刻或配置拼接。Migration 179 在已安装的 v1.72/schema 128 表上添加 nullable REAL 比例，原记录和业务数据保留，升级为 schema 129；不回写 Migration 178。Codex 当前已核验的通知把 `tokenUsage.last.totalTokens` 作为最近单次模型调用的 Context used 候选，与同一通知的 `modelContextWindow` 配对；它不是实时窗口同步值。`tokenUsage.total.totalTokens`、`last.inputTokens`、Run 累计与正文估算都不能代替 used。Context 的来源身份独立于 Run Usage 的累计来源身份：消耗总量未变但 `last` 或窗口变化时仍接收新观测。ACP 原生 Gauge 在提示结束后到达时，可在短暂的原 Session owner 保留期内按原 Run／代次落盘；新 owner 绑定后不沿用旧 owner。`used > window` 的无效观测不进入当前上下文。当前绑定发生已确认压缩后，旧 gauge 在新 gauge 到达前不再显示。
 
 ## 原生上下文来源

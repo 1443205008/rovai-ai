@@ -567,9 +567,72 @@ impl MonitoringFilter {
     }
 }
 
+fn execution_run_usage_rows(
+    connection: &rusqlite::Connection,
+    params: &MonitoringExecutionParams,
+) -> Result<Vec<Value>> {
+    let mut run_query = connection.prepare(r#"
+            SELECT ar.id, ar.execution_epoch, s.prompt_input_total_tokens, s.output_tokens,
+                   s.cache_read_tokens, s.cache_write_tokens,
+                   s.finalized_at, s.last_observed_at
+            FROM json_each(?2) requested
+            JOIN agent_run ar ON ar.id = requested.value
+            JOIN conversation c ON c.id = ar.conversation_id
+            JOIN runtime_usage_run_summary s ON s.agent_run_id = ar.id
+                AND s.collection_epoch = (
+                    SELECT collection_epoch FROM runtime_usage_collection_state WHERE singleton_id = 1
+                )
+            WHERE c.camp_id = ?1
+            ORDER BY requested.key
+        "#)?;
+    let rows = run_query
+        .query_map(
+            params![
+                params.camp_id,
+                serde_json::to_string(&params.agent_run_ids)?
+            ],
+            |row| {
+                Ok(json!({
+                    "agentRunId": row.get::<_, String>(0)?,
+                    "executionEpoch": row.get::<_, i64>(1)?,
+                    "promptInputTotalTokens": row.get::<_, Option<i64>>(2)?,
+                    "outputTokens": row.get::<_, Option<i64>>(3)?,
+                    "cacheReadTokens": row.get::<_, Option<i64>>(4)?,
+                    "cacheWriteTokens": row.get::<_, Option<i64>>(5)?,
+                    "finalizedAt": row.get::<_, Option<String>>(6)?,
+                    "lastObservedAt": row.get::<_, Option<String>>(7)?,
+                }))
+            },
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+fn execution_usage_has_terminal_rows(
+    connection: &rusqlite::Connection,
+    agent_run_ids: &[&str],
+) -> Result<bool> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM json_each(?1) requested JOIN agent_run ar ON ar.id=requested.value WHERE ar.status NOT IN ('queued','running','waiting'))",
+        [serde_json::to_string(agent_run_ids)?],
+        |row| row.get(0),
+    )?)
+}
+
 pub struct MonitoringService;
 
 impl MonitoringService {
+    pub fn has_terminal_usage_batches(
+        database: &Database,
+        batches: &[RuntimeUsageFlushBatch],
+    ) -> Result<bool> {
+        let ids = batches
+            .iter()
+            .map(|batch| batch.run.key.agent_run_id.as_str())
+            .collect::<Vec<_>>();
+        execution_usage_has_terminal_rows(database.connection(), &ids)
+    }
+
     pub fn execution_snapshot(
         database: &Database,
         params: &MonitoringExecutionParams,
@@ -579,40 +642,11 @@ impl MonitoringService {
             params.agent_run_ids.len() <= 500,
             "too many AgentRuns requested"
         );
-        let connection = database.connection();
-        let mut run_query = connection.prepare(r#"
-            SELECT ar.execution_epoch, s.prompt_input_total_tokens, s.output_tokens,
-                   s.cache_read_tokens, s.cache_write_tokens,
-                   s.finalized_at, s.last_observed_at
-            FROM agent_run ar
-            JOIN conversation c ON c.id = ar.conversation_id
-            JOIN runtime_usage_run_summary s ON s.agent_run_id = ar.id
-                AND s.collection_epoch = (
-                    SELECT collection_epoch FROM runtime_usage_collection_state WHERE singleton_id = 1
-                )
-            WHERE c.camp_id = ?1 AND ar.id = ?2
-        "#)?;
-        let mut runs = Vec::new();
         for agent_run_id in &params.agent_run_ids {
             validate_key(agent_run_id, "AgentRun ID")?;
-            let row = run_query
-                .query_row(params![params.camp_id, agent_run_id], |row| {
-                    Ok(json!({
-                        "agentRunId": agent_run_id,
-                        "executionEpoch": row.get::<_, i64>(0)?,
-                        "promptInputTotalTokens": row.get::<_, Option<i64>>(1)?,
-                        "outputTokens": row.get::<_, Option<i64>>(2)?,
-                        "cacheReadTokens": row.get::<_, Option<i64>>(3)?,
-                        "cacheWriteTokens": row.get::<_, Option<i64>>(4)?,
-                        "finalizedAt": row.get::<_, Option<String>>(5)?,
-                        "lastObservedAt": row.get::<_, Option<String>>(6)?,
-                    }))
-                })
-                .optional()?;
-            if let Some(row) = row {
-                runs.push(row);
-            }
         }
+        let connection = database.connection();
+        let runs = execution_run_usage_rows(connection, params)?;
         let mut session_query = connection.prepare(
             r#"
             SELECT c.id, c.agent_id, x.native_binding_generation, x.runtime_kind,
@@ -4170,6 +4204,62 @@ mod tests {
         );
         assert_eq!(add_decimal("10", "5").unwrap(), "15");
         assert_eq!(subtract_decimal_signed("10", "12.5").unwrap(), "-2.5");
+    }
+
+    #[test]
+    fn execution_usage_batch_keeps_requested_scope_collection_and_sparse_fields() {
+        // Lowest-cost owner of the SQL read seam; no migrations, Runtime or historical bodies.
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(r#"
+            CREATE TABLE conversation (id TEXT PRIMARY KEY, camp_id TEXT);
+            CREATE TABLE agent_run (id TEXT PRIMARY KEY, conversation_id TEXT, execution_epoch INTEGER, status TEXT);
+            CREATE TABLE runtime_usage_collection_state (singleton_id INTEGER, collection_epoch TEXT);
+            CREATE TABLE runtime_usage_run_summary (
+                agent_run_id TEXT, collection_epoch TEXT, prompt_input_total_tokens INTEGER,
+                output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER,
+                finalized_at TEXT, last_observed_at TEXT
+            );
+            INSERT INTO conversation VALUES ('conversation-a', 'camp-a'), ('conversation-b', 'camp-b');
+            INSERT INTO agent_run VALUES ('run-a', 'conversation-a', 2, 'succeeded'), ('run-b', 'conversation-a', 1, 'running'), ('foreign', 'conversation-b', 1, 'failed');
+            INSERT INTO runtime_usage_collection_state VALUES (1, 'current');
+            INSERT INTO runtime_usage_run_summary VALUES
+                ('run-a', 'current', 100, 20, NULL, 0, 'final', 'observed'),
+                ('run-a', 'old', 999, 999, 999, 999, 'old', 'old'),
+                ('run-b', 'current', NULL, NULL, NULL, NULL, NULL, NULL),
+                ('foreign', 'current', 200, 40, 10, 0, 'final', 'observed');
+        "#).unwrap();
+        let params = |ids: Vec<&str>| MonitoringExecutionParams {
+            camp_id: "camp-a".into(),
+            agent_run_ids: ids.into_iter().map(String::from).collect(),
+        };
+        let rows = execution_run_usage_rows(
+            &connection,
+            &params(vec!["run-b", "foreign", "missing", "run-a"]),
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["agentRunId"], "run-b");
+        assert_eq!(rows[0]["promptInputTotalTokens"], Value::Null);
+        assert_eq!(rows[1]["agentRunId"], "run-a");
+        assert_eq!(rows[1]["executionEpoch"], 2);
+        assert_eq!(rows[1]["promptInputTotalTokens"], 100);
+        assert_eq!(rows[1]["cacheReadTokens"], Value::Null);
+        assert_eq!(rows[1]["cacheWriteTokens"], 0);
+        assert_eq!(rows[1]["finalizedAt"], "final");
+        assert!(
+            execution_run_usage_rows(&connection, &params(vec![]))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            execution_run_usage_rows(&connection, &params(vec!["run-a' OR 1=1 --"]))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(execution_usage_has_terminal_rows(&connection, &["run-a"]).unwrap());
+        assert!(execution_usage_has_terminal_rows(&connection, &["run-b", "foreign"]).unwrap());
+        assert!(!execution_usage_has_terminal_rows(&connection, &["run-b", "missing"]).unwrap());
+        assert!(!execution_usage_has_terminal_rows(&connection, &[]).unwrap());
     }
 
     #[test]

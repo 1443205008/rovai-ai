@@ -41,6 +41,12 @@ const initial: CampSnapshot = {
 let draft: CampComposerDraftView = { campId, quotes: [], body: '验收中保留的消息草稿', content: { version: 2, segments: [{ kind: 'text', text: '验收中保留的消息草稿' }] },
   revision: 1, attachments: [], replyIntent: null, continuationIntent: null, updatedAt: now, expiresAt: null }
 const requests: Array<{ method: string; params: unknown }> = []
+let metricMode = false
+let metricValue: number | null = null
+let metricGeneration = 1
+let metricSessionVisible = true
+let metricStartedAt = 0
+let metricRuns: AgentRunView[] = []
 const checkFailures = new Set(['agent-4'])
 const heldChecks = new Map<string, Promise<void>>()
 const checksInFlight = new Map<string, number>()
@@ -64,6 +70,25 @@ Object.assign(window, { rovai: {
   },
   request: async (method: string, params?: Record<string, any>): Promise<unknown> => {
     requests.push({ method, params })
+    if (method === 'monitoring.execution') return { schemaVersion: 1,
+      runs: metricMode ? (params!.agentRunIds as string[]).flatMap(id => {
+        const run = metricRuns.find(item => item.id === id)
+        return run ? [{ agentRunId: id, executionEpoch: run.executionEpoch,
+          promptInputTotalTokens: metricValue, outputTokens: metricValue === null ? null : 20,
+          cacheReadTokens: null, cacheWriteTokens: metricValue === null ? null : 0,
+          finalizedAt: run.status === 'succeeded' ? now : null, lastObservedAt: metricValue === null ? null : now }] : []
+      }) : [],
+      sessions: metricMode && metricSessionVisible ? [{ conversationId: 'conversation-agent-0', agentId: 'agent-0',
+        sessionGeneration: metricGeneration, runtimeKind: 'claude-code-cli', modelKey: `model-${metricGeneration}`,
+        usedTokens: null, windowTokens: null, nativeRatio: metricGeneration === 1 ? 0.25 : 0.32,
+        source: 'fixture', dialectId: 'fixture', observedAt: now }] : [] }
+    if (method === 'monitoring.observableOutput') {
+      const sampledAtMs = Math.floor(performance.now())
+      return metricMode ? { agentRunId: params!.agentRunId, executionEpoch: params!.executionEpoch,
+        counterGeneration: 'fixture', sequence: Math.floor(sampledAtMs), algorithmVersion: 'observable-output-heuristic-v3',
+        unicodeDataVersion: 'fixture', publicTextUnits: Math.floor((sampledAtMs - metricStartedAt) * 5),
+        reasoningUnits: 0, reasoningSource: 'none', streamConfirmed: true, sampledAtMs, lastOutputAtMs: sampledAtMs } : null
+    }
     if (method === 'skills.list' || method === 'skills.deliveryGroups.list') return []
     if (method === 'camp.pendingInputs.get') return {campId, executionActive: false,
       items: [...submissionOutcomes.values()].filter(item => item.state === 'queued').map((item, index) => ({
@@ -173,6 +198,34 @@ const element = (selector: string): HTMLElement => document.querySelector(select
 let bookmarkedButton: HTMLElement | null = null
 let releaseStop: (() => void) | null = null
 Object.assign(window, { fastTest: {
+  showMetrics: () => {
+    metricMode = true
+    metricStartedAt = performance.now()
+    ;(window as any).fastTest.showExecution()
+    updateSnapshot(current => {
+      const active = current.agentRuns.find(run => run.id === 'run-agent-0')!
+      const history = Array.from({ length: 499 }, (_, index): AgentRunView => ({ ...active,
+        id: `metric-history-${index}`, campTurnId: null, status: 'succeeded', executionEvidenceCount: 0,
+        createdAt: new Date(Date.parse(now) - (index + 1) * 1_000).toISOString(),
+        startedAt: new Date(Date.parse(now) - (index + 1) * 1_000).toISOString(), endedAt: now }))
+      metricRuns = [active, ...history]
+      return { ...current, agentRuns: metricRuns }
+    })
+  },
+  metricsTerminal: () => updateSnapshot(current => {
+    metricRuns = current.agentRuns.map(run => run.id === 'run-agent-0' ? { ...run, status: 'succeeded', endedAt: now } : run)
+    return { ...current, agentRuns: metricRuns }
+  }),
+  metricsCommit: (value: number, generation = metricGeneration) => {
+    metricValue = value
+    metricGeneration = generation
+    for (const listener of eventListeners) listener({ method: 'monitoring.changed', params: { reason: 'late_fixture_usage' } })
+  },
+  metricsRemoveContext: () => {
+    metricSessionVisible = false
+    for (const listener of eventListeners) listener({ method: 'monitoring.changed', params: { reason: 'fixture_session_rotation' } })
+  },
+  metricsRequests: () => requests.filter(request => request.method.startsWith('monitoring.')),
   queueNextSend: (earlyPublication = false) => { queueNextSend = true; publishBeforeReceipt = earlyPublication },
   publishQueued: (deferProjection = false) => { queuedPublication?.(deferProjection); queuedPublication = null },
   projectPublishedRun: () => { deferredProjection?.(); deferredProjection = null },

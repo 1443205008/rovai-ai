@@ -3,6 +3,7 @@ import { newCommandId } from '../../shared/command-id'
 import { useMobileLayout } from './MobileLayout'
 import { useCampClient, useEditingRecovery, type CampClient } from './camp-client'
 import { useExecutionDisclosureAnchor } from './useExecutionDisclosureAnchor'
+import { useExecutionMetrics, useExecutionMetricsVisibility } from './useExecutionMetrics'
 import { RunningText } from './RunningText'
 import { ExecutionContentContext, ExecutionVirtualList } from './ExecutionVirtualList'
 import { ExecutionNarration } from './ExecutionNarration'
@@ -6872,37 +6873,10 @@ function ExecutionDrawer({
   const newestFirstRuns = useMemo(() => process.runs.slice().sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id)
   ), [process.runs])
-  const requestedRunIds = newestFirstRuns.slice(0, 500).map((run) => run.id)
-  const runIdsKey = requestedRunIds.join('\u0000')
-  const runStateKey = newestFirstRuns.map((run) => `${run.id}:${run.executionEpoch}:${run.status}`).join('\u0000')
-  const [metrics, setMetrics] = useState<RuntimeExecutionMetricsSnapshot | null>(null)
-  useEffect(() => {
-    let disposed = false
-    let inFlight = false
-    const refresh = async (): Promise<void> => {
-      if (inFlight) return
-      inFlight = true
-      try {
-        const next = await client.request<RuntimeExecutionMetricsSnapshot>('monitoring.execution', {
-          campId,
-          agentRunIds: requestedRunIds
-        })
-        if (!disposed && next.schemaVersion === 1) setMetrics(next)
-      } catch {
-        // Metrics are optional evidence; a failed read leaves them unknown.
-      } finally {
-        inFlight = false
-      }
-    }
-    void refresh()
-    const active = newestFirstRuns.some((run) => NON_TERMINAL_RUNS.has(run.status) && run.status !== 'queued')
-    // Continue reading after terminal: the final Usage flush can land after the Run status.
-    const timer = window.setInterval(() => { void refresh() }, active ? 4_000 : 10_000)
-    return () => {
-      disposed = true
-      window.clearInterval(timer)
-    }
-  }, [client, campId, runIdsKey, runStateKey])
+  const metricsVisibility = useExecutionMetricsVisibility(drawerRef)
+  const metrics = useExecutionMetrics(client, campId, process.agentId, {
+    ...metricsVisibility, runs: newestFirstRuns, expandedRunIds
+  })
   const usageByRunId = useMemo(() => new Map(metrics?.runs.map((run) => [run.agentRunId, run]) ?? []), [metrics])
   const currentConversationId = newestFirstRuns[0]?.conversationId ?? null
   const sessionContext = overview || !currentConversationId ? null
@@ -7293,7 +7267,8 @@ function ExecutionDrawer({
               subject={uiAttribute("本次执行")}
             />
             <span className="execution-run-trailing">
-              <ExecutionRunMetric run={run} usage={usageByRunId.get(run.id) ?? null} />
+              <ExecutionRunMetric run={run} usage={usageByRunId.get(run.id)?.executionEpoch === run.executionEpoch
+                ? usageByRunId.get(run.id)! : null} />
               <span className="execution-run-operations">
                 <button type="button" aria-label={expanded ? uiAttribute("收起卡片") : uiAttribute("展开卡片")} aria-expanded={expanded}
                   aria-controls={contentId} onClick={() => toggleRun(run.id)}>
@@ -7544,7 +7519,7 @@ function ExecutionDrawer({
             </div>
           </div>
           {!overview && <span className="execution-header-metrics">
-            {speedRun && <ExecutionLiveSpeed key={`${speedRun.id}:${speedRun.executionEpoch}`}
+            {speedRun && metricsVisibility.visible && <ExecutionLiveSpeed key={`${speedRun.id}:${speedRun.executionEpoch}`}
               run={speedRun} campId={campId} client={client} />}
             <ExecutionContextPopover context={sessionContext} />
           </span>}

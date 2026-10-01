@@ -606,6 +606,20 @@ Team Case 可在密封 manifest 中声明 `collaboration` 合同。Runner 将它
 
 ## UI 验收命令
 
+`pnpm test:execution-metrics-ui` 复用 CampWorkspace 的隔离 Renderer fixture，独立验证当前指标的
+500 Run 范围读取、可见收起卡片、滚动与展开、面板／页面隐藏、恢复速度基线、有限终态尾读后的
+迟到用量，以及当前 Context 整体换代和删除；夹具数值不是 Runtime 能力证据。
+`ROVAI_KEEP_EXECUTION_METRICS_FIXTURE=1` 保留报告与双主题截图；默认清理本次临时目录。
+最低层 `execution-metrics-reader.test.ts` 拥有确定性时钟、single-flight／trailing、有限重试、引用复用和
+旧代次响应隔离；不通过重复真实网络调用验证刷新次数。
+
+批量 SQL 新增 `monitoring::tests::execution_usage_batch_keeps_requested_scope_collection_and_sparse_fields`：
+该读接口此前没有独立 SQL owner；原有 Context 写入与 Usage 累计测试不拥有请求范围或 collection 过滤。
+一次内存 SQLite 最小表验证跨 Camp／旧 collection 拒绝、指定顺序、空范围、缺失与零、参数化查询及
+终态 batch 通知资格（活动／missing／空范围不命中）；
+不建立完整 Database、迁移或 Runtime fixture。原实现逐 Run 查询的数值结果一致，新增失败语义是批量读取
+改变范围或稀疏语义。最小命令为 `cargo test -p rovai-core --lib execution_usage_batch_keeps_requested_scope`。
+
 `pnpm test:runtime-model-picker` 在隔离 Electron 中挂载生产模型、推理强度、权限与运行时选择组件，
 验证队员页和训练营共享字段的默认值、本地搜索、中文输入法、键盘与焦点、目录失败/迟到响应和双主题布局。
 覆盖 1040×700、1440×920、2560×1440 与 200% 缩放。它属于 `test:desktop:integration`；Linux 使用 `xvfb-run -a`。

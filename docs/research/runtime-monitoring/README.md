@@ -9,6 +9,8 @@ baseline_ref: "4b4fe088b15ef785cd76f54f221e5d87c9d639a4"
 
 # Rovai AI 运行监控指标可采集性审计
 
+当前执行台的取数范围、隐藏暂停、引用复用与迟到刷新收口见[执行指标读取验收](execution-metrics-refresh-verification-2026-10-01.md)。
+
 当前执行台的最新字段与 App 证据见[原生压缩、冷恢复与剩余链路验收（2026-10-01）](native-boundaries-verification-2026-10-01.md)。[原生比例与当前占用核验](native-context-ratio-verification-2026-10-01.md)、[原生来源补接](native-usage-context-verification-2026-09-30.md)、[第二轮字段级核验](execution-metrics-verification-2026-09-29.md)、[v3 思考验收](observable-output-v3-verification-2026-09-30.md)与[首轮记录](observable-output-v3-verification-2026-09-29.md)保留各自当时的范围。本文是历史设计输入，版本与支持判断以当次实测记录为准。
 
 > 本文审计设置页“运行监控”原型中的数据是否能由 Rovai 当前事实和 Runtime 原生协议可靠提供。

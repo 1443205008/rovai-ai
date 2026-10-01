@@ -22488,10 +22488,27 @@ async fn flush_runtime_usage(
     }
     let persistence = {
         let mut database = core.database.lock().await;
-        MonitoringService::record_usage_batches_with_deferred_context(&mut database, &batches)
+        let result =
+            MonitoringService::record_usage_batches_with_deferred_context(&mut database, &batches);
+        // Active UI has a scoped safety poll. A periodic commit after terminal
+        // must invalidate readers even after their bounded terminal tail ends.
+        let notify_late = if !notify_monitoring
+            && matches!(target, RuntimeUsageFlushTarget::Periodic)
+            && result.as_ref().is_ok_and(|(inserted, _)| *inserted > 0)
+        {
+            MonitoringService::has_terminal_usage_batches(&database, &batches).unwrap_or_else(
+                |error| {
+                    eprintln!("failed to classify committed Runtime Usage notification: {error:#}");
+                    true // The data has committed; a conservative invalidation does not duplicate Usage.
+                },
+            )
+        } else {
+            false
+        };
+        result.map(|(inserted, deferred)| (inserted, deferred, notify_late))
     };
     match persistence {
-        Ok((inserted, deferred_context)) => {
+        Ok((inserted, deferred_context, notify_late)) => {
             let mut usage = core.runtime_usage.lock().await;
             if matches!(target, RuntimeUsageFlushTarget::Periodic) {
                 // Native Usage has already been persisted. Only one numeric
@@ -22500,11 +22517,11 @@ async fn flush_runtime_usage(
             }
             usage.finish_idle_target_after_flush(&target);
             drop(usage);
-            if inserted > 0 && notify_monitoring {
+            if inserted > 0 && (notify_monitoring || notify_late) {
                 emit(
                     &core.output,
                     "monitoring.changed",
-                    json!({ "reason": reason, "observationCount": inserted }),
+                    json!({ "reason": if notify_late { "late_usage_flush" } else { reason }, "observationCount": inserted }),
                 );
             }
             Ok(inserted)

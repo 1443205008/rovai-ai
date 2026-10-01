@@ -62,6 +62,9 @@ Run 的 API public-price equivalent；不新增长期事件表，也不在页面
 
 周期 Flush 不发出立即 Snapshot 事件。普通事件受全局最短间隔约束；terminal 事件可在 Debounce 后立即
 刷新。所有请求仍 single-flight，从而不让 Dashboard 反向阻塞单一 SQLite Database Mutex 上的运行结算。
+周期 Flush 若实际提交了终态 Run 的迟到 Usage／Context，则补发 `monitoring.changed`，
+让已经结束有限尾读的执行面板按当前可见范围刷新；活动 Run 的周期提交仍不额外发通知。
+分类读取失败时只保守失效，不恢复已经提交的 batch，也不再次累加用量。
 
 ### 本地原生数值来源与 Context
 
