@@ -11,6 +11,12 @@ last_updated: 2026-10-01
 
 # Rovai-ai v1.72：Lark 独立渠道
 
+## 待审阅：User 统一称呼
+
+[上下文变更说明 r1](model-context-change-principal-user.md)与[完整前后对照](principal-user-context-comparison.md)
+整理 Principal 改为 User、`--to-user` 与 `@User` 的拟议文本和兼容边界。旧 Native Session 保留原绑定及冻结
+Bootstrap，Skill 沿用随包原路径同步。当前只完成提案，尚未确认实施；不改变本版已实现状态或当前合同。
+
 ## 并行实施：Thread 统一命名
 
 Principal 已确认 [Camp → Thread r2](model-context-change-thread-rename.md) 开始实施：公开范围使用 `threadId`，
