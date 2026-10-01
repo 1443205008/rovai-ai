@@ -41,7 +41,7 @@ back together; idempotent replay returns the original result without another rec
 Identity and helper name are snapshots at creation time, not joins to current profiles. This is presentation data;
 it adds no CampMessage, Thread member, tool-output field, ContextManifest field or bootstrap instruction.
 
-Migration 179 admits exactly v1.72/schema 128 and atomically advances to schema 129. `member_creation` stores one JSON
+Migration 180 admits exactly v1.72/schema 129 and atomically advances to schema 130. `member_creation` stores one JSON
 snapshot per command identity with a Thread foreign key and `(camp_id, created_at, creation_id)` index. Thread deletion
 cascades its receipts. `member_creation_preference` is an instance-wide singleton helper ID, retained independently of
 Thread deletion; a deleted or unavailable helper is skipped by entry preflight. Existing profiles are unchanged and
@@ -66,7 +66,7 @@ status and never becomes a start-conversation action.
 
 - Existing `team_tool` member-create transaction test owns rollback, direct-user authorization, idempotent replay,
   no added public message/membership, immutable snapshots and Open projection.
-- `db_member_creation` owns the new schema 128 to 129 boundary, rollback and profile preservation.
+- `db_member_creation` owns the new schema 129 to 129 boundary, rollback and profile preservation.
 - Renderer helper/navigation tests own deterministic selection and local draft overlay.
 - `pnpm test:member-creation` exercises production conversation/member surfaces with isolated transport and native input;
   it does not qualify a real model or physical mobile device.

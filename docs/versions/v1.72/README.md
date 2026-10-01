@@ -11,6 +11,13 @@ last_updated: 2026-10-02
 
 # Rovai-ai v1.72：Lark 独立渠道
 
+## 已实现：User 统一称呼
+
+[上下文变更说明 r2](model-context-change-principal-user.md)与[完整前后对照](principal-user-context-comparison.md)
+整理 Principal 改为 User、`--to-user` 与 `@User` 的已确认文本和兼容边界。旧 Native Session 保留原绑定及冻结
+Bootstrap，尚无 Bootstrap 的公开执行统一使用当前公开模板；Skill 沿用随包原路径同步。
+用户已于 2026-10-02 确认 r2、创建 PR 与合入 main，并免除上下文 Gate 模型评测。实现及本地兼容回归通过，准备 PR 合入；当前规范见 [User Naming v1](../../contracts/user-naming-v1.md)。
+
 ## 并行实施：Thread 统一命名
 
 Principal 已确认 [Camp → Thread r2](model-context-change-thread-rename.md) 开始实施：公开范围使用 `threadId`，
@@ -156,6 +163,6 @@ AI 创建使用一位可用协助者的普通草稿会话；三个起步提示�
 Desktop/Mobile、中文/英文共用生产组件。
 
 [Member Creation Flow v1](../../contracts/member-creation-flow-v1.md)拥有当前行为，
-[V1.72-D08](decisions.md#v1-72-d08)记录取舍；Migration 179 将 schema 128 升为 **129**。
+[V1.72-D09](decisions.md#v1-72-d09)记录取舍；Migration 180 将 schema 129 升为 **130**。
 [实施验收](implementation-plan.md#2026-10-02-ai-优先添加队员)区分自动化与真实模型/实体手机边界。
 本切片不改变模型 Bootstrap、Tool Schema、上下文格式或发布 Skill。

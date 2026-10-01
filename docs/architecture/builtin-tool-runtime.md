@@ -8,8 +8,10 @@ last_updated: 2026-09-24
 
 # Built-in Tool Runtime Architecture
 
+人类用户的主称呼、双别名、结构化搜索与冻结投影边界见 [User Naming v1](../contracts/user-naming-v1.md)。
+
 本文件说明 Rovai built-in operations 的长期组件结构。当前字段与版本以
-[Built-in Tool Transport v32](../contracts/builtin-tool-transport-v32.md)、
+[Built-in Tool Transport v34](../contracts/builtin-tool-transport-v34.md)、
 [Built-in Tool Agent Output Projection v1](../contracts/builtin-tool-agent-output-projection-v1.md)、
 [Camp History v10](../contracts/camp-history-v10.md)、
 [Durable Task v5](../contracts/durable-task-v5.md) 和

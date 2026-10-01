@@ -2163,7 +2163,7 @@ export interface ContextManifestView {
   skillExposureDigest: string
   currentInputSkillResolution: CurrentInputSkillResolution
   currentInputSkillResolutionDigest: string
-  messageProjectionAudience: 'agent_v1'
+  messageProjectionAudience: 'agent_v1' | 'agent_v2'
   a2aGuidanceEvidence: unknown
   a2aGuidanceEvidenceDigest: string
   mcpExposure: McpExposureSnapshot

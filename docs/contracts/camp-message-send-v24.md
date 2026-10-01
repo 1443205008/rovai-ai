@@ -9,6 +9,8 @@ last_updated: 2026-09-26
 
 # Camp Message Send v24
 
+当前 User 主称呼、双别名与新旧冻结投影遵循 [User Naming v1](user-naming-v1.md)。该命名合同替代本文及继承合同的 Principal 主称呼／唯一 `agent_v1` 限制，其他规则保持。
+
 v24 inherits [v23](camp-message-send-v23.md) publication, delivery, receipt, attachment, withdrawal and idempotency
 semantics. It adds a reserved human target to the existing Agent-authored Send body parser. This supersedes v18/v19's
 literal-only Principal rule and PublicOnly's complete parser bypass. No input field or receipt shape changes.

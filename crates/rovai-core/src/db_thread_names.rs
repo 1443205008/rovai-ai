@@ -139,7 +139,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 // Reverse only synthetic test fixtures; no product path downgrades stored evidence.
 #[cfg(test)]
 pub(super) fn downgrade_for_test(connection: &Connection) {
-    super::member_creation::downgrade_for_test(connection);
+    user_projection::downgrade_for_test(connection);
     if !connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=178)",

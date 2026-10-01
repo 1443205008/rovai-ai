@@ -119,7 +119,7 @@ app.whenReady().then(async () => {
   const last = await run('[...window.memberCreationQA.threads.keys()].at(-1)')
   await run(`window.memberCreationQA.join(${JSON.stringify(last)})`)
   await wait('!!document.querySelector(".member-joined-card")')
-  assert.ok((await run('document.querySelector(".member-joined-card").innerText')).includes('Configure agent'))
+  assert.ok((await run('document.querySelector(".member-joined-card").innerText')).includes('Configure an Agent'))
   assert.equal(await run('document.documentElement.scrollWidth > innerWidth'), false)
   await capture('mobile-joined-en')
   await run('window.memberCreationQA.theme("night")'); await settle(); await capture('mobile-joined-night-en')

@@ -191,7 +191,26 @@ Principal 希望在公开 Camp 正文中直接 `@` 队外成员，同时保留�
 不采用 Conversation 作为公开名称，不重命名 SQL 或路径、不重写旧上下文，不以换 Session 规避兼容。上下文与工具新版本单独留证，旧版严格恢复。Migration 178 仅扩展新格式准入，保留失败回滚。完整前后对照及升级矩阵见[确认稿 r2](model-context-change-thread-rename.md)。
 
 <a id="v1-72-d08"></a>
-## V1.72-D08：AI 创建队员使用普通草稿会话与独立静态入队回执
+## V1.72-D08：User 为主称呼，旧 Session 继续读取冻结 Bootstrap
+
+- 状态：accepted
+- 日期：2026-10-02
+- 当前权威：[User Naming v1](../../contracts/user-naming-v1.md)、[Built-in Tool Transport v34](../../contracts/builtin-tool-transport-v34.md)
+
+### 背景与选择
+
+Principal 对普通用户不直观，且现有指令同时用 User 和 Principal 指人类。用户确认 r2，要求简洁并保持旧会话可 resume。
+使用 User、`--to-user` 与 `@User`，旧写法进入相同身份处理。公开 Bootstrap 生成收敛为一个模板，已有冻结证据优先；
+新旧动态投影用已有 audience 与 A2A schema 区分。Skill 沿用安装包原路径同步。
+
+### 后果与替代方案
+
+不以轮换 Session 或重写旧摘要解决命名差异，也不增加兼容管理层、远程 Skill 服务或每轮迁移说明。
+相比保留两份公开模板，统一生成减少重复指令，同时允许既有准入下未生成 Bootstrap 的旧执行继续恢复。
+已有会话可能同时看到旧 Bootstrap 与新 Skill，旧别名确保仍可执行；具体证据与验证见[确认稿 r2](model-context-change-principal-user.md)。
+
+<a id="v1-72-d09"></a>
+## V1.72-D09：AI 创建队员使用普通草稿会话与独立静态入队回执
 
 - 状态：accepted
 - 日期：2026-10-02
@@ -207,4 +226,4 @@ Principal 要求 AI 成为默认入口，同时保持标准会话和已有队员
 
 不采用工具日志重放生成卡片，避免普通 Open 扫描 Evidence；不另发系统消息，避免改变公屏和模型输入。
 不持久化新草稿或在卡片订阅 Profile，接受刷新丢失草稿、历史卡片不反映当前状态的边界。资料删除与离队交给目标页。
-新增 Migration 179 与 schema 129；历史创建不补卡。
+新增 Migration 180 与 schema 130；历史创建不补卡。

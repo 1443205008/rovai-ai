@@ -25,6 +25,6 @@ Timeline and reply chain pages move from the latest message or anchor toward old
 
 Search/read resolve one Thread: omitted scope means the current Thread; an explicit historical target must belong to the current Run's frozen access scope and remain accessible. An explicit current Thread ID is equivalent to omission. A message ID alone does not search across Threads.
 
-When the Thread is unknown, use history search to obtain `threadId` and `messageId`, then read that exact pair. When the Thread is known, search there if needed, then read the exact message. Inspect the exact item's `addressing` when recipients or Principal mentions matter; snippets are discovery aids.
+When the Thread is unknown, use history search to obtain `threadId` and `messageId`, then read that exact pair. When the Thread is known, search there if needed, then read the exact message. Inspect the exact item's `addressing` when recipients or User mentions matter; snippets are discovery aids.
 
 Cross-Thread search requires a real need for wider history. An uncertain mutation outcome follows [Recovery](recovery.md); similar text, author or time cannot prove invocation identity. Send always uses the authenticated current Thread and accepts no caller-supplied Thread ID.

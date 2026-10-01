@@ -6,6 +6,8 @@ last_updated: 2026-09-27
 
 # Rovai-ai 文档导航
 
+人类用户统一称 User，旧 Session 与别名规则见 [User Naming v1](contracts/user-naming-v1.md)。
+
 公开会话统一称 Thread；改名和兼容边界先读 [Thread Naming v1](contracts/thread-naming-v1.md)。
 
 本文件定义 `docs/` 的职责、权威边界和读取顺序。人和 AI 在处理架构、实现、规划或文档任务前，应先从这里判断需要读取哪些资料，而不是默认加载全部历史文档。
@@ -47,7 +49,7 @@ last_updated: 2026-09-27
 | 修改渠道 Host 唤醒/watchdog、维护回执、FIFO 提升或 delivery lease 恢复 | [Channel Host Maintenance v5](contracts/channel-host-maintenance-v5.md)、[Core 事务不变量](architecture/foundational-invariants.md#core-command-transaction)及对应 Provider 当前合同 |
 | 修改渠道 Camp 自动命名、来源前缀或手动重命名展示 | [Channel Camp Naming v1](contracts/channel-camp-naming-v1.md)、[Camp 命名不变量](architecture/foundational-invariants.md#camp-lifecycle)、[App Shell 与统一侧栏](ui/components/app-shell-navigation.md) |
 | 新增或修改 Runtime Activity 映射规则 | [Runtime Activity Mapping 维护指南](runtime-activity/README.md)及[Registry](runtime-activity/registry.md) |
-| 修改内置 Agent CLI、IPC、Envelope、receipt、完整结果运输、Single Chat history、定时 Automation、Mission、队员创建、Agent Send 或幂等合同 | [Built-in Tool Transport v32](contracts/builtin-tool-transport-v32.md)、[Built-in 运输不变量](architecture/foundational-invariants.md#skills-builtin-transport)、[Skill Library 与投影不变量](architecture/foundational-invariants.md#skills-library-projection)、[Camp Message Send v24](contracts/camp-message-send-v24.md)及[Current User Attention v8](contracts/current-user-attention-v8.md) |
+| 修改内置 Agent CLI、IPC、Envelope、receipt、完整结果运输、Single Chat history、定时 Automation、Mission、队员创建、Agent Send 或幂等合同 | [Built-in Tool Transport v34](contracts/builtin-tool-transport-v34.md)、[Built-in 运输不变量](architecture/foundational-invariants.md#skills-builtin-transport)、[Skill Library 与投影不变量](architecture/foundational-invariants.md#skills-library-projection)、[Camp Message Send v24](contracts/camp-message-send-v24.md)及[Current User Attention v8](contracts/current-user-attention-v8.md) |
 | 修改普通用户 `rovai app`、Workspace inspection、Camp/Run 终端自动化、Diagnostic Trial、双 cursor 或诊断 bundle | [User Automation v6](contracts/user-automation-v6.md)、[User Automation Architecture](architecture/user-automation.md)、[Workspace 与动态 Git 不变量](architecture/foundational-invariants.md#camp-workspace)及[当前版本](versions/v1.54/README.md) |
 | 修改 Desktop 定时任务、Automation 定义/快照、started/skipped(overlap)、普通 Delivery claim、结果、Owner 通知或 Automation 工作区 | [Scheduled Automation v3](contracts/scheduled-automation-v3.md)、[Scheduled Automation Architecture](architecture/scheduled-automation.md)、[Scheduled Automation 不变量](architecture/foundational-invariants.md#scheduled-automation)及[Automation 工作区](ui/components/automation-workspace.md) |
 | 修改 `camp.search`、`camp.read`、`history.search`、公共读取范围、实时可见性、recipient suppression、撤回过滤、Camp message publication fence 或 Agent read 附件输出 | [Camp History v10](contracts/camp-history-v10.md)、[公共上下文不变量](architecture/foundational-invariants.md#context-public-history)、[History 与寻址不变量](architecture/foundational-invariants.md#collaboration-history-addressing)、[Message Delivery 不变量](architecture/foundational-invariants.md#collaboration-delivery)、[Built-in Tool Runtime](architecture/builtin-tool-runtime.md)及[Public Camp Message/Delivery 架构](architecture/public-a2a-message-delivery.md) |

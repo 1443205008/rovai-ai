@@ -48,14 +48,14 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
     anyhow::ensure!(
         matches!(classify_database_contract(&tx)?,
         DatabaseContractClassification::SupportedMigrationSource(ref marker)
-        if marker.contract_version == "v1.72" && marker.projection_schema_version == 128),
-        "Member creation receipts require v1.72/schema 128"
+        if marker.contract_version == "v1.72" && marker.projection_schema_version == 129),
+        "Member creation receipts require v1.72/schema 129"
     );
     for (_, sql) in OBJECTS {
         tx.execute_batch(sql)?;
     }
-    tx.execute_batch("INSERT INTO schema_migration VALUES (179, datetime('now'));
-        UPDATE rovai_data_contract SET projection_schema_version=129, updated_at=datetime('now') WHERE singleton=1;")?;
+    tx.execute_batch("INSERT INTO schema_migration VALUES (180, datetime('now'));
+        UPDATE rovai_data_contract SET projection_schema_version=130, updated_at=datetime('now') WHERE singleton=1;")?;
     anyhow::ensure!(
         schema_matches(&tx)?,
         "Member creation receipt schema is incomplete"
@@ -75,7 +75,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 pub(super) fn downgrade_for_test(connection: &Connection) {
     let applied: bool = connection
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=179)",
+            "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=180)",
             [],
             |row| row.get(0),
         )
@@ -87,8 +87,8 @@ pub(super) fn downgrade_for_test(connection: &Connection) {
         .execute_batch(
             "DROP TABLE member_creation;
         DROP TABLE member_creation_preference;
-        DELETE FROM schema_migration WHERE version=179;
-        UPDATE rovai_data_contract SET projection_schema_version=128 WHERE singleton=1;",
+        DELETE FROM schema_migration WHERE version=180;
+        UPDATE rovai_data_contract SET projection_schema_version=129 WHERE singleton=1;",
         )
         .unwrap();
 }
@@ -97,7 +97,7 @@ pub(super) fn downgrade_for_test(connection: &Connection) {
 mod tests {
     use super::*;
 
-    // Owns the additive 128 -> 129 boundary, rollback, and schema admission.
+    // Owns the additive 129 -> 130 boundary, rollback, and schema admission.
     #[test]
     fn member_receipt_migration_is_atomic_and_preserves_profiles() {
         let directory =
@@ -113,7 +113,7 @@ mod tests {
             .execute_batch("CREATE TABLE member_creation_preference(block INTEGER)")
             .unwrap();
         assert!(migrate(&mut database).is_err());
-        assert!(!database.schema_migration_applied(179).unwrap());
+        assert!(!database.schema_migration_applied(180).unwrap());
         assert!(
             !database
                 .connection()
