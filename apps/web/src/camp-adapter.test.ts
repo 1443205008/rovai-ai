@@ -21,8 +21,14 @@ it('loads a command after an initially empty Web Run and refreshes its completio
     if (String(url).endsWith('/login')) return Response.json({ protocolVersion: 4, token: 'a'.repeat(64), clientId: 'd'.repeat(64), editorProof: 'e'.repeat(64), ownerId: 'local_user' })
     const { operation, params } = JSON.parse(String(options?.body))
     operations.push(operation)
+    expect(params.projection).toBe('blocks')
+    const blocks = evidence.map(item => ({
+      key: 'tools:1', kind: 'toolGroup', sequence: 1, lastSequence: 1, changeSequence,
+      toolCount: 1, counts: { completed: Number(item.phase === 'completed'), running: Number(item.phase !== 'completed'),
+        failed: 0, stopped: 0, waiting: 0, recorded: 0 }, evidence: [item]
+    }))
     const common = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       threadId: 'camp',
       agentRunId: 'run',
       throughSequence: evidence.at(-1)?.sequence ?? 0,
@@ -30,14 +36,13 @@ it('loads a command after an initially empty Web Run and refreshes its completio
       hasMore: false
     }
     if (operation === 'agentRunExecution.page') return Response.json({ result: {
-      ...common, requestedBeforeSequence: params.beforeSequence, nextBeforeSequence: null, evidence
+      ...common, requestedBeforeSequence: params.beforeSequence, nextBeforeSequence: null, blocks
     } })
     if (operation === 'agentRunExecution.changes') return Response.json({ result: {
       ...common,
       requestedAfterChangeSequence: params.afterChangeSequence,
       nextAfterChangeSequence: changeSequence,
-      evidence: evidence.filter(item => (item.changeSequence ?? item.sequence) > params.afterChangeSequence),
-      refreshedEvidence: evidence.filter(item => params.refreshEvidenceIds.includes(item.id))
+      blocks: blocks.filter(item => item.changeSequence > params.afterChangeSequence)
     } })
     throw Error(`Unexpected request: ${operation}`)
   })
@@ -46,8 +51,8 @@ it('loads a command after an initially empty Web Run and refreshes its completio
   const adapter = createThreadAdapter(transport, async () => null)
   const client = adapter.environment.client
   const current = new ExecutionWindow('camp', 'run', 12,
-    params => client.request('agentRunExecution.page', params), () => undefined,
-    params => client.request('agentRunExecution.changes', params))
+    params => client.request('agentRunExecution.page', { ...params, projection: 'blocks' }), () => undefined,
+    params => client.request('agentRunExecution.changes', { ...params, projection: 'blocks' }))
   try {
     await current.latest()
     expect(current.loaded).toBe(true)

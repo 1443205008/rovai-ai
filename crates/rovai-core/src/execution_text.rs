@@ -756,6 +756,11 @@ mod slow_tests {
         )
         .unwrap();
         let baseline = database.connection().total_changes();
+        let first_page =
+            crate::execution_window::read_block_page(&mut database, camp, run, None, None, 24)
+                .unwrap();
+        assert_eq!(first_page.blocks[0].evidence[0].payload["text"], delta);
+        let first_cursor = first_page.through_change_sequence;
         // Cardinality is the property: 1,000 fragments of one native message must produce zero further SQLite writes.
         for _ in 1..1000 {
             write(
@@ -782,6 +787,24 @@ mod slow_tests {
         assert!(open.execution_evidence.is_empty());
         let live = crate::execution_window::read_page(&mut database, camp, run, None, 24).unwrap();
         assert_eq!(live.evidence[0].payload["text"], delta.repeat(1000));
+        let block_view = crate::execution_window::read_block_changes(
+            &mut database,
+            camp,
+            run,
+            first_cursor,
+            &[first_page.blocks[0].evidence[0].id.clone()],
+            24,
+        )
+        .unwrap();
+        assert!(
+            block_view.blocks.is_empty(),
+            "in-memory deltas must not invent durable changes"
+        );
+        assert_eq!(block_view.next_after_change_sequence, first_cursor);
+        assert_eq!(
+            block_view.refreshed_blocks[0].evidence[0].payload["text"],
+            delta.repeat(1000)
+        );
         write(
             &mut database,
             "activity.started",

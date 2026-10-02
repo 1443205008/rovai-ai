@@ -1494,6 +1494,14 @@ struct ExecutionWindowParams {
     before_sequence: Option<i64>,
     limit: Option<i64>,
     after_sequence: Option<i64>,
+    projection: Option<ExecutionWindowProjection>,
+    group_sequence: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum ExecutionWindowProjection {
+    Blocks,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1506,6 +1514,10 @@ struct ExecutionChangesParams {
     #[serde(default)]
     refresh_evidence_ids: Vec<String>,
     limit: Option<i64>,
+    projection: Option<ExecutionWindowProjection>,
+    group_sequence: Option<i64>,
+    from_sequence: Option<i64>,
+    to_sequence: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -10133,18 +10145,51 @@ impl Core {
                 let mut database = self.database.lock().await;
                 let lock_ms = lock_started_at.elapsed().as_millis();
                 let read_started_at = Instant::now();
-                let changes = rovai_core::execution_window::read_changes(
-                    &mut database,
-                    params.camp_id.as_str(),
-                    &params.agent_run_id,
-                    params.after_change_sequence,
-                    &params.refresh_evidence_ids,
-                    params.limit.unwrap_or(96),
-                )?;
+                anyhow::ensure!(
+                    params.group_sequence.is_some()
+                        || (params.from_sequence.is_none() && params.to_sequence.is_none()),
+                    "Execution group range requires a group"
+                );
+                anyhow::ensure!(
+                    params.group_sequence.is_none() || params.projection.is_none(),
+                    "Execution blocks and group cursors cannot be combined"
+                );
+                let changes = if let Some(group) = params.group_sequence {
+                    serde_json::to_value(rovai_core::execution_window::read_group_changes(
+                        &mut database,
+                        params.camp_id.as_str(),
+                        &params.agent_run_id,
+                        group,
+                        params.after_change_sequence,
+                        params
+                            .from_sequence
+                            .context("Execution group range is required")?,
+                        params.to_sequence,
+                        params.limit.unwrap_or(96),
+                    )?)?
+                } else if params.projection.is_some() {
+                    serde_json::to_value(rovai_core::execution_window::read_block_changes(
+                        &mut database,
+                        params.camp_id.as_str(),
+                        &params.agent_run_id,
+                        params.after_change_sequence,
+                        &params.refresh_evidence_ids,
+                        params.limit.unwrap_or(96),
+                    )?)?
+                } else {
+                    serde_json::to_value(rovai_core::execution_window::read_changes(
+                        &mut database,
+                        params.camp_id.as_str(),
+                        &params.agent_run_id,
+                        params.after_change_sequence,
+                        &params.refresh_evidence_ids,
+                        params.limit.unwrap_or(96),
+                    )?)?
+                };
                 let read_ms = read_started_at.elapsed().as_millis();
                 drop(database);
                 let serialization_started_at = Instant::now();
-                let mut value = serde_json::to_value(changes)?;
+                let mut value = changes;
                 if let Some((_, phase)) = self
                     .runtime_phases
                     .lock()
@@ -10173,20 +10218,45 @@ impl Core {
                 let mut database = self.database.lock().await;
                 let lock_ms = lock_started_at.elapsed().as_millis();
                 let read_started_at = Instant::now();
-                let page = rovai_core::execution_window::read_range(
-                    &mut database,
-                    params.camp_id.as_str(),
-                    &params.agent_run_id,
-                    params.before_sequence,
-                    params.after_sequence,
-                    params
-                        .limit
-                        .unwrap_or(rovai_core::execution_window::DEFAULT_WINDOW_LIMIT),
-                )?;
+                anyhow::ensure!(
+                    params.projection.is_none() || params.group_sequence.is_none(),
+                    "Execution blocks and group cursors cannot be combined"
+                );
+                let page = if let Some(group) = params.group_sequence {
+                    serde_json::to_value(rovai_core::execution_window::read_group_page(
+                        &mut database,
+                        params.camp_id.as_str(),
+                        &params.agent_run_id,
+                        group,
+                        params.before_sequence,
+                        params.after_sequence,
+                        params.limit.unwrap_or(24),
+                    )?)?
+                } else if params.projection.is_some() {
+                    serde_json::to_value(rovai_core::execution_window::read_block_page(
+                        &mut database,
+                        params.camp_id.as_str(),
+                        &params.agent_run_id,
+                        params.before_sequence,
+                        params.after_sequence,
+                        params.limit.unwrap_or(12),
+                    )?)?
+                } else {
+                    serde_json::to_value(rovai_core::execution_window::read_range(
+                        &mut database,
+                        params.camp_id.as_str(),
+                        &params.agent_run_id,
+                        params.before_sequence,
+                        params.after_sequence,
+                        params
+                            .limit
+                            .unwrap_or(rovai_core::execution_window::DEFAULT_WINDOW_LIMIT),
+                    )?)?
+                };
                 let read_ms = read_started_at.elapsed().as_millis();
                 drop(database);
                 let serialization_started_at = Instant::now();
-                let mut value = serde_json::to_value(page)?;
+                let mut value = page;
                 if let Some((_, phase)) = self
                     .runtime_phases
                     .lock()

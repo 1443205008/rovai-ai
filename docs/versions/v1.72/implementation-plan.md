@@ -552,6 +552,41 @@ Electron 采用独立临时 userData/Skill Library 与显式内存 transport，�
 测试驱动的 CSS/DIP 坐标差，按 zoomFactor 修正点击坐标后全量通过，未以改动产品布局绕过该检查。
 最终截图复核修正了短视口继承旧 `.dialog-actions` 背景的问题；新弹窗操作区保持本层背景，位置由固定 footer 管理。
 
+## 2026-10-02 Run 内容块与 command 组分页
+
+- Worktree：`rovai/run-block-pagination`，基线 `f229ce3edf24d4054499babf98b0b3d984e46868`；User 明确要求 PR 合入 main。
+- Core 读取时薄索引构造完整组摘要，主线块、子窗口与输出分别按需；旧 RPC 和 schema 2 调用仍有效。
+- Renderer 主线首屏 4–24 块、历史 12 块，组内 24 项；首次不足视口有界续接，无嵌套滚动框。
+- Rust 测试准入：扩展原有 slow-tests 的 SQLite pagination owner，复用完整 schema fixture 覆盖万条组、游标、归属与旧子项变更。
+  纯命令语法 proof 使用无 I/O 的独立单测，拥有与读取计数相关的静态语法边界，不复制 SQLite fixture。
+- 初步隔离样本：10,000 commands 的首屏（组摘要及后一正文）1,621 bytes，单次本机读取约 325 ms。
+  这是单 fixture 观测，不是跨机器基准；薄索引仍需全量元数据扫描，有序载体候选索引为 O(N log N)。
+- 自动验收复用生产 Run/Tool 组件和临时 Electron userData，无 Core/真实 Runtime；覆盖底部/侧栏、日夜主题、
+  初次补齐、组内与主线失败重试、独立游标、缓存、输出/diff 惰性读取、键盘和位置锚点。
+- 最终验证记录见下；不据本机模拟扩大真实 Runtime/移动设备资格。
+
+审核修正：规范轴发现逐 Shell 全 Run SQL 扫描和 generic Shell 可见性分歧；需求轴另发现流式正文遗漏、自动组分页
+误关跟随、静止加载边界无法由新滚动意图重启。改为批量候选索引，现代载体只检查相邻 Core；无 digest 历史结果
+按候选惰性取证。共享载体与可见性 fixture 覆盖两端规则；扩展既有正文 owner，验证 1,000 个 delta 不写 SQLite
+但窗口正文继续增长。组自动续接保留跟随，新 wheel/key 即使不发生 scroll 也重新检查边界。
+新增样本：10,000 带 canonical 的载体／Core 行（相同 digest，保留歧义）读取约 458 ms；此数字同样是本机单次观测。
+
+复核补充相邻历史 start/end 的空区间保护，原 SQLite owner 覆盖未关联 Shell 仍独立可见。
+规范轴 3 项、需求轴 5 项发现全部关闭（两轴有重叠），两名独立审核者在合并基线 `1111eadc` 确认通过。
+
+最终本地证据：
+
+- `pnpm typecheck`；`pnpm test`：233 个 Vitest 文件／2,490 tests 通过，Node suite 328 通过、2 项 Windows-only 跳过。
+- `pnpm test:rust:pr`：workspace 默认 owner 441 通过、1 项既有人工 smoke ignored；并定向执行两个 `slow-tests`
+  owner：SQLite pagination 和 streaming text（各 1 项，非零）。新增测试复用既有 fixture，不扩充默认 SQLite 集成 owner。
+- `pnpm test:camp-open-projection`：11 项通过；`pnpm test:command-view`：1 项通过。合并最新 main 后再运行
+  execution-window、block-pagination、command-interaction 三个受影响 Electron 模式，3 项通过。
+- `pnpm build:desktop`、`cargo fmt --all -- --check`、`pnpm docs:check:ci` 通过；文档门禁使用当前 PR base `97aa3fde`。
+- 上游 Run 最小初始宽度／Windows 窗口关闭改动已合入；只解决版本文档末尾追加冲突，并保留双方内容。
+
+最初全套并发执行时出现既有 evaluation-host 等待超时及 Electron 资料卡返回焦点失败；停止并发 Electron/构建后，
+完整原门禁通过，未降低断言或修改无关产品逻辑。CI、PR 与最终 merge SHA 由 PR 和任务完成记录保留。
+
 ## 2026-10-02 Windows 关闭选择与托盘
 
 由 Windows Main 持有关闭偏好、当前弹窗与单一 Tray；以现有 GeneralSettings/AppDialog 展示三态选项和“记住我的选择”。

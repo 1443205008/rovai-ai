@@ -83,7 +83,7 @@ Files Changed；时钟回拨时消息 sequence 优先，不能用非传递比较
 后保持用户当前阅读锚点，不跳到顶部或最新消息。没有 earlier history 时不显示该控件。
 
 Camp open/refresh 仅返回最多 96 个 Run 摘要与每个返回 Run 的原始 Evidence 计数；它不计算或返回全 Camp Evidence 总数。可见展开的 Run 才读取执行窗口，按详情高度估算首屏项数，
-并预取相邻更早一页。滚到边界或点击后才翻页，只挂载视口附近的内容；完整历史可继续按需访问，关闭的 Drawer、
+主线按正文或完整折叠组计数，并预取相邻更早一页。首次内容不足视口时最多自动补三页；之后滚到边界或点击续接，只挂载视口附近的内容；完整历史可继续按需访问，关闭的 Drawer、
 隐藏 Inspector、收起的 Run 与世界地图不读取历史。活动操作可补充到最新页，原始 Evidence 不被删除。
 普通 event refresh 保留较早消息、Draft、阅读位置、Inspector 选择和地图模式；在途执行刷新不覆盖历史阅读。
 
@@ -557,7 +557,7 @@ Desktop 与宽屏 Web 的展开正文首尾、主要过程项间距及相邻 Run
 滚动容器为键盘焦点留出标题安全区，不改变跟随最新、折叠、输入清单或 exact Run 停止语义。
 总览中的队员头像固定为 20×20px，不随 flex 收缩拉伸。左侧状态节点与卡头首行垂直居中并跟随本卡标题，
 展开与停止操作距卡片右边保留 9px。字段与验收边界见
-[Run Process Detail Surface v42](../../contracts/run-process-detail-surface-v42.md)。
+[Run Process Detail Surface v43](../../contracts/run-process-detail-surface-v43.md)。
 
 执行浮层入口、右侧标签、消息区“处理中”回执和底部标题共用同一 24×24 心跳路径与 1.65 描边；
 queued 回执的时钟及各执行状态图形不变。
@@ -629,7 +629,7 @@ Shell 载体时，标题使用完整命令的单行预览，展开显示 `$ comm
 纯 CLI Shell 的完整成功返回值与其生命周期内唯一 Core 调用精确匹配时，折叠到 Built-in 行；单记录生命周期
 改用同 Run、同 epoch、紧邻序号和精确结果 digest 证明关联。混合命令、帮助、
 提前失败或不确定关联保留。底层 Evidence 和 Canonical 身份不变。完整规则见
-[Run Process Detail Surface v42](../../contracts/run-process-detail-surface-v42.md)。
+[Run Process Detail Surface v43](../../contracts/run-process-detail-surface-v43.md)。
 
 新 operation 的 started/progress/terminal 按稳定 Evidence ID 合并为一行；Renderer 只接受更高
 `revision/changeSequence`，不以记录数量或固定展示 `sequence` 判断内容是否变化。终态后的输入补齐、结果更新和
@@ -641,10 +641,9 @@ Shell 载体时，标题使用完整命令的单行预览，展开显示 `$ comm
 可靠阅读／编辑文件名或多文件数量，Web 搜索使用 typed query，其他操作使用非通用 Runtime title/toolName；
 没有具体值时回退稳定 Tool 行标题，不从 raw input/output 猜测。当前 Tool 已结算但尾组尚未收口时，继续显示
 “<最近一条指令>”。真正收口后只显示 `已完成 x 个步骤`；`x` 统计成功、失败、停止、跳过和结果未知在内的
-全部已结算逻辑操作，各终态不再追加独立数量，具体结果由展开后的 Tool 行表达。分页读取沿用相同的执行结果摘要，不改成“已载入 x 项执行记录”；组摘要只统计
-当前组已读取的逻辑操作，不表示整轮总量。已载入范围只在“加载更早记录”入口呈现。
+全部已结算逻辑操作，各终态不再追加独立数量，具体结果由展开后的 Tool 行表达。分页读取沿用相同的执行结果摘要，不改成“已载入 x 项执行记录”；组摘要统计该组完整的可见逻辑操作，不表示整轮总量；未展开的子项不读取。主线和组内分别维护已载入范围。
 `x` 按去重后的可见逻辑操作计数；同一 Built-in 与已关联 Shell 载体计一步，started/result/delta 和一个 Activity 的多文件行不重复计数。
-精确计数语义见 [Run Process Detail Surface v42](../../contracts/run-process-detail-surface-v42.md)。
+精确计数语义见 [Run Process Detail Surface v43](../../contracts/run-process-detail-surface-v43.md)。
 
 Runtime Compaction 作为根级、非 Tool process item 同样截断前后 Tool 分组，但不进入“已完成 x 个步骤”。
 它复用普通 command 的桌面 28px 行、最右侧状态 icon、文字后展开提示与结果文本框，并保留独立压缩 SVG；同一
@@ -670,7 +669,7 @@ Terminal、File Read、File Write、Web 等图标。运行时最右端只有状�
 高亮只覆盖静止的文字，不移动文字或闪烁背景；展开组或 Compact 后停止该行高亮，子指令及结果正文保持静态。
 完成、失败、等待、停止和结果未知保持静态；减少动态效果或 forced-colors 时关闭文字高亮，状态事实仍保留。
 
-用户展开后保持展开，新 Tool 与组终态只原位更新，不自动收起或抢焦点。展开组只显示全部 Tool summary，
+用户展开后保持展开，新 Tool 与组终态只原位更新，不自动收起或抢焦点。展开组每页读取 24 项 Tool 元数据，近边界自动续接并保留手动入口，与主线共用 Run 滚动容器；
 截断后的结果仍须再展开精确 Tool；结果 region 在首次展开前不进入 DOM，Managed Blob 也不提前读取。普通输出超过
 7.5 KiB 时在结果下显示“结果过长，部分内容已省略。”，并将读取文案改为“结果”，不提供全文恢复
 暗示；结构化 diff、Files Changed、输入与附件仍使用各自入口。收起组时
