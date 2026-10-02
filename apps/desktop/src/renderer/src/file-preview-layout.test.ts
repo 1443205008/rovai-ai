@@ -41,11 +41,12 @@ describe('File preview split geometry', () => {
     expect(filePreviewCloseThreshold(false)).toBe(320)
   })
 
-  it('recovers from invalid storage and accepts stable ratios from very wide workspaces', () => {
+  it('distinguishes an absent preference from explicit ratios including very wide workspaces', () => {
     for (const stored of [null, '', 'NaN', 'Infinity', '0', '1', '-.2', '900px']) {
-      expect(filePreviewRatioFromStoredValue(stored)).toBe(.56)
+      expect(filePreviewRatioFromStoredValue(stored)).toBeNull()
     }
     expect(filePreviewRatioFromStoredValue('.9')).toBe(.9)
+    expect(filePreviewRatioFromStoredValue('.56')).toBe(.56)
   })
 })
 

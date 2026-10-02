@@ -1,7 +1,8 @@
 import { useThreadClient } from './camp-client'
 import { ExecutionContentContext, ExecutionVirtualList, useExecutionRetainedState } from './ExecutionVirtualList'
 import { createContext, useContext, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react'
-import type { AgentRunExecutionEvidenceView, AgentRunView, CanonicalRuntimeActivityView } from '@contracts'
+import type { AgentRunExecutionBlock, AgentRunExecutionEvidenceView, AgentRunView, CanonicalRuntimeActivityView } from '@contracts'
+import { useExecutionGroupWindow } from './useExecutionGroupWindow'
 import { RunningText } from './RunningText'
 import { ExecutionStatusGlyph } from './ExecutionStatusGlyph'
 import { useOptionalFilePreview } from './FilePreviewContext'
@@ -15,6 +16,8 @@ import {
   runtimeCompactionIsExpandable,
   runtimeCompactionTitle,
   selectCompleteExecutionEvidence,
+  buildLiveExecutionProgress,
+  liveRuntimeEventFromExecutionEvidence,
   type ActivityIconKind,
   type LiveExecutionProgress,
   type RuntimeCompactionDisplayItem,
@@ -730,6 +733,7 @@ export function ToolActivityGroup({
   runId,
   runStatus,
   completeEvidence,
+  block,
   onFileOpenError
 }: {
   threadId: string
@@ -742,19 +746,29 @@ export function ToolActivityGroup({
     byToolId: Map<string, PresentableExecutionEvidence>
     byFileOperationToolId?: Map<string, PresentableExecutionEvidence>
   }
+  block?: AgentRunExecutionBlock
   onFileOpenError(message: string): void
 }): JSX.Element {
   const t = useUiText()
   const [localExpanded, setLocalExpanded] = useState(false)
   const groupState = useContext(ExecutionToolGroupStateContext)
   const retained = useContext(ExecutionContentContext)
-  const groupKeys = items.map(item => `${runId}:${item.key}`)
+  const root = useRef<HTMLDetailsElement>(null)
+  const groupKeys = block ? [`${runId}:block:${block.key}`] : items.map(item => `${runId}:${item.key}`)
   const expanded = groupKeys.some(key => retained?.get<boolean>(`group:${key}`)) || (groupState ? groupKeys.some(key => groupState.expanded.has(key)) : localExpanded)
   const setExpanded = (value: boolean): void => {
     for (const key of groupKeys) retained?.set(`group:${key}`, value)
     if (groupState) groupState.change(groupKeys, value)
     else setLocalExpanded(value)
   }
+  const childWindow = useExecutionGroupWindow(block, threadId, runId, expanded, liveTail, root)
+  const childEvidence = childWindow.window?.state.evidence
+  const childItems = useMemo(() => childEvidence
+    ? buildLiveExecutionProgress(childEvidence.map(liveRuntimeEventFromExecutionEvidence), runId, { includePublicResults: false })
+        .items.filter((item): item is ToolProgressItem => item.kind === 'tool')
+    : items, [childEvidence, items, runId])
+  const childCompleteEvidence = useMemo(() => childEvidence
+    ? selectCompletePresentableExecutionEvidence(childEvidence) : completeEvidence, [childEvidence, completeEvidence])
   const settledPresentation = toolActivityGroupPresentation(
     items, runStatus, liveTail,
     count => count === 1 ? t('已完成 1 个步骤') : t('已完成 {0} 个步骤', count),
@@ -762,7 +776,8 @@ export function ToolActivityGroup({
       translateLabel: t,
       currentTitle: step => localizedExecutionStepTitle(step, true, t),
       activeAccessibleLabel: (primary, title) => t('{0}：{1}', primary, title)
-    }
+    },
+    block
   )
   // Cancellation intent is retained in history; an authoritative terminal Run wins.
   const nonTerminal = runStatus === 'queued' || runStatus === 'running' || runStatus === 'waiting'
@@ -779,8 +794,10 @@ export function ToolActivityGroup({
     : settledPresentation
   const active = presentation.status === 'running' || presentation.status === 'waiting'
   return (
-    <details className={`tool-activity-group status-${presentation.status}`} open={expanded}
-      data-execution-item-key={items[0]?.key}
+    <details ref={root} className={`tool-activity-group status-${presentation.status}`} open={expanded}
+      data-execution-item-key={block?.key ?? items[0]?.key}
+      data-execution-group-sequence={block?.sequence}
+      data-execution-group-loaded={childEvidence?.length}
       data-execution-item-keys={items.map(item => item.key).join(' ')}
       onToggle={event => { if (event.target === event.currentTarget) setExpanded(event.currentTarget.open) }}
     >
@@ -824,14 +841,22 @@ export function ToolActivityGroup({
         </span>}
       </summary>
       {expanded && <div className="tool-group-items">
-        <ExecutionVirtualList items={items} enabled={Boolean(retained)} gap={1}>{(item) => {
+        {block && (childWindow.window?.state.hasEarlier || !childWindow.window?.state.initialized
+          || (childWindow.window.direction !== 'newer' && (childWindow.window.loading || childWindow.window.error))) &&
+          <ExecutionGroupBoundary root={childWindow.before} loading={Boolean(childWindow.window?.loading)} error={childWindow.window?.error}
+            onLoad={() => void childWindow.move(childWindow.window?.error ? 'retry' : childWindow.window?.state.initialized ? 'earlier' : 'initial')} />}
+        <ExecutionVirtualList items={childItems} enabled={Boolean(retained)} gap={1} onVisible={visible => {
+          const ids = new Set(visible.map(item => item.step.id))
+          const sequences = (childEvidence ?? []).filter(item => ids.has(item.canonical?.operationId ?? item.id)).map(item => item.sequence)
+          if (sequences.length) childWindow.window?.setViewport(Math.min(...sequences), Math.max(...sequences))
+        }}>{(item) => {
           const step = item.step
           if (step.fileChanges?.length) {
             return step.fileChanges.map((change, index) => (
               <ModifiedFileRow
                 threadId={threadId}
                 change={change}
-                completeEvidence={completeEvidence.byToolId.get(step.id)}
+                completeEvidence={childCompleteEvidence.byToolId.get(step.id)}
                 itemKey={`${item.key}:file:${index}`}
                 key={`${item.key}:file:${index}:${change.path}`}
                 onFileOpenError={onFileOpenError}
@@ -846,7 +871,7 @@ export function ToolActivityGroup({
                 threadId={threadId}
                 step={step as ToolCallStep & { fileOperation: NonNullable<ToolCallStep['fileOperation']> }}
                 runStatus={runStatus}
-                completeEvidence={completeEvidence.byFileOperationToolId?.get(step.id)}
+                completeEvidence={childCompleteEvidence.byFileOperationToolId?.get(step.id)}
                 onFileOpenError={onFileOpenError}
               />
             )
@@ -858,14 +883,31 @@ export function ToolActivityGroup({
               step={step}
               runId={runId}
               runStatus={runStatus}
-              completeEvidence={completeEvidence.byToolId.get(step.detailOperationId ?? step.id)}
+              completeEvidence={childCompleteEvidence.byToolId.get(step.detailOperationId ?? step.id)}
               onFileOpenError={onFileOpenError}
             />
           )
         }}</ExecutionVirtualList>
+        {block && (childWindow.window?.state.hasNewer || (childWindow.window?.direction === 'newer' && (childWindow.window.loading || childWindow.window.error))) &&
+          <ExecutionGroupBoundary root={childWindow.after} newer loading={Boolean(childWindow.window?.loading)} error={childWindow.window?.error}
+            onLoad={() => void childWindow.move(childWindow.window?.error ? 'retry' : 'newer')} />}
       </div>}
     </details>
   )
+}
+
+function ExecutionGroupBoundary({ root, newer = false, loading, error, onLoad }: {
+  root: RefObject<HTMLDivElement | null>; newer?: boolean; loading: boolean; error?: string | null; onLoad(): void
+}): JSX.Element {
+  return <div ref={root} className={`camp-history-loader execution-history-loader execution-group-loader${error ? ' is-error' : ''}`}
+    role={error ? 'alert' : 'status'} aria-atomic="true">
+    {error && <span><UiText zh={"执行记录暂时没有加载"} /></span>}
+    <button className="camp-history-text-button" type="button" disabled={loading} onClick={onLoad}>
+      {loading ? <><span className="camp-history-spinner" aria-hidden="true" /><UiText zh={"正在加载…"} /></>
+        : error ? <UiText zh={"重试"} />
+          : <><span aria-hidden="true">{newer ? '↓' : '↑'}</span><UiText zh={newer ? "加载更多" : "加载更早记录"} /></>}
+    </button>
+  </div>
 }
 
 export function RuntimeRetryNotice({ diagnostic }: {

@@ -9354,6 +9354,7 @@ button.skill-file-current:hover, .skill-file-current[aria-expanded="true"] { bac
 .message-quotes button:focus-visible, .message-quotes-popover button:focus-visible, .message-quote-selection-toolbar button:focus-visible { outline: 2px solid var(--line-strong); outline-offset: 2px; }
 
 .process-content > .execution-history-loader { margin: 0; max-width: 100%; flex-wrap: wrap; white-space: normal; }
+.execution-group-loader { margin: 0; max-width: 100%; flex-wrap: wrap; white-space: normal; }
 
 /* A stable window-level deck keeps iframe browsing contexts alive across route commits. */
 .file-preview-retained-host { position: fixed; z-index: 8; display: flex; min-width: 0; min-height: 0; }

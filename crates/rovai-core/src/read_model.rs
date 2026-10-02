@@ -3500,6 +3500,14 @@ pub(crate) fn attach_canonical_activity(
     connection: &Connection,
     evidence: &mut [AgentRunExecutionEvidenceView],
 ) -> Result<()> {
+    attach_canonical_activity_projection(connection, evidence, false)
+}
+
+pub(crate) fn attach_canonical_activity_projection(
+    connection: &Connection,
+    evidence: &mut [AgentRunExecutionEvidenceView],
+    metadata_only: bool,
+) -> Result<()> {
     if evidence.is_empty() {
         return Ok(());
     }
@@ -3529,7 +3537,9 @@ pub(crate) fn attach_canonical_activity(
                activity.operation_id, activity.classifier_version,
                activity.activity_domain,
                activity.semantic_kind, activity.tool_name,
-               activity.presentation_hint, activity.diff_projection_json,
+               activity.presentation_hint,
+               CASE WHEN ?6 THEN json_set(activity.diff_projection_json, '$.entries', json('[]'))
+                    ELSE activity.diff_projection_json END,
                activity.phase, activity.outcome,
                activity.credibility, activity.coverage_level,
                activity.source_authority, activity.source_evidence_ids_json,
@@ -3556,6 +3566,7 @@ pub(crate) fn attach_canonical_activity(
             crate::canonical_activity::PREVIOUS_CLASSIFIER_VERSION,
             crate::canonical_activity::INTERMEDIATE_CLASSIFIER_VERSION,
             crate::canonical_activity::LEGACY_CLASSIFIER_VERSION,
+            metadata_only,
         ],
         |row| {
             let diff_projection: Option<String> = row.get(7)?;
@@ -6507,6 +6518,8 @@ mod slow_tests {
             "team.get_task"
         );
 
+        assert_execution_block_and_group_cursors(&mut database, camp_id, agent_run_id, &now);
+
         // Historical Runs still resolve their Camp through CampTurn after the
         // delivery-first batch model moved new Runs to agent_run.camp_id.
         database
@@ -6554,6 +6567,219 @@ mod slow_tests {
 
         drop(database);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    // This extends the existing SQLite pagination owner: a large collapsed group must
+    // stay one block, and an old child can change without the group's tail moving.
+    fn assert_execution_block_and_group_cursors(
+        database: &mut Database,
+        camp: &str,
+        run: &str,
+        now: &str,
+    ) {
+        use crate::execution_window::{
+            read_block_changes, read_block_page, read_group_changes, read_group_page,
+        };
+        let old = read_block_page(database, camp, run, None, None, 1).unwrap();
+        let old_count = old.blocks[0].tool_count;
+        database.connection().execute(
+            "UPDATE agent_run_execution_evidence SET payload_preview_json = json_set(payload_preview_json, '$.input', 'rovai task get --task-id trae-task && echo extra') WHERE id = 'trae-shell'", [],
+        ).unwrap();
+        let mixed = read_block_page(database, camp, run, None, None, 1).unwrap();
+        assert_eq!(
+            mixed.blocks[0].tool_count,
+            old_count + 1,
+            "mixed Shell work is a separate step"
+        );
+        let end = 10_101;
+        let tx = database.connection_mut().transaction().unwrap();
+        {
+            let mut insert = tx.prepare(
+                "INSERT INTO agent_run_execution_evidence(id, agent_run_id, execution_epoch, sequence, event_type, kind, phase,
+                 payload_preview_json, content_byte_count, is_truncated, occurred_at, revision, change_sequence, updated_at)
+                 VALUES(?1, ?2, 0, ?3, ?4, ?5, 'completed', ?6, 100, 0, ?7, 1, ?3, ?7)"
+            ).unwrap();
+            for sequence in 101..=end + 1 {
+                let root = sequence == 101 || sequence == end + 1;
+                let payload = if root {
+                    json!({"text": format!("boundary {sequence}")})
+                } else {
+                    json!({"item": {"type": "commandExecution", "command": format!("echo {sequence}"),
+                        "status": "completed", "aggregatedOutput": "saved result must not enter the folded page"}})
+                };
+                insert
+                    .execute(params![
+                        format!("block-fixture-{sequence}"),
+                        run,
+                        sequence,
+                        if root {
+                            "agent.text.block"
+                        } else {
+                            "activity.completed"
+                        },
+                        if root { "narration" } else { "command" },
+                        payload.to_string(),
+                        now
+                    ])
+                    .unwrap();
+            }
+        }
+        tx.execute(
+            "UPDATE agent_run SET execution_evidence_change_sequence = ?1 WHERE id = ?2",
+            params![end + 1, run],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        let started = std::time::Instant::now();
+        let page = read_block_page(database, camp, run, None, None, 2).unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(page.schema_version, 3);
+        assert_eq!(page.blocks.len(), 2);
+        let group = &page.blocks[0];
+        assert_eq!(
+            (group.sequence, group.last_sequence, group.tool_count),
+            (102, end, 10_000)
+        );
+        assert_eq!(group.evidence.len(), 1);
+        assert_eq!(group.evidence[0].sequence, end);
+        assert_eq!(page.next_before_sequence, Some(102));
+        let bytes = serde_json::to_vec(&page).unwrap().len();
+        assert!(
+            bytes < 16_384,
+            "10,000 closed commands have a bounded transport: {bytes}"
+        );
+        eprintln!(
+            "execution block probe: commands=10000 response_bytes={bytes} read_ms={}",
+            elapsed.as_millis()
+        );
+        assert!(
+            !serde_json::to_string(&page)
+                .unwrap()
+                .contains("saved result must not")
+        );
+        let prior = read_block_page(database, camp, run, Some(102), None, 1).unwrap();
+        assert_eq!(prior.blocks[0].sequence, 101);
+        let first = read_group_page(database, camp, run, 102, None, Some(101), 24).unwrap();
+        assert_eq!(first.evidence.len(), 24);
+        assert_eq!(first.evidence.first().unwrap().sequence, 102);
+        assert_eq!(first.next_after_sequence, Some(125));
+        let next = read_group_page(
+            database,
+            camp,
+            run,
+            102,
+            None,
+            first.next_after_sequence,
+            24,
+        )
+        .unwrap();
+        assert_eq!(next.evidence.first().unwrap().sequence, 126);
+        let tail = read_group_page(database, camp, run, 102, None, None, 24).unwrap();
+        assert_eq!(tail.evidence.last().unwrap().sequence, end);
+        assert_eq!(tail.next_before_sequence, Some(end - 23));
+        assert!(read_group_page(database, "other-thread", run, 102, None, None, 24).is_err());
+        assert!(read_group_page(database, camp, run, 101, None, None, 24).is_err());
+        assert!(read_group_page(database, camp, run, 102, Some(110), Some(120), 24).is_err());
+        assert!(read_block_page(database, "other-thread", run, None, None, 2).is_err());
+        database.connection().execute(
+            "UPDATE agent_run_execution_evidence SET phase = 'failed', revision = 2, change_sequence = ?1 WHERE id = 'block-fixture-110'",
+            [end + 2],
+        ).unwrap();
+        database
+            .connection()
+            .execute(
+                "UPDATE agent_run SET execution_evidence_change_sequence = ?1 WHERE id = ?2",
+                params![end + 2, run],
+            )
+            .unwrap();
+        let changed = read_block_changes(database, camp, run, end + 1, &[], 1).unwrap();
+        assert_eq!(changed.blocks.len(), 1);
+        assert_eq!(changed.blocks[0].key, group.key);
+        assert_eq!(changed.blocks[0].counts.failed, 1);
+        assert_eq!(changed.blocks[0].evidence[0].sequence, end);
+        let children =
+            read_group_changes(database, camp, run, 102, end + 1, 102, Some(125), 24).unwrap();
+        assert_eq!(children.evidence.len(), 1);
+        assert_eq!(children.evidence[0].sequence, 110);
+        assert_eq!(children.evidence[0].phase, "failed");
+        let outside =
+            read_group_changes(database, camp, run, 102, end + 1, 126, Some(149), 24).unwrap();
+        assert!(outside.evidence.is_empty());
+        assert_eq!(outside.next_after_change_sequence, end + 2);
+        let last_id = format!("block-fixture-{end}");
+        database.connection().execute(
+            "INSERT INTO canonical_runtime_activity(agent_run_id, execution_epoch, operation_id, classifier_version, activity_domain, phase, outcome, credibility, coverage_level, source_authority, source_evidence_ids_json, first_evidence_sequence, last_evidence_sequence, revision, created_at, updated_at)
+             VALUES(?1, 0, ?2, 'activity-v1', 'shell', 'started', 'unknown', 'runtime_structured', 'fine_grained', 'runtime', ?3, ?4, ?4, 1, ?5, ?5)",
+            params![run, last_id, json!([last_id]).to_string(), end, now],
+        ).unwrap();
+        database.connection().execute("UPDATE agent_run_execution_evidence SET payload_preview_json = '{\"item\":{\"type\":\"commandExecution\"}}', phase = 'started' WHERE id = ?1", [&last_id]).unwrap();
+        let visibility: Value = serde_json::from_str(include_str!(
+            "../../../packages/contracts/fixtures/execution-shell-visibility.json"
+        ))
+        .unwrap();
+        for case in visibility.as_array().unwrap() {
+            database.connection().execute("UPDATE canonical_runtime_activity SET presentation_hint = ?1, tool_name = ?2 WHERE agent_run_id = ?3 AND operation_id = ?4", params![case["title"].as_str(), case["toolName"].as_str(), run, last_id]).unwrap();
+            let page = read_block_page(database, camp, run, None, None, 2).unwrap();
+            let visible = case["visible"] == true;
+            assert_eq!(
+                page.blocks[0].tool_count,
+                if visible { 10000 } else { 9999 },
+                "{case}"
+            );
+            assert_eq!(
+                page.blocks[0].evidence[0].sequence,
+                if visible { end } else { end - 1 },
+                "hidden tail must not hide earlier work: {case}"
+            );
+        }
+        // Exercise the real catalog/digest path, including repeated response digests.
+        // Modern carriers are adjacent candidates in one in-memory index, not N SQL scans.
+        let tx = database.connection_mut().transaction().unwrap();
+        for sequence in 102..=end {
+            let shell = sequence % 2 == 0;
+            let id = format!("block-fixture-{sequence}");
+            let payload = if shell {
+                json!({"resultDigest":"same-result", "item":{"type":"commandExecution","command":"rovai task get --task-id fixture"}})
+            } else {
+                json!({"sourceAuthority":"core", "canonicalTool":"team.get_task", "agentOutputDigest":"same-result", "coreEnvelope":{"ok":true,"operation":"team.get_task"}})
+            };
+            tx.execute("UPDATE agent_run_execution_evidence SET event_type = ?1, phase = 'completed', payload_preview_json = ?2 WHERE id = ?3", params![if shell { "activity.completed" } else { "runtime.action" }, payload.to_string(), id]).unwrap();
+            tx.execute(
+                "INSERT OR REPLACE INTO canonical_runtime_activity(agent_run_id, execution_epoch, operation_id, classifier_version, activity_domain, phase, outcome, credibility, coverage_level, source_authority, source_evidence_ids_json, first_evidence_sequence, last_evidence_sequence, revision, created_at, updated_at)
+                 VALUES(?1, 0, ?2, 'activity-v1', ?3, 'terminal', 'succeeded', ?4, 'fine_grained', ?5, ?6, ?7, ?7, 1, ?8, ?8)",
+                params![run, id, if shell { "shell" } else { "tool" }, if shell { "runtime_structured" } else { "core_verified" }, if shell { "runtime" } else { "core" }, json!([id]).to_string(), sequence, now],
+            ).unwrap();
+        }
+        tx.commit().unwrap();
+        let started = std::time::Instant::now();
+        let page = read_block_page(database, camp, run, None, None, 2).unwrap();
+        // Repeated adjacent equal responses are ambiguous for every middle Shell, and remain separate.
+        assert_eq!(page.blocks[0].tool_count, 9999);
+        assert!(serde_json::to_vec(&page).unwrap().len() < 16384);
+        eprintln!(
+            "execution carrier probe: canonical_rows=10000 read_ms={}",
+            started.elapsed().as_millis()
+        );
+        // A historical started/ended lifetime can have no sequence strictly inside it.
+        // Core callbacks elsewhere do not turn that empty interval into an invalid range.
+        for (id, sequence, event) in [
+            ("adjacent-start", end + 2, "activity.started"),
+            ("adjacent-end", end + 3, "activity.completed"),
+        ] {
+            database.connection().execute(
+                "INSERT INTO agent_run_execution_evidence(id, agent_run_id, execution_epoch, sequence, event_type, kind, phase, payload_preview_json, content_byte_count, is_truncated, occurred_at)
+                 VALUES(?1, ?2, 0, ?3, ?4, 'command', 'completed', ?5, 100, 0, ?6)",
+                params![id, run, sequence, event, json!({"item":{"type":"commandExecution","command":"rovai task get --task-id fixture"}}).to_string(), now],
+            ).unwrap();
+        }
+        database.connection().execute(
+            "INSERT INTO canonical_runtime_activity(agent_run_id, execution_epoch, operation_id, classifier_version, activity_domain, phase, outcome, credibility, coverage_level, source_authority, source_evidence_ids_json, first_evidence_sequence, last_evidence_sequence, revision, created_at, updated_at)
+             VALUES(?1, 0, 'adjacent-shell', 'activity-v1', 'shell', 'terminal', 'succeeded', 'runtime_structured', 'fine_grained', 'runtime', '[\"adjacent-start\",\"adjacent-end\"]', ?2, ?3, 1, ?4, ?4)",
+            params![run, end + 2, end + 3, now],
+        ).unwrap();
+        let adjacent = read_block_page(database, camp, run, None, None, 1).unwrap();
+        assert_eq!(adjacent.blocks[0].tool_count, 1);
+        assert_eq!(adjacent.blocks[0].evidence[0].sequence, end + 2);
     }
 
     #[test]

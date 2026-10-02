@@ -146,7 +146,7 @@ import { runtimeReadinessLabel } from './runtime-status'
 import { runtimeEditorInstallation } from './MemberRuntimeParameters'
 import { SafeMarkdown } from './SafeMarkdown'
 import { FilePreviewPane } from './FilePreviewPane'
-import { FilePreviewResizeHandle, FilePreviewWorkspace, useOptionalFilePreviewLayout } from './FilePreviewLayout'
+import { FilePreviewResizeHandle, FilePreviewWorkspace, useInitializeFilePreviewMinimumWidth, useOptionalFilePreviewLayout } from './FilePreviewLayout'
 import { useExecutionPreviewHost, useOptionalFilePreview } from './FilePreviewContext'
 import {
   agentRunFileChangeHasReviewableDiff,
@@ -197,6 +197,7 @@ import {
   executionHasActiveCompaction,
   groupConsecutiveToolItems,
   toolActivityGroupHasActiveTool,
+  type GroupedExecutionProgressItem,
   type ToolProgressItem
 } from './execution-tool-grouping'
 import { UiText, getInterfaceLanguage, uiAttribute, useUiText } from './interface-language'
@@ -622,6 +623,8 @@ type ExecutionDrawerFocusRequest = {
   sequence: number
   moveDomFocus: boolean
 }
+
+type SubmittedExecutionRequest = ThreadMessageSendReceipt & { firstThreadSubmission: boolean }
 
 export function preferredAgentProcessRun(runs: AgentRunView[]): AgentRunView | null {
   const newestFirst = runs.slice().sort((left, right) =>
@@ -1735,6 +1738,7 @@ export function ThreadWorkspace({
   const { profile: currentUserProfile } = useCurrentUserProfile()
   const currentUserName = currentUserDisplayName(currentUserProfile)
   const filePreview = useOptionalFilePreview()
+  const initializePreviewMinimumWidth = useInitializeFilePreviewMinimumWidth()
   useEffect(() => {
     filePreview?.syncFileChanges(snapshot.thread.id, snapshot.agentRunFileChanges)
   }, [filePreview?.syncFileChanges, snapshot.agentRunFileChanges, snapshot.thread.id])
@@ -2001,7 +2005,7 @@ export function ThreadWorkspace({
     sequence: workspaceEntryRunningRun ? 1 : 0,
     moveDomFocus: false
   })
-  const [submittedExecutionRequests, setSubmittedExecutionRequests] = useState<ThreadMessageSendReceipt[]>([])
+  const [submittedExecutionRequests, setSubmittedExecutionRequests] = useState<SubmittedExecutionRequest[]>([])
   const publishedMessageSequence = snapshot.messages.reduce((latest, message) => Math.max(latest, message.sequence), 0)
   const executionDrawerTriggerRef = useRef<HTMLButtonElement | null>(null)
   const executionDrawerReturnAgentIdRef = useRef<string | null>(null)
@@ -4007,7 +4011,11 @@ export function ThreadWorkspace({
       sendAccepted = true
       if (mountedThreadId.current === threadId
         && (sendReceipt.deliveryIds.length || sendReceipt.agentRunIds.length)) {
-        setSubmittedExecutionRequests((current) => [...current, sendReceipt])
+        setSubmittedExecutionRequests((current) => [...current, {
+          ...sendReceipt,
+          firstThreadSubmission: currentSnapshot.thread.activationState === 'pending'
+            && !currentSnapshot.thread.missionId
+        }])
       }
       try {
         const discardAttachments = client.composerAttachments.discard?.(
@@ -4582,6 +4590,10 @@ export function ThreadWorkspace({
       executionDrawerFocusedRunId,
       snapshot.agentRuns
     )) return
+    if (submittedExecutionRequest.firstThreadSubmission && !mobile && executionPlacement === 'right'
+      && filePreview && !filePreview.paneVisible && filePreview.tabs.length === 0) {
+      initializePreviewMinimumWidth?.()
+    }
     openExecutionProcess(targetRun.agentId, null, {
       runId: targetRun.id,
       moveDomFocus: false,
@@ -4597,6 +4609,7 @@ export function ThreadWorkspace({
     filePreview,
     snapshot.agentRuns,
     submittedExecutionRequests,
+    initializePreviewMinimumWidth,
     mobile,
     taskCreationActive,
     suppressExecutionAutoOpen
@@ -10148,26 +10161,17 @@ function RunExecutionContent({
   ).filter((item) =>
     item.kind !== 'narration' || !finalKey || comparableMessageText(item.body) !== finalKey
   ), [effectiveProgress?.items, finalKey, narrationBodies])
-  const windowGroupKeys = useRef({ next: 0, byItem: new Map<string, string>() })
   const groupedProcessItems = useMemo(() => {
-    const groups = groupConsecutiveToolItems(processItems)
-    if (!windowedEvidence) return groups
-    const identities = windowGroupKeys.current
-    const currentKeys = new Set(processItems.map(item => item.key))
-    for (const key of identities.byItem.keys()) if (!currentKeys.has(key)) identities.byItem.delete(key)
-    const used = new Set<string>()
-    return groups.map(group => {
-      if (group.kind !== 'toolGroup') return group
-      // A page can prepend the first operation of an existing group. Keep its
-      // React identity so expanded child results and keyboard focus survive.
-      const key = group.items.map(item => identities.byItem.get(item.key))
-        .find((key): key is string => key !== undefined && !used.has(key))
-        ?? `window-tool-group:${identities.next++}`
-      used.add(key)
-      for (const item of group.items) identities.byItem.set(item.key, key)
-      return { ...group, key }
+    if (!windowedEvidence) return groupConsecutiveToolItems(processItems)
+    return windowPage.blocks.flatMap((block): GroupedExecutionProgressItem[] => {
+      const progress = buildLiveExecutionProgress(block.evidence.map(liveRuntimeEventFromExecutionEvidence), run.id, { includePublicResults: false })
+      if (block.kind === 'toolGroup') {
+        const items = progress.items.filter((item): item is ToolProgressItem => item.kind === 'tool')
+        return block.toolCount > 0 && items.length ? [{ key: block.key, kind: 'toolGroup' as const, items, block }] : []
+      }
+      return progress.items.filter(item => item.kind !== 'narration' || !finalKey || comparableMessageText(item.body) !== finalKey)
     })
-  }, [processItems, windowedEvidence])
+  }, [processItems, windowedEvidence, windowPage.blocks, run.id, finalKey])
   const activeToolItems = useMemo(
     () => processItems.filter((item): item is ToolProgressItem => item.kind === 'tool'),
     [processItems]
@@ -10226,8 +10230,8 @@ function RunExecutionContent({
     <ExecutionContentContext.Provider value={windowedEvidence ? windowPage.contentCache : null}>
     <div className="process-content" ref={windowPage.root}
       data-execution-run-id={run.id}
-      data-execution-loaded-count={windowedEvidence ? windowPage.evidence.length : undefined}
-      data-execution-first-sequence={windowedEvidence ? windowPage.evidence[0]?.sequence : undefined}>
+      data-execution-loaded-count={windowedEvidence ? windowPage.blocks.length : undefined}
+      data-execution-first-sequence={windowedEvidence ? windowPage.blocks[0]?.sequence : undefined}>
       {windowedEvidence && (windowPage.hasEarlier || earlierLoadError || earlierLoading) && (
         <div className={`camp-history-loader execution-history-loader${earlierLoadError ? ' is-error' : ''}`}
           role={earlierLoadError ? 'alert' : 'status'} aria-atomic="true">
@@ -10243,7 +10247,7 @@ function RunExecutionContent({
           </> : earlierLoadError ? uiAttribute("重试") : <><span aria-hidden="true">↑</span><span><UiText zh={"加载更早记录"} /></span></>}</button>
           {!earlierLoadError && windowPage.evidence.length > 0 && <>
             <span className="camp-history-separator" aria-hidden="true">·</span>
-            <span className="camp-history-count"><UiText zh={"已载入 "} />{processItems.length}<UiText zh={" 项"} /></span>
+            <span className="camp-history-count"><UiText zh={"已载入 "} />{groupedProcessItems.length}<UiText zh={" 项"} /></span>
           </>}
         </div>
       )}
@@ -10254,8 +10258,8 @@ function RunExecutionContent({
         gapAfter={(item, next) => (item.kind === 'toolGroup' && next.kind === 'compaction')
           || (item.kind === 'compaction' && (next.kind === 'toolGroup' || next.kind === 'compaction')) ? 4 : processItemGap}
         onVisible={visible => {
-        const keys = visible.flatMap(item => item.kind === 'toolGroup' ? item.items.map(child => child.key) : [item.key])
-        const sequences = keys.flatMap(key => sequenceByKey.has(key) ? [sequenceByKey.get(key)!] : [])
+        const sequences = visible.flatMap(item => item.kind === 'toolGroup' && item.block ? [item.block.sequence]
+          : sequenceByKey.has(item.key) ? [sequenceByKey.get(item.key)!] : [])
         if (sequences.length) windowPage.setViewport(Math.min(...sequences), Math.max(...sequences))
       }}>{(item) => {
         if (item.kind === 'toolGroup') {
@@ -10264,6 +10268,7 @@ function RunExecutionContent({
               key={item.key}
               threadId={threadId}
               items={item.items}
+              block={item.block}
               liveTail={item.key === liveTailToolGroupKey}
               cancelling={cancelling}
               runId={run.id}

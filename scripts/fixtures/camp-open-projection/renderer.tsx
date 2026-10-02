@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 import type {
   AgentProfile,
   AgentRunView,
+  AgentRunExecutionBlock,
   AgentRunExecutionEvidenceView,
   ThreadComposerDraftView,
   ThreadOpenMessageCoverage,
@@ -50,6 +51,7 @@ const textRun: AgentRunView = {
 }
 const attachmentReviewMode = new URLSearchParams(window.location.search).get('review') === 'attachments'
 const executionRequests: { beforeSequence: number | null; limit: number }[] = []
+const executionGroupRequests: { groupSequence: number; beforeSequence: number | null; afterSequence?: number }[] = []
 const executionContentReads: string[] = []
 const executionChanges: number[] = []
 let executionThrough = 1000
@@ -57,25 +59,26 @@ const executionTails = new Map<string, number>()
 let executionReadFailure = false
 let runningExecutionScenario = false
 let commandInteraction = false
+let blockScenario: 'regular' | 'short' | 'long' | 'sparse' = 'regular'
 const pendingCommandResults = new Map<string, { resolve(): void; reject(error: Error): void }>()
 const executionRun = { ...textRun, id: 'window-run', executionEvidenceCount: 1000 }
 function windowEvidence(sequence: number): AgentRunExecutionEvidenceView {
   const id = `window-${sequence}`
   if (commandInteraction && sequence === 81) return {
-    id, agentRunId: executionRun.id, executionEpoch: 1, sequence,
+    id, agentRunId: executionRun.id, executionEpoch: 1, sequence, revision: 1, changeSequence: sequence,
     eventType: 'runtime.compaction.display', kind: 'step', phase: 'started',
     payload: { schemaVersion: 1, compactionId: 'fixture-compact', adapterKind: 'codex-cli',
       phase: 'started', tokens: { before: 12345 }, summaryText: '压缩摘要预览' },
     contentBlobId: 'fixture-compact-body', contentByteCount: 2000, isTruncated: true, occurredAt: now
   }
-  const narration = !commandInteraction && sequence % 8 === 0
+  const narration = !commandInteraction && !['long', 'sparse'].includes(blockScenario) && sequence % (blockScenario === 'short' ? 2 : 8) === 0
   const file = sequence === 999
   return {
-    id, agentRunId: executionRun.id, executionEpoch: 1, sequence,
+    id, agentRunId: executionRun.id, executionEpoch: 1, sequence, revision: 1, changeSequence: sequence,
     eventType: narration ? 'agent.text.block' : 'activity.completed',
     kind: narration ? 'narration' : 'command', phase: 'completed',
-    payload: narration ? { blockId: id, itemId: id, text: `记录 ${sequence}：${'这一页的执行说明。'.repeat(30)}`, status: 'completed' }
-      : { item: { id, type: file ? 'fileChange' : 'commandExecution', status: 'completed', command: file ? undefined : commandInteraction && sequence === 79 ? "sed -n '1,10p' src/a.ts; sed -n '1,10p' src/b.ts" : `TOKEN=fixture-value echo ${sequence}` } },
+    payload: narration ? { blockId: id, itemId: id, text: blockScenario === 'short' ? `记录 ${sequence}` : `记录 ${sequence}：${'这一页的执行说明。'.repeat(30)}`, status: 'completed' }
+      : { item: { id, type: file ? 'fileChange' : blockScenario === 'sparse' && sequence <= 200 ? 'agentMessage' : 'commandExecution', status: 'completed', command: file ? undefined : commandInteraction && sequence === 79 ? "sed -n '1,10p' src/a.ts; sed -n '1,10p' src/b.ts" : `TOKEN=fixture-value echo ${sequence}` } },
     canonical: narration ? null : {
       operationId: id, classifierVersion: 'activity-v4', activityDomain: file ? 'file' : 'shell',
       semanticKind: file ? 'file.write' : 'shell.execute', toolName: null,
@@ -86,6 +89,26 @@ function windowEvidence(sequence: number): AgentRunExecutionEvidenceView {
         status: 'available', semanticKind: 'unified_diff_snapshot', entries: [{ path: 'fixture.ts', changeKind: 'update', additions: 1, deletions: 1, diff: '' }] } : null
     }, contentBlobId: null, contentByteCount: 100, isTruncated: !narration, occurredAt: now
   }
+}
+function windowBlocks(): AgentRunExecutionBlock[] {
+  const blocks: AgentRunExecutionBlock[] = []
+  for (let sequence = 1; sequence <= executionThrough; sequence++) {
+    let item = windowEvidence(sequence)
+    const tool = item.eventType === 'activity.completed'
+    if (runningExecutionScenario && item.kind === 'narration') item = {
+      ...item, isTruncated: true, contentBlobId: `body-${item.id}`, payload: { ...item.payload, text: '正文预览' }
+    }
+    let block = tool ? blocks.at(-1) : undefined
+    if (!block || block.kind !== 'toolGroup') {
+      block = { key: `${tool ? 'tools' : 'item'}:${sequence}`, kind: tool ? 'toolGroup' : 'item',
+        sequence, lastSequence: sequence, changeSequence: sequence, toolCount: 0,
+        counts: { completed: 0, failed: 0, stopped: 0, recorded: 0, running: 0, waiting: 0 }, evidence: [] }
+      blocks.push(block)
+    }
+    block.lastSequence = sequence; block.changeSequence = sequence; block.evidence = [item]
+    if (tool && !(blockScenario === 'sparse' && sequence <= 200)) { block.toolCount++; block.counts[item.canonical?.phase === 'started' ? 'running' : 'completed']++ }
+  }
+  return blocks
 }
 const createAgent = (
   agentId: string,
@@ -305,39 +328,68 @@ Object.assign(window, { rovai: {
     agentRunId?: string
     afterChangeSequence?: number
     refreshEvidenceIds?: string[]
+    projection?: string
+    groupSequence?: number
+    fromSequence?: number
+    toSequence?: number
+    afterSequence?: number
     beforeSequence?: number | null
     limit?: number
   }): Promise<unknown> => {
     if (method === 'agentRunExecution.page') {
-      if (params?.agentRunId?.startsWith('empty-failed-')) return {
-        schemaVersion: 2, threadId, agentRunId: params.agentRunId,
-        requestedBeforeSequence: params.beforeSequence ?? null, nextBeforeSequence: null,
-        throughSequence: 0, throughChangeSequence: 0, hasMore: false, evidence: []
-      }
-      const beforeSequence = params?.beforeSequence ?? null
+      const beforeSequence = params?.beforeSequence ?? null, afterSequence = params?.afterSequence ?? null
       const limit = params?.limit ?? 24
-      executionRequests.push({ beforeSequence, limit })
+      const empty = params?.agentRunId?.startsWith('empty-failed-')
+      const through = executionThrough
+      const blocks = empty ? [] : windowBlocks()
+      if (params?.groupSequence !== undefined) {
+        const group = blocks.find(block => block.sequence === params.groupSequence && block.kind === 'toolGroup')
+        if (!group) throw new Error('Missing fixture group')
+        executionGroupRequests.push({ groupSequence: group.sequence, beforeSequence, ...(afterSequence === null ? {} : { afterSequence }) })
+        if (executionReadFailure) throw new Error('Fixture group offline')
+        const rows = Array.from({ length: group.lastSequence - group.sequence + 1 }, (_, i) => windowEvidence(group.sequence + i))
+          .filter(item => (beforeSequence === null || item.sequence < beforeSequence) && (afterSequence === null || item.sequence > afterSequence))
+        const evidence = afterSequence === null ? rows.slice(-limit) : rows.slice(0, limit)
+        const hasMore = rows.length > limit
+        return { schemaVersion: 3, threadId, agentRunId: executionRun.id, groupSequence: group.sequence,
+          requestedBeforeSequence: beforeSequence, requestedAfterSequence: afterSequence,
+          nextBeforeSequence: hasMore && afterSequence === null ? evidence[0].sequence : null,
+          nextAfterSequence: hasMore && afterSequence !== null ? evidence.at(-1)!.sequence : null,
+          throughChangeSequence: executionThrough, hasMore, evidence }
+      }
+      if (!empty) executionRequests.push({ beforeSequence, limit })
       if (runningExecutionScenario) await new Promise(resolve => setTimeout(resolve, 120))
       if (executionReadFailure && beforeSequence !== null) throw new Error('Fixture page offline')
-      const end = (beforeSequence ?? executionThrough + 1) - 1
-      const start = Math.max(1, end - limit + 1)
-      return { schemaVersion: 2, threadId, agentRunId: executionRun.id, requestedBeforeSequence: beforeSequence,
-        nextBeforeSequence: start > 1 ? start : null, throughSequence: executionThrough,
-        throughChangeSequence: executionThrough, runtimePhase: 'executing', hasMore: start > 1,
-        evidence: Array.from({ length: end - start + 1 }, (_, offset) => {
-          const item = windowEvidence(start + offset)
-          return runningExecutionScenario && item.kind === 'narration'
-            ? { ...item, isTruncated: true, contentBlobId: `body-${item.id}`, payload: { ...item.payload, text: '正文预览' } } : item
-        }) }
+      const rows = blocks.filter(block => (beforeSequence === null || block.sequence < beforeSequence)
+        && (afterSequence === null || block.sequence > afterSequence))
+      const selected = afterSequence === null ? rows.slice(-limit) : rows.slice(0, limit)
+      const hasMore = rows.length > limit
+      return { schemaVersion: 3, threadId, agentRunId: params?.agentRunId ?? executionRun.id,
+        requestedBeforeSequence: beforeSequence, requestedAfterSequence: afterSequence,
+        nextBeforeSequence: hasMore && afterSequence === null ? selected[0].sequence : null,
+        nextAfterSequence: hasMore && afterSequence !== null ? selected.at(-1)!.sequence : null,
+        throughSequence: empty ? 0 : through, throughChangeSequence: empty ? 0 : through,
+        runtimePhase: 'executing', hasMore, blocks: selected, activeBlocks: [] }
     }
     if (method === 'agentRunExecution.changes') {
-      const after = params?.afterChangeSequence ?? 0
-      const end = Math.min(executionThrough, after + (params?.limit ?? 96))
+      const after = params?.afterChangeSequence ?? 0, limit = params?.limit ?? 96
+      if (params?.groupSequence !== undefined) {
+        const group = windowBlocks().find(block => block.sequence === params.groupSequence)!
+        const evidence = Array.from({ length: group.lastSequence - group.sequence + 1 }, (_, i) => windowEvidence(group.sequence + i))
+          .filter(item => item.sequence > after && item.sequence >= (params?.fromSequence ?? 0) && item.sequence <= (params?.toSequence ?? Infinity))
+        const hasMore = evidence.length > limit
+        evidence.length = Math.min(evidence.length, limit)
+        return { schemaVersion: 2, threadId, agentRunId: executionRun.id, requestedAfterChangeSequence: after,
+          nextAfterChangeSequence: hasMore ? evidence.at(-1)!.changeSequence : executionThrough,
+          throughSequence: executionThrough, throughChangeSequence: executionThrough, hasMore, evidence, refreshedEvidence: [] }
+      }
+      const changed = windowBlocks().filter(block => block.changeSequence > after)
+      const blocks = changed.slice(0, limit), hasMore = changed.length > limit
       executionChanges.push(after)
-      return { schemaVersion: 2, threadId, agentRunId: executionRun.id, requestedAfterChangeSequence: after,
-        nextAfterChangeSequence: end, throughSequence: executionThrough,
-        throughChangeSequence: executionThrough, runtimePhase: 'executing', hasMore: end < executionThrough,
-        evidence: Array.from({ length: Math.max(0, end - after) }, (_, i) => windowEvidence(after + i + 1)), refreshedEvidence: [] }
+      return { schemaVersion: 3, threadId, agentRunId: executionRun.id, requestedAfterChangeSequence: after,
+        nextAfterChangeSequence: hasMore ? blocks.at(-1)!.changeSequence : executionThrough,
+        throughSequence: executionThrough, throughChangeSequence: executionThrough,
+        runtimePhase: 'executing', hasMore, blocks }
     }
     if (method === 'agentRunEvidence.list') return { schemaVersion: 1, agentRunId: 'text-run',
       requestedAfterSequence: 0, nextAfterSequence: 60, throughSequence: 60, hasMore: false, evidence: textEvidence }
@@ -645,20 +697,37 @@ Object.assign(window, { campOpenTest: {
     updateSnapshot(current)
   },
   showTextEvidence: () => reactRoot.render(<RunExecutionDisclosure run={textRun} threadId={threadId} />),
+  showBlockPagination: (scene: 'short' | 'long' | 'sparse' | 'failure', placement: 'bottom' | 'inspector') => {
+    blockScenario = scene === 'failure' ? 'short' : scene
+    commandInteraction = false
+    executionReadFailure = scene === 'failure'
+    executionRun.id = `blocks-${scene}-${placement}`
+    executionThrough = scene === 'sparse' ? 220 : scene === 'long' ? 120 : scene === 'failure' ? 40 : 14
+    runningExecutionScenario = false
+    executionRequests.length = 0; executionGroupRequests.length = 0; executionContentReads.length = 0
+    const run = { ...executionRun, agentId: agent.agentId, executionEvidenceCount: executionThrough, threadTurnId: 'stopped-turn' }
+    current = { ...campOpenProjectionAsSnapshot(projection(60)), tasks: [], messages: [],
+      agentRunFileChanges: [], agentRuns: [run], executionEvidence: [] }
+    reactRoot.render(<Fixture key={`blocks-${scene}-${placement}`} executionPlacement={placement} windowed />)
+  },
   showExecutionWindow: (placement: 'bottom' | 'inspector' = 'bottom') => {
+    blockScenario = 'regular'
     executionRun.id = `window-static-${placement}`
     executionThrough = 1000
     runningExecutionScenario = false
     executionRequests.length = 0
+    executionGroupRequests.length = 0
     executionContentReads.length = 0
     reactRoot.render(<StaticExecutionWindow key={placement} placement={placement} />)
   },
   showRunningExecution: (placement: 'bottom' | 'inspector', sample: number, initialCount = 1000) => {
+    blockScenario = 'regular'
     executionRun.id = `window-live-${placement}-${sample}`
     executionThrough = executionTails.get(executionRun.id) ?? initialCount
     runningExecutionScenario = true
     executionChanges.length = 0
     executionRequests.length = 0
+    executionGroupRequests.length = 0
     executionContentReads.length = 0
     const run = { ...executionRun, executionEvidenceCount: executionThrough, agentId: agent.agentId, threadTurnId: 'stopped-turn', status: 'running' as const,
       cancelRequestedAt: null, cancelAcknowledgedAt: null, cancelReasonCode: null, endedAt: null }
@@ -676,7 +745,7 @@ Object.assign(window, { campOpenTest: {
   },
   executionWindowState: () => ({
     changes: executionChanges, through: executionThrough,
-    requests: executionRequests, contentReads: executionContentReads,
+    requests: executionRequests, groupRequests: executionGroupRequests, blockCount: windowBlocks().length, contentReads: executionContentReads,
     dom: document.querySelectorAll('*').length,
     toolRows: document.querySelectorAll('.tool-group-items .tool-call-disclosure, .tool-group-items .modified-file-row').length,
     diffLines: document.querySelectorAll('.modified-file-diff-line').length,

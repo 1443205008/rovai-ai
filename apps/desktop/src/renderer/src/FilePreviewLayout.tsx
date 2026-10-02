@@ -46,12 +46,14 @@ interface FilePreviewLayoutValue {
 }
 
 const FilePreviewLayoutContext = createContext<FilePreviewLayoutValue | null>(null)
+// Initializing a pane must not subscribe the conversation to drag geometry.
+const FilePreviewInitialWidthContext = createContext<(() => void) | null>(null)
 
-function readPreferredRatio(): number {
+function readPreferredRatio(): number | null {
   try {
     return filePreviewRatioFromStoredValue(window.localStorage.getItem(FILE_PREVIEW_RATIO_STORAGE_KEY))
   } catch {
-    return DEFAULT_FILE_PREVIEW_RATIO
+    return null
   }
 }
 
@@ -71,11 +73,25 @@ export function FilePreviewLayoutProvider({
   const [availableWidth, setAvailableWidth] = useState(0)
   const availableWidthRef = useRef(0)
   const [preferredRatio, setPreferredRatio] = useState(readPreferredRatio)
+  const [initialRatios, setInitialRatios] = useState<ReadonlyMap<string, number>>(() => new Map())
+  const openedThreads = useRef(new Set<string>())
   const [dragWidth, setDragWidth] = useState<number | null>(null)
   const [snapping, setSnapping] = useState(false)
   const snapTimer = useRef<number | null>(null)
 
   const cancelResize = useCallback(() => setDragWidth(null), [])
+
+  useLayoutEffect(() => {
+    if (threadId && visible) openedThreads.current.add(threadId)
+  }, [threadId, visible])
+
+  const initializeMinimumWidth = useCallback((): void => {
+    if (!threadId || visible || preferredRatio !== null || openedThreads.current.has(threadId)) return
+    const ratio = filePreviewRatioForWidth(availableWidthRef.current, MIN_FILE_PREVIEW_WIDTH)
+    if (ratio === null) return
+    openedThreads.current.add(threadId)
+    setInitialRatios(current => new Map(current).set(threadId, ratio))
+  }, [preferredRatio, threadId, visible])
 
   useLayoutEffect(() => {
     if (!workspace) return
@@ -129,7 +145,8 @@ export function FilePreviewLayoutProvider({
   }, [])
 
   const compact = availableWidth < filePreviewSplitMinWidth(activityMode)
-  const width = dragWidth ?? filePreviewWidthForRatio(availableWidth, preferredRatio)
+  const ratio = preferredRatio ?? initialRatios.get(threadId ?? '') ?? DEFAULT_FILE_PREVIEW_RATIO
+  const width = dragWidth ?? filePreviewWidthForRatio(availableWidth, ratio)
   const value = useMemo<FilePreviewLayoutValue>(() => ({
     visible,
     activityMode,
@@ -152,7 +169,13 @@ export function FilePreviewLayoutProvider({
     resetRatio
   }), [activityMode, availableWidth, cancelResize, commitWidth, compact, dragWidth, previewWidth, resetRatio, snapping, visible, width, workspace])
 
-  return <FilePreviewLayoutContext.Provider value={value}>{children}</FilePreviewLayoutContext.Provider>
+  return <FilePreviewInitialWidthContext.Provider value={initializeMinimumWidth}>
+    <FilePreviewLayoutContext.Provider value={value}>{children}</FilePreviewLayoutContext.Provider>
+  </FilePreviewInitialWidthContext.Provider>
+}
+
+export function useInitializeFilePreviewMinimumWidth(): (() => void) | null {
+  return useContext(FilePreviewInitialWidthContext)
 }
 
 export function useOptionalFilePreviewLayout(): FilePreviewLayoutValue | null {

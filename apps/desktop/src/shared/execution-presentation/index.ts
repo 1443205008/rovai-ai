@@ -1571,7 +1571,7 @@ function activeShellSyntax(value: string): boolean {
   return quote !== null
 }
 
-function pureBuiltinShellOperation(command: string): string | null {
+export function pureBuiltinShellOperation(command: string): string | null {
   const source = unwrapShellCommand(stripAnsi(command).trim())
   const stdin = omitBuiltinStdin(source)
   if (!stdin.complete || stdin.hasExpansion) return null
