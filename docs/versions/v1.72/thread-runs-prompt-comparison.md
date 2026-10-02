@@ -1,14 +1,16 @@
 ---
 document_type: design-comparison
 version: v1.72
-revision: 1
+revision: 2
 status: draft
 last_updated: 2026-10-02
 ---
 
 # Thread 查询提示词与 CLI 帮助完整对照
 
-本附录是[方案 r1](model-context-change-thread-runs.md)的组成部分，基线为 `f229ce3edf24d4054499babf98b0b3d984e46868`。下面的“变更前”取自该基线源码；Rust 转义已还原为模型实际读取的文本。“变更后”是完整替换稿，不是已生效的运行结果。
+本附录是[方案 r2](model-context-change-thread-runs.md)的组成部分，基线为 `f229ce3edf24d4054499babf98b0b3d984e46868`。下面的“变更前”取自该基线源码；Rust 转义已还原为模型实际读取的文本。“变更后”是完整替换稿，不是已生效的运行结果。
+
+r2 只明确生效策略，以下提示词全文不再增字：旧 Session 的 resume 与压缩补发继续使用原冻结 Bootstrap，新 Session 才生成新版；受管 Skill 正文与 reference 随升级同步原路径，旧、新 Session 后续读取文件均可取得新版。
 
 用户要求上下文提示词尽可能简洁有效。因此常驻 Charter 只改两处：命令目录加 `runs`，已有等待规则加 `or execution status`。平台 Skill description、其他索引和每轮动态上下文保持原文。具体用法只放在 Agent 按需读取的帮助和 reference 中；不把完整 JSON 合同注入每轮上下文。
 

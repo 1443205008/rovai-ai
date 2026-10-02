@@ -1,14 +1,14 @@
 ---
 document_type: model-context-change
 version: v1.72
-revision: 1
+revision: 2
 confirmation_status: pending
 last_updated: 2026-10-02
 ---
 
 # Thread 消息寻址与执行查询方案
 
-本稿 r1 将本 Thread 已确认的功能边界整理为待审阅的实施方案。目标是让 Agent 查询消息实际寻址，以及谁正在执行、排队或等待。公开条目使用统一的 `items` 与可空 `agentRunId`，不提供 `kind` 或替代分类字段。
+本稿 r2 将本 Thread 已确认的功能边界整理为待审阅的实施方案。目标是让 Agent 查询消息实际寻址，以及谁正在执行、排队或等待。公开条目使用统一的 `items` 与可空 `agentRunId`，不提供 `kind` 或替代分类字段。
 
 完整的 CLI 帮助和模型指令前后文本见[提示词与帮助对照](thread-runs-prompt-comparison.md)。本稿只交付设计；尚未修改产品代码、运行中的提示词、当前合同或数据库。用户此前确认的是功能边界，本稿新增的完整提示词和版本策略尚待审阅，不能代记为已二次确认。
 
@@ -28,6 +28,7 @@ last_updated: 2026-10-02
 `37e8b079-22e1-4a8b-9505-05fb5ed584e5` 的删除 kind 修订，
 以及 `a395d409-77a6-47e0-869f-de785630bec8` 的完整方案与提示词对照要求。
 `ae8c973a-a910-45b4-b789-aa780c7f06b9` 进一步要求上下文提示词尽可能简洁有效，本稿据此保持平台 description 不变，将具体用法放在按需帮助中。
+`ce60027c-acac-43ff-ad2f-daa231c3ca05` 要求本次升级保留旧 Session 的 resume 与冻结 Bootstrap、新 Session 使用新版 Bootstrap，并让升级用户直接取得新版 Skill。r2 明确这三条生效规则；CLI 设计和提示词全文保持 r1 内容。
 
 当前权威为 [Camp History v10](../../contracts/camp-history-v10.md)、
 [Thread Naming v1](../../contracts/thread-naming-v1.md)、
@@ -416,11 +417,17 @@ type ThreadRunsResult = {
 | IPC / Envelope / receipt | 2 / 1 / 1 | 保持 |
 | 数据库 schema / migration | 当前基线 | 无本功能新增迁移 |
 
-新 Native Binding 首次生成新 Charter；平台 Skill description 保持原文。已有 Binding、Session ID 和 generation 不因本功能轮换。恢复和压缩补发继续复用该绑定已经冻结的 Bootstrap，不回写旧证据。
+本次是兼容升级，直接沿用现有冻结与受管文件同步机制：
+
+1. **旧 Session 继续 resume，并使用原 Bootstrap。** 本功能不得改变已有 Native Binding 的兼容身份、Session ID 或 generation。恢复与压缩补发均读取该 Binding 已冻结的完整 Bootstrap，包括原 Charter 和平台 Skill 索引；不根据新版模板重建或回写。保持现有 compatibility contract 的整份内容，不能把新 Charter revision 或实时 CLI catalog digest 接入旧会话的兼容判断。
+2. **新 Session 使用新版 Bootstrap。** 仅在新 Native Binding 首次准备 Bootstrap 时生成并冻结新版 Charter。新 Run、Core 重启或软件升级本身都不等于新 Session。无需批量重置会话、失效旧 Evidence 或增加 Bootstrap 迁移。
+3. **升级后直接读取新版受管 Skill。** 新安装包携带修改后的 `cli-operations/SKILL.md` 与 reference；Core 启动及新 Run 准备时使用现有 `ManagedSkills::sync` 同步到原受管路径。用户无需重新导入、重新勾选或重建 Session。旧、新 Session 后续实际读取该路径时均得到新版文件；已进入模型对话历史的旧正文保持，不承诺自动改写模型已经读过的内容。
+
+本轮已核对基线实现：[context_contract.rs](../../../crates/rovai-core/src/context_contract.rs)将 Charter revision 与 Binding compatibility 分开；[context.rs](../../../crates/rovai-core/src/context.rs)的 `prepare_session_bootstrap_evidence_for_snapshot` 优先复用既有 Evidence；[core_subsystems.rs](../../../crates/rovai-core/src/core_subsystems.rs)与 `prepare_additional_skills` 已调用 [ManagedSkills::sync](../../../crates/rovai-core/src/managed_skills.rs)，后者递归同步正文与 references。实施只接通这些现有路径，不增加热更新通知、版本协商或按 Session 维护 Skill 副本。
 
 当前安装包的 Core 与 CLI 按既有发布流程配套更新；新调用使用当前目录/输出合同，不能只替换一个运行中进程的 CLI 二进制。已有原始工具结果保留自身版本和 digest，不用当前必填字段重新伪造旧响应。实现时须明确验证历史结果读取与新结果严格校验分别走各自路径。
 
-Skills 通过现有 managed 同步更新原路径；旧 Session 再次实际读取文件时可见新版，已进入对话历史的旧文本保持。新工具可从当前 CLI help 发现；不插入额外迁移消息。Antigravity 的 Native Binding 继续使用既有冻结兼容目录，live catalog 新增 operation 不改变其兼容身份。
+平台 Skill description 与路径保持原文，旧索引仍能定位新版文件。新工具可从当前 CLI help 发现，不插入额外迁移消息。Antigravity 的 Native Binding 继续使用既有冻结兼容目录，live catalog 新增 operation 不改变其兼容身份。本次只保证不因这项功能新增 resume 失效条件，其他已有的真实不兼容或证据损坏处理规则保持。
 
 ### 实施位置
 
@@ -441,9 +448,9 @@ Skills 通过现有 managed 同步更新原路径；旧 Session 再次实际读�
 
 ## 二次确认
 
-本稿 `revision: 1`，`confirmation_status: pending`。此前的“边界同意”和“删除 kind”决定已纳入需求，但不是用户看过本稿完整提示词之后的确认。
+本稿 `revision: 2`，`confirmation_status: pending`。此前的“边界同意”“删除 kind”和会话兼容要求已纳入需求，尚未收到明确同意实施本稿的指令。
 
-遵循[核心模型上下文变更治理](../../development/model-context-change-governance.md)：“未取得确认时可以继续调查和编辑提案文档，但不得修改实现、Schema、当前合同或执行 clean break。”确认时记录真实消息、confirmed_by、confirmed_at 和 confirmed_revision:1；语义修订需更新 revision。
+遵循[核心模型上下文变更治理](../../development/model-context-change-governance.md)：“未取得确认时可以继续调查和编辑提案文档，但不得修改实现、Schema、当前合同或执行 clean break。”确认时记录真实消息、confirmed_by、confirmed_at 和 confirmed_revision:2；语义修订需更新 revision。
 
 当前文档检查会对未确认的 canonical 变更说明报告确认字段缺失，这是草案状态的实施门禁；本稿不伪填确认，也不修改 checker 绕过它。
 
@@ -472,7 +479,9 @@ Skills 通过现有 managed 同步更新原路径；旧 Session 再次实际读�
 | 动态变化 | 验证跨页队首移动的已声明限制；单页内部仍一致；无快照缓存或长事务跨请求 |
 | 输出运输 | stdout 只有一个业务 JSON；无格式选项；成功、失败和历史结果符合既有运输 |
 | 无业务副作用 | 查询前后消息、Delivery、Run、accepted 水位和调度行为不改变；允许既有审计证据 |
-| Bootstrap 与 Skill | 旧 Binding 不轮换/不重写；新 Binding 使用新文本；Skill 原路径同步，单聊不扩权 |
+| 旧 Session 升级恢复 | 同一受支持 Session 的冷 resume 与压缩补发保留 Binding、Session ID、generation 和 Bootstrap 内容/digest；新 catalog 不触发兼容身份变化 |
+| 新 Session Bootstrap | 新 Binding 冻结新版 Charter；同一 Session 新建 Run 或 Core 重启不重建 Bootstrap；单聊不扩权 |
+| Skill 升级 | 安装包包含新正文和 reference；启动及新 Run 准备沿用现有同步，旧/新 Session 从原路径实际读取均得到新版，无需重新导入或重建会话 |
 
 实现时遵循 [Rust 测试准入规则](../../development/testing.md#rust-测试准入与退役门槛)，优先扩展相关 owner 的语义场景；不新增逐句复制提示词的重复测试，不用全文相等替代权限或状态验证。
 
@@ -507,11 +516,12 @@ pnpm test:rust:pr
 
 ### 本稿验证记录
 
-本轮只改方案文档，记录如下：
+本轮只改方案文档，r1 的来源核对和 r2 的复核记录如下：
 
 - 六个提示词来源文件的 SHA-256 与固定源码基线一致；附录的两份现行 CLI 帮助与实际 `--help` 输出逐字一致。
 - JSON 示例解析、公开新增指令不暴露 Delivery/claim 分类，以及平台 description 不变的检查通过。
-- `pnpm docs:test`：10 项通过。首次并行调用触发 pnpm 自动安装竞争；安装完成后单独重跑本命令通过，无产品文件或 lockfile 改动。
+- r2 核对旧 Bootstrap 复用、Binding compatibility 与受管 Skill 同步的现有代码；附录 15 个文本块与 r1 逐字一致，没有增加上下文提示词。
+- `pnpm docs:test`：r1 与 r2 均为 10 项通过。r1 首次并行调用触发 pnpm 自动安装竞争；安装完成后单独重跑本命令通过，无产品文件或 lockfile 改动。
 - `DOCS_BASE_REF=f229ce3edf24d4054499babf98b0b3d984e46868 node scripts/check-doc-decisions.mjs --require-base`：通过文档链接、决策治理和历史冻结检查。
 - `pnpm docs:check` 与 `docs:check:ci`：版本阶段因本稿 pending 状态的四项确认字段检查而拒绝；没有伪填确认。组合命令的后续决策检查已按上一条独立执行。
 - 产品测试、真实 Runtime 与真实任务 Gate 本轮未运行；它们是实施后的验收，不能用本轮文档自检代替。
