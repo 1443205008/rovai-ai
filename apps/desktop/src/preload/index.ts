@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { createCloseTabShortcutHandler } from '../shared/close-tab-shortcut'
+import { createWindowCloseApi } from './window-close-api'
 import {
   APP_PREPARE_QUIT_CHANNEL,
   type AppQuitPreparationResponse
@@ -53,6 +54,7 @@ ipcRenderer.on(APP_PREPARE_QUIT_CHANNEL, (event) => {
 })
 
 const api: RovaiApi = {
+  windowClose: createWindowCloseApi(ipcRenderer, process.platform),
   hostWeb: {
     loginTicket: () => ipcRenderer.invoke('rovai:host-web', 'loginTicket'),
     token: () => ipcRenderer.invoke('rovai:host-web', 'token'),

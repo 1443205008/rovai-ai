@@ -177,3 +177,10 @@ Run 产物作者头。入队卡与文件卡共用桌面/窄列宽度、缩进和
 [V1.72-D09](decisions.md#v1-72-d09)记录取舍；Migration 180 将 schema 129 升为 **130**。
 [实施验收](implementation-plan.md#2026-10-02-ai-优先添加队员)区分自动化与真实模型/实体手机边界。
 本切片不改变模型 Bootstrap、Tool Schema、上下文格式或发布 Skill。
+
+## 并行交付：Windows 关闭选择与托盘
+
+Windows 主窗口默认关闭时询问，可选择最小化到系统托盘或正常退出，并记住选择。通用设置可切换三种行为；
+macOS/Web 不增加入口。托盘及第二次启动恢复原窗口，明确退出和更新重启继续现有受控退出。
+[Windows Window Close v1](../../contracts/windows-window-close-v1.md)拥有字段与状态规则；
+[实施验收](implementation-plan.md#2026-10-02-windows-关闭选择与托盘)记录自动化和真实 Windows 的证据边界。

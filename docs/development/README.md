@@ -100,6 +100,9 @@ Preload 请求 transport 或 Renderer 错误读取改动还须运行 `pnpm test:
 成功值和结构化拒绝；临时目录与 headless CI 说明见[Electron 隔离世界回归](testing.md#electron-隔离世界回归)。
 修改 macOS 独立关窗 Draft fence 时运行 `pnpm test:window-close`：隔离 Electron 验证等待准备、失败重试、关窗不退出
 及重新开窗，不启动 Core 或 Runtime；该项属于 `test:desktop:integration`，headless Linux 使用 `xvfb-run -a`。
+修改 Windows 关闭选择、记忆或托盘生命周期时运行 `pnpm test:windows-close`：使用生产 Main owner、preload 与设置/Dialog
+组件，在隔离 Electron 中验证隐藏、恢复、保存失败和显式退出。非 Windows 主机只证明控制流；Windows 主机额外创建
+真实 Tray。`Full check` 的 `desktop-windows` scope 可单独运行 Windows Desktop 自动化，不代表 Windows 10/11 交互验收。
 修改 Desktop 历史导航、侧栏按钮或平台输入时运行 `pnpm test:navigation-shell` 与 `pnpm test:startup-presentation`，
 并运行 `desktop-navigation` / `window-navigation` 定向 Vitest；历史只在内存中保存，复用既有隔离 Electron 夹具。
 修改启动页面、Supervisor Renderer gate 或 400ms 反馈时运行 `pnpm test:startup-presentation`：真实 Electron 中挂载生产

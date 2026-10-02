@@ -1,3 +1,4 @@
+import { WindowCloseSettings } from './WindowCloseSettings'
 import { GeneralLeadSelect } from './GeneralLeadSelect'
 import { readErrorMessage } from './error-message'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -41,6 +42,7 @@ const ignorePreferencesChange = (): void => undefined
 export function GeneralSettings({
   api,
   windowControls,
+  windowClose,
   browserAccess,
   agents = [],
   initialPreferences = null,
@@ -49,6 +51,7 @@ export function GeneralSettings({
 }: {
   api: GeneralPreferencesApi
   windowControls?: WindowControlsApi
+  windowClose?: import('@contracts').WindowCloseApi
   browserAccess?: ReactNode
   agents?: AgentProfile[]
   initialPreferences?: GeneralPreferencesSnapshot | null
@@ -552,6 +555,7 @@ export function GeneralSettings({
 
         {windowControls && <section className="section-block general-settings-section" aria-labelledby="general-window-heading">
           <div className="section-heading"><div><h2 id="general-window-heading"><UiText zh={"窗口"} /></h2><p><UiText zh={"本机显示位置"} /></p></div></div>
+          {windowClose && <WindowCloseSettings api={windowClose} />}
           <div className="general-section-body general-window-row">
             <p className="general-window-description"><UiText zh={"自动记住窗口大小与位置。需要时可恢复默认。"} /></p>
             <button

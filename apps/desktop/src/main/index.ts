@@ -132,6 +132,11 @@ import {
 import { AppQuitCoordinator } from './app-quit-coordinator'
 import { requestRendererQuitPreparation } from './renderer-quit-preparation'
 import { createWindowCloseHandler } from './window-close-guard'
+import { WindowsWindowClose, restoreMainWindow } from './windows-window-close'
+import { WindowClosePreferences } from './window-close-preferences'
+import { createWindowsTray } from './windows-tray'
+import { WINDOW_CLOSE_CHANNEL, WINDOW_CLOSE_CHANGED } from '../shared/window-close'
+import { createWindowCloseRequestHandler } from './window-close-ipc'
 import { installCloseTabShortcut } from '../shared/close-tab-shortcut'
 import { ChannelSettingsService } from './channel-settings'
 import { optionalChannelKind } from './channel-kind-input'
@@ -402,6 +407,7 @@ let lastDiagnosticsExportPath: string | null = null
 let lastMonitoringExportPath: string | null = null
 let lastAppearanceSignature = ''
 let generalPreferences: GeneralPreferencesStore | null = null
+let windowsWindowClose: WindowsWindowClose | null = null
 let currentUserProfile: CurrentUserProfileStore | null = null
 let onboarding: OnboardingStore | null = null
 let restorableLocations: RestorableLocationStore | null = null
@@ -860,12 +866,22 @@ function createWindow(): void {
       console.error('Rovai Renderer window-close preparation failed; the window remains open', error)
     }
   )
+  let sessionEnding = false
+  if (process.platform === 'win32') window.on('session-end', () => {
+    sessionEnding = true
+    windowsWindowClose?.beginQuit()
+  })
   window.on('close', (event) => {
     if (persistBoundsTimer) clearTimeout(persistBoundsTimer)
     persistBoundsTimer = null
     flushBounds()
+    if (sessionEnding) return
     if (process.platform === 'darwin') handleWindowClose(event)
-    else appQuitCoordinator.handleQuitRequest(event)
+    else if (windowsWindowClose && appUpdates?.get().status !== 'installing') windowsWindowClose.handleClose(event)
+    else {
+      windowsWindowClose?.beginQuit()
+      appQuitCoordinator.handleQuitRequest(event)
+    }
   })
   window.on('closed', () => {
     if (pageZoomFeedbackTimer !== null) clearTimeout(pageZoomFeedbackTimer)
@@ -961,6 +977,19 @@ if (primaryInstance) void app.whenReady().then(async () => {
     console.warn('[rovai] Execution Web service did not start; channel execution remains available.', error)
   })
   generalPreferences = GeneralPreferencesStore.defaults(generalPreferencesPath)
+  if (process.platform === 'win32') {
+    windowsWindowClose = new WindowsWindowClose({
+      preferences: new WindowClosePreferences(join(userDataPath, 'window-close.json')),
+      window: () => mainWindow,
+      createTray: (open, quit) => createWindowsTray(open, quit, requireGeneralPreferences().get().interfaceLanguage === 'en'),
+      quit: () => app.quit(),
+      publish: snapshot => {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+          mainWindow.webContents.send(WINDOW_CLOSE_CHANGED, snapshot)
+        }
+      }
+    })
+  }
   onboarding = OnboardingStore.defaults(onboardingPath)
   restorableLocations = RestorableLocationStore.defaults(restorableLocationPath)
   navigationPreferences = NavigationPreferencesStore.defaults(navigationPreferencesPath)
@@ -1017,6 +1046,7 @@ if (primaryInstance) void app.whenReady().then(async () => {
   restorableLocations = loadedRestorableLocations
   navigationPreferences = loadedNavigationPreferences
   currentUserProfile = loadedCurrentUserProfile
+  windowsWindowClose?.initialize()
   localStoresReady = true
   resolveLocalStoresLoaded()
   const restorableDegradation: StructuredError | null =
@@ -1109,6 +1139,10 @@ async function removeRetiredChannelCredentialFiles(userDataPath: string): Promis
 }
 
 app.on('second-instance', () => {
+  if (process.platform === 'win32') {
+    restoreMainWindow(mainWindow)
+    return
+  }
   if (!mainWindow || mainWindow.isDestroyed()) return
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.focus()
@@ -1353,6 +1387,10 @@ ipcMain.handle('rovai:desktop-session-commit-location', async (_event, location:
   if (!restorableLocations) throw new Error('Restorable Location store is unavailable')
   await restorableLocations.commit(validated)
 })
+
+ipcMain.handle(WINDOW_CLOSE_CHANNEL, createWindowCloseRequestHandler(
+  process.platform, () => windowsWindowClose, () => mainWindow
+))
 
 ipcMain.handle('rovai:general-preferences-get', () => hostGeneralPreferences().get())
 
@@ -2499,10 +2537,9 @@ const appQuitCoordinator = new AppQuitCoordinator({
   beforeDrain: () => {
     // Keep services and Core fully available until Renderer Draft preparation succeeds.
   },
-  prepareRenderer: () => requestRendererQuitPreparation(
-    mainWindow,
-    () => new MessageChannelMain()
-  ),
+  prepareRenderer: () => windowsWindowClose
+    ? windowsWindowClose.settlePending().then(() => requestRendererQuitPreparation(mainWindow, () => new MessageChannelMain()))
+    : requestRendererQuitPreparation(mainWindow, () => new MessageChannelMain()),
   drain: async () => {
     if (desktopBackgroundTimer) {
       clearInterval(desktopBackgroundTimer)
@@ -2532,10 +2569,12 @@ const appQuitCoordinator = new AppQuitCoordinator({
   },
   reportPreparationFailure: (error) => {
     console.error('Rovai Renderer quit preparation failed; the App remains open', error)
+    windowsWindowClose?.quitPreparationFailed()
   },
   finish: () => {
     // The updater has already staged its installer before update-driven quit.
     // app.exit finishes the bounded drain without reopening native negotiation.
+    windowsWindowClose?.dispose()
     app.exit(0)
   }
 })
@@ -2545,6 +2584,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', (event) => {
+  windowsWindowClose?.beginQuit()
   appQuitCoordinator.handleQuitRequest(event)
 })
 

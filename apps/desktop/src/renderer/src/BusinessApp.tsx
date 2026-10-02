@@ -4512,7 +4512,7 @@ export function BusinessApp({
             onOpenMenu={openMobileMenu} onBack={returnToMobileSettings} onSectionChange={chooseSettingsSection}>
           <SettingsView
             preferencesApi={uiPreferences.generalPreferences}
-            nativeSettings={environment.desktop && { windowControls: environment.desktop.windowControls }}
+            nativeSettings={environment.desktop && { windowControls: environment.desktop.windowControls, windowClose: environment.desktop.windowClose }}
             remoteConnection={environment.desktop?.hostWeb ? <HostWebSettings portDraft={remotePort} onPortDraftChange={setRemotePort} api={environment.desktop.hostWeb} /> : remoteConnection}
             zoomManagedBy={environment.desktop ? 'desktop' : 'browser'}
             platform={client.platform}
@@ -4815,7 +4815,7 @@ export function SettingsView({
 }: {
   remoteConnection?: React.ReactNode
   preferencesApi: import('@contracts').GeneralPreferencesApi
-  nativeSettings?: { windowControls: import('@contracts').WindowControlsApi; browserAccess?: React.ReactNode }
+  nativeSettings?: { windowControls: import('@contracts').WindowControlsApi; windowClose?: import('@contracts').WindowCloseApi; browserAccess?: React.ReactNode }
   zoomManagedBy?: 'desktop' | 'browser'
   platform?: NodeJS.Platform
   appearance: AppearanceSnapshot
@@ -4841,6 +4841,7 @@ export function SettingsView({
           <GeneralSettings
             api={preferencesApi}
             windowControls={nativeSettings?.windowControls}
+            windowClose={platform === 'win32' ? nativeSettings?.windowClose : undefined}
             browserAccess={nativeSettings?.browserAccess}
             agents={agents}
             initialPreferences={generalPreferences}
