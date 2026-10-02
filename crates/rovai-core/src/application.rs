@@ -20456,6 +20456,12 @@ async fn process_agent_run_acp_message(
     if adapter_kind == AdapterKind::KiroCli && method == "_kiro.dev/metadata" {
         return;
     }
+    if acp::is_session_catalog_update(&message) {
+        // A Grok catalog notification may carry native Context. Its numeric
+        // observation has been collected; catalog contents stay out of Evidence
+        // and Renderer IPC just as they did before this observation was routed.
+        return;
+    }
     if adapter_kind == AdapterKind::CopilotCli && method == "github.com/copilot/sessionEvent" {
         // Drop private events before Evidence or Renderer IPC.
         if usage

@@ -348,7 +348,7 @@ fn is_acp_client_terminal_method(method: &str) -> bool {
     )
 }
 
-fn is_session_catalog_update(message: &Value) -> bool {
+pub(crate) fn is_session_catalog_update(message: &Value) -> bool {
     message.get("id").is_none()
         && message.get("method").and_then(Value::as_str) == Some("session/update")
         && matches!(
@@ -362,6 +362,20 @@ fn is_session_catalog_update(message: &Value) -> bool {
                     | "session_info_update"
             )
         )
+}
+
+fn is_prompt_metadata_only(adapter_kind: AdapterKind, message: &Value) -> bool {
+    let carries_context = adapter_kind == AdapterKind::GrokBuild
+        && crate::runtime::is_root_output(&message["params"])
+        && crate::runtime::is_root_output(&message["params"]["update"])
+        && message
+            .pointer("/params/_meta/totalTokens")
+            .and_then(Value::as_i64)
+            .is_some_and(|n| n >= 0);
+    // Grok also attaches its latest context to catalog notifications. Let the
+    // active prompt's numeric collector observe it before dropping the catalog.
+    (is_session_catalog_update(message) && !carries_context)
+        || is_known_session_lifecycle_extension(adapter_kind, message)
 }
 
 fn is_known_session_lifecycle_extension(adapter_kind: AdapterKind, message: &Value) -> bool {
@@ -2398,12 +2412,15 @@ impl AcpHost {
                 {
                     return AcpSessionMessageRoute::SessionMetadata;
                 }
-                if is_session_catalog_update(message)
-                    || is_known_session_lifecycle_extension(self.adapter_kind, message)
-                {
+                if is_prompt_metadata_only(self.adapter_kind, message) {
                     return AcpSessionMessageRoute::SessionMetadata;
                 }
-                active_prompt.prompt_activity_observed = true;
+                // Catalog metadata may report the previous context before a
+                // prompt is accepted. Collect its numbers without treating it
+                // as proof that a rejected input was consumed.
+                if !is_session_catalog_update(message) {
+                    active_prompt.prompt_activity_observed = true;
+                }
                 route.sequence = route.sequence.saturating_add(1);
                 AcpSessionMessageRoute::Forward {
                     owner: route.owner.clone(),
@@ -7257,6 +7274,24 @@ mod route_policy_tests {
             &usage
         ));
         assert!(is_idle_session_metadata(AdapterKind::GrokBuild, &usage));
+        // Actual Grok 1.0.44 terminal sequence: the final context is carried on
+        // available_commands_update after the last body chunk (19636 -> 19724).
+        let mut catalog = json!({"method":"session/update", "params":{
+            "sessionId":"session-grok", "_meta":{"totalTokens":19724},
+            "update":{"sessionUpdate":"available_commands_update",
+                "availableCommands":[{"name":"private-catalog-entry"}]}}});
+        assert!(is_session_catalog_update(&catalog));
+        assert!(!is_prompt_metadata_only(AdapterKind::GrokBuild, &catalog));
+        assert!(is_idle_session_metadata(AdapterKind::GrokBuild, &catalog));
+        assert!(is_prompt_metadata_only(AdapterKind::TraeCnCli, &catalog));
+        for invalid in [json!(-1), json!("19724"), Value::Null] {
+            catalog["params"]["_meta"]["totalTokens"] = invalid;
+            assert!(is_prompt_metadata_only(AdapterKind::GrokBuild, &catalog));
+        }
+        catalog["params"]["_meta"]["totalTokens"] = json!(0);
+        assert!(!is_prompt_metadata_only(AdapterKind::GrokBuild, &catalog));
+        catalog["params"]["agentId"] = json!("child");
+        assert!(is_prompt_metadata_only(AdapterKind::GrokBuild, &catalog));
         let mut unbound = usage;
         unbound["params"]["update"]
             .as_object_mut()

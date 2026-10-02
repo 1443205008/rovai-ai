@@ -14,6 +14,8 @@ baseline_ref: "4b4fe088b15ef785cd76f54f221e5d87c9d639a4"
 
 当前执行台的取数范围、隐藏暂停、引用复用与迟到刷新收口见[执行指标读取验收](execution-metrics-refresh-verification-2026-10-01.md)。
 
+2026-10-03 同一个隔离打包 App、15 类 Runtime 的真实数值与界面对照见[同会话验收](all-runtime-app-verification-2026-10-03.md)。
+
 2026-10-02 本轮补采与版本兼容结果见[原生来源验收](native-format-compatibility-2026-10-02.md)。
 
 此前执行台的字段与 App 证据见[原生压缩、冷恢复与剩余链路验收（2026-10-01）](native-boundaries-verification-2026-10-01.md)。[原生比例与当前占用核验](native-context-ratio-verification-2026-10-01.md)、[原生来源补接](native-usage-context-verification-2026-09-30.md)、[第二轮字段级核验](execution-metrics-verification-2026-09-29.md)、[v3 思考验收](observable-output-v3-verification-2026-09-30.md)与[首轮记录](observable-output-v3-verification-2026-09-29.md)保留各自当时的范围。本文是历史设计输入，版本与支持判断以当次实测记录为准。
