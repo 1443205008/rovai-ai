@@ -24,7 +24,9 @@ app.whenReady().then(async () => {
     window: () => window,
     createTray: (open, quit) => {
       if (failTray) throw Error('fixture tray creation failure')
-      if (process.platform === 'win32') return createWindowsTray(open, quit, false)
+      if (process.platform === 'win32') {
+        try { return createWindowsTray(open, quit, false) } catch (error) { console.error('Native tray creation failed:', error); throw error }
+      }
       let destroyed = false
       return { destroy: () => { destroyed = true }, isDestroyed: () => destroyed }
     },
@@ -52,6 +54,7 @@ app.whenReady().then(async () => {
   const run = expression => window.webContents.executeJavaScript(expression, true)
   const wait = async expression => {
     for (let n = 0; n < 80; n++) { if (await run(`Boolean(${expression})`)) return; await pause(40) }
+    console.error('UI timeout evidence:', JSON.stringify({ owner: owner.get(), visible: window.isVisible(), minimized: window.isMinimized(), focused: window.isFocused(), renderer: await run(`({text:document.querySelector('.window-close-dialog')?.textContent,focus:document.activeElement?.outerHTML,ratio:devicePixelRatio})`) }))
     throw Error('UI did not settle: ' + expression)
   }
   const click = async selector => {

@@ -91,13 +91,18 @@ jobs:
       - run: pnpm typecheck
       - name: Check close policy and existing quit/update owners
         run: pnpm exec vitest run apps/desktop/src/main/windows-window-close.test.ts apps/desktop/src/main/window-close-preferences.test.ts apps/desktop/src/main/window-close-ipc.test.ts apps/desktop/src/preload/window-close-api.test.ts apps/desktop/src/main/app-quit-coordinator.test.ts apps/desktop/src/main/app-updates.test.ts
-      - name: Exercise isolated native window, tray and bridge
+      - name: Exercise Windows close choice and native tray
         env:
           ROVAI_REQUIRE_ELECTRON_INTEGRATION: '1'
-        run: |
-          pnpm test:windows-close
-          pnpm test:window-close
-          pnpm test:desktop-bridge
+        run: pnpm test:windows-close
+      - name: Preserve standalone window close
+        env:
+          ROVAI_REQUIRE_ELECTRON_INTEGRATION: '1'
+        run: pnpm test:window-close
+      - name: Verify the isolated production bridge
+        env:
+          ROVAI_REQUIRE_ELECTRON_INTEGRATION: '1'
+        run: pnpm test:desktop-bridge
 
   rust-full:
     if: inputs.scope == 'full'
