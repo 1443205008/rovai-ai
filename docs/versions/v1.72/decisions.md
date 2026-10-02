@@ -3,7 +3,7 @@ document_type: version-decisions
 version: v1.72
 authority: decision-rationale
 lifecycle: current
-last_updated: 2026-09-30
+last_updated: 2026-10-02
 ---
 
 # v1.72 版本决定
@@ -227,3 +227,22 @@ Principal 要求 AI 成为默认入口，同时保持标准会话和已有队员
 不采用工具日志重放生成卡片，避免普通 Open 扫描 Evidence；不另发系统消息，避免改变公屏和模型输入。
 不持久化新草稿或在卡片订阅 Profile，接受刷新丢失草稿、历史卡片不反映当前状态的边界。资料删除与离队交给目标页。
 新增 Migration 180 与 schema 130；历史创建不补卡。
+
+<a id="v1-72-d10"></a>
+## V1.72-D10：Run 主线按完整内容块分页，展开组独立读取
+
+- 状态：accepted
+- 日期：2026-10-02
+- 当前权威：[Run Process Detail Surface v43](../../contracts/run-process-detail-surface-v43.md)、[Camp Open Read Path](../../architecture/camp-open-read-path.md#run-主线与展开组读取)与[会话工作区](../../ui/components/conversation-workspace.md)
+
+### 背景与选择
+
+用户观察到少量可见内容已经分页，且必须点击才能继续。原窗口按逻辑操作分页后再折叠，长 command 组占满页数，
+短摘要却不产生可滚动区域。采用读取时计算内容块与完整组摘要，主线和展开组各有游标；首次不足视口时有界补读。
+新选择器沿用既有请求与权限，旧 schema 2 读取保留。
+
+### 后果与替代方案
+
+不采用仅扩大原页大小：大组依然可能填满一页并增加传输；不建立持久化分组表：它需要维护实时补齐、版本化展示
+分类及历史回填。读取时薄索引保留 O(N) 元数据扫描，换取无需迁移和有界传输。组身份沿稳定首 sequence，
+旧子项变化用独立 changeSequence 更新，避免把 UI 分组变成新的执行事实或嵌套滚动层。

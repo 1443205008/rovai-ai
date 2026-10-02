@@ -203,3 +203,15 @@ Snapshot/Open 在同一读事务内按当前 Thread 索引读取 `member_creatio
 不回放工具 Evidence 或 `event_log`，不扩大消息/Run 窗口。`thread.memberCreated` 只提示重读当前会话；
 重开以表为准。卡片链接交给现有队员页处理实时状态。字段与原子边界见
 [Member Creation Flow v1](../contracts/member-creation-flow-v1.md)。
+
+## Run 主线与展开组读取
+
+执行详情沿用已有 page/changes 派发与 Thread/Run 归属验证。Core 的 execution_window blocks 模块从既有
+Evidence/Canonical operation index 在读取事务中计算块边界、完整组计数与代表项；无新增表或后台投影维护。
+Renderer 的 ExecutionWindow 拥有主线块游标，ExecutionGroupWindow 拥有单组子窗口，公开输出仍由既有
+content cache 与精确详情请求拥有。两个窗口同用 Run 原生滚动容器，缓存、展开、内容和 DOM 窗口分别有界。
+
+薄索引扫描保留 O(N) 成本，折叠组传输量与子项数脱钩；不把这项优化声称为常数时间数据库查询。初次短内容
+有界自动补齐，失败原位恢复，历史阅读锚点优先于后台更新。协议和预算见
+[Run Process Detail Surface v43](../contracts/run-process-detail-surface-v43.md)，取舍见
+[V1.72-D10](../versions/v1.72/decisions.md#v1-72-d10)。

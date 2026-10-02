@@ -1,6 +1,7 @@
+import carrierCases from '../../../../../packages/contracts/fixtures/execution-carrier-cases.json'
 import { describe, expect, it } from 'vitest'
 import type { CanonicalRuntimeActivityView } from '@contracts'
-import { executionActivityTitle, executionEvidenceResultText } from './index'
+import { executionActivityTitle, executionEvidenceResultText, pureBuiltinShellOperation } from './index'
 
 const shell: CanonicalRuntimeActivityView = {
   operationId: 'powershell-command', classifierVersion: 'test', activityDomain: 'shell',
@@ -42,4 +43,8 @@ describe('PowerShell command presentation', () => {
   ])('preserves commands outside the bounded wrapper shape: %s', (wrapped) => {
     expect(executionActivityTitle(shell, { item: { command: wrapped } })).toBe(wrapped)
   })
+})
+
+it('agrees with Core block counting on the shared carrier proof cases', () => {
+  for (const { command, operation } of carrierCases) expect(pureBuiltinShellOperation(command), command).toBe(operation)
 })

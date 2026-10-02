@@ -551,3 +551,16 @@ Electron 采用独立临时 userData/Skill Library 与显式内存 transport，�
 原生 fixture 字段保持原值；上述证据不代表真实模型执行、实体手机或已打包安装。首轮验收末项暴露 200% 缩放下
 测试驱动的 CSS/DIP 坐标差，按 zoomFactor 修正点击坐标后全量通过，未以改动产品布局绕过该检查。
 最终截图复核修正了短视口继承旧 `.dialog-actions` 背景的问题；新弹窗操作区保持本层背景，位置由固定 footer 管理。
+
+## 2026-10-02 Run 内容块与 command 组分页
+
+- Worktree：`rovai/run-block-pagination`，基线 `f229ce3edf24d4054499babf98b0b3d984e46868`；User 明确要求 PR 合入 main。
+- Core 读取时薄索引构造完整组摘要，主线块、子窗口与输出分别按需；旧 RPC 和 schema 2 调用仍有效。
+- Renderer 主线首屏 4–24 块、历史 12 块，组内 24 项；首次不足视口有界续接，无嵌套滚动框。
+- Rust 测试准入：扩展原有 slow-tests 的 SQLite pagination owner，复用完整 schema fixture 覆盖万条组、游标、归属与旧子项变更。
+  纯命令语法 proof 使用无 I/O 的独立单测，拥有与读取计数相关的静态语法边界，不复制 SQLite fixture。
+- 初步隔离样本：10,000 commands 的首屏（组摘要及后一正文）1,621 bytes，单次本机读取约 325 ms。
+  这是单 fixture 观测，不是跨机器基准；薄索引仍 O(N)。
+- 自动验收复用生产 Run/Tool 组件和临时 Electron userData，无 Core/真实 Runtime；覆盖底部/侧栏、日夜主题、
+  初次补齐、组内与主线失败重试、独立游标、缓存、输出/diff 惰性读取、键盘和位置锚点。
+- 完整门禁、独立审核与合入结果在任务收口时补记；不据本机模拟扩大真实 Runtime/移动设备资格。

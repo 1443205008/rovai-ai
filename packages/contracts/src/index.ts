@@ -2033,6 +2033,44 @@ export interface AgentRunExecutionWindowChanges {
   refreshedEvidence: AgentRunExecutionEvidenceView[]
 }
 
+/** A read-time presentation boundary; tools inside it have a separate cursor. */
+export interface AgentRunExecutionBlock {
+  key: string
+  kind: 'item' | 'toolGroup'
+  sequence: number
+  lastSequence: number
+  changeSequence: number
+  toolCount: number
+  counts: Record<'completed' | 'failed' | 'stopped' | 'recorded' | 'running' | 'waiting', number>
+  /** One root item, or latest/active operations with their proven Shell supports (at most four rows). */
+  evidence: AgentRunExecutionEvidenceView[]
+}
+
+export interface AgentRunExecutionBlockPage extends Omit<AgentRunExecutionWindowPage, 'schemaVersion' | 'evidence' | 'activeEvidence'> {
+  schemaVersion: 3
+  blocks: AgentRunExecutionBlock[]
+  activeBlocks?: AgentRunExecutionBlock[]
+}
+
+export interface AgentRunExecutionBlockChanges extends Omit<AgentRunExecutionWindowChanges, 'schemaVersion' | 'evidence' | 'refreshedEvidence'> {
+  schemaVersion: 3
+  blocks: AgentRunExecutionBlock[]
+}
+
+export interface AgentRunExecutionGroupPage {
+  schemaVersion: 3
+  threadId: string
+  agentRunId: string
+  groupSequence: number
+  requestedBeforeSequence: number | null
+  requestedAfterSequence: number | null
+  nextBeforeSequence: number | null
+  nextAfterSequence: number | null
+  throughChangeSequence: number
+  hasMore: boolean
+  evidence: AgentRunExecutionEvidenceView[]
+}
+
 export interface ExecutionConsolePage {
   pageIndex: number
   pageCount: number
