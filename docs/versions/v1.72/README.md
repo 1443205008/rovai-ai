@@ -192,4 +192,3 @@ Windows 主窗口默认关闭时询问，可选择最小化到系统托盘或正
 macOS/Web 不增加入口。托盘及第二次启动恢复原窗口，明确退出和更新重启继续现有受控退出。
 [Windows Window Close v1](../../contracts/windows-window-close-v1.md)拥有字段与状态规则；
 [实施验收](implementation-plan.md#2026-10-02-windows-关闭选择与托盘)记录自动化和真实 Windows 的证据边界。
-
