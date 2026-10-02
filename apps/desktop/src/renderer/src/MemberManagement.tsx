@@ -1,5 +1,5 @@
 import { MobileBack, useMobileLayout } from './MobileLayout'
-import { desktopThreadClient } from './desktop-camp-client'
+import { assertApplied, commandCodeLabel, submitMemberRuntimeConfiguration } from './member-runtime-commands'
 import { newCommandId } from '../../shared/command-id'
 import { useThreadClient } from './camp-client'
 import { CurrentUserProfileEditor, CurrentUserRosterEntry } from './CurrentUserProfileEditor'
@@ -76,6 +76,8 @@ import {
   adapterLabel
 } from './runtime-products'
 import { MemberRuntimePicker } from './MemberRuntimePicker'
+import { MemberRuntimeApplyDialog, RuntimeApplyIcon, type RuntimeApplySource } from './MemberRuntimeApplyDialog'
+import type { RuntimeApplyEditorState } from './member-runtime-apply'
 
 import { MemberSidebar } from './MemberSidebar'
 import { MemberRosterLayout } from './MemberRosterLayout'
@@ -138,8 +140,15 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
     creatingRef.current = creating
     const [runtimeFocus, setRuntimeFocus] = useState(0)
     const [states, setStates] = useState<
-      Record<string, { dirty: boolean; busy: boolean }>
+      Record<string, RuntimeApplyEditorState & { dirty: boolean }>
     >({})
+    const [applySource, setApplySource] = useState<RuntimeApplySource | null>(null)
+    const [applyingRuntime, setApplyingRuntime] = useState(false)
+    const applyingRuntimeRef = useRef(false)
+    const updateApplyingRuntime = useCallback((value: boolean): void => {
+      applyingRuntimeRef.current = value
+      setApplyingRuntime(value)
+    }, [])
     const [pending, setPending] = useState<GuardedTransition | null>(null)
     const pendingRef = useRef<GuardedTransition | null>(null)
     const editors = useRef(new Map<string, MemberEditorHandle>())
@@ -166,7 +175,7 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
       )
       .map(([, state]) => state)
     const dirty = hasNewDraft || activeStates.some((state) => state.dirty)
-    const busy = activeStates.some((state) => state.busy)
+    const busy = applyingRuntime || activeStates.some((state) => state.busy)
     const stateRef = useRef({ dirty, busy })
     stateRef.current = { dirty, busy }
     const showSelectedMember = (): void => {
@@ -197,11 +206,11 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
       )
     }
     const updateState = useCallback(
-      (id: string, dirty: boolean, busy: boolean): void => {
+      (id: string, dirty: boolean, busy: boolean, runtimeDirty = false): void => {
         setStates((current) =>
-          current[id]?.dirty === dirty && current[id]?.busy === busy
+          current[id]?.dirty === dirty && current[id]?.busy === busy && current[id]?.runtimeDirty === runtimeDirty
             ? current
-            : { ...current, [id]: { dirty, busy } }
+            : { ...current, [id]: { dirty, busy, runtimeDirty } }
         )
       },
       []
@@ -213,7 +222,7 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
       (
         action: () => void | Promise<void>
       ): Promise<boolean> => {
-        if (stateRef.current.busy || pendingRef.current)
+        if (stateRef.current.busy || applyingRuntimeRef.current || pendingRef.current)
           return Promise.resolve(false)
         if (!stateRef.current.dirty)
           return Promise.resolve()
@@ -234,7 +243,7 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
     }))
     useEffect(() => {
       const guard = (event: BeforeUnloadEvent): void => {
-        if (stateRef.current.dirty || stateRef.current.busy) {
+        if (stateRef.current.dirty || stateRef.current.busy || applyingRuntimeRef.current) {
           event.preventDefault()
           event.returnValue = ''
         }
@@ -265,6 +274,10 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
       } catch {
         value.resolve(false)
       }
+    }
+    const openRuntimeApply = (agent: AgentProfile): void => {
+      if (!agent.runtimeConfiguration || stateRef.current.busy || applyingRuntimeRef.current) return
+      setApplySource(structuredClone({ ...agent, runtimeConfiguration: agent.runtimeConfiguration }))
     }
     return (
       <>
@@ -349,6 +362,7 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
                   else editors.current.delete(id)
                 }}
                 onStateChange={updateState}
+                onApplyRuntime={openRuntimeApply}
                 onCreated={(profile) => select(profile.agentId, 'identity')}
                 onDiscardNew={() => undefined}
               />
@@ -365,6 +379,7 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
                   else editors.current.delete('new-member')
                 }}
                 onStateChange={updateState}
+                onApplyRuntime={openRuntimeApply}
                 onCreated={(profile) => {
                   setHasNewDraft(false)
                   if (creatingRef.current) select(profile.agentId, 'identity')
@@ -425,6 +440,12 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
             </AppDialogContent>
           </Dialog.Portal>
         </Dialog.Root>
+        {applySource && <MemberRuntimeApplyDialog
+          source={applySource} agents={agents} installations={props.installations} editorStates={states}
+          environment={{ hostPlatform: props.hostPlatform ?? null, admissions: props.runtimePlatformAdmission ?? [] }}
+          onBusyChange={updateApplyingRuntime} onReload={props.onReload} onProfileCommitted={props.onProfileCommitted}
+          onClose={() => setApplySource(null)}
+        />}
       </>
     )
   }
@@ -434,7 +455,8 @@ const MemberEditor = forwardRef<
   MemberEditorHandle,
   MembersViewProps & {
     active: boolean
-    onStateChange(id: string, dirty: boolean, busy: boolean): void
+    onStateChange(id: string, dirty: boolean, busy: boolean, runtimeDirty: boolean): void
+    onApplyRuntime(agent: AgentProfile): void
     onCreated(profile: AgentProfile): void
     onDiscardNew(): void
   }
@@ -456,6 +478,7 @@ const MemberEditor = forwardRef<
     onProfileCommitted,
     onOpenRuntimeSettings,
     onStateChange,
+    onApplyRuntime,
     onCreated,
     onDiscardNew
   },
@@ -497,7 +520,8 @@ const MemberEditor = forwardRef<
     onStateChange(
       selectedAgentId ?? 'new-member',
       identityDirty || runtimeDirty,
-      busy !== null
+      busy !== null,
+      runtimeDirty
     )
   }, [selectedAgentId, identityDirty, runtimeDirty, busy, onStateChange])
   const openRuntime = (): void => {
@@ -803,6 +827,7 @@ const MemberEditor = forwardRef<
                 onClear={clearRuntime}
                 onReload={onReload}
                 onOpenRuntimeSettings={onOpenRuntimeSettings}
+                onApplyToOthers={onApplyRuntime}
               />
             ) : (
               <p className="member-editor-new-runtime"><UiText zh={"创建队员后，可在这里选择智能体、模型与权限。"} /></p>
@@ -1075,6 +1100,7 @@ export const MemberRuntimeForm = forwardRef<
     onClear(): Promise<void>
     onReload(): Promise<void>
     onOpenRuntimeSettings(): void
+    onApplyToOthers?(agent: AgentProfile): void
   }
 >(function MemberRuntimeForm(
   {
@@ -1089,7 +1115,8 @@ export const MemberRuntimeForm = forwardRef<
     onSave,
     onClear,
     onReload,
-    onOpenRuntimeSettings
+    onOpenRuntimeSettings,
+    onApplyToOthers
   },
   ref
 ): React.JSX.Element {
@@ -1367,7 +1394,13 @@ export const MemberRuntimeForm = forwardRef<
             )}
           </div>
         )}
-        <div className="member-editor-save-row">
+        <div className={`member-editor-save-row${onApplyToOthers ? ' runtime-apply-save-row' : ''}`}>
+          {onApplyToOthers && <button type="button" className="quiet-button runtime-apply-entry" data-apply-entry={agent.agentId}
+            disabled={dirty || conflict || busy !== null || !runtimeMutationAllowed || !agent.runtimeConfiguration}
+            title={dirty ? uiAttribute('请先保存当前运行配置') : undefined}
+            onClick={() => onApplyToOthers(agent)}>
+            <RuntimeApplyIcon/>{dirty ? uiAttribute('保存后应用到其他队员…') : uiAttribute('应用到其他队员…')}
+          </button>}
           <span
             className={`member-editor-save-status ${dirty ? 'is-dirty' : ''}`}
           >
@@ -1594,93 +1627,6 @@ export function RuntimeInstallationsPanel({
   )
 }
 
-// Local to member Runtime saving: one explicit rejection, one awaited catalog
-// refresh, one resubmission. The original command (and expectedVersion) is frozen.
-export async function submitMemberRuntimeConfiguration(
-  command: { adapterKind: AdapterKind },
-  request: import('@contracts').RovaiApi['request'] = desktopThreadClient.request
-): Promise<StoredCommandResult> {
-  const submit = async (): Promise<StoredCommandResult> => {
-    try {
-      return await request<StoredCommandResult>('members.runtime.set', { commandId: newCommandId(), command })
-    } catch (error) {
-      console.warn('[member-runtime] submission outcome unknown', error)
-      throw new MemberRuntimeCommandError('runtime_save_outcome_unknown')
-    }
-  }
-  const result = await submit()
-  if (result.status !== 'rejected' || result.code !== 'runtime_model_catalog_refresh_required') return result
-  try {
-    const catalog = await openRuntimeModelCatalog(command.adapterKind, request, true)
-    if ((catalog.refreshStatus !== 'completed' && catalog.refreshStatus !== 'not_required')
-      || (catalog.cache.status !== 'fresh' && catalog.cache.status !== 'stale')) {
-      throw new MemberRuntimeCommandError('runtime_model_catalog_refresh_required')
-    }
-  } catch {
-    console.warn('[member-runtime] runtime_model_catalog_refresh_required: refresh did not complete')
-    throw new MemberRuntimeCommandError('runtime_model_catalog_refresh_required')
-  }
-  return submit()
-}
-
-class MemberRuntimeCommandError extends Error {
-  constructor(readonly code: string, payload?: StoredCommandResult['payload']) {
-    const option = payload ? stringField(payload, 'option') : null
-    const label = option && ({ reasoning_effort: '推理强度', effort: '推理强度', thinking_level: '思考深度' } as Record<string, string>)[option]
-    super(label && (code === 'runtime_model_option_invalid' || code === 'runtime_model_option_unknown')
-      ? uiAttribute("所选模型不支持当前「{0}」设置，请调整该参数。填写内容已保留。", uiAttribute(label))
-      : commandCodeLabel(code))
-  }
-}
-
-function assertApplied(result: StoredCommandResult): void {
-  if (result.status !== 'rejected') return
-  if (result.code.startsWith('runtime_') || result.code === 'agent_profile.version_conflict' || result.code === 'version_conflict') {
-    console.warn('[member-runtime] command rejected', result.code)
-    throw new MemberRuntimeCommandError(result.code, result.payload)
-  }
-  const detail =
-    stringField(result.payload, 'message') ??
-    stringField(result.payload, 'detail')
-  throw new Error(
-    detail
-      ? `${commandCodeLabel(result.code)}：${detail}`
-      : commandCodeLabel(result.code)
-  )
-}
-
-function commandCodeLabel(code: string): string {
-  return uiAttribute(
-    (
-      {
-        'agent_profile.display_name_conflict': '该名称已被其他队员使用',
-        'agent_profile.version_conflict': '配置已被其他操作更新，请重新载入后确认修改。填写内容已保留。',
-        version_conflict: '配置已被其他操作更新，请重新载入后确认修改。填写内容已保留。',
-        runtime_model_catalog_refresh_required: '暂时无法验证所选模型，本次修改尚未保存，填写内容已保留。',
-        runtime_save_outcome_unknown: '暂时无法确认保存结果，请重新载入后核对配置。填写内容已保留。',
-        runtime_model_requires_verification: '运行环境尚未完成验证，请先检查智能体。填写内容已保留。',
-        runtime_configuration_unavailable: '当前运行环境不可用，请检查智能体。填写内容已保留。',
-        runtime_model_unavailable: '所选模型已不在当前可选列表中，请调整模型选择。填写内容已保留。',
-        runtime_model_options_invalid: '所选模型的参数格式无效，请调整模型参数。填写内容已保留。',
-        runtime_model_option_unknown: '所选模型不支持此参数，请调整模型参数。填写内容已保留。',
-        runtime_model_option_invalid: '所选模型不支持当前参数值，请调整推理强度等模型参数。填写内容已保留。',
-        runtime_permission_adapter_mismatch: '权限配置与运行环境不匹配，请重新选择权限。填写内容已保留。',
-        runtime_permission_schema_mismatch: '运行环境的权限选项已变化，请重新确认权限。填写内容已保留。',
-        runtime_permission_values_invalid: '权限配置格式无效，请重新确认权限。填写内容已保留。',
-        runtime_permission_option_unknown: '运行环境不支持此权限选项，请调整权限。填写内容已保留。',
-        runtime_permission_option_unsupported: '运行环境不支持此权限选项，请调整权限。填写内容已保留。',
-        runtime_permission_option_invalid: '权限选项值无效，请调整权限。填写内容已保留。',
-        runtime_permission_value_invalid: '权限选项值无效，请调整权限。填写内容已保留。',
-        'agent_profile.default_lead_successor_required':
-          '该队员仍是某个会话的默认负责人，请先在对应会话中指定继任者',
-        'adapter_installation.already_exists': '这个智能体已经存在',
-        'adapter_installation.version_conflict':
-          '智能体已被更新，请刷新后重试'
-      } as Record<string, string>
-    )[code] ?? uiAttribute('操作未完成，请稍后重试；详细原因可在诊断中查看。')
-  )
-}
-
 function memberPresenceLabel(presence: AgentProfile['presence']): string {
   return { present:uiAttribute("在队"), away:uiAttribute("暂离"), removed:uiAttribute("已移除") }[presence]
 }
@@ -1712,13 +1658,6 @@ function formatTimestamp(value: string | null | undefined): string {
   return Number.isNaN(date.getTime())
     ? value
     : date.toLocaleString('zh-CN', { hour12: false })
-}
-
-function stringField(
-  value: Record<string, unknown>,
-  key: string
-): string | null {
-  return typeof value[key] === 'string' ? (value[key] as string) : null
 }
 
 function errorMessage(error: unknown): string {

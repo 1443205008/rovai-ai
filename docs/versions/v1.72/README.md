@@ -141,6 +141,14 @@ Claude Code 保留 `--print` 结构化输出，增加 stream-json 输入与 stdi
 当前语义见[统一侧栏](../../ui/components/app-shell-navigation.md)、[Navigation Read v1](../../contracts/navigation-read-v1.md)
 与[侧栏刷新](../../architecture/desktop-navigation-refresh.md)，验收见[实施记录](implementation-plan.md#2026-10-02-sidecar-v3-交互实现)。
 
+## 并行交付：队员运行配置应用
+
+按 User 确认的交互稿，在原队员设置中增加一次性的“应用到其他队员…”：中英文、Desktop 与 Mobile
+复用同一组件和原有单队员命令，逐人检查版本、保留草稿并呈现部分失败与结果未知。源配置和已确认目标版本
+冻结于用户审核的选择，不建立长期同步；不改新手训练、数据库、Host 请求面或模型上下文。
+当前行为见[队员配置 UI 合同](../../ui/components/member-identity.md#应用运行配置到其他队员)，证据见
+[实施记录](implementation-plan.md#2026-10-02-队员运行配置应用)。
+
 ## 跨版本文档影响
 
 | 范围 | 结论 | 证据或理由 |
