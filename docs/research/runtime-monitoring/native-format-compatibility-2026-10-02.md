@@ -18,18 +18,19 @@ last_updated: 2026-10-02
 
 ## 实测字段矩阵
 
-本次五类均有健康原生调用。`verified_available` 在本记录中明确限定为原始来源 → 适配 → Core
-归属 → 数据库 → `monitoring.execution` 读回；同次真实调用的打包 App 显示未逐一验收。
-独立生产 Renderer 回放已通过，不能替代这一缺口。`raw_absent` 只表示本次指明来源未上报，
+本次五类均有健康原生调用。表中“已读回”表示原始来源 → 适配 → Core 归属 → 数据库 →
+`monitoring.execution` 已逐项核对。同次真实调用的打包 App 显示未逐一验收，因此新来源不标为
+完整 `verified_available`。独立生产 Renderer 回放已通过，不能替代这一缺口。
+`raw_absent` 只表示本次指明来源未上报，
 不代表 Runtime 在所有接入方式都没有此字段。
 
 | Runtime / 本机版本 | Provider / 实际模型 | Run 原生用量 | 当前 Session Context | 到达时机与未决项 |
 | --- | --- | --- | --- | --- |
-| OpenCode 1.18.32 | sub2api / gpt-6.1-sol | Input、Output、Read、Write `verified_available` | 最新调用 used `verified_available`；当前有效目录无 window，`raw_absent` | 原生 SQLite 的完成调用；本次 Write 明确为 0，正值仍仅有受控回归；显式有效窗口的既有真实闭环见上一轮 |
-| CodeBuddy 2.133.1 | 已授权 sub2api / gpt-6.1-sol | Input、Output、Read `verified_available`；Write `raw_absent` | 最新调用 used `verified_available`；当前模型未列在原生窗口目录，window `raw_absent` | journal 逐调用；Read 有正值，也有单调用缺失，缺失保持部分观测；窗口匹配实现已测，当前自定义模型没有真实分母 |
-| Kiro CLI 2.21.1 | 原生账号，Provider 未辨明 / auto（实际底层模型未知） | 当前 ACP 没有四项原生用量，`raw_absent`；其他可靠来源 `blocked_unverified` | 原生百分比 `verified_available`；used/window `raw_absent` | `_kiro.dev/metadata`，交付确认前缓冲最新 Gauge；本次 prompt 终态确认后读回。比例不反推 token |
-| TRAE CLI CN 0.120.52 | 原生账号，Provider 未辨明 / GLM-5.3 | 本地来源 Input、Output、Read `verified_available`；Write `raw_absent` | 当前 ACP / session 数值来源未给可靠 Gauge，`raw_absent`；其他来源 `blocked_unverified` | ACP 本身无 Usage；session journal 的完成 assistant 调用补采。不解析 `/context` 的人类可读输出 |
-| Antigravity 1.2.14 | 原生账号，Provider 未辨明 / runtime-default（未返回明确模型） | Output、Read `verified_available`；Input 含缓存总量语义 `blocked_unverified`；Write `raw_absent` | 当前结构化来源无 Gauge，`raw_absent` | `stream-json` 的根 DONE step；终态 Usage 为 Session 累计，不认领为本 Run。只有普通终稿的旧通道不会凭正文估算 |
+| OpenCode 1.18.32 | sub2api / gpt-6.1-sol | Input、Output、Read、Write 已读回 | 最新调用 used 已读回；当前有效目录无 window，`raw_absent` | 原生 SQLite 的完成调用；本次 Write 明确为 0，正值仍仅有受控回归；显式有效窗口的既有真实闭环见上一轮 |
+| CodeBuddy 2.133.1 | 已授权 sub2api / gpt-6.1-sol | Input、Output、Read 已读回；Write `raw_absent` | 最新调用 used 已读回；当前模型未列在原生窗口目录，window `raw_absent` | journal 逐调用；Read 有正值，也有单调用缺失，缺失保持部分观测；窗口匹配实现已测，当前自定义模型没有真实分母 |
+| Kiro CLI 2.21.1 | 原生账号，Provider 未辨明 / auto（实际底层模型未知） | 当前 ACP 没有四项原生用量，`raw_absent`；其他可靠来源 `blocked_unverified` | 原生百分比 已读回；used/window `raw_absent` | `_kiro.dev/metadata`，交付确认前缓冲最新 Gauge；本次 prompt 终态确认后读回。比例不反推 token |
+| TRAE CLI CN 0.120.52 | 原生账号，Provider 未辨明 / GLM-5.3 | 本地来源 Input、Output、Read 已读回；Write `raw_absent` | 当前 ACP / session 数值来源未给可靠 Gauge，`raw_absent`；其他来源 `blocked_unverified` | ACP 本身无 Usage；session journal 的完成 assistant 调用补采。不解析 `/context` 的人类可读输出 |
+| Antigravity 1.2.14 | 原生账号，Provider 未辨明 / runtime-default（未返回明确模型） | Output、Read 已读回；Input 含缓存总量语义 `blocked_unverified`；Write `raw_absent` | 当前结构化来源无 Gauge，`raw_absent` | `stream-json` 的根 DONE step；终态 Usage 为 Session 累计，不认领为本 Run。只有普通终稿的旧通道不会凭正文估算 |
 
 TRAE 原始 journal 与 Antigravity 结构化 step 以前属于 `present_not_mapped`，本次已接入。
 Kiro 原生比例以前被生命周期 metadata 过滤，本次已从该过滤中分离。没有把原始有值但未映射的情况
