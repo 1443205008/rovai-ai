@@ -3,12 +3,12 @@ document_type: architecture
 architecture: runtime-monitoring
 authority: runtime-usage-metering-and-read-boundaries
 status: accepted
-last_updated: 2026-10-01
+last_updated: 2026-10-02
 ---
 
 # Runtime Monitoring 架构
 
-精确字段与方法见 [Runtime Usage Monitoring v4](../contracts/runtime-usage-monitoring-v4.md)；执行台的三种指标另见 [Runtime Execution Metrics v1](../contracts/runtime-execution-metrics-v1.md)。长期最小化、
+精确字段与方法见 [Runtime Usage Monitoring v4](../contracts/runtime-usage-monitoring-v4.md)；执行台的原生用量与上下文另见 [Runtime Execution Metrics v1](../contracts/runtime-execution-metrics-v1.md)。长期最小化、
 稀疏语义、clean break 与 Cost grain 由
 [Evidence 与 Usage 不变量](foundational-invariants.md#evidence-usage)拥有。本架构只说明 Usage Transport、内存归一化、
 Projection/Rollup、Read Side 和 Renderer 如何组合。

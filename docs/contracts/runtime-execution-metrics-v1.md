@@ -67,10 +67,9 @@ OpenCode 1.18.30 的最近已完成根 assistant 调用用于原生占用：inpu
 其 native loader 已合并配置和模型目录，没有 size 时仅保留 used，不在 Core 猜模型窗口。
 
 Copilot CLI 1.0.83 订阅 `clientCapabilities._meta["github.com/copilot"].events` 的
-`assistant.usage` 与 `assistant.reasoning_delta`。`github.com/copilot/sessionEvent` 经当前 Session/prompt
+`assistant.usage`，不再主动订阅思考增量。`github.com/copilot/sessionEvent` 经当前 Session/prompt
 栅栏，排除子 Agent 和 dataOmitted；逐调用 Usage 是 Run 的唯一输入，不再累加其 process/session
-累计终态。只计 reasoning_delta；标准 agent_thought_chunk 混有一次性 intent，不能直接纳入。
-私有事件在 Core 消费后返回，不进入 Evidence、Blob、公共 IPC 或 Renderer。
+累计终态。未经请求仍到达的思考等私有事件继续丢弃，不进入 Evidence、Blob、公共 IPC 或 Renderer。
 
 部分 ACP Runtime 在 prompt 返回时才确认输入交付。纯数值 Session Gauge 提前到达时，
 Core 在现有 Usage buffer 中只保留同一当前 Run 的最新观测，保留原生观测时刻；交付确认后再按

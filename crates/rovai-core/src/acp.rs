@@ -1510,10 +1510,10 @@ impl AcpHost {
         if host.adapter_kind == AdapterKind::CopilotCli
             && crate::monitoring::reported_version_is(host.reported_version.as_deref(), [1, 0, 83])
         {
-            // Native events distinguish streamed reasoning from one-shot intent,
-            // and per-call Usage from ACP's process/session cumulative result.
+            // Subscribe only to per-call Usage, separate from ACP's
+            // process/session cumulative result.
             initialize_params["clientCapabilities"]["_meta"] = json!({
-                "github.com/copilot": {"events": ["assistant.usage", "assistant.reasoning_delta"]}
+                "github.com/copilot": {"events": ["assistant.usage"]}
             });
         }
         let initialized = host.rpc("initialize", initialize_params).await;
@@ -7551,10 +7551,11 @@ mod tests {
             || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 
-    async fn assert_runtime_terminal_capability(
+    async fn assert_runtime_client_capabilities(
         root: &Path,
         frozen: &FrozenAgentRuntimeConfig,
-        expected: bool,
+        expected_terminal: bool,
+        expected_meta: Option<Value>,
     ) {
         let protocol_log = root.join("initialize.json");
         make_executable(
@@ -7593,14 +7594,18 @@ while IFS= read -r ignored; do :; done
             initialize
                 .pointer("/params/clientCapabilities/terminal")
                 .and_then(Value::as_bool),
-            Some(expected)
+            Some(expected_terminal)
         );
-        assert_eq!(host.client_terminal_bridge.is_some(), expected);
+        assert_eq!(host.client_terminal_bridge.is_some(), expected_terminal);
+        assert_eq!(
+            initialize.pointer("/params/clientCapabilities/_meta"),
+            expected_meta.as_ref()
+        );
         host.shutdown().await;
     }
 
     #[tokio::test]
-    async fn runtime_policy_negotiates_client_terminal_only_for_kimi() {
+    async fn runtime_policy_negotiates_only_required_client_capabilities() {
         let kimi_root = std::env::temp_dir().join(format!(
             "rovai-acp-terminal-capability-kimi-{}",
             uuid::Uuid::new_v4()
@@ -7618,11 +7623,39 @@ while IFS= read -r ignored; do :; done
         kimi.reported_version = Some("0.38.0".to_string());
         let trae = frozen_trae_runtime(&trae_root.join("traecli"));
 
-        assert_runtime_terminal_capability(&kimi_root, &kimi, true).await;
-        assert_runtime_terminal_capability(&trae_root, &trae, false).await;
+        assert_runtime_client_capabilities(&kimi_root, &kimi, true, None).await;
+        assert_runtime_client_capabilities(&trae_root, &trae, false, None).await;
 
         std::fs::remove_dir_all(kimi_root).unwrap();
         std::fs::remove_dir_all(trae_root).unwrap();
+
+        let copilot_root = std::env::temp_dir().join(format!(
+            "rovai-acp-capabilities-copilot-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&copilot_root).unwrap();
+        let mut copilot = frozen_trae_runtime(&copilot_root.join("copilot"));
+        copilot.adapter_kind = AdapterKind::CopilotCli;
+        copilot.permissions = AdapterPermissionConfig {
+            adapter_kind: AdapterKind::CopilotCli,
+            schema_version: 1,
+            values: json!({"allow_all": "off"}),
+        };
+        // Assert the initialize frame emitted by the real Host path. The
+        // verified dialect needs native Usage, never a reasoning subscription.
+        for (version, expected_meta) in [
+            (
+                Some("1.0.83"),
+                Some(json!({"github.com/copilot": {"events": ["assistant.usage"]}})),
+            ),
+            (Some("1.0.82"), None),
+            (Some("1.0.84"), None),
+            (None, None),
+        ] {
+            copilot.reported_version = version.map(str::to_string);
+            assert_runtime_client_capabilities(&copilot_root, &copilot, false, expected_meta).await;
+        }
+        std::fs::remove_dir_all(copilot_root).unwrap();
     }
 
     #[tokio::test]
