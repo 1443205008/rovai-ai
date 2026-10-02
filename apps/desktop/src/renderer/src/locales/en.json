@@ -3470,5 +3470,8 @@
   "已应用到 1 位队员。": "Applied to 1 teammate.",
   "已应用到 {0} 位队员。": "Applied to {0} teammates.",
   "已完成 {0} 位队员。": "Completed for {0} teammates.",
-  "权限": "Permissions"
+  "权限": "Permissions",
+  "{0}的模型信息": "Model info for {0}",
+  "关闭模型信息": "Close model info",
+  "模型未记录": "Model not recorded"
 }

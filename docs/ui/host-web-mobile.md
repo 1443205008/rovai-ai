@@ -191,3 +191,9 @@ Server 更新通过统一 Rust Host 的认证接口完成，使用独立 Server 
 独立 Server 用例验证渠道隐藏、真实版本和仅 Server 可见的更新控件；安装重启与真实 Release 验收分别记录。
 截图覆盖 360/390/430px、触摸横屏 844px 与日夜主题；它们是 macOS Chrome 模拟，**不等于实体手机验收**。
 实体 iOS Safari / Android Chrome 的软键盘、图库/相机、后台恢复与移动网络切换，以及第二实体设备联调仍待完成。
+
+### 会话模型信息
+
+消息头、接收者摘要与队员资料沿用桌面的模型／强度展示；队员列表支持直接点摘要展开无底色详情。
+只读信息在手机可用，不开放 Runtime 配置管理。摘要与关闭按钮保留 44px 触摸高度，详情长值换行，
+浮层避让视口边缘；英文使用独立标签列宽，完整身份与历史取值规则见 [Conversation Workspace](components/conversation-workspace.md#camp-队员管理)。

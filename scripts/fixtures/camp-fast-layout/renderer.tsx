@@ -4,6 +4,16 @@ import type { AgentProfile, AgentRunView, ThreadComposerDraftView, ThreadMemberF
 import { AppHeader } from '../../../apps/desktop/src/renderer/src/App'
 import { ThreadWorkspace, type ThreadInspectorTab } from '../../../apps/desktop/src/renderer/src/ThreadWorkspace'
 import '../../../apps/desktop/src/renderer/src/styles.css'
+import '../../../apps/web/src/mobile.css'
+import { MobileLayoutProvider, useMobileViewport } from '../../../apps/desktop/src/renderer/src/MobileLayout'
+import { initializeInterfaceLanguage } from '../../../apps/desktop/src/renderer/src/interface-language'
+
+const query = new URLSearchParams(location.search)
+const modelReview = query.get('review') === 'models'
+if (modelReview) {
+  initializeInterfaceLanguage({ interfaceLanguage: query.get('lang') === 'en' ? 'en' : 'zh-CN' })
+  document.documentElement.dataset.theme = query.get('theme') === 'night' ? 'night' : 'day'
+}
 
 const now = '2026-08-31T00:00:00Z'
 const threadId = 'rvcamp_01m0wzxbb8e1ht984tsbjmysfe'
@@ -16,6 +26,17 @@ const agents: AgentProfile[] = Array.from({ length: 16 }, (_, index) => ({
   runtimeReadiness: { status: 'ready', blockers: [] }, memberOrder: index, version: 1,
   createdAt: now, updatedAt: now, removedAt: null
 }))
+if (modelReview) {
+  agents.splice(4)
+  const names = ['Alice', 'Audrey', 'Kyoko', 'Megumi']
+  agents.forEach((agent, index) => {
+    agent.displayName = names[index]
+    agent.professionalResponsibilities = 'Design and implementation'
+    if (index < 2) agent.runtimeConfiguration!.model = { mode: 'explicit',
+      modelId: index === 0 ? 'claude-sonnet-4-6' : 'a-very-long-model-identifier-for-responsive-layout-checks',
+      options: index === 0 ? { effort: 'max' } : { reasoning_effort: 'high' } }
+  })
+}
 const values = new Map<string, ThreadMemberFastView>(agents.filter((_, index) => index !== 2 && index !== 3).map(agent => [agent.agentId, {
   runtimeBindingRevision: `binding-${agent.agentId}`, fastOverride: null, runtimeDefaultFast: null
 }]))
@@ -37,6 +58,22 @@ const initial: ThreadSnapshot = {
     memberOrder: index, isDefaultLead: index === 0, version: 1, fast: index === 1 || index === 4 ? undefined : values.get(agent.agentId) })),
   membershipReconciliations: [], tasks: [], messages: [], messageDeliveries: [], turns: [], agentRuns: [],
   executionEvidence: [], agentRunFileChanges: [], contextManifests: [], approvals: [], actions: [], timeline: []
+}
+if (modelReview) {
+  initial.messages = [
+    ['agent-0', 'claude-code-cli', 'claude-opus-4-6', 'high', 'The message keeps the model used to write it.'],
+    ['agent-1', 'codex-cli', 'a-very-long-model-identifier-for-responsive-layout-checks', 'xhigh', 'Long model names can be expanded for the full value.'],
+    ['agent-2', 'opencode-cli', null, null, 'This member follows the Agent default.'],
+    ['agent-3', null, null, null, 'Older messages may have no model record.']
+  ].map(([authorId, adapterKind, modelId, reasoningEffort, body], index) => ({
+    id: `model-review-${index}`, sequence: index + 1, timelineGlobalSequence: index + 1,
+    authorType: 'agent', authorId: authorId!, sourceAgentRunId: `old-run-${index}`,
+    runtimeModel: adapterKind ? { adapterKind, modelId, reasoningEffort } : null,
+    body: body!, content: [{ kind: 'text', text: body! }], attachments: [], quotes: [],
+    addressMode: 'default', addressedAgentIds: [], replyToThreadMessageId: null, threadTurnId: null,
+    presentation: null, createdAt: now, withdrawn: false, canWithdraw: false, version: 1
+  }))
+  initial.thread.title = 'Conversation model visibility'
 }
 let draft: ThreadComposerDraftView = { threadId, quotes: [], body: '验收中保留的消息草稿', content: { version: 2, segments: [{ kind: 'text', text: '验收中保留的消息草稿' }] },
   revision: 1, attachments: [], replyIntent: null, continuationIntent: null, updatedAt: now, expiresAt: null }
@@ -104,6 +141,7 @@ Object.assign(window, { rovai: {
 } })
 
 function Fixture(): React.JSX.Element {
+  const mobile = useMobileViewport(modelReview)
   const [snapshot, setSnapshot] = useState(initial)
   const [profiles, setProfiles] = useState(agents)
   const [open, setOpen] = useState(false)
@@ -113,8 +151,8 @@ function Fixture(): React.JSX.Element {
   const [notice, setNotice] = useState('')
   updateSnapshot = setSnapshot
   updateAgents = setProfiles
-  return <div className="app-shell app-shell-camp">
-    <aside style={{ gridRow: '1 / -1', padding: '48px 24px', background: 'var(--rail)' }}>Rovai AI</aside>
+  return <MobileLayoutProvider value={mobile}><div className="app-shell app-shell-camp">
+    {!mobile && <aside style={{ gridRow: '1 / -1', padding: '48px 24px', background: 'var(--rail)' }}>Rovai AI</aside>}
     <AppHeader threadTitle={snapshot.thread.title} contextLabel="隔离验收" thread={snapshot} detailEntryHostRef={setEntryHost} onFocusApprovals={() => {}} />
     <main className="content task-content">
       <ThreadWorkspace snapshot={snapshot} projectName="隔离验收" agents={profiles} busy={false} stopping={false}
@@ -166,7 +204,7 @@ function Fixture(): React.JSX.Element {
         onOpenInspector={next => { setTab(next); setOpen(true) }} onCloseInspector={() => setOpen(false)} onNotify={setNotice} />
       <span className="sr-only" data-fixture-notice>{notice}</span>
     </main>
-  </div>
+  </div></MobileLayoutProvider>
 }
 createRoot(document.getElementById('root')!).render(<Fixture />)
 const element = (selector: string): HTMLElement => document.querySelector(selector)!
