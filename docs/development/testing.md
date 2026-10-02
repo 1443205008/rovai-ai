@@ -98,6 +98,8 @@ Rust owner 分成四个可执行层级；feature gating 只改变日常路由，
 历史归属、计数不依赖可见性、缺失来源、逻辑状态、游标条目消失和无写入。纯函数不能证明 JOIN、聚合或事务读取，
 现有 claim owner 也不拥有该查询；最小命令为 `cargo test -p rovai-core --features extended-tests --lib thread_runs::read_tests::`。
 消息 addressing、实时历史范围、Single Chat、Bootstrap 和 Skill 升级复用现有 owner，不另建等价 fixture。
+历史 collection 结果沿用 `execution_evidence` 的既有持久化 owner，验证 inline/blob 原始字节、digest、receipt
+与当前 CLI 的严格 Schema 分离；不放宽新结果合同。
 
 ## 渠道入站附件
 

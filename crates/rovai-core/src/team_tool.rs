@@ -48,7 +48,7 @@ pub const TEAM_CREATE_TASK_TOOL_NAME: &str = "team.create_task";
 pub const TEAM_GET_TASK_TOOL_NAME: &str = "team.get_task";
 pub const TEAM_UPDATE_TASK_TOOL_NAME: &str = "team.update_task";
 pub const TEAM_LIST_TASKS_TOOL_NAME: &str = "team.list_tasks";
-pub const TEAM_TOOL_NAMES: [&str; 26] = [
+pub const TEAM_TOOL_NAMES: [&str; 27] = [
     "mission.list",
     "mission.get",
     "mission.update",
@@ -70,6 +70,7 @@ pub const TEAM_TOOL_NAMES: [&str; 26] = [
     CAMP_SEARCH_TOOL_NAME,
     HISTORY_SEARCH_TOOL_NAME,
     CAMP_READ_TOOL_NAME,
+    crate::thread_runs::THREAD_RUNS_TOOL_NAME,
     SINGLE_CHAT_HISTORY_TOOL_NAME,
     "memory.view",
     "memory.search",

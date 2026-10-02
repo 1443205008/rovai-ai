@@ -1,14 +1,16 @@
 //! Live, read-only public execution and queue projection. No scheduling happens here.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    camp_history::{public_read_target, visible_message_body},
+    camp_history::{public_read_target, visible_message_bodies},
     camp_id::ThreadId,
     db::Database,
     team_tool::{AuthenticatedTeamToolRun, TeamToolInvocationError},
@@ -240,28 +242,36 @@ fn read_transaction(
     } else {
         None
     };
-    let mut items = Vec::with_capacity(rows.len());
-    for mut row in rows {
+    let run_ids: Vec<_> = rows
+        .iter()
+        .filter_map(|row| row.run_id.as_deref())
+        .collect();
+    let inputs = frozen_inputs(transaction, &run_ids)?;
+    for row in &mut rows {
         if let Some(run_id) = &row.run_id {
-            let count: i64 = transaction.query_row(
-                "SELECT COUNT(*) FROM agent_run_input WHERE agent_run_id = ?1",
-                [run_id],
-                |r| r.get(0),
-            )?;
             if row.batch {
-                ensure!(count > 0, "batch Run is missing frozen inputs");
+                ensure!(
+                    inputs.contains_key(run_id),
+                    "batch Run is missing frozen inputs"
+                );
             }
-            if count > 0 {
-                row.count = Some(count);
-                row.first_message = transaction.query_row("SELECT message_id FROM agent_run_input WHERE agent_run_id = ?1 ORDER BY ordinal LIMIT 1", [run_id], |r| r.get(0)).optional()?;
+            if let Some((count, first)) = inputs.get(run_id) {
+                row.count = Some(*count);
+                row.first_message = Some(first.clone());
             }
         }
-        let preview = if let Some(message_id) = &row.first_message {
-            visible_message_body(transaction, &target, message_id)?
-                .map(|body| message_preview(message_id, &body))
-        } else {
-            None
-        };
+    }
+    let message_ids: Vec<_> = rows
+        .iter()
+        .filter_map(|row| row.first_message.as_deref())
+        .collect();
+    let bodies = visible_message_bodies(transaction, &target, &message_ids)?;
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        let preview = row
+            .first_message
+            .as_ref()
+            .and_then(|id| bodies.get(id).map(|body| message_preview(id, body)));
         items.push(json!({
             "agentRunId": row.run_id, "agentId": row.agent_id, "status": row.status,
             "messageCount": row.count, "messagePreview": preview, "waitReason": null,
@@ -272,6 +282,28 @@ fn read_transaction(
     Ok(
         json!({"threadId": target.camp_id, "observedAt": observed_at, "items": items, "hasMore": has_more, "nextCursor": next_cursor}),
     )
+}
+
+fn frozen_inputs(
+    transaction: &Transaction<'_>,
+    run_ids: &[&str],
+) -> Result<HashMap<String, (i64, String)>> {
+    if run_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut statement = transaction.prepare(
+        "SELECT input.agent_run_id, COUNT(*),
+                (SELECT first.message_id FROM agent_run_input first
+                 WHERE first.agent_run_id = input.agent_run_id ORDER BY first.ordinal LIMIT 1)
+         FROM agent_run_input input
+         WHERE input.agent_run_id IN (SELECT value FROM json_each(?1))
+         GROUP BY input.agent_run_id",
+    )?;
+    Ok(statement
+        .query_map([serde_json::to_string(run_ids)?], |row| {
+            Ok((row.get(0)?, (row.get(1)?, row.get(2)?)))
+        })?
+        .collect::<rusqlite::Result<HashMap<_, _>>>()?)
 }
 
 fn parse_timestamp(value: &str) -> Result<DateTime<Utc>> {

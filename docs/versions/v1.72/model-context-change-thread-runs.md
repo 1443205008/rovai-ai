@@ -528,3 +528,29 @@ r1/r2 方案阶段只改文档，其来源核对和复核记录如下：
 - `DOCS_BASE_REF=f229ce3edf24d4054499babf98b0b3d984e46868 node scripts/check-doc-decisions.mjs --require-base`：通过文档链接、决策治理和历史冻结检查。
 - `pnpm docs:check` 与 `docs:check:ci`：版本阶段因本稿 pending 状态的四项确认字段检查而拒绝；没有伪填确认。组合命令的后续决策检查已按上一条独立执行。
 - 产品测试、真实 Runtime 与真实任务 Gate 本轮未运行；它们是实施后的验收，不能用本轮文档自检代替。
+
+### 实施验收记录
+
+在 `7f6fdafa` 主线基线上实施，复用本工作条目的 worktree。功能、封闭工具合同、CLI 帮助、最小 Charter
+改动与 Skill 文件已落地。正常 collection 按页批量读取 addressing；执行列表分页后批量读取冻结输入计数与
+首条预览源。桌面现有命令名称字典同步新增 operation，仅维持工具名称识别，不新增展示或交互。
+
+本地实际验证：
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo fmt --all --check`、`cargo check --workspace` | 通过 |
+| `pnpm test:rust:pr` | workspace 442 项通过，1 项既有 ignored；包含旧 collection inline/blob 字节、digest、receipt 和受管 Skill 升级回归 |
+| `cargo test -p rovai-core --features slow-tests --lib thread_runs::` | 3 项通过，包括最小 SQL owner |
+| 同 feature 的 `camp_history::`、`builtin_tool_` | 分别 7、32 项通过 |
+| 实时跨 Thread、旧 Bootstrap 补发、新 Binding Bootstrap、Single Chat 封闭策略 | 现有 slow owner 各 1 项通过 |
+| `antigravity_catalog_rename_preserves_binding_but_protocol_changes_do_not`，extended feature | 1 项通过；目录变化保持 Binding 兼容身份 |
+| `pnpm typecheck`、`pnpm test` | 通过；Vitest 2,482 项，Node 回归 328 项，2 项平台限定 skip；文档与 Skill 门禁包含在内 |
+| 实际 CLI 根帮助、read/runs 帮助对照 | 与已确认附录逐字一致 |
+
+采用 `code-review` 的双轴只读审查：Standards 无明确违规；Spec 发现两项批量读取偏差及一项历史结果验证缺口，
+均已修正并复核通过。初轮测试暴露的旧夹具、目录计数和版本断言已同步，未以放宽合同消除失败。
+
+**真实任务 Gate 尚未执行，不能宣称整体门禁通过。** 已检查本地现有 Judge 配置，其策略为
+`catalog_bound_alias`，只能提供诊断；缺少本稿要求的可追溯 `pinned_snapshot` 配置。未将别名摘要伪装成固定
+模型版本，未变更 Case、评分或预算。PR 可供审阅，合并前仍需补齐上述真实任务 Gate，或由用户明确调整本次验收要求。

@@ -5515,7 +5515,7 @@ mod tests {
                     expected_versions: Vec::new(),
                     execution_epoch: None,
                     payload: CancelAgentRunCommand {
-                        camp_id,
+                        camp_id: camp_id.clone(),
                         agent_run_id: run_id.clone(),
                         expected_version: run_version,
                     },
@@ -5783,6 +5783,59 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+
+        // Historical collection results retain their original bytes and receipt. Current
+        // CLI responses still require addressing; reading stored Evidence is a separate path.
+        for (mode, body_size) in [
+            ("timeline", 10),
+            ("reply_chain", INLINE_PAYLOAD_LIMIT_BYTES),
+        ] {
+            let mut result = json!({
+                "threadId": camp_id, "mode": mode, "direction": "before",
+                "items": [{"messageId":"old-message", "sequence":1,
+                    "authorType":"user", "authorId":"local_user", "anchorMessageId":null,
+                    "createdAt":"2026-09-01T00:00:00Z", "body":"旧".repeat(body_size),
+                    "attachmentCount":0}], "hasMore":false, "nextCursor":null
+            });
+            if mode == "reply_chain" {
+                result["anchorMessageId"] = json!("old-message");
+                result["replyChainRootMessageId"] = json!("old-message");
+            }
+            let envelope = BuiltinToolInvocationEnvelope::success(
+                "thread.read",
+                "7b5db24c-4a43-4cab-9217-d982b08f7691",
+                result,
+            )
+            .unwrap();
+            assert!(project_envelope(envelope.clone()).is_err());
+            let historical = serde_json::to_value(envelope).unwrap();
+            let bytes = serde_json::to_vec(&historical).unwrap();
+            let digest = crate::command::canonical_json_digest(&historical).unwrap();
+            let stored =
+                prepare_lifecycle_part(&mut database, &blob_store, &historical, false).unwrap();
+            if let Some(blob_id) = &stored.blob_id {
+                assert_eq!(blob_store.read_bytes(&database, blob_id).unwrap(), bytes);
+            }
+            let loaded = load_lifecycle_part(
+                &database,
+                &blob_store,
+                stored.preview_json,
+                stored.blob_id,
+                stored.byte_count,
+                stored.state,
+            )
+            .unwrap()
+            .value;
+            assert_eq!(serde_json::to_vec(&loaded).unwrap(), bytes);
+            assert_eq!(
+                crate::command::canonical_json_digest(&loaded).unwrap(),
+                digest
+            );
+            serde_json::from_value::<BuiltinToolInvocationEnvelope>(loaded)
+                .unwrap()
+                .validate()
+                .unwrap();
+        }
 
         drop(database);
         std::fs::remove_dir_all(directory).unwrap();
