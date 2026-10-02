@@ -33,7 +33,7 @@ const commands = {
   'kiro-cli': ['kiro-cli', 'ROVAI_KIRO_BIN'],
   'trae-cn-cli': ['trae-cli', 'ROVAI_TRAE_CN_BIN'],
   'zcode-app': null,
-  'antigravity-app': null
+  'antigravity-app': ['agy', 'ROVAI_ANTIGRAVITY_BIN']
 }
 if (!Object.hasOwn(commands, kind)) throw new Error('Select an in-scope Runtime')
 const fixture = await realpath(process.env.ROVAI_METRICS_FIXTURE_ROOT ?? await mkdtemp(join(tmpdir(), `rovai-runtime-metrics-${kind}-`)))
@@ -142,11 +142,13 @@ if (kind === 'kimi-code-cli' && process.env.ROVAI_METRICS_SUB2API === '1') {
   process.env.ROVAI_KIMI_CONFIG = path
 }
 let nativeExecutable = null
+let observerExecutable = null
 if (commands[kind]) {
   const [command, override] = commands[kind]
   nativeExecutable = await realpath(process.env[override]
     ?? execFileSync('/usr/bin/which', [command], { encoding: 'utf8' }).trim())
   const wrapper = join(fixture, 'native-observer')
+  observerExecutable = wrapper
   await writeFile(wrapper, `#!/usr/bin/env python3
 import sys,subprocess,threading,json,time,uuid
 child=subprocess.Popen([${JSON.stringify(nativeExecutable)}]+sys.argv[1:],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -157,10 +159,11 @@ def forward_input():
         child.stdin.close()
     except (BrokenPipeError,ValueError): pass
 threading.Thread(target=forward_input,daemon=True).start()
-def discard_diagnostics():
-    for line in child.stderr: pass
-threading.Thread(target=discard_diagnostics,daemon=True).start()
-numeric_keys={'input_tokens','output_tokens','prompt_tokens','completion_tokens','total_tokens','cached_tokens','cache_read_input_tokens','cache_creation_input_tokens','cache_write_input_tokens','reasoning_tokens','thinking_tokens','used','size','contextWindow','context_window','modelContextWindow','inputTokens','outputTokens','totalTokens','cachedInputTokens','cacheWriteInputTokens','cachedReadTokens','cachedWriteTokens','cacheReadTokens','cacheWriteTokens','thoughtTokens','cacheCreationTokens','reasoningTokens','context_usage_ratio','context_tokens','context_window_size','input','output','cacheRead','cacheWrite','tokens_before','tokens_after','tokens_used','percentage','elapsed_ms'}
+def forward_diagnostics():
+    for line in child.stderr:
+        sys.stderr.buffer.write(line);sys.stderr.buffer.flush()
+threading.Thread(target=forward_diagnostics,daemon=True).start()
+numeric_keys={'input_tokens','output_tokens','prompt_tokens','completion_tokens','total_tokens','cached_tokens','cache_read_tokens','cache_write_tokens','cache_read_input_tokens','cache_creation_input_tokens','cache_write_input_tokens','reasoning_tokens','thinking_tokens','used','size','contextWindow','context_window','modelContextWindow','inputTokens','outputTokens','totalTokens','cachedInputTokens','cacheWriteInputTokens','cachedReadTokens','cachedWriteTokens','cacheReadTokens','cacheWriteTokens','thoughtTokens','cacheCreationTokens','reasoningTokens','context_usage_ratio','context_tokens','context_window_size','input','output','cacheRead','cacheWrite','tokens_before','tokens_after','tokens_used','percentage','contextUsagePercentage','context_window_tokens','maxInputTokens','promptTokenCount','candidatesTokenCount','totalTokenCount','cachedContentTokenCount','elapsed_ms'}
 observer_generation=str(uuid.uuid4())
 def numeric(v,path='',depth=0):
     if depth>6 or not isinstance(v,dict): return {}
@@ -190,8 +193,9 @@ with open(${JSON.stringify(rawPath)},'a',buffering=1) as out:
         try:
             v=json.loads(line); p=v.get('params') or {}; u=p.get('update') or {}; a=v.get('assistantMessageEvent') or {}; e=v.get('event') or {}; d=v.get('delta') or {}
             if not isinstance(p,dict): p={}
+            if not isinstance(e,dict): e={}
             item=p.get('item') or {}
-            out.write(json.dumps({'observerGeneration':observer_generation,'atMs':round(time.monotonic()*1000),'method':v.get('method'),'type':v.get('type') or p.get('type'),'itemType':item.get('type'),'sessionUpdate':u.get('sessionUpdate'),'deltaType':a.get('type') or d.get('type') or (e.get('delta') or {}).get('type'),'keys':sorted(v.keys()),'paramsKeys':sorted(p.keys()),'dataKeys':sorted((p.get('data') or {}).keys()),'nativeModel':(p.get('data') or {}).get('model') if isinstance((p.get('data') or {}).get('model'),str) else None,'nativeTimestamp':p.get('timestamp') if isinstance(p.get('timestamp'),str) and len(p['timestamp'])<=40 else None,'updateKeys':sorted(u.keys()),'contentKeys':sorted((u.get('content') or {}).keys()),'eventKeys':sorted(e.keys()),'itemId':identity(p.get('itemId') or item.get('id') or u.get('messageId') or (e.get('message') or {}).get('id')),'turnId':identity(p.get('turnId')),'summaryIndex':p.get('summaryIndex'),'contentIndex':p.get('contentIndex',a.get('contentIndex')),'textOffset':p.get('textOffset',u.get('textOffset')),'parentPresent':any(u.get(k)!=None for k in ['agentId','sourceAgentId','subagentId','parentAgentId','parentSessionId']) or v.get('parent_tool_use_id')!=None,'usageFields':numeric(v),'managedContext':managed_context(v)})+'\\n')
+            out.write(json.dumps({'observerGeneration':observer_generation,'atMs':round(time.monotonic()*1000),'method':v.get('method'),'type':v.get('type') or p.get('type'),'itemType':item.get('type'),'sessionUpdate':u.get('sessionUpdate'),'deltaType':a.get('type') or d.get('type') or (e.get('delta') or {}).get('type'),'nativeStep':{k:(v.get('step_update') or {}).get(k) for k in ['step_index','state','step_type']},'nativeEvent':v.get('event') if isinstance(v.get('event'),str) else None,'resultKeys':sorted((v.get('result') or {}).keys()) if isinstance(v.get('result'),dict) else [],'modelWindows':[{'modelId':m.get('modelId'),'window':(m.get('_meta') or {}).get('maxInputTokens')} for m in ((v.get('result') or {}).get('models') or {}).get('availableModels',[])] if isinstance(v.get('result'),dict) else [],'keys':sorted(v.keys()),'paramsKeys':sorted(p.keys()),'dataKeys':sorted((p.get('data') or {}).keys()),'nativeModel':(p.get('data') or {}).get('model') if isinstance((p.get('data') or {}).get('model'),str) else None,'nativeTimestamp':p.get('timestamp') if isinstance(p.get('timestamp'),str) and len(p['timestamp'])<=40 else None,'updateKeys':sorted(u.keys()),'contentKeys':sorted((u.get('content') or {}).keys()),'eventKeys':sorted(e.keys()),'itemId':identity(p.get('itemId') or item.get('id') or u.get('messageId') or (e.get('message') or {}).get('id')),'turnId':identity(p.get('turnId')),'summaryIndex':p.get('summaryIndex'),'contentIndex':p.get('contentIndex',a.get('contentIndex')),'textOffset':p.get('textOffset',u.get('textOffset')),'parentPresent':any(u.get(k)!=None for k in ['agentId','sourceAgentId','subagentId','parentAgentId','parentSessionId']) or v.get('parent_tool_use_id')!=None,'usageFields':numeric(v),'managedContext':managed_context(v)})+'\\n')
         except Exception: pass
         sys.stdout.buffer.write(line);sys.stdout.buffer.flush()
 sys.exit(child.wait())
@@ -214,6 +218,11 @@ let run = null, campId = null, installation = null, failure = null
 let failureDetail = null
 try {
   await core.request('health.check')
+  if (observerExecutable) {
+    const startup = await core.request('runtime.startup.get', { runtimeKind: kind })
+    await core.request('runtime.startup.save', { runtimeKind: kind, expectedRevision: startup.revision,
+      configuration: { programPath: observerExecutable, environment: [] } })
+  }
   let configurationDeadline
   try {
     installation = await Promise.race([
@@ -307,13 +316,13 @@ try {
   try { raw = (await readFile(rawPath, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) } catch {}
   const groups = {}
   for (const event of raw) {
-    const key = [event.method, event.type, event.sessionUpdate, event.deltaType].filter(Boolean).join('/')
+    const key = [event.method, event.type, event.sessionUpdate, event.deltaType, event.nativeEvent].filter(Boolean).join('/')
     groups[key] ??= { count: 0, firstAtMs: event.atMs, lastAtMs: event.atMs }
     groups[key].count++
     groups[key].firstAtMs = Math.min(groups[key].firstAtMs, event.atMs)
     groups[key].lastAtMs = Math.max(groups[key].lastAtMs, event.atMs)
   }
-  const report = { kind, fixture, coreDigest, status: run?.status ?? null, failure, version: installation?.snapshot?.reportedVersion ?? null,
+  const report = { kind, fixture, coreDigest, rawObservation: raw.length ? 'captured' : 'not_captured', status: run?.status ?? null, failure, version: installation?.snapshot?.reportedVersion ?? null,
     model: frozen?.runtime_observed_model_id ?? (frozen?.runtime_model_selection_json ? JSON.parse(frozen.runtime_model_selection_json) : null),
     requestedModel: frozen?.runtime_model_selection_json ? JSON.parse(frozen.runtime_model_selection_json) : null,
     observedModel: frozen?.runtime_observed_model_id ?? null,

@@ -19735,15 +19735,23 @@ async fn process_acp_events(
                     continue;
                 }
                 let method = message["method"].as_str().unwrap_or("");
-                let Ok(identity) = canonical_json_digest(&message) else {
-                    continue;
-                };
                 for mut usage in parse_acp_usage_message(adapter_kind, None, method, params) {
                     if usage.scope != "session"
                         || usage.native_session_id.as_deref() != Some(native_session_id.as_str())
                     {
                         continue;
                     }
+                    // Only qualified numeric metadata contributes to identity;
+                    // unrelated private native fields never enter this digest.
+                    let Ok(identity) = canonical_json_digest(&json!({
+                        "sessionId": native_session_id,
+                        "dialect": usage.dialect_id,
+                        "used": usage.fields.context_used_tokens,
+                        "window": usage.fields.context_size_tokens,
+                        "ratio": usage.fields.native_context_ratio,
+                    })) else {
+                        continue;
+                    };
                     usage.occurred_at = Some(chrono::Utc::now().to_rfc3339());
                     let result = {
                         let mut database = core.database.lock().await;
@@ -20388,7 +20396,7 @@ async fn process_agent_run_acp_message(
     if adapter_kind == AdapterKind::GrokBuild {
         let window = runtime.observed_context_window().await;
         for item in &mut usage {
-            if item.dialect_id == "grok-acp-meta-context-1.0.44" {
+            if item.dialect_id == "grok-acp-meta-context-v1" {
                 item.fields.context_size_tokens = window;
             }
         }
@@ -20412,13 +20420,15 @@ async fn process_agent_run_acp_message(
             core,
             agent_run_id,
             execution_epoch,
-            &if usage
-                .iter()
-                .any(|item| item.dialect_id == "grok-acp-meta-context-1.0.44")
-            {
+            &if usage.iter().any(|item| {
+                matches!(
+                    item.dialect_id.as_str(),
+                    "grok-acp-meta-context-v1" | "kiro-acp-context-percentage-v1"
+                )
+            }) {
                 // Metadata rides on text/thought notifications. Its stable
                 // receipt identity must not hash their private content.
-                format!("grok-context:{host_instance_id}:{native_prompt_id}:{sequence}")
+                format!("native-context:{host_instance_id}:{native_prompt_id}:{sequence}")
             } else {
                 acp_usage_source_identity(adapter_kind, &method, &params)
                 .unwrap_or_else(|error| {
@@ -20443,11 +20453,14 @@ async fn process_agent_run_acp_message(
             adapter_kind.as_str()
         );
     }
+    if adapter_kind == AdapterKind::KiroCli && method == "_kiro.dev/metadata" {
+        return;
+    }
     if adapter_kind == AdapterKind::CopilotCli && method == "github.com/copilot/sessionEvent" {
         // Drop private events before Evidence or Renderer IPC.
         if usage
             .iter()
-            .any(|item| item.dialect_id == "copilot-native-call-usage-1.0.83")
+            .any(|item| item.dialect_id == "copilot-native-call-usage-v1")
             && let Some(model) = params.pointer("/data/model").and_then(Value::as_str)
         {
             // ACP's advertised default can differ from the model that actually
@@ -20944,6 +20957,26 @@ async fn process_runtime_event(
     let Some(_runtime_route_permit) = core.planned_shutdown.enter_runtime_route().await else {
         return Ok(());
     };
+    if scope.adapter_kind == AdapterKind::AntigravityApp
+        && event_type == "runtime.antigravity.usage"
+    {
+        let usage: rovai_core::monitoring::ParsedRuntimeUsage =
+            serde_json::from_value(payload.clone())?;
+        let identity = format!(
+            "antigravity:{}:{}",
+            usage.native_session_id.as_deref().unwrap_or(""),
+            usage.identity_suffix
+        );
+        buffer_runtime_usage(
+            core,
+            scope.agent_run_id,
+            scope.execution_epoch,
+            &identity,
+            &[usage],
+        )
+        .await?;
+        return Ok(());
+    }
     if event_type == agent_run_image::IMAGE_EVENT {
         if let Ok(images) = serde_json::from_value::<RuntimeImageObservation>(payload.clone()) {
             persist_runtime_images(
@@ -22284,6 +22317,7 @@ async fn flush_runtime_usage(
         AdapterKind::KimiCodeCli,
         AdapterKind::OpencodeCli,
         AdapterKind::QoderCli,
+        AdapterKind::TraeCnCli,
     ] {
         let Some(adapter) = core.acp_adapter(kind) else {
             continue;

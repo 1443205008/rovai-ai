@@ -565,3 +565,16 @@ Electron 采用独立临时 userData/Skill Library 与显式内存 transport，�
 原生 fixture 字段保持原值；上述证据不代表真实模型执行、实体手机或已打包安装。首轮验收末项暴露 200% 缩放下
 测试驱动的 CSS/DIP 坐标差，按 zoomFactor 修正点击坐标后全量通过，未以改动产品布局绕过该检查。
 最终截图复核修正了短视口继承旧 `.dialog-actions` 背景的问题；新弹窗操作区保持本层背景，位置由固定 footer 管理。
+
+## 2026-10-02 指标原生格式兼容与补采
+
+用户明确要求指标采集不以 CLI 精确版本或指标专用最小版本阻断；Grok 等产品最低准入继续生效。
+实现改为原生格式、根 Session、workspace、模型和字段语义校验。CodeBuddy、Kiro、TRAE、Antigravity
+新增来源，OpenCode 补失败占位记录过滤。两轮同 Session 冷恢复及独立 raw fixture 见
+[原生格式兼容验收](../../research/runtime-monitoring/native-format-compatibility-2026-10-02.md)。
+
+当前合同为 [Runtime Usage Monitoring v5](../../contracts/runtime-usage-monitoring-v5.md) 和
+[Runtime Execution Metrics v2](../../contracts/runtime-execution-metrics-v2.md)；不新增迁移、输出测速、
+模型提示或 Renderer 布局。未验证字段保持未知，CLI 实测版本和版本准入明确分开。
+默认 Rust gate 与生产 Renderer 500 Run 回放通过；真实逐 Runtime 同调用打包 App、正缓存写、
+未提供窗口和其他来源的 Context 仍按验收记录保留边界。

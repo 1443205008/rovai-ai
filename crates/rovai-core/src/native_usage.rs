@@ -7,7 +7,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -28,11 +28,18 @@ enum Dialect {
     CodeBuddy,
     Kimi,
     Qoder,
+    Trae,
 }
 
 pub(crate) struct NativeUsageObservation {
     pub source_identity: String,
     pub usage: ParsedRuntimeUsage,
+}
+
+#[derive(Clone)]
+pub(crate) struct NativeContextModel {
+    pub model_id: String,
+    pub window_tokens: Option<i64>,
 }
 
 pub(crate) enum NativeUsageReader {
@@ -43,17 +50,17 @@ pub(crate) enum NativeUsageReader {
 impl NativeUsageReader {
     pub(crate) fn for_prompt(
         kind: AdapterKind,
-        version: Option<&str>,
         workspace: &Path,
         session_id: &str,
+        context_model: Option<NativeContextModel>,
     ) -> Option<Self> {
-        if kind == AdapterKind::OpencodeCli
-            && crate::monitoring::reported_version_is(version, [1, 18, 30])
-        {
+        if kind == AdapterKind::OpencodeCli {
             OpenCodeUsageReader::for_prompt(workspace, session_id).map(Self::OpenCode)
         } else {
-            NativeJsonlUsageReader::for_prompt(kind, version, workspace, session_id)
-                .map(Self::Jsonl)
+            NativeJsonlUsageReader::for_prompt(kind, workspace, session_id).map(|mut reader| {
+                reader.context_model = context_model;
+                Self::Jsonl(reader)
+            })
         }
     }
     pub(crate) fn poll(&mut self) -> Vec<NativeUsageObservation> {
@@ -85,6 +92,7 @@ pub(crate) struct NativeJsonlUsageReader {
     skip_partial: bool,
     seen: BTreeSet<String>,
     disabled: bool,
+    context_model: Option<NativeContextModel>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -119,25 +127,30 @@ impl FileIdentity {
 impl NativeJsonlUsageReader {
     pub(crate) fn for_prompt(
         kind: AdapterKind,
-        version: Option<&str>,
         workspace: &Path,
         session_id: &str,
     ) -> Option<Self> {
-        // These are installed-version witnesses, not a promise about future
-        // journal formats. Other versions continue using their wire dialect.
-        let (dialect, env_key, default_home) = match (
-            kind,
-            version.and_then(crate::monitoring::parse_reported_version),
-        ) {
-            (AdapterKind::CodebuddyCli, Some([2, 133, 1])) => {
-                (Dialect::CodeBuddy, "CODEBUDDY_CONFIG_DIR", ".codebuddy")
+        // Select a native format by Runtime and validate each record's shape
+        // and ownership. Reported version is evidence, never a reader gate.
+        if kind == AdapterKind::TraeCnCli {
+            if !safe_identity(session_id) {
+                return None;
             }
-            (AdapterKind::KimiCodeCli, Some([2, 1, 1])) => {
-                (Dialect::Kimi, "KIMI_CODE_HOME", ".kimi-code")
-            }
-            (AdapterKind::QoderCli, Some([1, 1, 64])) => {
-                (Dialect::Qoder, "QODER_CONFIG_DIR", ".qoder")
-            }
+            let root = fs::canonicalize(dirs::cache_dir()?.join("trae-cli")).ok()?;
+            let path = root.join("sessions").join(session_id).join("events.jsonl");
+            return Self::baseline(
+                Dialect::Trae,
+                root,
+                path,
+                workspace.to_str()?.to_string(),
+                session_id.to_string(),
+            )
+            .ok();
+        }
+        let (dialect, env_key, default_home) = match kind {
+            AdapterKind::CodebuddyCli => (Dialect::CodeBuddy, "CODEBUDDY_CONFIG_DIR", ".codebuddy"),
+            AdapterKind::KimiCodeCli => (Dialect::Kimi, "KIMI_CODE_HOME", ".kimi-code"),
+            AdapterKind::QoderCli => (Dialect::Qoder, "QODER_CONFIG_DIR", ".qoder"),
             _ => return None,
         };
         if !safe_identity(session_id) || session_id.starts_with("agent-") {
@@ -168,6 +181,7 @@ impl NativeJsonlUsageReader {
                 .join("projects")
                 .join(qoder_workspace_key(&workspace))
                 .join(format!("{session_id}.jsonl")),
+            Dialect::Trae => unreachable!("TRAE uses the platform cache root"),
         };
         Self::baseline(dialect, root, path, workspace, session_id.to_string()).ok()
     }
@@ -190,6 +204,7 @@ impl NativeJsonlUsageReader {
             skip_partial: false,
             seen: BTreeSet::new(),
             disabled: false,
+            context_model: None,
         };
         if let Some(mut file) = reader.open()? {
             let metadata = file.metadata()?;
@@ -210,34 +225,27 @@ impl NativeJsonlUsageReader {
     }
 
     fn open(&self) -> Result<Option<File>> {
-        let relative = self.path.strip_prefix(&self.root)?;
-        let mut path = self.root.clone();
-        for component in relative.components() {
-            if !matches!(component, Component::Normal(_)) {
-                bail!("native Usage path is invalid");
+        if matches!(self.dialect, Dialect::Trae) {
+            let metadata_path = self
+                .path
+                .parent()
+                .context("native Session directory is missing")?
+                .join("session.json");
+            let Some(file) = open_native_file(&self.root, &metadata_path)? else {
+                if self.path.exists() {
+                    bail!("native Session metadata is missing");
+                }
+                return Ok(None);
+            };
+            if file.metadata()?.len() > MAX_LINE_BYTES {
+                bail!("native Session metadata exceeds bound");
             }
-            path.push(component);
-            match fs::symlink_metadata(&path) {
-                Ok(meta) if meta.file_type().is_symlink() => bail!("native Usage path is a link"),
-                Ok(_) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                Err(_) => bail!("native Usage journal is unavailable"),
+            let record: TraeSessionMetadata = serde_json::from_reader(file.take(MAX_LINE_BYTES))?;
+            if record.id != self.session_id || record.metadata.cwd != self.workspace {
+                bail!("native Session identity does not match");
             }
         }
-        let mut options = OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-        }
-        let file = options
-            .open(&self.path)
-            .map_err(|_| anyhow::anyhow!("native Usage journal is unavailable"))?;
-        if !file.metadata()?.is_file() {
-            bail!("native Usage journal is not a regular file");
-        }
-        Ok(Some(file))
+        open_native_file(&self.root, &self.path)
     }
 
     pub(crate) fn poll(&mut self) -> Vec<NativeUsageObservation> {
@@ -315,10 +323,64 @@ impl NativeJsonlUsageReader {
                 continue;
             }
             let incoming = match self.dialect {
-                Dialect::CodeBuddy => parse_codebuddy(&line, &self.session_id, &self.workspace)
-                    .into_iter()
-                    .collect(),
+                Dialect::CodeBuddy => {
+                    let Some(record) = codebuddy_record(&line, &self.session_id, &self.workspace)
+                    else {
+                        continue;
+                    };
+                    let baseline_id = format!(
+                        "codebuddy-baseline:{}:{}",
+                        self.session_id,
+                        record
+                            .provider_data
+                            .as_ref()
+                            .unwrap()
+                            .message_id
+                            .as_deref()
+                            .unwrap()
+                    );
+                    if baseline {
+                        if self.seen.len() >= MAX_IDENTITIES {
+                            self.disabled = true;
+                            break;
+                        }
+                        self.seen.insert(baseline_id);
+                        continue;
+                    }
+                    if self.seen.contains(&baseline_id) {
+                        continue;
+                    }
+                    let mut calls: Vec<_> =
+                        parse_codebuddy(&line, &self.session_id, &self.workspace)
+                            .into_iter()
+                            .collect();
+                    if let Some(call) = calls.first()
+                        && let Some(context) = self.context_model.as_ref()
+                        && let Some(gauge) = codebuddy_context(&line, call, context)
+                    {
+                        calls.push(gauge);
+                    }
+                    calls
+                }
                 Dialect::Kimi => parse_kimi(&line, &self.session_id).into_iter().collect(),
+                Dialect::Trae => {
+                    let Some(record) = trae_record(&line, &self.session_id) else {
+                        continue;
+                    };
+                    let baseline_id = format!("trae-baseline:{}:{}", self.session_id, record.id);
+                    if baseline {
+                        if self.seen.len() >= MAX_IDENTITIES {
+                            self.disabled = true;
+                            break;
+                        }
+                        self.seen.insert(baseline_id);
+                        continue;
+                    }
+                    if self.seen.contains(&baseline_id) {
+                        continue;
+                    }
+                    parse_trae(record, &self.session_id).into_iter().collect()
+                }
                 Dialect::Qoder => {
                     let Some(record) = qoder_record(&line, &self.session_id, &self.workspace)
                     else {
@@ -362,6 +424,37 @@ impl NativeJsonlUsageReader {
         }
         Ok(observations)
     }
+}
+
+fn open_native_file(root: &Path, file_path: &Path) -> Result<Option<File>> {
+    let relative = file_path.strip_prefix(root)?;
+    let mut path = root.to_path_buf();
+    for component in relative.components() {
+        if !matches!(component, Component::Normal(_)) {
+            bail!("native Usage path is invalid");
+        }
+        path.push(component);
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => bail!("native Usage path is a link"),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => bail!("native Usage journal is unavailable"),
+        }
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options
+        .open(file_path)
+        .map_err(|_| anyhow::anyhow!("native Usage journal is unavailable"))?;
+    if !file.metadata()?.is_file() {
+        bail!("native Usage journal is not a regular file");
+    }
+    Ok(Some(file))
 }
 
 pub(crate) struct OpenCodeUsageReader {
@@ -474,12 +567,13 @@ impl OpenCodeUsageReader {
         // are never selected into Core memory or its public Evidence channel.
         let mut query = database.prepare(
             "SELECT id,
-            json_extract(data,'$.tokens.input'), json_extract(data,'$.tokens.output'),
-            json_extract(data,'$.tokens.reasoning'), json_extract(data,'$.tokens.cache.read'),
-            json_extract(data,'$.tokens.cache.write'), json_extract(data,'$.time.completed')
+            CASE WHEN json_type(data,'$.tokens.input')='integer' THEN json_extract(data,'$.tokens.input') END, CASE WHEN json_type(data,'$.tokens.output')='integer' THEN json_extract(data,'$.tokens.output') END,
+            CASE WHEN json_type(data,'$.tokens.reasoning')='integer' THEN json_extract(data,'$.tokens.reasoning') END, CASE WHEN json_type(data,'$.tokens.cache.read')='integer' THEN json_extract(data,'$.tokens.cache.read') END,
+            CASE WHEN json_type(data,'$.tokens.cache.write')='integer' THEN json_extract(data,'$.tokens.cache.write') END, json_extract(data,'$.time.completed')
             FROM message WHERE session_id=?1 AND json_valid(data)
                 AND json_extract(data,'$.role')='assistant'
                 AND json_type(data,'$.time.completed')='integer'
+                AND (json_type(data,'$.error') IS NULL OR json_type(data,'$.error')='null')
             ORDER BY time_created,id LIMIT ?2",
         )?;
         let rows = query.query_map(
@@ -519,7 +613,7 @@ impl OpenCodeUsageReader {
             result.push(observation(
                 &self.session_id,
                 format!("opencode-native:{}:{id}", self.session_id),
-                "opencode-native-message-usage-1.18.30",
+                "opencode-native-message-usage-v1",
                 None,
                 RuntimeInputSemantics::ExclusiveBuckets,
                 fields.clone(),
@@ -539,7 +633,7 @@ impl OpenCodeUsageReader {
                 let mut gauge = observation(
                     &self.session_id,
                     format!("opencode-context:{}:{id}", self.session_id),
-                    "opencode-native-call-context-1.18.30",
+                    "opencode-native-call-context-v1",
                     None,
                     RuntimeInputSemantics::Unknown,
                     RuntimeUsageFields {
@@ -627,6 +721,7 @@ struct CodeBuddyRecord {
 struct CodeBuddyProvider {
     message_id: Option<String>,
     agent: Option<String>,
+    model: Option<String>,
     raw_usage: Option<OpenAiUsage>,
 }
 #[derive(Deserialize)]
@@ -678,11 +773,7 @@ fn observation(
     }
 }
 
-fn parse_codebuddy(
-    line: &[u8],
-    session_id: &str,
-    workspace: &str,
-) -> Option<NativeUsageObservation> {
+fn codebuddy_record(line: &[u8], session_id: &str, workspace: &str) -> Option<CodeBuddyRecord> {
     let record: CodeBuddyRecord = serde_json::from_slice(line).ok()?;
     if record.session_id.as_deref() != Some(session_id)
         || record.cwd.as_deref() != Some(workspace)
@@ -691,6 +782,21 @@ fn parse_codebuddy(
     {
         return None;
     }
+    let provider = record.provider_data.as_ref()?;
+    if provider.agent.as_deref() != Some("cli")
+        || !provider.message_id.as_deref().is_some_and(safe_identity)
+    {
+        return None;
+    }
+    Some(record)
+}
+
+fn parse_codebuddy(
+    line: &[u8],
+    session_id: &str,
+    workspace: &str,
+) -> Option<NativeUsageObservation> {
+    let record = codebuddy_record(line, session_id, workspace)?;
     let provider = record.provider_data?;
     if provider.agent.as_deref() != Some("cli") {
         return None;
@@ -701,7 +807,7 @@ fn parse_codebuddy(
     Some(observation(
         session_id,
         format!("codebuddy-native:{session_id}:{id}"),
-        "codebuddy-native-raw-usage-2.133.1",
+        "codebuddy-native-raw-usage-v1",
         None,
         RuntimeInputSemantics::CacheInclusiveTotal,
         RuntimeUsageFields {
@@ -717,6 +823,121 @@ fn parse_codebuddy(
             ..RuntimeUsageFields::default()
         },
         record.timestamp,
+    ))
+}
+
+fn codebuddy_context(
+    line: &[u8],
+    call: &NativeUsageObservation,
+    model: &NativeContextModel,
+) -> Option<NativeUsageObservation> {
+    // The native status line uses the most recent root call's inputTokens and
+    // the selected model's maxInputTokens. Never use the whole Run's Usage.
+    let record: CodeBuddyRecord = serde_json::from_slice(line).ok()?;
+    if record.provider_data?.model.as_deref() != Some(model.model_id.as_str()) {
+        return None;
+    }
+    let used = call.usage.fields.input_tokens?;
+    let window = model.window_tokens.filter(|n| *n > 0);
+    if window.is_some_and(|n| used > n) {
+        return None;
+    }
+    let mut gauge = observation(
+        call.usage.native_session_id.as_deref()?,
+        format!("{}:context", call.source_identity),
+        "codebuddy-native-call-context-v1",
+        None,
+        RuntimeInputSemantics::Unknown,
+        RuntimeUsageFields {
+            context_used_tokens: Some(used),
+            context_size_tokens: window,
+            ..Default::default()
+        },
+        record.timestamp,
+    );
+    gauge.usage.scope = "session".into();
+    gauge.usage.counter_mode = RuntimeUsageCounterMode::Gauge;
+    gauge.usage.identity_suffix = "native_context".into();
+    Some(gauge)
+}
+
+#[derive(Deserialize)]
+struct TraeSessionMetadata {
+    id: String,
+    metadata: TraeWorkspaceMetadata,
+}
+#[derive(Deserialize)]
+struct TraeWorkspaceMetadata {
+    cwd: String,
+}
+#[derive(Deserialize)]
+struct TraeRecord {
+    id: String,
+    session_id: String,
+    branch: String,
+    agent_name: String,
+    agent_id: String,
+    parent_tool_call_id: String,
+    created_at: String,
+    message: TraeMessageEvent,
+}
+#[derive(Deserialize)]
+struct TraeMessageEvent {
+    message: TraeMessage,
+}
+#[derive(Deserialize)]
+struct TraeMessage {
+    role: String,
+    response_meta: Option<TraeResponseMeta>,
+}
+#[derive(Deserialize)]
+struct TraeResponseMeta {
+    usage: Option<TraeUsage>,
+}
+#[derive(Deserialize)]
+struct TraeUsage {
+    prompt_tokens: Option<i64>,
+    completion_tokens: Option<i64>,
+    prompt_token_details: Option<PromptDetails>,
+}
+fn trae_record(line: &[u8], session_id: &str) -> Option<TraeRecord> {
+    let record: TraeRecord = serde_json::from_slice(line).ok()?;
+    (record.session_id == session_id
+        && record.branch == "Trae CLI"
+        && record.agent_name == "Trae CLI"
+        && safe_identity(&record.agent_id)
+        && record.parent_tool_call_id.is_empty()
+        && safe_identity(&record.id)
+        && record.message.message.role == "assistant")
+        .then_some(record)
+}
+fn parse_trae(record: TraeRecord, session_id: &str) -> Option<NativeUsageObservation> {
+    let time = DateTime::parse_from_rfc3339(&record.created_at)
+        .ok()?
+        .timestamp_millis();
+    let usage = record.message.message.response_meta?.usage?;
+    let fields = RuntimeUsageFields {
+        input_tokens: nonnegative(usage.prompt_tokens),
+        output_tokens: nonnegative(usage.completion_tokens),
+        cache_read_input_tokens: usage
+            .prompt_token_details
+            .and_then(|v| nonnegative(v.cached_tokens)),
+        ..Default::default()
+    };
+    if fields.input_tokens.is_none()
+        && fields.output_tokens.is_none()
+        && fields.cache_read_input_tokens.is_none()
+    {
+        return None;
+    }
+    Some(observation(
+        session_id,
+        format!("trae-native:{session_id}:{}", record.id),
+        "trae-native-model-call-v1",
+        None,
+        RuntimeInputSemantics::CacheInclusiveTotal,
+        fields,
+        Some(time),
     ))
 }
 
@@ -761,7 +982,7 @@ fn parse_kimi(line: &[u8], session_id: &str) -> Option<NativeUsageObservation> {
     Some(observation(
         session_id,
         format!("kimi-native:{session_id}:{id}"),
-        "kimi-native-step-usage-2.1.1",
+        "kimi-native-step-usage-v1",
         event.turn_id,
         RuntimeInputSemantics::ExclusiveBuckets,
         RuntimeUsageFields {
@@ -886,6 +1107,13 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn trae(id: &str) -> serde_json::Value {
+        json!({"id":id,"session_id":"session-1","branch":"Trae CLI","agent_name":"Trae CLI",
+            "agent_id":"root-agent","parent_tool_call_id":"","created_at":"2026-10-02T21:55:27+08:00",
+            "message":{"message":{"role":"assistant","content":"PRIVATE_TRAE_CANARY","response_meta":{
+                "usage":{"prompt_tokens":18015,"completion_tokens":292,"prompt_token_details":{"cached_tokens":17920}}}}}})
+    }
+
     fn codebuddy(id: &str) -> serde_json::Value {
         json!({"type":"message","role":"assistant","sessionId":"session-1","cwd":"/workspace",
             "providerData":{"agent":"cli","messageId":id,"rawUsage":{"prompt_tokens":123,"completion_tokens":9},
@@ -909,6 +1137,39 @@ mod tests {
     // fields. ACP parser fixtures cannot exercise these persisted envelopes.
     #[test]
     fn native_dialects_select_root_calls_preserve_missing_and_ignore_restated_content() {
+        let mut frame = trae("call-1");
+        let read = |v: &serde_json::Value| {
+            trae_record(v.to_string().as_bytes(), "session-1")
+                .and_then(|r| parse_trae(r, "session-1"))
+        };
+        let parsed = read(&frame).unwrap();
+        assert_eq!(parsed.usage.fields.input_tokens, Some(18015));
+        assert_eq!(parsed.usage.fields.output_tokens, Some(292));
+        assert_eq!(parsed.usage.fields.cache_read_input_tokens, Some(17920));
+        assert_eq!(parsed.usage.fields.cache_write_input_tokens, None);
+        assert!(
+            !serde_json::to_string(&parsed.usage)
+                .unwrap()
+                .contains("PRIVATE_TRAE_CANARY")
+        );
+        frame["message"]["message"]["response_meta"]["usage"]["prompt_token_details"] =
+            serde_json::Value::Null;
+        assert_eq!(
+            read(&frame).unwrap().usage.fields.cache_read_input_tokens,
+            None
+        );
+        frame["message"]["message"]["response_meta"]["usage"]["prompt_token_details"] =
+            json!({"cached_tokens":0});
+        assert_eq!(
+            read(&frame).unwrap().usage.fields.cache_read_input_tokens,
+            Some(0)
+        );
+        frame["parent_tool_call_id"] = json!("parent");
+        assert!(read(&frame).is_none());
+        frame["parent_tool_call_id"] = json!("");
+        frame["session_id"] = json!("other-session");
+        assert!(read(&frame).is_none());
+
         let value = codebuddy("call-1");
         let parsed = parse_codebuddy(
             &serde_json::to_vec(&value).unwrap(),
@@ -970,6 +1231,30 @@ mod tests {
         assert_eq!(parsed.usage.fields.cache_read_input_tokens, Some(0));
         assert_eq!(parsed.usage.fields.output_tokens, Some(9));
         assert_eq!(parsed.usage.fields.reasoning_output_tokens, Some(7));
+        value["providerData"]["model"] = json!("native-model");
+        let line = serde_json::to_vec(&value).unwrap();
+        let mut model = NativeContextModel {
+            model_id: "native-model".into(),
+            window_tokens: Some(1000),
+        };
+        let gauge = codebuddy_context(&line, &parsed, &model).unwrap();
+        assert_eq!(gauge.usage.fields.context_used_tokens, Some(123));
+        assert_eq!(gauge.usage.fields.context_size_tokens, Some(1000));
+        assert_eq!(gauge.usage.fields.output_tokens, None);
+        model.window_tokens = None;
+        assert_eq!(
+            codebuddy_context(&line, &parsed, &model)
+                .unwrap()
+                .usage
+                .fields
+                .context_size_tokens,
+            None
+        );
+        model.window_tokens = Some(100);
+        assert!(codebuddy_context(&line, &parsed, &model).is_none());
+        model.window_tokens = Some(1000);
+        model.model_id = "changed-model".into();
+        assert!(codebuddy_context(&line, &parsed, &model).is_none());
         let value = kimi("step-1");
         let parsed = parse_kimi(&serde_json::to_vec(&value).unwrap(), "session-1").unwrap();
         assert_eq!(
@@ -1109,6 +1394,64 @@ mod tests {
                 }
             }
         }
+        let witness: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/research/runtime-monitoring/fixtures/round8-native-format-compatibility.json"
+        )).unwrap();
+        for entry in witness["entries"].as_array().unwrap() {
+            let kind = entry["runtime"].as_str().unwrap();
+            if !matches!(kind, "codebuddy-cli" | "trae-cn-cli") {
+                continue;
+            }
+            for run in entry["runs"].as_array().unwrap() {
+                let mut totals = [0i64; 3];
+                let mut latest_context = None;
+                for raw in run["sourceRecords"].as_array().unwrap() {
+                    let bytes = serde_json::to_vec(raw).unwrap();
+                    let observed = if kind == "codebuddy-cli" {
+                        parse_codebuddy(&bytes, "session-1", "/fixture/workspace").unwrap()
+                    } else {
+                        parse_trae(trae_record(&bytes, "session-1").unwrap(), "session-1").unwrap()
+                    };
+                    assert_eq!(
+                        observed.usage.input_semantics,
+                        RuntimeInputSemantics::CacheInclusiveTotal
+                    );
+                    let fields = &observed.usage.fields;
+                    for (sum, value) in totals.iter_mut().zip([
+                        fields.input_tokens,
+                        fields.output_tokens,
+                        fields.cache_read_input_tokens,
+                    ]) {
+                        *sum += value.unwrap_or(0);
+                    }
+                    assert_eq!(fields.cache_write_input_tokens, None);
+                    if kind == "codebuddy-cli" {
+                        latest_context = codebuddy_context(
+                            &bytes,
+                            &observed,
+                            &NativeContextModel {
+                                model_id: entry["model"].as_str().unwrap().into(),
+                                window_tokens: None,
+                            },
+                        );
+                    }
+                }
+                // Expected sums were read back from the isolated Core database,
+                // independently of these native journal records.
+                assert_eq!(
+                    json!({"promptInputTotalTokens":totals[0],"outputTokens":totals[1],
+                    "cacheReadTokens":totals[2],"cacheWriteTokens":null}),
+                    run["expectedRunProjection"]
+                );
+                if let Some(context) = latest_context {
+                    assert_eq!(
+                        context.usage.fields.context_used_tokens,
+                        run["expectedSessionProjection"][0]["usedTokens"].as_i64()
+                    );
+                    assert_eq!(context.usage.fields.context_size_tokens, None);
+                }
+            }
+        }
         for source in [
             include_str!(
                 "../../../docs/research/runtime-monitoring/fixtures/round6-native-context-ratio.json"
@@ -1157,18 +1500,43 @@ mod tests {
     #[test]
     fn native_cursor_excludes_history_replays_partial_lines_and_file_resets() {
         use std::io::Write;
-        for dialect in [Dialect::CodeBuddy, Dialect::Kimi, Dialect::Qoder] {
+        for dialect in [
+            Dialect::CodeBuddy,
+            Dialect::Kimi,
+            Dialect::Qoder,
+            Dialect::Trae,
+        ] {
             let root =
                 std::env::temp_dir().join(format!("rovai-native-usage-{}", uuid::Uuid::new_v4()));
             fs::create_dir_all(&root).unwrap();
             let path = root.join("wire.jsonl");
+            if matches!(dialect, Dialect::Trae) {
+                fs::write(
+                    root.join("session.json"),
+                    json!({"id":"session-1","metadata":{"cwd":"/workspace"}}).to_string(),
+                )
+                .unwrap();
+            }
             let make = |id| match dialect {
                 Dialect::CodeBuddy => codebuddy(id),
                 Dialect::Kimi => kimi(id),
                 Dialect::Qoder => qoder(id),
+                Dialect::Trae => trae(id),
             };
             let line = |id| format!("{}\n", make(id));
             let mut historical = make("old");
+            if matches!(dialect, Dialect::CodeBuddy) {
+                historical["providerData"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("rawUsage");
+            }
+            if matches!(dialect, Dialect::Trae) {
+                historical["message"]["message"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("response_meta");
+            }
             if matches!(dialect, Dialect::Qoder) {
                 historical["message"]
                     .as_object_mut()
@@ -1266,6 +1634,61 @@ mod tests {
             assert!(terminal.poll().is_empty());
             fs::remove_dir_all(root).unwrap();
         }
+        let root =
+            std::env::temp_dir().join(format!("rovai-trae-identity-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("events.jsonl");
+        let baseline = || {
+            NativeJsonlUsageReader::baseline(
+                Dialect::Trae,
+                root.clone(),
+                path.clone(),
+                "/workspace".into(),
+                "session-1".into(),
+            )
+        };
+        let mut fresh = baseline().unwrap();
+        assert!(
+            fresh.poll().is_empty(),
+            "new sessions may create their journal after dispatch"
+        );
+        fs::write(
+            root.join("session.json"),
+            json!({"id":"session-1","metadata":{"cwd":"/workspace"}}).to_string(),
+        )
+        .unwrap();
+        fs::write(&path, format!("{}\n", trae("new"))).unwrap();
+        assert_eq!(fresh.poll().len(), 1);
+        for metadata in [
+            json!({"id":"other","metadata":{"cwd":"/workspace"}}),
+            json!({"id":"session-1","metadata":{"cwd":"/other"}}),
+        ] {
+            fs::write(root.join("session.json"), metadata.to_string()).unwrap();
+            assert!(
+                baseline().is_err(),
+                "native Session and cwd must both match"
+            );
+        }
+        fs::remove_file(root.join("session.json")).unwrap();
+        assert!(
+            baseline().is_err(),
+            "an existing journal requires matching metadata"
+        );
+        #[cfg(unix)]
+        {
+            fs::write(
+                root.join("redirect.json"),
+                json!({"id":"session-1","metadata":{"cwd":"/workspace"}}).to_string(),
+            )
+            .unwrap();
+            std::os::unix::fs::symlink(root.join("redirect.json"), root.join("session.json"))
+                .unwrap();
+            assert!(
+                baseline().is_err(),
+                "native metadata cannot redirect through a symlink"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     // SQLite metadata has a different continuity boundary from the append-only
@@ -1335,6 +1758,38 @@ mod tests {
         assert!(reader.poll().is_empty());
         database.execute("UPDATE message SET data=json_set(data,'$.time.completed',4) WHERE id='new-pending'", []).unwrap();
         assert_eq!(reader.poll().len(), 2);
+        // Positive cache write and independent reasoning formerly lived in the
+        // ambiguous ACP terminal owner. The native call is now their owner.
+        database
+            .execute(
+                "INSERT INTO message VALUES('positive-cache','session-1',4,?1)",
+                [json!({"role":"assistant","time":{"completed":4},
+                "tokens":{"input":100,"output":40,"reasoning":7,"cache":{"read":11,"write":13}}})
+                .to_string()],
+            )
+            .unwrap();
+        let positive = reader.poll();
+        assert_eq!(positive.len(), 2);
+        assert_eq!(positive[0].usage.fields.input_tokens, Some(100));
+        assert_eq!(positive[0].usage.fields.cache_read_input_tokens, Some(11));
+        assert_eq!(positive[0].usage.fields.cache_write_input_tokens, Some(13));
+        assert_eq!(positive[0].usage.fields.output_tokens, Some(47));
+        assert_eq!(positive[1].usage.fields.context_used_tokens, Some(124));
+        database.execute("INSERT INTO message VALUES('failed-empty','session-1',5,?1)",
+            [json!({"role":"assistant","time":{"completed":5},"error":{"name":"UnknownError"},
+                "tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}).to_string()]).unwrap();
+        assert!(
+            reader.poll().is_empty(),
+            "failed calls' initialized zeros are not Usage or Context"
+        );
+        database.execute("INSERT INTO message VALUES('sparse','session-1',6,?1)",
+            [json!({"role":"assistant","time":{"completed":6},"tokens":{"input":"100","output":9,"reasoning":2,"cache":{"read":0}}}).to_string()]).unwrap();
+        let sparse = reader.poll();
+        assert_eq!(sparse.len(), 1);
+        assert_eq!(sparse[0].usage.fields.input_tokens, None);
+        assert_eq!(sparse[0].usage.fields.output_tokens, Some(11));
+        assert_eq!(sparse[0].usage.fields.cache_write_input_tokens, None);
+        assert!(!reader.disabled);
         let mut next =
             OpenCodeUsageReader::baseline(path.clone(), "/workspace".into(), "session-1".into())
                 .unwrap();
@@ -1394,6 +1849,58 @@ mod tests {
                 assert!(replay.poll().is_empty());
             }
         }
+        }
+        let witness: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/research/runtime-monitoring/fixtures/round8-native-format-compatibility.json"
+        )).unwrap();
+        let entry = witness["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["runtime"] == "opencode-cli")
+            .unwrap();
+        for run in entry["runs"].as_array().unwrap() {
+            let mut replay = OpenCodeUsageReader::baseline(
+                path.clone(),
+                "/workspace".into(),
+                "session-1".into(),
+            )
+            .unwrap();
+            let mut totals = [0i64; 4];
+            let mut latest_context = None;
+            for raw in run["sourceRecords"].as_array().unwrap() {
+                database
+                    .execute(
+                        "INSERT INTO message VALUES(?1,'session-1',1,?2)",
+                        rusqlite::params![raw["id"].as_str().unwrap(), raw.to_string()],
+                    )
+                    .unwrap();
+                let observations = replay.poll();
+                assert_eq!(observations.len(), 2);
+                let fields = &observations[0].usage.fields;
+                let input = fields.input_tokens.unwrap()
+                    + fields.cache_read_input_tokens.unwrap()
+                    + fields.cache_write_input_tokens.unwrap();
+                for (sum, value) in totals.iter_mut().zip([
+                    input,
+                    fields.output_tokens.unwrap(),
+                    fields.cache_read_input_tokens.unwrap(),
+                    fields.cache_write_input_tokens.unwrap(),
+                ]) {
+                    *sum += value;
+                }
+                latest_context = observations[1].usage.fields.context_used_tokens;
+                assert!(replay.poll().is_empty());
+            }
+            assert_eq!(
+                json!({"promptInputTotalTokens":totals[0],"outputTokens":totals[1],
+                "cacheReadTokens":totals[2],"cacheWriteTokens":totals[3]}),
+                run["expectedRunProjection"]
+            );
+            assert_eq!(
+                latest_context,
+                run["expectedSessionProjection"][0]["usedTokens"].as_i64()
+            );
         }
         database
             .execute(

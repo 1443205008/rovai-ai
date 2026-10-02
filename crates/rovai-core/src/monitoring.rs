@@ -1628,9 +1628,7 @@ fn project_codex_run_cost(
     collection_epoch: &str,
     run: &RuntimeUsageRun,
 ) -> Result<()> {
-    if run.runtime_kind != AdapterKind::CodexCli
-        || !codex_cache_write_supported(run.runtime_version.as_deref())
-    {
+    if run.runtime_kind != AdapterKind::CodexCli {
         return Ok(());
     }
     let row = transaction
@@ -2011,7 +2009,6 @@ fn validate_usage(usage: &ParsedRuntimeUsage) -> Result<()> {
 fn eligible_mask_for_run(run: &RuntimeUsageRun, enrolled_at: DateTime<Utc>) -> i64 {
     let mut mask = eligible_mask(run.runtime_kind, run.runtime_version.as_deref());
     if run.runtime_kind == AdapterKind::CodexCli
-        && codex_cache_write_supported(run.runtime_version.as_deref())
         && supports_codex_price_estimate(
             run.model_key.as_deref(),
             run.service_tier.as_deref(),
@@ -2023,129 +2020,45 @@ fn eligible_mask_for_run(run: &RuntimeUsageRun, enrolled_at: DateTime<Utc>) -> i
     mask
 }
 
-fn eligible_mask(runtime: AdapterKind, runtime_version: Option<&str>) -> i64 {
+fn eligible_mask(runtime: AdapterKind, _runtime_version: Option<&str>) -> i64 {
+    // Coverage describes fields the format can carry, not a version allowlist.
+    // Actual observations still validate sparse fields, ownership and semantics.
+    let full_tokens = ELIGIBLE_PROMPT_INPUT_TOTAL
+        | ELIGIBLE_UNCACHED_INPUT
+        | ELIGIBLE_CACHE_READ
+        | ELIGIBLE_CACHE_WRITE
+        | ELIGIBLE_OUTPUT
+        | ELIGIBLE_REASONING_OUTPUT
+        | ELIGIBLE_REQUEST_CACHE_HIT;
     match runtime {
-        AdapterKind::CodexCli => {
-            let mut mask = ELIGIBLE_PROMPT_INPUT_TOTAL
-                | ELIGIBLE_CACHE_READ
-                | ELIGIBLE_OUTPUT
-                | ELIGIBLE_REASONING_OUTPUT
-                | ELIGIBLE_REQUEST_CACHE_HIT;
-            if codex_cache_write_supported(runtime_version) {
-                mask |= ELIGIBLE_CACHE_WRITE | ELIGIBLE_UNCACHED_INPUT;
-            }
-            mask
-        }
-        AdapterKind::ClaudeCodeCli => {
-            ELIGIBLE_PROMPT_INPUT_TOTAL
-                | ELIGIBLE_UNCACHED_INPUT
-                | ELIGIBLE_CACHE_READ
-                | ELIGIBLE_CACHE_WRITE
-                | ELIGIBLE_OUTPUT
-                | ELIGIBLE_REASONING_OUTPUT
-                | ELIGIBLE_REQUEST_CACHE_HIT
-                | ELIGIBLE_COST
-        }
-        AdapterKind::CopilotCli => {
-            ELIGIBLE_PROMPT_INPUT_TOTAL
-                | ELIGIBLE_UNCACHED_INPUT
-                | ELIGIBLE_CACHE_READ
-                | ELIGIBLE_CACHE_WRITE
-                | ELIGIBLE_OUTPUT
-                | ELIGIBLE_REASONING_OUTPUT
-                | ELIGIBLE_REQUEST_CACHE_HIT
-                | ELIGIBLE_COST
-        }
-        AdapterKind::OpencodeCli => {
-            if reported_version_at_least(runtime_version, [1, 18, 15]) {
-                ELIGIBLE_PROMPT_INPUT_TOTAL
-                    | ELIGIBLE_UNCACHED_INPUT
-                    | ELIGIBLE_CACHE_READ
-                    | ELIGIBLE_CACHE_WRITE
-                    | ELIGIBLE_OUTPUT
-                    | ELIGIBLE_REASONING_OUTPUT
-                    | ELIGIBLE_REQUEST_CACHE_HIT
-            } else {
-                0
-            }
-        }
-        AdapterKind::CodebuddyCli => {
-            let mut mask = ELIGIBLE_COST;
-            if reported_version_at_least(runtime_version, [2, 133, 1]) {
-                mask |= ELIGIBLE_PROMPT_INPUT_TOTAL
-                    | ELIGIBLE_UNCACHED_INPUT
-                    | ELIGIBLE_CACHE_READ
-                    | ELIGIBLE_OUTPUT
-                    | ELIGIBLE_REASONING_OUTPUT
-                    | ELIGIBLE_REQUEST_CACHE_HIT;
-            }
-            mask
-        }
+        AdapterKind::CodexCli
+        | AdapterKind::OpencodeCli
+        | AdapterKind::Pi
+        | AdapterKind::GrokBuild => full_tokens,
+        AdapterKind::ClaudeCodeCli | AdapterKind::CopilotCli => full_tokens | ELIGIBLE_COST,
+        AdapterKind::CodebuddyCli => (full_tokens & !ELIGIBLE_CACHE_WRITE) | ELIGIBLE_COST,
         AdapterKind::QwenCode => {
-            let mut mask = ELIGIBLE_COST;
-            if reported_version_at_least(runtime_version, [0, 21, 5]) {
-                mask |= ELIGIBLE_PROMPT_INPUT_TOTAL
-                    | ELIGIBLE_CACHE_READ
-                    | ELIGIBLE_OUTPUT
-                    | ELIGIBLE_REASONING_OUTPUT
-                    | ELIGIBLE_REQUEST_CACHE_HIT;
-            }
-            mask
+            (full_tokens & !(ELIGIBLE_UNCACHED_INPUT | ELIGIBLE_CACHE_WRITE)) | ELIGIBLE_COST
         }
-        AdapterKind::KiroCli | AdapterKind::QoderCli | AdapterKind::TraeCnCli => ELIGIBLE_COST,
-        AdapterKind::Pi => {
-            if reported_version_at_least(runtime_version, [0, 84, 4]) {
-                ELIGIBLE_PROMPT_INPUT_TOTAL
-                    | ELIGIBLE_UNCACHED_INPUT
-                    | ELIGIBLE_CACHE_READ
-                    | ELIGIBLE_CACHE_WRITE
-                    | ELIGIBLE_OUTPUT
-                    | ELIGIBLE_REASONING_OUTPUT
-                    | ELIGIBLE_REQUEST_CACHE_HIT
-            } else {
-                0
-            }
+        AdapterKind::KiroCli | AdapterKind::QoderCli => ELIGIBLE_COST,
+        AdapterKind::TraeCnCli => {
+            ELIGIBLE_COST | ELIGIBLE_PROMPT_INPUT_TOTAL | ELIGIBLE_OUTPUT | ELIGIBLE_CACHE_READ
         }
         AdapterKind::ZcodeApp => {
-            if reported_version_at_least(runtime_version, [0, 16, 5]) {
-                ELIGIBLE_PROMPT_INPUT_TOTAL | ELIGIBLE_CACHE_READ | ELIGIBLE_OUTPUT
-            } else {
-                0
-            }
+            ELIGIBLE_PROMPT_INPUT_TOTAL | ELIGIBLE_CACHE_READ | ELIGIBLE_OUTPUT
         }
         AdapterKind::DeepseekHarness => {
-            if crate::dsh::supported_version(runtime_version) {
-                ELIGIBLE_UNCACHED_INPUT
-                    | ELIGIBLE_CACHE_READ
-                    | ELIGIBLE_CACHE_WRITE
-                    | ELIGIBLE_OUTPUT
-                    | ELIGIBLE_REASONING_OUTPUT
-            } else {
-                0
-            }
-        }
-        AdapterKind::GrokBuild => {
-            if reported_version_at_least(runtime_version, [1, 0, 41]) {
-                ELIGIBLE_PROMPT_INPUT_TOTAL
-                    | ELIGIBLE_UNCACHED_INPUT
-                    | ELIGIBLE_CACHE_READ
-                    | ELIGIBLE_CACHE_WRITE
-                    | ELIGIBLE_OUTPUT
-                    | ELIGIBLE_REASONING_OUTPUT
-                    | ELIGIBLE_REQUEST_CACHE_HIT
-            } else {
-                0
-            }
-        }
-        AdapterKind::KimiCodeCli if runtime_version == Some("2.1.1") => {
-            ELIGIBLE_PROMPT_INPUT_TOTAL
-                | ELIGIBLE_UNCACHED_INPUT
-                | ELIGIBLE_OUTPUT
+            ELIGIBLE_UNCACHED_INPUT
                 | ELIGIBLE_CACHE_READ
                 | ELIGIBLE_CACHE_WRITE
-                | ELIGIBLE_REQUEST_CACHE_HIT
+                | ELIGIBLE_OUTPUT
+                | ELIGIBLE_REASONING_OUTPUT
         }
-        AdapterKind::AntigravityApp | AdapterKind::CursorAgent | AdapterKind::KimiCodeCli => 0,
+        AdapterKind::KimiCodeCli => full_tokens & !ELIGIBLE_REASONING_OUTPUT,
+        AdapterKind::AntigravityApp => {
+            ELIGIBLE_OUTPUT | ELIGIBLE_CACHE_READ | ELIGIBLE_REASONING_OUTPUT
+        }
+        AdapterKind::CursorAgent => 0,
     }
 }
 
@@ -3007,34 +2920,6 @@ fn string_option(value: &Value, keys: &[&str]) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
-fn codex_cache_write_supported(runtime_version: Option<&str>) -> bool {
-    reported_version_at_least(runtime_version, [0, 145, 0])
-}
-
-fn reported_version_at_least(runtime_version: Option<&str>, minimum: [u64; 3]) -> bool {
-    runtime_version
-        .and_then(parse_reported_version)
-        .is_some_and(|version| version >= minimum)
-}
-
-pub(crate) fn reported_version_is(runtime_version: Option<&str>, exact: [u64; 3]) -> bool {
-    runtime_version.and_then(parse_reported_version) == Some(exact)
-}
-
-pub(crate) fn parse_reported_version(value: &str) -> Option<[u64; 3]> {
-    value
-        .split(|character: char| !character.is_ascii_digit() && character != '.')
-        .filter(|part| !part.is_empty())
-        .find_map(|part| {
-            let mut components = part.split('.');
-            Some([
-                components.next()?.parse().ok()?,
-                components.next()?.parse().ok()?,
-                components.next()?.parse().ok()?,
-            ])
-        })
-}
-
 fn safe_integer(value: Option<&Value>) -> Option<i64> {
     value
         .and_then(Value::as_u64)
@@ -3048,18 +2933,6 @@ fn value_at_any<'a>(value: &'a Value, pointers: &[&str]) -> Option<&'a Value> {
 
 fn integer_at_any(value: &Value, pointers: &[&str]) -> Option<i64> {
     safe_integer(value_at_any(value, pointers))
-}
-
-fn integer_at_any_or_omitted_zero(
-    value: &Value,
-    pointer: &str,
-    omitted_is_zero: bool,
-) -> Option<i64> {
-    match value.pointer(pointer) {
-        Some(reported) => safe_integer(Some(reported)),
-        None if omitted_is_zero => Some(0),
-        None => None,
-    }
 }
 
 fn string_at_any(value: &Value, pointers: &[&str]) -> Option<String> {
@@ -3179,13 +3052,85 @@ pub fn codex_context_source_identity(params: &Value) -> Result<String> {
     }))
 }
 
+/// Per-step observations only; Antigravity's result.usage is Session cumulative.
+/// The adapter has already checked the conversation and current input step.
+pub fn parse_antigravity_step_usage(step: &Value) -> Option<ParsedRuntimeUsage> {
+    if step["state"] != "DONE"
+        || !matches!(
+            step["step_type"].as_str(),
+            Some("agent_response" | "checkpoint")
+        )
+        || !crate::runtime::is_root_output(step)
+        || step.get("subagent_info").is_some_and(|v| !v.is_null())
+    {
+        return None;
+    }
+    let session = step["conversation_id"].as_str().filter(|s| !s.is_empty())?;
+    let index = step["step_index"].as_u64()?;
+    let raw = step.get("usage")?;
+    let output = integer_at_any(raw, &["/output_tokens"]);
+    let read = integer_at_any(raw, &["/cache_read_tokens"]);
+    if output.is_none() && read.is_none() {
+        return None;
+    }
+    Some(ParsedRuntimeUsage {
+        identity_suffix: format!("native_step:{index}"),
+        dialect_id: "antigravity-native-step-usage-v1".into(),
+        source: "runtime_event".into(),
+        scope: "model_call".into(),
+        counter_mode: RuntimeUsageCounterMode::Delta,
+        // The wire total excludes cache reads. Do not assume missing cache
+        // classifications are zero or turn that total into inclusive Input.
+        input_semantics: RuntimeInputSemantics::Unknown,
+        native_session_id: Some(session.into()),
+        native_turn_id: None,
+        fields: RuntimeUsageFields {
+            input_tokens: integer_at_any(raw, &["/input_tokens"]),
+            output_tokens: output,
+            reasoning_output_tokens: integer_at_any(raw, &["/thinking_tokens"])
+                .filter(|n| output.is_some_and(|out| *n <= out)),
+            cache_read_input_tokens: read,
+            ..Default::default()
+        },
+        cost: None,
+        occurred_at: None,
+    })
+}
+
 pub fn parse_acp_usage_message(
     adapter_kind: AdapterKind,
-    runtime_version: Option<&str>,
+    _runtime_version: Option<&str>,
     method: &str,
     params: &Value,
 ) -> Vec<ParsedRuntimeUsage> {
-    if adapter_kind == AdapterKind::CopilotCli && reported_version_is(runtime_version, [1, 0, 83]) {
+    if adapter_kind == AdapterKind::KiroCli && method == "_kiro.dev/metadata" {
+        let Some(ratio) = params
+            .get("contextUsagePercentage")
+            .and_then(Value::as_f64)
+            .filter(|n| n.is_finite() && (0.0..=100.0).contains(n))
+            .filter(|_| crate::runtime::is_root_output(params))
+            .map(|n| n / 100.0)
+        else {
+            return Vec::new();
+        };
+        return vec![ParsedRuntimeUsage {
+            identity_suffix: "native_context_ratio".into(),
+            dialect_id: "kiro-acp-context-percentage-v1".into(),
+            source: "runtime_private_extension".into(),
+            scope: "session".into(),
+            counter_mode: RuntimeUsageCounterMode::Gauge,
+            input_semantics: RuntimeInputSemantics::Unknown,
+            native_session_id: string_at_any(params, &["/sessionId"]),
+            native_turn_id: None,
+            fields: RuntimeUsageFields {
+                native_context_ratio: Some(ratio),
+                ..Default::default()
+            },
+            cost: None,
+            occurred_at: None,
+        }];
+    }
+    if adapter_kind == AdapterKind::CopilotCli {
         if method == "rovai/acp_prompt_completed" {
             // Native ACP JTn(session.usage) restates earlier prompts in this
             // process. Subscribed per-call events own this Run's consumption.
@@ -3218,7 +3163,7 @@ pub fn parse_acp_usage_message(
             }
             return vec![ParsedRuntimeUsage {
                 identity_suffix: "native_model_call".into(),
-                dialect_id: "copilot-native-call-usage-1.0.83".into(),
+                dialect_id: "copilot-native-call-usage-v1".into(),
                 source: "runtime_private_extension".into(),
                 scope: "model_call".into(),
                 counter_mode: RuntimeUsageCounterMode::Delta,
@@ -3232,7 +3177,6 @@ pub fn parse_acp_usage_message(
         }
     }
     if adapter_kind == AdapterKind::GrokBuild
-        && reported_version_at_least(runtime_version, [1, 0, 41])
         && method == "_x.ai/session_notification"
         && params.pointer("/update/sessionUpdate") == Some(&json!("turn_completed"))
     {
@@ -3393,7 +3337,6 @@ pub fn parse_acp_usage_message(
         let mut observations = Vec::new();
 
         if adapter_kind == AdapterKind::GrokBuild
-            && reported_version_is(runtime_version, [1, 0, 44])
             && crate::runtime::is_root_output(params)
             && crate::runtime::is_root_output(update)
             && let Some(used) = integer_at_any(params, &["/_meta/totalTokens"])
@@ -3402,7 +3345,7 @@ pub fn parse_acp_usage_message(
             // from result._meta.usage's cumulative consumption.
             observations.push(ParsedRuntimeUsage {
                 identity_suffix: "context_occupancy".into(),
-                dialect_id: "grok-acp-meta-context-1.0.44".into(),
+                dialect_id: "grok-acp-meta-context-v1".into(),
                 source: "runtime_event".into(),
                 scope: "session".into(),
                 counter_mode: RuntimeUsageCounterMode::Gauge,
@@ -3552,8 +3495,8 @@ pub fn parse_acp_usage_message(
     if method != "rovai/acp_prompt_completed" {
         return Vec::new();
     }
-    if adapter_kind == AdapterKind::OpencodeCli && runtime_version == Some("1.18.30") {
-        // Installed 1.18.30 returns only the last assistant's Usage here.
+    if adapter_kind == AdapterKind::OpencodeCli {
+        // This terminal shape can describe only the last assistant call.
         // Per-call native metadata is the Run source; unavailable metadata
         // stays unknown instead of presenting this tail as a complete Run.
         return Vec::new();
@@ -3596,51 +3539,6 @@ pub fn parse_acp_usage_message(
                 native_context_ratio: None,
             },
         ),
-        AdapterKind::OpencodeCli => {
-            let input = integer_at_any(usage, &["/inputTokens"]);
-            let visible_output = integer_at_any(usage, &["/outputTokens"]);
-            let omitted_optional_bucket_is_zero =
-                reported_version_at_least(runtime_version, [1, 18, 15])
-                    && input.is_some()
-                    && visible_output.is_some();
-            let reasoning = integer_at_any_or_omitted_zero(
-                usage,
-                "/thoughtTokens",
-                omitted_optional_bucket_is_zero,
-            );
-            let cache_read = integer_at_any_or_omitted_zero(
-                usage,
-                "/cachedReadTokens",
-                omitted_optional_bucket_is_zero,
-            );
-            let cache_write = integer_at_any_or_omitted_zero(
-                usage,
-                "/cachedWriteTokens",
-                omitted_optional_bucket_is_zero,
-            );
-            let output = match (visible_output, reasoning) {
-                (Some(visible), Some(reasoning)) => visible
-                    .checked_add(reasoning)
-                    .filter(|value| *value as u64 <= JS_MAX_SAFE_INTEGER),
-                (visible, None) => visible,
-                (None, Some(_)) => None,
-            };
-            (
-                "opencode-acp-terminal-usage-v1",
-                RuntimeInputSemantics::ExclusiveBuckets,
-                RuntimeUsageFields {
-                    input_tokens: input,
-                    uncached_input_tokens: None,
-                    output_tokens: output,
-                    reasoning_output_tokens: reasoning,
-                    cache_read_input_tokens: cache_read,
-                    cache_write_input_tokens: cache_write,
-                    context_used_tokens: None,
-                    context_size_tokens: None,
-                    native_context_ratio: None,
-                },
-            )
-        }
         _ => return Vec::new(),
     };
     let cost = if adapter_kind == AdapterKind::OpencodeCli {
@@ -3683,7 +3581,7 @@ pub fn acp_usage_source_identity(
         (AdapterKind::CopilotCli, "github.com/copilot/sessionEvent") => {
             (params["type"] == "assistant.usage").then(|| {
                 json!({
-                    "dialect": "copilot-native-call-usage-1.0.83",
+                    "dialect": "copilot-native-call-usage-v1",
                     "sessionId": params.get("sessionId"), "timestamp": params.get("timestamp"),
                     "input": params.pointer("/data/inputTokens"),
                     "output": params.pointer("/data/outputTokens"),
@@ -4099,7 +3997,10 @@ mod tests {
             eligible_mask(AdapterKind::Pi, Some("0.84.4")) & ELIGIBLE_COST,
             0
         );
-        assert_eq!(eligible_mask(AdapterKind::Pi, Some("0.84.3")), 0);
+        assert_eq!(
+            eligible_mask(AdapterKind::Pi, Some("0.84.3")),
+            eligible_mask(AdapterKind::Pi, None)
+        );
         let gauge = parse_pi_usage_message(
             &json!({"type":"rovai.context_usage","usedTokens":32,"windowTokens":100}),
             "session-pi",
@@ -4754,6 +4655,32 @@ mod tests {
 
     #[test]
     fn runtime_parsers_emit_sparse_usage_without_antigravity_inference() {
+        let mut step = json!({"conversation_id":"native-session","step_index":5,"state":"DONE",
+            "step_type":"agent_response","text_delta":"PRIVATE_AGY_CANARY","usage":{
+                "input_tokens":4211,"output_tokens":133,"thinking_tokens":13,"cache_read_tokens":12206,"total_tokens":4344}});
+        let usage = parse_antigravity_step_usage(&step).unwrap();
+        let normalized = normalize_usage(&usage).unwrap();
+        assert_eq!(normalized.prompt_input_total_tokens, None);
+        assert_eq!(normalized.output_tokens, Some(133));
+        assert_eq!(normalized.reasoning_output_tokens, Some(13));
+        assert_eq!(normalized.cache_read_tokens, Some(12206));
+        assert_eq!(normalized.cache_write_tokens, None);
+        assert!(
+            !serde_json::to_string(&usage)
+                .unwrap()
+                .contains("PRIVATE_AGY_CANARY")
+        );
+        for field in ["output_tokens", "cache_read_tokens"] {
+            let mut missing = step.clone();
+            missing["usage"].as_object_mut().unwrap().remove(field);
+            assert!(parse_antigravity_step_usage(&missing).is_some());
+        }
+        step["state"] = json!("ACTIVE");
+        assert!(parse_antigravity_step_usage(&step).is_none());
+        step["state"] = json!("DONE");
+        step["parentAgentId"] = json!("child");
+        assert!(parse_antigravity_step_usage(&step).is_none());
+
         let mut zcode = json!({
             "sessionId": "native-session",
             "update": {"sessionUpdate":"usage_update", "_meta":{
@@ -4784,7 +4711,10 @@ mod tests {
             eligible_mask(AdapterKind::ZcodeApp, Some("0.16.5")),
             ELIGIBLE_PROMPT_INPUT_TOTAL | ELIGIBLE_CACHE_READ | ELIGIBLE_OUTPUT
         );
-        assert_eq!(eligible_mask(AdapterKind::ZcodeApp, None), 0);
+        assert_eq!(
+            eligible_mask(AdapterKind::ZcodeApp, None),
+            eligible_mask(AdapterKind::ZcodeApp, Some("0.16.5"))
+        );
         zcode["update"]["_meta"]["zcodeUsage"]["source"] = json!("estimated");
         assert!(
             parse_acp_usage_message(
@@ -4808,8 +4738,8 @@ mod tests {
         assert_eq!(parsed[1].fields.context_used_tokens, Some(150));
         assert_eq!(
             eligible_mask(AdapterKind::CodexCli, None) & ELIGIBLE_CACHE_WRITE,
-            0,
-            "unknown Codex versions must not claim Cache Write eligibility"
+            ELIGIBLE_CACHE_WRITE,
+            "reported version cannot block fields present in a recognized shape"
         );
         assert_ne!(
             eligible_mask(AdapterKind::CodexCli, Some("codex-cli 0.145.0")) & ELIGIBLE_CACHE_WRITE,
@@ -4825,7 +4755,7 @@ mod tests {
             copilot["method"].as_str().unwrap(),
             &copilot["params"],
         );
-        assert_eq!(copilot_usage[0].fields.cache_write_input_tokens, Some(10));
+        assert!(copilot_usage.is_empty());
 
         let native = json!({"sessionId":"copilot-session","type":"assistant.usage",
             "timestamp":"2026-10-01T00:00:00Z","data":{"inputTokens":100,"outputTokens":10,
@@ -4846,6 +4776,47 @@ mod tests {
         );
         assert_eq!(normalize_usage(&call[0]).unwrap().output_tokens, Some(10));
         assert_eq!(call[0].fields.cache_write_input_tokens, Some(0));
+        for version in [None, Some("unknown"), Some("0.1.0"), Some("99.0.0")] {
+            let parsed = parse_acp_usage_message(
+                AdapterKind::CopilotCli,
+                version,
+                "github.com/copilot/sessionEvent",
+                &native,
+            );
+            assert_eq!(parsed.len(), 1);
+            assert_eq!(parsed[0].fields.input_tokens, Some(100));
+            let kiro = parse_acp_usage_message(
+                AdapterKind::KiroCli,
+                version,
+                "_kiro.dev/metadata",
+                &json!({"sessionId":"kiro-session","contextUsagePercentage":2.179}),
+            );
+            assert_eq!(kiro.len(), 1);
+            assert!((kiro[0].fields.native_context_ratio.unwrap() - 0.02179).abs() < 1e-12);
+            assert_eq!(kiro[0].fields.context_used_tokens, None);
+            assert_eq!(kiro[0].fields.context_size_tokens, None);
+            assert!(!normalize_usage(&kiro[0]).unwrap().any_observed());
+        }
+        for invalid in [json!(-1), json!(101), json!("2.179"), Value::Null] {
+            assert!(
+                parse_acp_usage_message(
+                    AdapterKind::KiroCli,
+                    None,
+                    "_kiro.dev/metadata",
+                    &json!({"sessionId":"kiro-session","contextUsagePercentage":invalid})
+                )
+                .is_empty()
+            );
+        }
+        assert!(
+            parse_acp_usage_message(
+                AdapterKind::KiroCli,
+                None,
+                "_kiro.dev/metadata",
+                &json!({"sessionId":"kiro-session","agentId":"child","contextUsagePercentage":2})
+            )
+            .is_empty()
+        );
         assert!(
             parse_acp_usage_message(
                 AdapterKind::CopilotCli,
@@ -4943,6 +4914,56 @@ mod tests {
                         Some(run["expectedContext"]["usedTokens"].clone())
                     );
                     assert!(!normalize_usage(&parsed[0]).unwrap().any_observed());
+                }
+            }
+        }
+        let witness: Value = serde_json::from_str(include_str!(
+            "../../../docs/research/runtime-monitoring/fixtures/round8-native-format-compatibility.json"
+        )).unwrap();
+        for entry in witness["entries"].as_array().unwrap() {
+            for run in entry["runs"].as_array().unwrap() {
+                match entry["runtime"].as_str().unwrap() {
+                    "kiro-cli" => {
+                        let mut latest = None;
+                        for raw in run["sourceRecords"].as_array().unwrap() {
+                            let parsed = parse_acp_usage_message(
+                                AdapterKind::KiroCli,
+                                entry["version"].as_str(),
+                                raw["method"].as_str().unwrap(),
+                                &raw["params"],
+                            );
+                            assert_eq!(parsed.len(), 1);
+                            assert!(!normalize_usage(&parsed[0]).unwrap().any_observed());
+                            assert_eq!(parsed[0].fields.context_used_tokens, None);
+                            assert_eq!(parsed[0].fields.context_size_tokens, None);
+                            latest = parsed[0].fields.native_context_ratio;
+                        }
+                        assert_eq!(
+                            latest,
+                            run["expectedSessionProjection"][0]["nativeRatio"].as_f64()
+                        );
+                    }
+                    "antigravity-app" => {
+                        let mut output = 0;
+                        let mut read = 0;
+                        for raw in run["sourceRecords"].as_array().unwrap() {
+                            let Some(parsed) = parse_antigravity_step_usage(&raw["step_update"])
+                            else {
+                                continue;
+                            };
+                            let normalized = normalize_usage(&parsed).unwrap();
+                            assert_eq!(normalized.prompt_input_total_tokens, None);
+                            assert_eq!(normalized.cache_write_tokens, None);
+                            output += normalized.output_tokens.unwrap();
+                            read += normalized.cache_read_tokens.unwrap();
+                        }
+                        assert_eq!(
+                            json!({"promptInputTotalTokens":null,"outputTokens":output,
+                            "cacheReadTokens":read,"cacheWriteTokens":null}),
+                            run["expectedRunProjection"]
+                        );
+                    }
+                    _ => {}
                 }
             }
         }
@@ -5090,80 +5111,36 @@ mod tests {
         assert_eq!(dsh[1].fields.uncached_input_tokens, Some(30));
         assert_eq!(dsh[1].fields.cache_write_input_tokens, Some(50));
 
-        let opencode_cache_write: Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/runtime-usage/opencode-cache-write.json"
-        ))
-        .unwrap();
-        let opencode_usage = parse_acp_usage_message(
-            AdapterKind::OpencodeCli,
-            opencode_cache_write["runtimeVersion"].as_str(),
-            opencode_cache_write["method"].as_str().unwrap(),
-            &opencode_cache_write["params"],
-        );
-        assert_eq!(opencode_usage.len(), 1);
-        assert_eq!(opencode_usage[0].fields.input_tokens, Some(100));
-        assert_eq!(opencode_usage[0].fields.cache_read_input_tokens, Some(11));
-        assert_eq!(opencode_usage[0].fields.cache_write_input_tokens, Some(13));
-        assert_eq!(opencode_usage[0].fields.output_tokens, Some(47));
-        assert_eq!(opencode_usage[0].fields.reasoning_output_tokens, Some(7));
-        let opencode_normalized = normalize_usage(&opencode_usage[0]).unwrap();
-        assert_eq!(opencode_normalized.uncached_input_tokens, Some(100));
-        assert_eq!(opencode_normalized.cache_read_tokens, Some(11));
-        assert_eq!(opencode_normalized.cache_write_tokens, Some(13));
-        assert_eq!(opencode_normalized.prompt_input_total_tokens, Some(124));
-        assert_eq!(opencode_normalized.output_tokens, Some(47));
-        assert_eq!(opencode_normalized.reasoning_output_tokens, Some(7));
-
+        // ACP terminal Usage can be a single final call. It must never become
+        // a complete Run merely because a version differs from the witness.
+        for fixture in [
+            include_str!("../tests/fixtures/runtime-usage/opencode-cache-write.json"),
+            include_str!("../tests/fixtures/runtime-usage/opencode.json"),
+        ] {
+            let fixture: Value = serde_json::from_str(fixture).unwrap();
+            let message = fixture.get("messages").map_or(&fixture, |items| &items[1]);
+            for version in [
+                None,
+                Some("1.18.15"),
+                Some("1.18.30"),
+                Some("1.18.32"),
+                Some("99.0.0"),
+            ] {
+                assert!(
+                    parse_acp_usage_message(
+                        AdapterKind::OpencodeCli,
+                        version,
+                        message["method"].as_str().unwrap(),
+                        &message["params"]
+                    )
+                    .is_empty()
+                );
+            }
+        }
         let opencode: Value = serde_json::from_str(include_str!(
             "../tests/fixtures/runtime-usage/opencode.json"
         ))
         .unwrap();
-        let opencode_terminal = &opencode["messages"][1];
-        assert!(
-            parse_acp_usage_message(
-                AdapterKind::OpencodeCli,
-                Some("1.18.30"),
-                opencode_terminal["method"].as_str().unwrap(),
-                &opencode_terminal["params"]
-            )
-            .is_empty()
-        );
-        let omitted_zero_usage = parse_acp_usage_message(
-            AdapterKind::OpencodeCli,
-            opencode["runtimeVersion"].as_str(),
-            opencode_terminal["method"].as_str().unwrap(),
-            &opencode_terminal["params"],
-        );
-        assert_eq!(
-            omitted_zero_usage[0].fields.cache_write_input_tokens,
-            Some(0),
-            "verified OpenCode versions omit optional zero buckets"
-        );
-        assert_eq!(
-            normalize_usage(&omitted_zero_usage[0])
-                .unwrap()
-                .prompt_input_total_tokens,
-            Some(12817)
-        );
-        let mut malformed_optional_bucket = opencode_terminal.clone();
-        malformed_optional_bucket["params"]["result"]["usage"]["cachedWriteTokens"] =
-            json!("invalid");
-        let malformed_usage = parse_acp_usage_message(
-            AdapterKind::OpencodeCli,
-            opencode["runtimeVersion"].as_str(),
-            malformed_optional_bucket["method"].as_str().unwrap(),
-            &malformed_optional_bucket["params"],
-        );
-        assert_eq!(
-            malformed_usage[0].fields.cache_write_input_tokens, None,
-            "a malformed reported bucket must not be normalized as omitted zero"
-        );
-        assert_eq!(
-            normalize_usage(&malformed_usage[0])
-                .unwrap()
-                .prompt_input_total_tokens,
-            None
-        );
 
         let codebuddy: Value = serde_json::from_str(include_str!(
             "../tests/fixtures/runtime-usage/codebuddy.json"
@@ -5290,7 +5267,7 @@ mod tests {
         assert_eq!(qwen_usage[0].fields.cache_read_input_tokens, Some(0));
         assert_eq!(qwen_usage[0].fields.cache_write_input_tokens, None);
 
-        for (runtime, version, expected, absent, unversioned) in [
+        for (runtime, version, expected, absent, _previous_unversioned) in [
             (
                 AdapterKind::KimiCodeCli,
                 "2.1.1",
@@ -5345,8 +5322,8 @@ mod tests {
             assert_eq!(mask & absent, 0);
             assert_eq!(
                 eligible_mask(runtime, None),
-                unversioned,
-                "unversioned private ACP Usage must not expand eligibility"
+                mask,
+                "coverage cannot depend on a reported version string"
             );
         }
         let acp_cost = json!({
@@ -5606,15 +5583,17 @@ mod tests {
         assert_eq!(normalized.cache_read_tokens, Some(0));
         assert_eq!(normalized.cache_write_tokens, Some(0));
         assert_eq!(normalized.uncached_input_tokens, Some(16799));
-        assert!(
-            parse_acp_usage_message(
-                AdapterKind::GrokBuild,
-                Some("1.0.40"),
-                terminal["method"].as_str().unwrap(),
-                &terminal["params"],
-            )
-            .is_empty()
-        );
+        for reported_version in [Some("1.0.40"), Some("99.0.0"), None] {
+            assert_eq!(
+                parse_acp_usage_message(
+                    AdapterKind::GrokBuild,
+                    reported_version,
+                    terminal["method"].as_str().unwrap(),
+                    &terminal["params"]
+                ),
+                parsed
+            );
+        }
         let identity = acp_usage_source_identity(
             AdapterKind::GrokBuild,
             terminal["method"].as_str().unwrap(),

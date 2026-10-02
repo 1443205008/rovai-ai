@@ -57,7 +57,7 @@ use tokio::{
 use crate::{
     builtin_tool_runtime::BuiltinToolProcessConfig,
     health,
-    native_usage::{NativeUsageObservation, NativeUsageReader},
+    native_usage::{NativeContextModel, NativeUsageObservation, NativeUsageReader},
     runtime_fleet::{
         AgentRuntimeFleetManager, FleetAcquireRequest, FleetReleaseDisposition,
         RuntimeCompatibilityKey, RuntimeProcessHost,
@@ -368,6 +368,9 @@ fn is_known_session_lifecycle_extension(adapter_kind: AdapterKind, message: &Val
     if message.get("id").is_some() {
         return false;
     }
+    if adapter_kind == AdapterKind::KiroCli && is_kiro_context_gauge(message) {
+        return false;
+    }
     let method = message.get("method").and_then(Value::as_str);
     (adapter_kind == AdapterKind::GrokBuild
         && method.is_some_and(|method| method.starts_with("_x.ai/"))
@@ -555,6 +558,7 @@ fn is_idle_session_metadata(adapter_kind: AdapterKind, message: &Value) -> bool 
     is_session_catalog_update(message)
         || is_known_session_lifecycle_extension(adapter_kind, message)
         || (adapter_kind == AdapterKind::GrokBuild && is_grok_turn_usage_frame(message))
+        || (adapter_kind == AdapterKind::KiroCli && is_kiro_context_gauge(message))
         || (adapter_kind == AdapterKind::KimiCodeCli && is_kimi_compaction_completed_frame(message))
         || (message.get("id").is_none()
             && message.get("method").and_then(Value::as_str) == Some("session/update")
@@ -565,15 +569,26 @@ fn is_idle_session_metadata(adapter_kind: AdapterKind, message: &Value) -> bool 
 }
 
 fn is_late_session_context_gauge(message: &Value) -> bool {
+    is_kiro_context_gauge(message)
+        || (message.get("id").is_none()
+            && message.get("method").and_then(Value::as_str) == Some("session/update")
+            && message
+                .pointer("/params/update/sessionUpdate")
+                .and_then(Value::as_str)
+                == Some("usage_update")
+            && ["/params/update/used", "/params/update/size"]
+                .iter()
+                .any(|path| message.pointer(path).and_then(Value::as_u64).is_some()))
+}
+
+fn is_kiro_context_gauge(message: &Value) -> bool {
     message.get("id").is_none()
-        && message.get("method").and_then(Value::as_str) == Some("session/update")
+        && message["method"] == "_kiro.dev/metadata"
+        && crate::runtime::is_root_output(&message["params"])
         && message
-            .pointer("/params/update/sessionUpdate")
-            .and_then(Value::as_str)
-            == Some("usage_update")
-        && ["/params/update/used", "/params/update/size"]
-            .iter()
-            .any(|path| message.pointer(path).and_then(Value::as_u64).is_some())
+            .pointer("/params/contextUsagePercentage")
+            .and_then(Value::as_f64)
+            .is_some_and(|n| n.is_finite() && (0.0..=100.0).contains(&n))
 }
 
 const ACP_HISTORY_RESTORE_MAX_EVENTS: u64 = 4_096;
@@ -1507,9 +1522,7 @@ impl AcpHost {
                 "version": env!("CARGO_PKG_VERSION")
             }
         });
-        if host.adapter_kind == AdapterKind::CopilotCli
-            && crate::monitoring::reported_version_is(host.reported_version.as_deref(), [1, 0, 83])
-        {
+        if host.adapter_kind == AdapterKind::CopilotCli {
             // Subscribe only to per-call Usage, separate from ACP's
             // process/session cumulative result.
             initialize_params["clientCapabilities"]["_meta"] = json!({
@@ -3804,6 +3817,20 @@ impl AcpRuntime {
             } else {
                 self.set_config_option(&session_id, "model", model).await?;
             }
+            if self.host.adapter_kind == AdapterKind::CodebuddyCli {
+                // Freeze the acknowledged selection, not session/new's old
+                // default. The catalog window is matched by this exact ID.
+                if let Some(session) = self.session_result.write().await.as_mut() {
+                    session["models"]["currentModelId"] = json!(model);
+                    if let Some(options) = session["configOptions"].as_array_mut() {
+                        for option in options {
+                            if option["id"] == "model" {
+                                option["currentValue"] = json!(model);
+                            }
+                        }
+                    }
+                }
+            }
         } else if model_source != "runtime_default" {
             bail!("ACP model source is invalid");
         }
@@ -3868,10 +3895,8 @@ impl AcpRuntime {
     }
 
     pub async fn observed_model_id(&self) -> Option<String> {
-        if self.adapter_kind() == AdapterKind::CopilotCli
-            && crate::monitoring::reported_version_is(self.reported_version(), [1, 0, 83])
-        {
-            // This installed version advertises a Session default that may not
+        if self.adapter_kind() == AdapterKind::CopilotCli {
+            // The advertised Session default may not
             // be the root call's model. Its validated assistant.usage owns the
             // first actual model observation in Core.
             return None;
@@ -3933,11 +3958,19 @@ impl AcpRuntime {
             .prepare_prompt(&session_id, &self.owner, delivery_id)
             .await?;
         let kind = self.adapter_kind();
-        let version = self.reported_version().map(str::to_string);
         let workspace = self.execution_root.clone();
         let native_session = session_id.clone();
+        let context_model = if kind == AdapterKind::CodebuddyCli {
+            self.session_result
+                .read()
+                .await
+                .as_ref()
+                .and_then(codebuddy_context_model)
+        } else {
+            None
+        };
         *self.native_usage.lock().await = tokio::task::spawn_blocking(move || {
-            NativeUsageReader::for_prompt(kind, version.as_deref(), &workspace, &native_session)
+            NativeUsageReader::for_prompt(kind, &workspace, &native_session, context_model)
                 .map(|reader| Arc::new(std::sync::Mutex::new(reader)))
         })
         .await
@@ -4304,9 +4337,7 @@ impl AcpRuntime {
     }
 
     pub(crate) async fn observed_context_window(&self) -> Option<i64> {
-        if self.adapter_kind() != AdapterKind::GrokBuild
-            || !crate::monitoring::reported_version_is(self.reported_version(), [1, 0, 44])
-        {
+        if self.adapter_kind() != AdapterKind::GrokBuild {
             return None;
         }
         self.observed_model_id()
@@ -4377,6 +4408,21 @@ impl AcpRuntime {
             .unbind_session_and_flush_ingress(session_id.as_deref(), &self.owner)
             .await
     }
+}
+
+fn codebuddy_context_model(session: &Value) -> Option<NativeContextModel> {
+    let model_id = acp_runtime_model_id_from_session(session)?;
+    let window_tokens = session
+        .pointer("/models/availableModels")
+        .and_then(Value::as_array)
+        .and_then(|models| models.iter().find(|model| model["modelId"] == model_id))
+        .and_then(|model| model.pointer("/_meta/maxInputTokens"))
+        .and_then(Value::as_i64)
+        .filter(|n| *n > 0 && *n <= 9_007_199_254_740_991);
+    Some(NativeContextModel {
+        model_id,
+        window_tokens,
+    })
 }
 
 pub struct AcpCliRuntimeAdapter {
@@ -4592,6 +4638,7 @@ impl AcpCliRuntimeAdapter {
                 | AdapterKind::KimiCodeCli
                 | AdapterKind::OpencodeCli
                 | AdapterKind::QoderCli
+                | AdapterKind::TraeCnCli
         ) {
             return Vec::new();
         }
@@ -7238,6 +7285,22 @@ mod route_policy_tests {
         let mut request = gauge;
         request["id"] = json!(1);
         assert!(!is_late_session_context_gauge(&request));
+        let mut kiro = json!({"method":"_kiro.dev/metadata",
+            "params":{"sessionId":"session-kiro","contextUsagePercentage":2.179}});
+        assert!(is_late_session_context_gauge(&kiro));
+        assert!(!is_known_session_lifecycle_extension(
+            AdapterKind::KiroCli,
+            &kiro
+        ));
+        assert!(is_idle_session_metadata(AdapterKind::KiroCli, &kiro));
+        for invalid in [json!(-1), json!(101), json!("2.179"), Value::Null] {
+            kiro["params"]["contextUsagePercentage"] = invalid;
+            assert!(!is_late_session_context_gauge(&kiro));
+        }
+        kiro["params"]["contextUsagePercentage"] = json!(0);
+        assert!(is_late_session_context_gauge(&kiro));
+        kiro["params"]["agentId"] = json!("child");
+        assert!(!is_late_session_context_gauge(&kiro));
     }
 
     #[test]
@@ -7643,17 +7706,21 @@ while IFS= read -r ignored; do :; done
         };
         // Assert the initialize frame emitted by the real Host path. The
         // verified dialect needs native Usage, never a reasoning subscription.
-        for (version, expected_meta) in [
-            (
-                Some("1.0.83"),
-                Some(json!({"github.com/copilot": {"events": ["assistant.usage"]}})),
-            ),
-            (Some("1.0.82"), None),
-            (Some("1.0.84"), None),
-            (None, None),
+        for version in [
+            Some("1.0.83"),
+            Some("1.0.82"),
+            Some("1.0.84"),
+            Some("99.0.0"),
+            None,
         ] {
             copilot.reported_version = version.map(str::to_string);
-            assert_runtime_client_capabilities(&copilot_root, &copilot, false, expected_meta).await;
+            assert_runtime_client_capabilities(
+                &copilot_root,
+                &copilot,
+                false,
+                Some(json!({"github.com/copilot": {"events": ["assistant.usage"]}})),
+            )
+            .await;
         }
         std::fs::remove_dir_all(copilot_root).unwrap();
     }
@@ -8782,6 +8849,33 @@ done
 
     #[test]
     fn codebuddy_launch_preserves_native_default_and_explicit_model_selection() {
+        let mut session = json!({"models":{"currentModelId":"selected", "availableModels":[
+            {"modelId":"other","_meta":{"maxInputTokens":999}},
+            {"modelId":"selected","_meta":{"maxInputTokens":1000}}
+        ]}});
+        let context = codebuddy_context_model(&session).unwrap();
+        assert_eq!(context.model_id, "selected");
+        assert_eq!(context.window_tokens, Some(1000));
+        for invalid in [
+            Value::Null,
+            json!(0),
+            json!(-1),
+            json!("1000"),
+            json!(9_007_199_254_740_992_i64),
+        ] {
+            session["models"]["availableModels"][1]["_meta"]["maxInputTokens"] = invalid;
+            assert_eq!(
+                codebuddy_context_model(&session).unwrap().window_tokens,
+                None
+            );
+        }
+        session["models"]["currentModelId"] = json!("unlisted");
+        assert_eq!(
+            codebuddy_context_model(&session).unwrap().window_tokens,
+            None
+        );
+        session["models"]["currentModelId"] = Value::Null;
+        assert!(codebuddy_context_model(&session).is_none());
         let root = std::env::temp_dir();
         let workspace = AgentRunWorkspace::runtime_managed_path(root.to_string_lossy().to_string());
         for (source, model_id, expected) in [
