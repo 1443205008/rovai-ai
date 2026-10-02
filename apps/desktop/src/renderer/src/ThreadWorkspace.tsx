@@ -146,7 +146,7 @@ import { runtimeReadinessLabel } from './runtime-status'
 import { runtimeEditorInstallation } from './MemberRuntimeParameters'
 import { SafeMarkdown } from './SafeMarkdown'
 import { FilePreviewPane } from './FilePreviewPane'
-import { FilePreviewResizeHandle, FilePreviewWorkspace, useOptionalFilePreviewLayout } from './FilePreviewLayout'
+import { FilePreviewResizeHandle, FilePreviewWorkspace, useInitializeFilePreviewMinimumWidth, useOptionalFilePreviewLayout } from './FilePreviewLayout'
 import { useExecutionPreviewHost, useOptionalFilePreview } from './FilePreviewContext'
 import {
   agentRunFileChangeHasReviewableDiff,
@@ -623,6 +623,8 @@ type ExecutionDrawerFocusRequest = {
   sequence: number
   moveDomFocus: boolean
 }
+
+type SubmittedExecutionRequest = ThreadMessageSendReceipt & { firstThreadSubmission: boolean }
 
 export function preferredAgentProcessRun(runs: AgentRunView[]): AgentRunView | null {
   const newestFirst = runs.slice().sort((left, right) =>
@@ -1736,6 +1738,7 @@ export function ThreadWorkspace({
   const { profile: currentUserProfile } = useCurrentUserProfile()
   const currentUserName = currentUserDisplayName(currentUserProfile)
   const filePreview = useOptionalFilePreview()
+  const initializePreviewMinimumWidth = useInitializeFilePreviewMinimumWidth()
   useEffect(() => {
     filePreview?.syncFileChanges(snapshot.thread.id, snapshot.agentRunFileChanges)
   }, [filePreview?.syncFileChanges, snapshot.agentRunFileChanges, snapshot.thread.id])
@@ -2002,7 +2005,7 @@ export function ThreadWorkspace({
     sequence: workspaceEntryRunningRun ? 1 : 0,
     moveDomFocus: false
   })
-  const [submittedExecutionRequests, setSubmittedExecutionRequests] = useState<ThreadMessageSendReceipt[]>([])
+  const [submittedExecutionRequests, setSubmittedExecutionRequests] = useState<SubmittedExecutionRequest[]>([])
   const publishedMessageSequence = snapshot.messages.reduce((latest, message) => Math.max(latest, message.sequence), 0)
   const executionDrawerTriggerRef = useRef<HTMLButtonElement | null>(null)
   const executionDrawerReturnAgentIdRef = useRef<string | null>(null)
@@ -4008,7 +4011,11 @@ export function ThreadWorkspace({
       sendAccepted = true
       if (mountedThreadId.current === threadId
         && (sendReceipt.deliveryIds.length || sendReceipt.agentRunIds.length)) {
-        setSubmittedExecutionRequests((current) => [...current, sendReceipt])
+        setSubmittedExecutionRequests((current) => [...current, {
+          ...sendReceipt,
+          firstThreadSubmission: currentSnapshot.thread.activationState === 'pending'
+            && !currentSnapshot.thread.missionId
+        }])
       }
       try {
         const discardAttachments = client.composerAttachments.discard?.(
@@ -4583,6 +4590,10 @@ export function ThreadWorkspace({
       executionDrawerFocusedRunId,
       snapshot.agentRuns
     )) return
+    if (submittedExecutionRequest.firstThreadSubmission && !mobile && executionPlacement === 'right'
+      && filePreview && !filePreview.paneVisible && filePreview.tabs.length === 0) {
+      initializePreviewMinimumWidth?.()
+    }
     openExecutionProcess(targetRun.agentId, null, {
       runId: targetRun.id,
       moveDomFocus: false,
@@ -4598,6 +4609,7 @@ export function ThreadWorkspace({
     filePreview,
     snapshot.agentRuns,
     submittedExecutionRequests,
+    initializePreviewMinimumWidth,
     mobile,
     taskCreationActive,
     suppressExecutionAutoOpen

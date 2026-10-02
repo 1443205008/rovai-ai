@@ -185,3 +185,11 @@ Run 产物作者头。入队卡与文件卡共用桌面/窄列宽度、缩进和
 当前合同为 [Run Process Detail Surface v43](../../contracts/run-process-detail-surface-v43.md)，理由见
 [V1.72-D10](decisions.md#v1-72-d10)，实现与验证见[实施记录](implementation-plan.md#2026-10-02-run-内容块与-command-组分页)。
 跨版本影响：Contract、读取架构、UI 和当前导航已同步；版本指针、Runtime 兼容、原始 Evidence、结果预算与根 README 无需变化。
+
+## 并行交付：Windows 关闭选择与托盘
+
+Windows 主窗口默认关闭时询问，可选择最小化到系统托盘或正常退出，并记住选择。通用设置可切换三种行为；
+macOS/Web 不增加入口。托盘及第二次启动恢复原窗口，明确退出和更新重启继续现有受控退出。
+[Windows Window Close v1](../../contracts/windows-window-close-v1.md)拥有字段与状态规则；
+[实施验收](implementation-plan.md#2026-10-02-windows-关闭选择与托盘)记录自动化和真实 Windows 的证据边界。
+

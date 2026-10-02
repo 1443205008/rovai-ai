@@ -570,3 +570,22 @@ Electron 采用独立临时 userData/Skill Library 与显式内存 transport，�
 按候选惰性取证。共享载体与可见性 fixture 覆盖两端规则；扩展既有正文 owner，验证 1,000 个 delta 不写 SQLite
 但窗口正文继续增长。组自动续接保留跟随，新 wheel/key 即使不发生 scroll 也重新检查边界。
 新增样本：10,000 带 canonical 的载体／Core 行（相同 digest，保留歧义）读取约 458 ms；此数字同样是本机单次观测。
+
+## 2026-10-02 Windows 关闭选择与托盘
+
+由 Windows Main 持有关闭偏好、当前弹窗与单一 Tray；以现有 GeneralSettings/AppDialog 展示三态选项和“记住我的选择”。
+本机 `window-close.json` 独立于 Core/Host，macOS 和 Web 不获得 capability。Main 验证主窗口主 frame 和当前 promptId，
+保存失败保留原设置，托盘失败保持窗口可见，显式退出使待完成隐藏失效并等待偏好写入后复用原退出路径。
+
+这是可逆的本机窗口交互扩展，无新增 Version Decision 准入事项；不改变 Core schema、Runtime 生命周期、模型上下文或版本指针。
+当前规范已同步 Windows Platform、Windows Interaction Delta、Settings surface brief 与 Windows Window Close v1。
+
+本地验证：`pnpm typecheck`、`pnpm test`、`pnpm build:desktop` 通过；Rust 默认 workspace 回归 440 项通过、
+1 项既有人工 smoke 忽略，无 Rust 测试改动。`pnpm test:windows-close` 的隔离 Electron 验收覆盖两种主题、
+1040/1440 视口、英文 200% 缩放、真实 preload 请求、原 DOM/草稿/滚动保留、取消/记忆/三态切换、
+失败恢复、普通最小化和更新退出；既有 `test:window-close` 与 `test:desktop-bridge` 通过。
+
+`pnpm test:windows-close` 在非 Windows 上只验证控制流和真实 Electron 界面，
+在 Windows runner 上额外创建原生托盘。固定 Server CI 不能代替 Windows 10/11 的任务栏、Explorer 重启、多屏 DPI、
+NVDA、High Contrast 或安装升级的真人验收，未取得这些证据前不宣称这些项目完成。
+
