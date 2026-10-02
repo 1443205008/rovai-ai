@@ -31,6 +31,8 @@ use crate::{
 
 mod navigation;
 use navigation::*;
+mod message_model;
+pub use message_model::ThreadMessageRuntimeModelView;
 
 pub const READ_MODEL_SCHEMA_VERSION: i64 = 35;
 pub const EVENT_BATCH_SCHEMA_VERSION: i64 = 9;
@@ -293,6 +295,7 @@ pub struct ThreadMessageView {
     pub author_id: String,
     pub author_display_name: Option<String>,
     pub source_agent_run_id: Option<String>,
+    pub runtime_model: Option<ThreadMessageRuntimeModelView>,
     pub body: String,
     pub content: StructuredThreadMessageContent,
     pub attachments: Vec<ThreadMessageAttachmentView>,
@@ -2391,6 +2394,8 @@ fn hydrate_message_views(
 ) -> Result<Vec<ThreadMessageView>> {
     let requested_message_ids = rows.iter().map(|row| &row.id).collect::<Vec<_>>();
     let requested_message_ids_json = serde_json::to_string(&requested_message_ids)?;
+    let mut models_by_message_id =
+        message_model::load_message_models(transaction, &requested_message_ids_json)?;
     let mut attachments_by_message_id = BTreeMap::<String, Vec<ThreadMessageAttachmentView>>::new();
     for row in &rows {
         let source_attachments = parse_source_attachments(&row.source_attachments_json)?;
@@ -2517,6 +2522,7 @@ fn hydrate_message_views(
             let mission_start=transaction.query_row("SELECT s.mission_id,m.title,m.description FROM mission_start s JOIN mission m ON m.id=s.mission_id WHERE s.message_id=?1",[&row.id],|r|Ok(serde_json::json!({"missionId":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"description":r.get::<_,String>(2)?}))).optional()?;
             Ok(ThreadMessageView {
                 mission_start,
+                runtime_model: models_by_message_id.remove(&row.id),
                 quotes: load_quotes(transaction, QuoteStorage::CampMessage, &row.id)?,
                 id: row.id,
                 sequence: row.sequence,

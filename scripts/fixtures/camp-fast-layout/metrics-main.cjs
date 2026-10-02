@@ -9,7 +9,9 @@ app.setPath('userData', userData)
 app.setPath('sessionData', join(userData, 'session'))
 
 app.whenReady().then(async () => {
-  const window = new BrowserWindow({ show: true, width: 1280, height: 720, useContentSize: true,
+  // Keep panel visibility independent of unrelated desktop windows. Explicit
+  // window.hide()/show() below still exercises the real page visibility gate.
+  const window = new BrowserWindow({ show: true, alwaysOnTop: true, width: 1280, height: 720, useContentSize: true,
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false } })
   window.webContents.on('console-message', event => console.error(event.message))
   const run = code => window.webContents.executeJavaScript(code, true)

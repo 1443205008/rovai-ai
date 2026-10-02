@@ -1,3 +1,6 @@
+import { ConfiguredModelSummary, MessageModelSummary, ModelSummaryText, ProfileModelFields } from './ThreadModelInformation'
+import { memberRuntimeConfigurationPresentation, modelSummary, runtimeAdapterLabel } from './runtime-model-presentation'
+export { memberRuntimeConfigurationPresentation, type MemberRuntimeConfigurationPresentation } from './runtime-model-presentation'
 import { memberCreationStarters } from './member-creation-flow'
 import { MemberJoinedCard } from './MemberJoinedCard'
 import type { MemberCreationView } from '@contracts'
@@ -5176,8 +5179,9 @@ export function ThreadWorkspace({
                                       </MessageAuthorProfileTrigger>
                                     )
                                   : <strong>{author}</strong>}
-                                {campMessage.authorType === 'agent' && authorProfile?.runtimeConfiguration && (
-                                  <span>{runtimeAdapterLabel(authorProfile.runtimeConfiguration.adapterKind)}</span>
+                                {campMessage.authorType === 'agent' && (
+                                  <MessageModelSummary message={campMessage} installations={installations}
+                                    displayName={author} avatarRef={authorProfile?.avatarRef ?? null} />
                                 )}
                                 <time title={`#${campMessage.sequence}`}>{messageClockTime(campMessage.createdAt)}</time>
                               </div>
@@ -5679,6 +5683,10 @@ export function ThreadWorkspace({
                           : recipientSummary}</span>
                       </span>
                     )}
+                <ConfiguredModelSummary installations={installations}
+                  profile={profileById.get(continuationVisible && continuationIntent
+                    ? continuationIntent.recipient.agentId
+                    : defaultLead && campMemberIsLeadEligible(defaultLead) ? defaultLead.agentId : '') ?? null} />
               </div>
             )
           : null}
@@ -6016,6 +6024,7 @@ export function ThreadWorkspace({
           request={mentionPopover}
           members={snapshot.members}
           profiles={agents}
+          installations={installations}
           onClose={closeMentionPopover}
         />
       )}
@@ -7806,11 +7815,13 @@ function MentionProfilePopover({
   request,
   members,
   profiles,
+  installations,
   onClose
 }: {
   request: MentionPopoverRequest
   members: ThreadSnapshot['members']
   profiles: AgentProfile[]
+  installations: AdapterInstallation[]
   onClose(returnFocus: boolean): void
 }): JSX.Element {
   const { profile: currentUserProfile } = useCurrentUserProfile()
@@ -7985,6 +7996,7 @@ function MentionProfilePopover({
                       {mentionRuntimeLabel(profile)}
                     </span>
                   </div>
+                  <ProfileModelFields profile={profile} installations={installations} />
                   <div className="mention-profile-fields">
                     <dl>
                       <div>
@@ -8431,6 +8443,14 @@ function ThreadMembersPanel({
                   {member.isDefaultLead && <small><UiText zh={"队长"} /></small>}
                 </span>
                 <small title={member.teamRole || undefined}>{runtimeLabel}</small>
+                {runtimeConfiguration && <button type="button" className="camp-member-model-summary"
+                  aria-label={uiAttribute('{0}的模型信息', member.displayName)}
+                  aria-expanded={runtimeDetailsOpen} aria-controls={runtimeDetailsId}
+                  title={modelSummary(runtimeConfiguration)}
+                  onClick={() => toggleRuntimeDetails(member.agentId)}>
+                  <ModelSummaryText presentation={runtimeConfiguration} />
+                  <svg aria-hidden="true" viewBox="0 0 16 16"><path d="m6 4 4 4-4 4" /></svg>
+                </button>}
               </span>
               {!mobile && fast && <ThreadMemberFastToggle value={fast} displayName={member.displayName} pending={fastControl!.pending}
                 onToggle={next => { void memberFast.save(member.agentId, next) }} />}
@@ -8490,11 +8510,11 @@ function ThreadMembersPanel({
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>}
-              {!mobile && runtimeConfiguration && runtimeDetailsOpen && (
+              {runtimeConfiguration && runtimeDetailsOpen && (
                 <dl
                   className="camp-inspector-runtime-detail"
                   id={runtimeDetailsId}
-                  aria-label={uiAttribute("{0}的当前模型配置", String(member.displayName))}
+                  aria-label={uiAttribute('{0}的模型信息', member.displayName)}
                 >
                   <div><dt><UiText zh={"模型"} /></dt><dd>{runtimeConfiguration.model}</dd></div>
                   {runtimeConfiguration.effort && (
@@ -8503,7 +8523,6 @@ function ThreadMembersPanel({
                       <dd>{runtimeConfiguration.effort.value}</dd>
                     </div>
                   )}
-                  <div><dt><UiText zh={"模型策略"} /></dt><dd>{runtimeConfiguration.strategy}</dd></div>
                 </dl>
               )}
             </article>
@@ -10659,83 +10678,6 @@ export function RunExecutionDisclosure({
 
 function comparableMessageText(value: string): string {
   return value.replace(/[\s*_`#>-]+/g, '').toLocaleLowerCase()
-}
-
-function runtimeAdapterLabel(kind: string): string {
-  return ({
-    'codex-cli': 'Codex CLI',
-    pi: 'Pi Coding Agent',
-    'opencode-cli': 'OpenCode',
-    'copilot-cli': 'GitHub Copilot',
-    'claude-code-cli': 'Claude Code',
-    'kiro-cli': 'Kiro',
-    'qoder-cli': 'Qoder',
-    'codebuddy-cli': 'CodeBuddy',
-    'qwen-code': 'Qwen Code',
-    'trae-cn-cli': 'TRAE CLI',
-    'cursor-agent': 'Cursor Agent',
-    'kimi-code-cli': 'Kimi Code',
-    'grok-build': 'Grok Build',
-    'deepseek-harness': 'DeepSeek Harness',
-    'zcode-app': 'ZCode',
-    'antigravity-app': 'Antigravity'
-  } as Record<string, string>)[kind] ?? kind
-}
-
-export type MemberRuntimeConfigurationPresentation = {
-  model: string
-  effort: { label: string; value: string } | null
-  strategy: string
-  summary: string
-}
-
-export function memberRuntimeConfigurationPresentation(
-  configuration: NonNullable<AgentProfile['runtimeConfiguration']>,
-  installation: AdapterInstallation | null
-): MemberRuntimeConfigurationPresentation {
-  const modelSelection = configuration.model
-  if (modelSelection.mode === 'runtime_default') {
-    return {
-      model: uiAttribute('智能体默认'),
-      effort: null,
-      strategy: uiAttribute('跟随智能体默认'),
-      summary:uiAttribute("智能体默认")
-    }
-  }
-
-  const modelDescriptor = installation?.snapshot?.models.find(
-    (model) => model.id === modelSelection.modelId
-  ) ?? null
-  const model = modelDescriptor?.displayName.trim() || modelSelection.modelId
-  const effortKey = configuration.adapterKind === 'claude-code-cli'
-    ? 'effort'
-    : 'reasoning_effort'
-  const effortDescriptor = modelDescriptor?.options.find((option) => option.key === effortKey) ?? null
-  const rawEffort = modelSelection.options[effortKey]
-  const effort = effortDescriptor || typeof rawEffort === 'string'
-    ? {
-        label: configuration.adapterKind === 'claude-code-cli'
-          ? uiAttribute('思考强度')
-          : uiAttribute('推理强度'),
-        value: typeof rawEffort === 'string' && rawEffort
-          ? runtimeEffortValueLabel(rawEffort, effortDescriptor?.values ?? [])
-          :uiAttribute("跟随模型默认值")
-      }
-    : null
-
-  return {
-    model,
-    effort,
-    strategy: uiAttribute('固定模型'),
-    summary: effort ? `${model} · ${effort.label} ${effort.value}` : model
-  }
-}
-
-function runtimeEffortValueLabel(
-  value: string,
-  choices: Array<{ value: string; label: string }>
-): string {
-  return choices.find((choice) => choice.value === value)?.label ?? value
 }
 
 export function executionDrawerTitle(

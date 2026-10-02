@@ -55,7 +55,10 @@ fn business_fixture() -> (OwnedTestDatabase, String, String, String) {
     let connection = database.connection();
     let now = "2026-08-31T00:00:00Z";
     connection.execute(
-        "UPDATE agent_run SET execution_epoch = 1, status = 'succeeded', ended_at = ?2 WHERE id = ?1",
+        "UPDATE agent_run SET execution_epoch = 1, status = 'succeeded', ended_at = ?2,
+         runtime_adapter_kind = 'codex-cli',
+         runtime_model_selection_json = '{\"source\":\"explicit\",\"modelId\":\"frozen-model\",\"options\":{\"reasoning_effort\":\"high\"}}'
+         WHERE id = ?1",
         params![completed_run, now],
     ).unwrap();
     connection.execute(
@@ -370,6 +373,39 @@ fn camp_open_preserves_business_state_without_reading_event_history() {
     let snapshot_json = serde_json::to_value(&snapshot).unwrap();
     assert_eq!(open.schema_version, CAMP_OPEN_SCHEMA_VERSION);
     assert_eq!(open_json["thread"], snapshot_json["thread"]);
+    let frozen_model =
+        json!({"adapterKind":"codex-cli", "modelId":"frozen-model", "reasoningEffort":"high"});
+    assert_eq!(
+        open_json["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["id"] == "open-agent-message")
+            .unwrap()["runtimeModel"],
+        frozen_model
+    );
+    assert!(
+        open.messages
+            .iter()
+            .filter(|message| message.author_type != "agent")
+            .all(|message| message.runtime_model.is_none())
+    );
+    // Paging and reveal hydrate the source Run directly, without requiring it
+    // in the independently bounded CampOpen Run window or reading event_log.
+    let page = ReadModelService
+        .camp_messages_page(&mut database, &camp_id, 3, open.through_global_sequence, 20)
+        .unwrap();
+    let around = ReadModelService
+        .camp_messages_around(&mut database, &camp_id, "open-agent-message")
+        .unwrap();
+    for messages in [&page.messages, &around.messages] {
+        let model = &messages
+            .iter()
+            .find(|message| message.id == "open-agent-message")
+            .unwrap()
+            .runtime_model;
+        assert_eq!(serde_json::to_value(model).unwrap(), frozen_model);
+    }
     let delivery = open
         .message_deliveries
         .iter()
@@ -473,6 +509,24 @@ fn camp_open_preserves_business_state_without_reading_event_history() {
     assert_eq!(
         serde_json::to_value(refreshed.messages).unwrap(),
         open_json["messages"]
+    );
+    database.connection().execute(
+        "UPDATE camp_message SET author_id = (
+            SELECT conversation.agent_id FROM agent_run JOIN conversation ON conversation.id = agent_run.conversation_id
+            WHERE agent_run.id = ?1) WHERE id = 'open-agent-message'", [&active_run],
+    ).unwrap();
+    let mismatched = ReadModelService
+        .camp_messages_around(&mut database, &camp_id, "open-agent-message")
+        .unwrap();
+    assert!(
+        mismatched
+            .messages
+            .iter()
+            .find(|message| message.id == "open-agent-message")
+            .unwrap()
+            .runtime_model
+            .is_none(),
+        "a source Run belonging to another author cannot supply model metadata"
     );
 }
 

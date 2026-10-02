@@ -31,4 +31,14 @@ describe('adjacent public message identity', () => {
     const unknown = { ...legacy, sourceAgentRunId: null }
     expect(samePublicMessageSegment(unknown, unknown)).toBe(false)
   })
+
+  it('retains a header when the model record changes within the same turn', () => {
+    const message = { ...first, runtimeModel: { adapterKind: 'codex-cli', modelId: 'frozen', reasoningEffort: 'high' } }
+    expect(samePublicMessageSegment(message, { ...message, sourceAgentRunId: 'run-2' })).toBe(true)
+    for (const runtimeModel of [undefined, null,
+      { ...message.runtimeModel, adapterKind: 'claude-code-cli' },
+      { ...message.runtimeModel, modelId: 'other' },
+      { ...message.runtimeModel, reasoningEffort: 'low' }
+    ]) expect(samePublicMessageSegment(message, { ...message, runtimeModel })).toBe(false)
+  })
 })
