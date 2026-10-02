@@ -4,7 +4,7 @@ import { BusinessApp } from '../../../apps/desktop/src/renderer/src/BusinessApp'
 import { ThreadClientProvider } from '../../../apps/desktop/src/renderer/src/camp-client'
 import { CurrentUserProfileContext } from '../../../apps/desktop/src/renderer/src/CurrentUserProfile'
 import { createReviewModel } from '../host-web-parity/model'
-import { initial, agents, installations, message, navigation, now, availability } from '../host-web-parity/data'
+import { initial, agents, installations, message, navigation, now, availability, run as fixtureRun } from '../host-web-parity/data'
 import { DEFAULT_GENERAL_PREFERENCES } from '../../../apps/desktop/src/shared/general-preferences-model'
 import { DEFAULT_APPEARANCE } from '../../../apps/desktop/src/shared/appearance'
 import { applyAppearanceSnapshot } from '../../../apps/desktop/src/renderer/src/theme'
@@ -36,7 +36,7 @@ const projection = (thread: any) => {
   return { ...structuredClone(thread), schemaVersion: 8, throughGlobalSequence: sequence,
     coverage: { tasks: coverage(0), messages: { ...coverage(thread.messages.length), hasEarlier: false,
       oldestLoadedSequence: thread.messages[0]?.sequence ?? null, newestLoadedSequence: thread.messages.at(-1)?.sequence ?? null },
-    messageDeliveries: coverage(0), turns: coverage(0), agentRuns: coverage(0), approvals: coverage(0) } }
+    messageDeliveries: coverage(0), turns: coverage(0), agentRuns: coverage(thread.agentRuns.length), approvals: coverage(0) } }
 }
 const client = { ...model.client, onInvalidated: undefined,
   onEvent: (fn: any) => { events.add(fn); return () => events.delete(fn) },
@@ -102,9 +102,25 @@ const environment: any = { client, files: { ...model.fileApi, bindThread: async 
     const thread = threads.get(threadId), helper = profiles.find((member) => member.agentId === thread.thread.defaultLeadAgentId)!
     const member = { ...structuredClone(profiles[0]), agentId: 'new-teammate', displayName: 'Nova', teamRole: 'Research partner', avatarRef: null,
       professionalResponsibilities: 'Compare evidence and explain uncertainty.', personalityTraits: ['Curious', 'Precise'], runtimeConfiguration: null }
-    profiles.push(member)
-    thread.memberCreations = [{ ...member, creationId: 'fixture-creation', creatorAgentId: helper.agentId, creatorDisplayName: helper.displayName, createdAt: new Date().toISOString() }]
+    if (!profiles.some((profile) => profile.agentId === member.agentId)) profiles.push(member)
+    const createdAt = new Date().toISOString(), runId = `creator-${threadId}`
+    thread.agentRuns = [{ ...fixtureRun, id: runId, agentId: helper.agentId, threadTurnId: `turn-${threadId}`,
+      executionEvidenceCount: 0, createdAt, startedAt: createdAt, updatedAt: createdAt }]
+    thread.memberCreations = [{ ...member, creationId: 'fixture-creation', sourceAgentRunId: runId,
+      creatorAgentId: helper.agentId, creatorDisplayName: helper.displayName, createdAt }]
+    thread.messages.push({ ...message(thread.messages.length + 1, 'Nova 已创建，正在整理本次结果。', 'agent'),
+      authorId: helper.agentId, sourceAgentRunId: runId, createdAt })
     events.forEach((fn) => fn({ method: 'members.invalidated', params: {} })); invalidate(threadId)
+  },
+  finish: (threadId: string) => {
+    const thread = threads.get(threadId), run = thread.agentRuns[0], completedAt = new Date().toISOString()
+    Object.assign(run, { status: 'succeeded', endedAt: completedAt, updatedAt: completedAt, version: 2 })
+    thread.messages.push({ ...message(thread.messages.length + 1, 'Nova 已加入队伍，可以前往队员页配置智能体。', 'agent'),
+      authorId: run.agentId, sourceAgentRunId: run.id, createdAt: completedAt })
+    thread.agentRunFileChanges = [{ schemaVersion: 2, agentRunId: run.id, executionEpoch: 1,
+      fileCount: 1, operationCount: 1, completedAt,
+      files: [{ evidenceFileId: 'fixture-file', path: 'notes/nova.md', changeKind: 'create', presentationKind: 'operation_history', operationCount: 1 }] }]
+    invalidate(threadId)
   },
   away: () => { const member = profiles.find((item) => item.agentId === 'new-teammate')!; member.displayName = 'Nova renamed'; member.presence = 'away'; events.forEach((fn) => fn({ method: 'members.invalidated', params: {} })) }
 }

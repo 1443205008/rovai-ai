@@ -170,6 +170,9 @@ AI 创建使用一位可用协助者的普通草稿会话；三个起步提示�
 成功 `member.create` 产生静态入队回执，配置链接进入已有队员设置，右侧表单及离队资料行为保持。
 Desktop/Mobile、中文/英文共用生产组件。
 
+入队回执保存经认证的来源 Run，终态后按“最后回复 → 入队卡片 → Files Changed”展示；无公开回复时复用
+Run 产物作者头。入队卡与文件卡共用桌面/窄列宽度、缩进和间距；旧回执保持可读，不按队员或时间猜测来源。
+
 [Member Creation Flow v1](../../contracts/member-creation-flow-v1.md)拥有当前行为，
 [V1.72-D09](decisions.md#v1-72-d09)记录取舍；Migration 180 将 schema 129 升为 **130**。
 [实施验收](implementation-plan.md#2026-10-02-ai-优先添加队员)区分自动化与真实模型/实体手机边界。

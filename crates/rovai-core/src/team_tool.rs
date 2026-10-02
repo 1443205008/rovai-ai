@@ -2518,6 +2518,22 @@ mod tests {
         assert_eq!(receipts[0].display_name, "Nova Test Member");
         assert_eq!(receipts[0].creator_agent_id, "agent_1");
         assert_eq!(
+            receipts[0].source_agent_run_id.as_deref(),
+            Some(authenticated_run.agent_run_id.as_str())
+        );
+        // Pre-association snapshots stay readable; never reconstruct a Run from timestamps.
+        let mut legacy_receipt = serde_json::to_value(&receipts[0]).unwrap();
+        legacy_receipt
+            .as_object_mut()
+            .unwrap()
+            .remove("sourceAgentRunId");
+        assert!(
+            serde_json::from_value::<crate::member_studio::MemberCreationView>(legacy_receipt)
+                .unwrap()
+                .source_agent_run_id
+                .is_none()
+        );
+        assert_eq!(
             crate::member_studio::last_creation_helper(fixture.database.connection())
                 .unwrap()
                 .as_deref(),

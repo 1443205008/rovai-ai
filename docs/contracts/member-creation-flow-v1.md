@@ -36,10 +36,15 @@ preference and the existing command result commit in the same Domain Command Gat
 back together; idempotent replay returns the original result without another receipt or preference update. Manual
 `members.create` does not manufacture an AI receipt. Existing confirmation, authorization and creation-key checks remain.
 
-`MemberCreationView` contains `creationId`, `agentId`, `displayName`, `avatarRef`, `teamRole`,
+`MemberCreationView` contains `creationId`, `sourceAgentRunId`, `agentId`, `displayName`, `avatarRef`, `teamRole`,
 `professionalResponsibilities`, `personalityTraits`, `creatorAgentId`, `creatorDisplayName` and `createdAt`.
 Identity and helper name are snapshots at creation time, not joins to current profiles. This is presentation data;
 it adds no CampMessage, Thread member, tool-output field, ContextManifest field or bootstrap instruction.
+
+New receipts copy `sourceAgentRunId` from the authenticated creating Run inside the creation transaction. This is a
+Run association, not an execution-epoch or creator-name match. Earlier JSON receipts may omit it or read as null;
+they stay readable without migration, evidence replay or inferred backfill. Idempotent replay preserves the original
+association. The optional additive field does not change schema 130 or the tool result.
 
 Migration 180 admits exactly v1.72/schema 129 and atomically advances to schema 130. `member_creation` stores one JSON
 snapshot per command identity with a Thread foreign key and `(camp_id, created_at, creation_id)` index. Thread deletion
@@ -57,6 +62,19 @@ After an applied creation, Core emits the existing `members.invalidated` signal 
 `threadId`. Desktop refreshes the matching active Thread through its existing coalesced reader; Web uses the ordinary
 invalidation stream. Reopening always loads the receipt. The event itself is not a second durable source.
 
+While the exact source Run is queued, running or waiting, the Renderer withholds its receipt. Once that Run succeeds,
+fails or is cancelled, its last public message is followed by the joined cards in `(createdAt, creationId)` order,
+then its Files Changed cards. Multiple Run epochs share this Run-level result region. Parallel Runs remain separate,
+including Runs by the same helper. A successful creation is not undone by subsequent Run failure or cancellation.
+Without a public message, the receipt joins that terminal Run's existing artifact region and single author header;
+no message or reply text is synthesized. Receipts without a source ID retain chronological standalone placement.
+If the source Run is unavailable, an exact public-message source ID can still anchor the card; otherwise it remains
+standalone and readable, with no inferred author or terminal state. These fallbacks do not read current member status.
+
+Joined and Files Changed cards share the result column: 42px left inset and at most 620px width on desktop,
+no inset and full column width when the conversation container is at most 480px. The result stack starts 14px after
+the reply and uses 12px between cards; existing MobileUI gutters and controls remain in charge of the outer layout.
+
 The joined card remains unchanged after rename, Runtime setup, departure or removal. Its sole action opens the existing
 member Runtime section by `agentId`. The destination loads the roster before resolving an unknown cached selection;
 away profiles remain accessible and removed profiles follow existing destination behavior. The card never polls member
@@ -67,6 +85,7 @@ status and never becomes a start-conversation action.
 - Existing `team_tool` member-create transaction test owns rollback, direct-user authorization, idempotent replay,
   no added public message/membership, immutable snapshots and Open projection.
 - `db_member_creation` owns the new schema 129 to 130 boundary, rollback and profile preservation.
-- Renderer helper/navigation tests own deterministic selection and local draft overlay.
+- Renderer helper/navigation tests own deterministic selection and local draft overlay; Run artifact tests own
+  terminal gating, exact Run/last-message association, creation order, author grouping and historical fallback.
 - `pnpm test:member-creation` exercises production conversation/member surfaces with isolated transport and native input;
   it does not qualify a real model or physical mobile device.
