@@ -40,6 +40,10 @@ pub fn validate_builtin_tool_input(canonical_name: &str, input: &Value) -> Resul
         .ok_or_else(|| anyhow::anyhow!("unknown built-in operation: {canonical_name}"))?;
     validate_schema(input, &definition["inputSchema"])
         .map_err(|_| anyhow::anyhow!("{canonical_name} input does not match its schema"))?;
+    if canonical_name == crate::thread_runs::THREAD_RUNS_TOOL_NAME {
+        return serde_json::from_value::<crate::thread_runs::ThreadRunsInput>(input.clone())?
+            .validate();
+    }
     let valid = match canonical_name {
         CAMP_MESSAGE_SEND_TOOL_NAME => {
             serde_json::from_value::<ThreadMessageSendInput>(input.clone()).map(|_| ())
@@ -194,7 +198,7 @@ fn collection_message_schema() -> Value {
         "additionalProperties": false,
         "required": [
             "messageId", "sequence", "authorType", "authorId", "anchorMessageId",
-            "createdAt", "body", "attachmentCount"
+            "createdAt", "body", "attachmentCount", "addressing"
         ],
         "properties": {
             "messageId": {"type": "string"},
@@ -205,7 +209,8 @@ fn collection_message_schema() -> Value {
             "createdAt": {"type": "string", "format": "date-time"},
             "body": {"type": "string"},
             "quotes": crate::message_quote::model_quotes_schema("thread_messages"),
-            "attachmentCount": {"type": "integer", "minimum": 0}
+            "attachmentCount": {"type": "integer", "minimum": 0},
+            "addressing": item_message_schema()["properties"]["addressing"].clone()
         }
     })
 }
@@ -1164,9 +1169,16 @@ pub fn builtin_tool_definitions() -> Vec<Value> {
         json!({
             "name": CAMP_READ_TOOL_NAME,
             "title": "Read public Thread messages",
-            "description": "Read messages from exactly one public Thread. Target-Thread membership is not a read permission. With no message selector, return the newest published messages from the current or explicitly selected Thread; use before as the exclusive sequence cursor. The default limit is 20; an explicit limit must be an integer from 1 to 100. Recallable messages remain readable until withdrawn; a withdrawn message returns a Message withdrawn marker without its original content. Use messageId for one exact message, or thread for a thread page ending before the optional cursor. Reuse nextCursor as before. IDs and cursors never bypass the publication boundary.",
+            "description": "Read published messages from one public Thread using its live state, including an explicit historical Thread. Target membership is not a read permission. With no selector, return the newest page; use before/nextCursor for older messages. Default limit: 20; range: 1-100. Use messageId for one message or replyChain for a reply chain. messageId cannot combine with replyChain, before or limit. Normal items include addressing; withdrawn items contain only a withdrawal marker. IDs and cursors never bypass visibility.",
             "inputSchema": ThreadHistoryService::camp_read_input_schema(),
             "outputSchema": camp_read_success_schema()
+        }),
+        json!({
+            "name": crate::thread_runs::THREAD_RUNS_TOOL_NAME,
+            "title": "Read Thread execution state",
+            "description": "Read public executions and queued work in one Thread. Omit threadId for the current Thread; explicit Threads are read live. Private Single Chat executions are excluded, and Single Chat callers cannot use this command. Business calls return JSON only.\n\nEach item identifies an Agent and its status. A non-null agentRunId identifies a real Run. A null ID is allowed only for queued work; those messages may be split across future Runs. Item counts are not Run counts. waitReason is always null: this interface does not provide reasons.\n\nmessageCount is the input count, or null when unknown. messagePreview shows the first message as readable now, up to 200 Unicode code points plus an ellipsis if truncated; unavailable previews are null.\n\nExecution and queues can change between pages; pagination does not guarantee a complete traversal of queued work. Start again without cursor when checking current state.",
+            "inputSchema": crate::thread_runs::input_schema(),
+            "outputSchema": crate::thread_runs::output_schema()
         }),
         json!({
             "name": SINGLE_CHAT_HISTORY_TOOL_NAME,
@@ -1573,6 +1585,25 @@ mod tests {
             }]
         });
         crate::builtin_tool_cli_output::validate_schema(&item, &schema).unwrap();
+        let mut collection = item["items"][0].clone();
+        for field in [
+            "attachments",
+            "attachmentsTruncated",
+            "attachmentOmittedCount",
+        ] {
+            collection.as_object_mut().unwrap().remove(field);
+        }
+        crate::builtin_tool_cli_output::validate_schema(&collection, &collection_message_schema())
+            .unwrap();
+        collection.as_object_mut().unwrap().remove("addressing");
+        assert!(
+            crate::builtin_tool_cli_output::validate_schema(
+                &collection,
+                &collection_message_schema()
+            )
+            .is_err()
+        );
+
         item["items"][0]["attachments"][0]
             .as_object_mut()
             .unwrap()

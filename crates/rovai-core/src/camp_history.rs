@@ -28,7 +28,7 @@ pub const CAMP_LIST_TOOL_NAME: &str = "thread.list";
 pub const CAMP_SEARCH_TOOL_NAME: &str = "thread.search";
 pub const HISTORY_SEARCH_TOOL_NAME: &str = "history.search";
 pub const CAMP_READ_TOOL_NAME: &str = "thread.read";
-pub const CAMP_HISTORY_CONTRACT_VERSION: u32 = 10;
+pub const CAMP_HISTORY_CONTRACT_VERSION: u32 = 11;
 
 const CAMP_LIST_DEFAULT_LIMIT: usize = 20;
 const CAMP_LIST_MAX_LIMIT: usize = 50;
@@ -123,8 +123,8 @@ enum MessageFence {
 }
 
 #[derive(Debug, Clone)]
-struct ThreadTarget {
-    camp_id: String,
+pub(crate) struct ThreadTarget {
+    pub(crate) camp_id: String,
     fence: MessageFence,
     viewer_agent_id: String,
 }
@@ -766,6 +766,26 @@ fn resolve_live_read_target(
         fence: MessageFence::Current { boundary },
         viewer_agent_id: run.agent_id.clone(),
     }))
+}
+
+/// The execution query shares the live public read scope and the caller's frozen authority.
+pub(crate) fn public_read_target(
+    transaction: &Transaction<'_>,
+    run: &AuthenticatedTeamToolRun,
+    requested_thread_id: Option<&str>,
+) -> Result<Option<ThreadTarget>> {
+    let fence = load_run_fence(transaction, run)?;
+    resolve_live_read_target(transaction, run, &fence, requested_thread_id)
+}
+
+pub(crate) fn visible_message_body(
+    transaction: &Transaction<'_>,
+    target: &ThreadTarget,
+    message_id: &str,
+) -> Result<Option<String>> {
+    Ok(load_visible_message(transaction, target, message_id)?
+        .filter(|message| !message.withdrawn)
+        .map(|message| message.body))
 }
 
 fn camp_name_match_class(title: &str, folded_query: &str) -> u8 {
@@ -2245,6 +2265,7 @@ fn collection_item(
         "createdAt": row.created_at,
         "body": row.body,
         "attachmentCount": attachment_count(transaction, &row.id)?,
+        "addressing": load_exact_addressing(transaction, &row.id)?,
     });
     attach_message_quotes(transaction, target, &row.id, &mut value)?;
     Ok(value)
@@ -2449,6 +2470,8 @@ mod slow_tests {
             .execute_batch(
                 r#"
                 CREATE TABLE agent_profile(id TEXT PRIMARY KEY, display_name TEXT NOT NULL);
+                CREATE TABLE message_attachment(camp_message_id TEXT NOT NULL);
+                CREATE TABLE camp_message_attachment_ref(camp_message_id TEXT NOT NULL);
                 CREATE TABLE camp_message (
                     id TEXT PRIMARY KEY,
                     camp_id TEXT NOT NULL,
@@ -2546,6 +2569,21 @@ mod slow_tests {
         )
         .unwrap();
         assert_eq!(rows[0].body, "@User authoritative body");
+        let target = ThreadTarget {
+            camp_id: rows[0].camp_id.clone(),
+            fence: MessageFence::Current { boundary: 1 },
+            viewer_agent_id: "agent_1".into(),
+        };
+        let collection = collection_item(&transaction, &target, &rows[0]).unwrap();
+        assert_eq!(
+            collection["addressing"],
+            json!({"effectiveAgentRecipients": [], "mentionsCurrentUser": true})
+        );
+        let mut withdrawn = rows[0].clone();
+        withdrawn.withdrawn = true;
+        let marker = collection_item(&transaction, &target, &withdrawn).unwrap();
+        assert_eq!(marker.as_object().unwrap().len(), 4);
+        assert!(marker.get("addressing").is_none());
         // Only structured atoms accept the alias; literal old text and mixed queries remain literal.
         let body = "😀 @User literal @Principal then @User";
         let offsets = [2, body.chars().count() - "@User".chars().count()];
@@ -3076,7 +3114,8 @@ mod slow_tests {
                 .filter(|sequence| *sequence != 101)
                 .collect::<Vec<_>>()
         );
-        let rows = (1..=20)
+        // These rows must still be normal messages when collection metadata is read.
+        let rows = (4..=23)
             .map(|sequence| MessageRow {
                 id: format!("message-{sequence}"),
                 camp_id: "rvcamp_01h47kvsy5fk1shh6w1g60eecf".to_string(),

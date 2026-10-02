@@ -109,6 +109,7 @@ pub fn agent_output_schema(operation: &str) -> Result<Value> {
         | "thread.list"
         | "thread.search"
         | "thread.read"
+        | "thread.runs"
         | "history.search"
         | "memory.view"
         | "memory.search"
@@ -238,6 +239,7 @@ fn project_success(operation: &str, result: Value) -> Result<Value> {
         | "thread.list"
         | "thread.search"
         | "thread.read"
+        | "thread.runs"
         | "history.search"
         | "memory.view"
         | "memory.search"
@@ -867,9 +869,9 @@ mod tests {
 
     #[test]
     fn every_operation_has_a_schema_valid_golden_projection() {
-        // v7 changes body projection, not result shape; keep the shared v6 shape fixture.
+        // v8 adds execution queries and addressing to collection items.
         let golden: Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/builtin-tool-agent-output-v6.json"
+            "../tests/fixtures/builtin-tool-agent-output-v8.json"
         ))
         .unwrap();
         // Old receipts must validate their original digest before live-name projection.
@@ -925,6 +927,23 @@ mod tests {
         let mut tampered = old_envelope;
         tampered.result.as_mut().unwrap()["items"][0]["body"] = json!("@User rewritten result");
         assert!(project_envelope(tampered).is_err());
+        let executions = &golden["thread.runs"]["canonicalResult"];
+        for (field, value) in [
+            ("status", json!("running")),
+            ("kind", json!("pending_batch")),
+            ("waitReason", json!("busy")),
+            ("messageCount", json!(0)),
+        ] {
+            let mut invalid = executions.clone();
+            invalid["items"][0][field] = value;
+            let envelope = BuiltinToolInvocationEnvelope::success(
+                "thread.runs",
+                "7b5db24c-4a43-4cab-9217-d982b08f7691",
+                invalid,
+            )
+            .unwrap();
+            assert!(project_envelope(envelope).is_err(), "{field}");
+        }
         let documents = golden.as_object().unwrap();
         assert_eq!(documents.len(), builtin_tool_definitions().len());
         for definition in builtin_tool_definitions() {

@@ -2,8 +2,8 @@
 document_type: design-comparison
 version: v1.72
 revision: 2
-status: draft
-last_updated: 2026-10-02
+status: confirmed
+last_updated: 2026-10-03
 ---
 
 # Thread 查询提示词与 CLI 帮助完整对照

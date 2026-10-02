@@ -6722,6 +6722,10 @@ impl Core {
                         .map_err(|_| invalid_input_error("history.search input is invalid"))?;
                     ThreadHistoryService.search_history(&mut database, &authenticated_run, &input)
                 }
+                crate::thread_runs::THREAD_RUNS_TOOL_NAME => {
+                    let input = serde_json::from_value::<crate::thread_runs::ThreadRunsInput>(request.input)?;
+                    crate::thread_runs::read(&mut database, &authenticated_run, &input)
+                }
                 CAMP_READ_TOOL_NAME => {
                     let input = serde_json::from_value::<ThreadReadInput>(request.input)
                         .map_err(|_| invalid_input_error("camp.read input is invalid"))?;

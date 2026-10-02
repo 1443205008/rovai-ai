@@ -2,15 +2,18 @@
 document_type: model-context-change
 version: v1.72
 revision: 2
-confirmation_status: pending
-last_updated: 2026-10-02
+confirmation_status: confirmed
+confirmed_revision: 2
+confirmed_by: local_user
+confirmed_at: 2026-10-03
+last_updated: 2026-10-03
 ---
 
 # Thread 消息寻址与执行查询方案
 
-本稿 r2 将本 Thread 已确认的功能边界整理为待审阅的实施方案。目标是让 Agent 查询消息实际寻址，以及谁正在执行、排队或等待。公开条目使用统一的 `items` 与可空 `agentRunId`，不提供 `kind` 或替代分类字段。
+本稿 r2 将本 Thread 已确认的功能边界整理为已确认的实施方案。目标是让 Agent 查询消息实际寻址，以及谁正在执行、排队或等待。公开条目使用统一的 `items` 与可空 `agentRunId`，不提供 `kind` 或替代分类字段。
 
-完整的 CLI 帮助和模型指令前后文本见[提示词与帮助对照](thread-runs-prompt-comparison.md)。本稿只交付设计；尚未修改产品代码、运行中的提示词、当前合同或数据库。用户此前确认的是功能边界，本稿新增的完整提示词和版本策略尚待审阅，不能代记为已二次确认。
+完整的 CLI 帮助和模型指令前后文本见[提示词与帮助对照](thread-runs-prompt-comparison.md)。User 已确认 r2 并授权实施；下文保留已确认的设计内容，实施验证在末尾记录。
 
 ## 基线与依据
 
@@ -20,8 +23,8 @@ last_updated: 2026-10-02
 | 当前版本 | [版本索引](../README.md)的 v1.72；本次不切换版本 |
 | 分支 | `docs/thread-runs-proposal` |
 | Worktree | `/Users/murray.xue/VSCodeProjects/opensource/rovai-ai-thread-runs-proposal` |
-| Governance | 本分支为待确认的方案；无本功能已合入的治理或实现提交 |
-| 状态 | `ready`，供审阅；后续修订复用本 worktree |
+| Governance | r2 已由 User 确认；实现与合同在同一 PR 合入，无主线治理先行要求 |
+| 状态 | `active`，实施与验证中；复用本 worktree |
 
 需求依据依次为本 Thread 消息 `98604f4e-d2b7-4ae4-87df-78a916d726e4` 的原方案、
 `03c543ae-71ce-414c-a9d6-94986a7e2bc7` 的范围修订、
@@ -448,11 +451,11 @@ type ThreadRunsResult = {
 
 ## 二次确认
 
-本稿 `revision: 2`，`confirmation_status: pending`。此前的“边界同意”“删除 kind”和会话兼容要求已纳入需求，尚未收到明确同意实施本稿的指令。
+本稿 `revision: 2` 已由 User 在 2026-10-03 的消息 `73fbaeb0-cb41-486c-a387-ad4f72c4eb1e` 明确确认实施：“已审阅 r2，没有发现需要修改的核心方案问题，按当前范围实施即可。”同条消息授权在 worktree 完成实现、创建 PR 到 main 并合并。实施基线已合入 `origin/main` 的 `7f6fdafa`；提示词基线和已确认的 r2 语义保持。
 
 遵循[核心模型上下文变更治理](../../development/model-context-change-governance.md)：“未取得确认时可以继续调查和编辑提案文档，但不得修改实现、Schema、当前合同或执行 clean break。”确认时记录真实消息、confirmed_by、confirmed_at 和 confirmed_revision:2；语义修订需更新 revision。
 
-当前文档检查会对未确认的 canonical 变更说明报告确认字段缺失，这是草案状态的实施门禁；本稿不伪填确认，也不修改 checker 绕过它。
+确认记录对应 r2 全文，不增加字段、存储、会话迁移或查询框架；若实现遇到无法满足现有约定的具体冲突，再按实际冲突处理。
 
 ## 验证
 
@@ -514,9 +517,9 @@ pnpm test:rust:pr
 
 实际 Runtime/模型、可追溯的固定 Judge snapshot 及路径在执行前按既有配置冻结；本方案不虚构这些环境证据。无 Judge 的设施验证不能宣称 Gate 通过。通用集证明共享流程回归，本功能的字段/事务/权限边界由上表定向验收承担。
 
-### 本稿验证记录
+### 方案阶段验证记录
 
-本轮只改方案文档，r1 的来源核对和 r2 的复核记录如下：
+r1/r2 方案阶段只改文档，其来源核对和复核记录如下：
 
 - 六个提示词来源文件的 SHA-256 与固定源码基线一致；附录的两份现行 CLI 帮助与实际 `--help` 输出逐字一致。
 - JSON 示例解析、公开新增指令不暴露 Delivery/claim 分类，以及平台 description 不变的检查通过。
