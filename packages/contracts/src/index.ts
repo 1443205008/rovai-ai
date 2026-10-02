@@ -3100,6 +3100,27 @@ export interface WindowResetCapability {
   reason: 'fullscreen' | null
 }
 
+export type WindowCloseBehavior = 'ask' | 'tray' | 'exit'
+export interface WindowCloseSnapshot {
+  revision: number
+  behavior: WindowCloseBehavior
+  promptId: number | null
+  busy: boolean
+  error: 'load_failed' | 'tray_unavailable' | 'save_failed' | 'quit_failed' | null
+}
+export interface WindowCloseResponse {
+  promptId: number
+  action: 'tray' | 'exit' | 'cancel'
+  remember: boolean
+}
+/** Windows Desktop only. Main owns the preference, prompt identity and native tray. */
+export interface WindowCloseApi {
+  get(): Promise<WindowCloseSnapshot>
+  setBehavior(behavior: WindowCloseBehavior): Promise<WindowCloseSnapshot>
+  respond(response: WindowCloseResponse): Promise<WindowCloseSnapshot>
+  onChanged(listener: (snapshot: WindowCloseSnapshot) => void): () => void
+}
+
 export interface WindowResetResult {
   performed: boolean
   reason: 'fullscreen' | null
@@ -4141,6 +4162,7 @@ export interface RovaiApi {
   channels: ChannelsApi
   onboarding: OnboardingApi
   windowControls: WindowControlsApi
+  windowClose?: WindowCloseApi
   navigationPreferences: NavigationPreferencesApi
   memberAvatars: MemberAvatarsApi
   composerAttachments: {

@@ -1,3 +1,4 @@
+import { WindowCloseDialog } from './WindowCloseSettings'
 import { useEffect, useRef, useState } from 'react'
 import type { CoreEvent, DesktopStartupSnapshot, SupervisorSnapshot, AppearanceSnapshot } from '@contracts'
 import { CurrentUserProfileProvider } from './CurrentUserProfile'
@@ -161,6 +162,7 @@ export function App(): React.JSX.Element {
   return (
     <>
       {workspace}
+      {window.rovai.windowClose && <WindowCloseDialog api={window.rovai.windowClose} />}
       {shuttingDown && <ControlledShutdownOverlay visible={shutdownFeedbackVisible} />}
     </>
   )
