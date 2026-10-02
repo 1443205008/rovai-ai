@@ -788,29 +788,47 @@ Windows 平台实测独立记录，不能由此 macOS 浏览器结果推断。
 `cargo test -p rovai-core --bin rovai`、`node --test scripts/lib/host-web-html.test.mjs scripts/lib/host-web.test.mjs`；
 完整 Core library 与 Context slow suite 继续执行，不用删除旧迁移测试换取通过。
 
-## 可观测输出真实 Runtime 验收
+## 原生执行指标 Runtime 验收
 
-`node --experimental-strip-types scripts/probe-observable-output.mjs <runtime-kind>` 创建独立 Core、bundled CLI、data-dir、Skill Library、MCP 和工作区，默认发送三段约 800 字的公开正文及工具停顿，最长观察 8 分钟。仅 relay 原始 Native 流，保留字段形态、匿名身份、字符数量、计时和 Core 数值快照；不保存思考正文、内容哈希或诊断原文。它调用生产显示状态机，但 `rendererVerified` 固定为 false，不能作为实际界面验收。
+`node scripts/probe-runtime-execution-metrics.mjs <runtime-kind>` 创建独立 Core、bundled CLI、data-dir、
+Skill Library、MCP 和工作区，执行包含只读工具调用的原生用量／上下文任务，最长观察 8 分钟。
+探针只保存原生字段形态、匿名身份、Token／Gauge 数值、观测时刻及持久化读回，不采集字符数量、
+速度、正文、思考正文或内容哈希；`rendererVerified` 固定为 false，不能作为界面验收。
 
-可选环境变量：`ROVAI_OBSERVABLE_CORE` 指定 Core 来源；`ROVAI_OBSERVABLE_MODEL`／`ROVAI_OBSERVABLE_MODEL_OPTIONS` 冻结显式模型；`ROVAI_OBSERVABLE_PROMPT_FILE` 指定公开任务；`ROVAI_OBSERVABLE_THINKING_LEVEL` 调整隔离 Pi 默认思考级别，或声明隔离 DSH 自定义 route 的该项 effort；`ROVAI_OBSERVABLE_NATIVE_HOME` 只复制 Grok／DSH 的必要配置到私有夹具；Kimi 的 `ROVAI_OBSERVABLE_SUB2API=1` 使用 Claude 已授权 Provider 配置，写入隔离的 0600 provider file，并用 `ROVAI_KIMI_CONFIG` 避免日常配置覆盖。`ROVAI_OBSERVABLE_RESUME=1` 在健康首 Run 后复用同一 Camp／Native Session 再执行一轮，分别保存两个 Run 的 Usage／Context 读回。探针不修改日常 Native 配置。证据导出只选 `evidence.json` 和 `native-shapes.jsonl`，不能打包整个含凭据的 fixture；数字 witness 可以保留原生 Token／Gauge 字段，不保留正文、参数、签名或 Provider 端点。
+可选环境变量使用 `ROVAI_METRICS_` 前缀：`CORE` 指定 Core，`MODEL`／`MODEL_OPTIONS` 选择模型，
+`PROMPT_FILE` 指定任务，`THINKING_LEVEL` 配置隔离 Pi／DSH 思考级别，`NATIVE_HOME` 只复制 Grok／DSH
+必要配置到私有夹具，Kimi `SUB2API=1` 使用已授权 Provider 配置。`RESUME=1` 在健康首 Run 后复用同一
+Native Session 再执行一轮；`COLD_RESTART=1` 先关闭隔离 Core，再读回并核对持久化与同一绑定。
+`GROK_COMPACT_AFTER_RESTART=1` 与 Grok 冷恢复一起验证原生压缩。日常 Runtime 配置保持只读。
+证据导出只选 `evidence.json` 和 `native-shapes.jsonl`，不能打包含凭据的整个 fixture。
 
 打包 App 的可重复入口：
 
 ```bash
 ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_STREAM_ONLY=1 node scripts/accept-runtime-activity-ui.mjs <packaged-app>
-ROVAI_RUNTIME_ACTIVITY_ACCEPT_OBSERVABLE_REAL=1 node scripts/accept-runtime-activity-ui.mjs <packaged-app>
+ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_REAL=1 node scripts/accept-runtime-activity-ui.mjs <packaged-app>
 ```
 
-第一项用合成 ACP 流证明去重、正文与思考合并、途中打开、切历史 Run、工具停顿、恢复、终态、迟到 Usage 和私有标记不扩散；第二项默认使用仓库的 `scripts/fixtures/observable-output-reasoning-task.txt` 图依赖推理长任务，也可用 `ROVAI_OBSERVABLE_PROMPT_FILE` 覆盖，验证当前模型的 summary 数值和实际 DOM 更新。后者幂等选择可见队员并逐帧确认不是总览；真实 Provider 未发摘要时不能把严格正样本断言失败归为漏计，需独立 Native 形态证据区分。两者均隔离 App/Core 数据，CDP 请求有 30 秒超时；不结束日常 App。字符权重与 500ms／1Hz／2.5s／1s／5s 参数由既有最低层 owner 验证，不为真实网络调用新增 Rust 单元测试。
+第一项用合成 ACP 流验证途中打开、切历史 Run、运行耗时、终态、迟到 Usage 和私有标记不进入
+数据库、Blob、文件、公开 IPC 或 Renderer。第二项使用 `scripts/fixtures/native-execution-metrics-task.txt`，
+可以用 `ROVAI_METRICS_PROMPT_FILE` 覆盖任务，`ROVAI_METRICS_RUNTIME` 选择 Runtime，
+`ROVAI_METRICS_VERIFY_USAGE=1` 核对落盘四项与气泡，`ROVAI_METRICS_VERIFY_CONTEXT=1` 核对
+已证实的 Session 数值与圆环／气泡。两者均隔离 App/Core，CDP 请求有 30 秒超时，不结束日常 App。
+重启验收使用原隔离 fixture，核对 `monitoring.execution` 的四项／Session modelKey／代次，
+不重新调用模型或修改数据库。原生字段历史证据见[原生 Usage 与 Context 核验](../research/runtime-monitoring/native-usage-context-verification-2026-09-30.md)。
 
-真实 App 入口可用 `ROVAI_OBSERVABLE_RUNTIME=<adapter-kind>` 替换默认 Codex；
-`ROVAI_OBSERVABLE_VERIFY_USAGE=1` 核对落盘四项与真实气泡，
-`ROVAI_OBSERVABLE_VERIFY_CONTEXT=1` 核对已证实的 Session 数值与圆环／气泡。
-`ROVAI_OBSERVABLE_REQUIRE_REASONING=0` 只验收正文；不能据此宣布思考通过。测速必须选择本次
-Native Run 所属的执行面板，不能取另一个隐藏 Camp 的总览；用量点击前展开历史并确认按钮可见。
-重启验收只启动已有隔离 App fixture，重新打开该 Camp、展开完成卡片，比较
-`monitoring.execution` 的四项／Session modelKey／代次与重启前记录，不重新调用模型或修改数据库。
-当前数字与实际截图证据见[原生 Usage 与 Context 核验](../research/runtime-monitoring/native-usage-context-verification-2026-09-30.md)。
+### 测速退役与保留的测试（2026-10-02）
+
+所有 Runtime 的测速生产路径和临时协议一并退出。删除 `observable_output::tests` 的 3 个分类／计数／
+去重测试、Web 数值快照白名单测试，以及 `execution-token-speed.test.ts` 的 5 个显示状态机测试；
+这些合同无 successor，由 Git 历史保留。Claude owner 改为验证私有思考身份和完整块／子 Agent 排除，
+移除仅为测速维护的 UTF-16 游标。Codex ingress 保留当前 turn／旧 turn 栅栏，移除测速 receipt 断言。
+共享根身份检查移入 `runtime::is_root_output`，原有 ACP、Pi、ZCode 与原生 Usage owner 继续覆盖其边界。
+
+原生 Usage／Context、迁移、恢复、权限和内容隔离测试继续执行。`pnpm test:execution-metrics-ui` 保留
+隐藏暂停、恢复刷新、500 Run 范围收敛、稳定终态和迟到用量测试；打包 App 混合验收移除测速断言，
+继续检查四项用量与思考内容不扩散。最低验证命令为 `pnpm typecheck`、`pnpm test:execution-metrics-ui`、
+`pnpm test:rust:pr` 和以下原生 owner 的定向命令。历史测速脚本／环境变量仅适用于 `ee444ab1` 及此前记录。
 
 ### 原生 Usage／Context 测试准入（2026-09-30）
 

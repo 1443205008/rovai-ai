@@ -173,7 +173,6 @@ impl CodexThreadRoute {
 #[derive(Default)]
 struct CodexThreadRoutes {
     inner: RwLock<HashMap<String, CodexThreadRoute>>,
-    output_sequence: AtomicU64,
 }
 
 impl CodexThreadRoutes {
@@ -327,7 +326,7 @@ async fn route_codex_stdout_ingress(
     host_instance_id: &str,
     routes: &CodexThreadRoutes,
     incoming: &mpsc::UnboundedSender<CodexIncoming>,
-    mut message: Value,
+    message: Value,
 ) -> (CodexIngressDisposition, Option<Value>) {
     let request_id = message.get("id").cloned();
     let (disposition, owner) = routes.ingress_route(&message).await;
@@ -337,18 +336,6 @@ async fn route_codex_stdout_ingress(
         }
         CodexIngressDisposition::Forward => {
             if let Some(owner) = owner {
-                // The stdio reader delivers one receipt per live notification.
-                // Mint its identity before any Core batching/fallback can copy it.
-                // Thread/turn routing excludes restore and unbound child threads.
-                if message["method"] == "item/reasoning/summaryTextDelta"
-                    && message
-                        .pointer("/params/turnId")
-                        .and_then(Value::as_str)
-                        .is_some()
-                {
-                    message["_rovaiOutputReceipt"] =
-                        json!(routes.output_sequence.fetch_add(1, Ordering::Relaxed) + 1);
-                }
                 let _ = incoming.send(owner.message(host_instance_id, message));
                 (disposition, None)
             } else {
@@ -2143,8 +2130,7 @@ pub fn normalize_event(method: &str, params: &Value) -> (&'static str, Value) {
     match method {
         "item/agentMessage/delta" => ("agent.text.delta", params.clone()),
         "item/reasoning/summaryTextDelta" => ("agent.reasoning.summary.delta", params.clone()),
-        // Raw reasoning is deliberately not counted alongside the summary.
-        // Still classify it as private so an unfamiliar notification cannot
+        // Classify raw reasoning as private so an unfamiliar notification cannot
         // escape via the generic public runtime.native branch.
         "item/reasoning/textDelta" => ("agent.thought.delta", params.clone()),
         "turn/plan/updated" => ("runtime.plan", params.clone()),
@@ -3034,20 +3020,10 @@ while IFS= read -r ignored; do :; done
             "summaryIndex":0, "delta":"PRIVATE_SUMMARY"
         }});
         route_codex_stdout_ingress("host-current", &routes, &incoming, summary.clone()).await;
-        let CodexIncoming::Message { message: first, .. } = receiver.try_recv().unwrap() else {
-            panic!()
+        let CodexIncoming::Message { message, .. } = receiver.try_recv().unwrap() else {
+            panic!("current-turn summary must reach the private event boundary");
         };
-        route_codex_stdout_ingress("host-current", &routes, &incoming, summary.clone()).await;
-        let CodexIncoming::Message {
-            message: second, ..
-        } = receiver.try_recv().unwrap()
-        else {
-            panic!()
-        };
-        assert!(
-            first["_rovaiOutputReceipt"].as_u64().unwrap()
-                < second["_rovaiOutputReceipt"].as_u64().unwrap()
-        );
+        assert_eq!(message, summary);
         let mut old_summary = summary.clone();
         old_summary["params"]["turnId"] = json!("turn-old");
         route_codex_stdout_ingress("host-current", &routes, &incoming, old_summary).await;

@@ -1181,7 +1181,7 @@ struct ClaudeCodeStreamState {
     message_text_completed: bool,
     text_delta_emitted: bool,
     stream_text_items: HashMap<u64, String>,
-    stream_thinking_items: HashMap<u64, (String, usize)>,
+    stream_thinking_items: HashMap<u64, String>,
     pending_text_items: VecDeque<String>,
     completed_text_packets: HashMap<String, Vec<String>>,
     tool_names: HashMap<String, String>,
@@ -1680,7 +1680,7 @@ fn normalize_claude_runtime_events(
                 if let Some(index) = event.pointer("/event/index").and_then(Value::as_u64) {
                     state
                         .stream_thinking_items
-                        .insert(index, (format!("claude-thinking:{native}:{index}"), 0));
+                        .insert(index, format!("claude-thinking:{native}:{index}"));
                 }
                 return Ok(normalized);
             }
@@ -1740,16 +1740,13 @@ fn normalize_claude_runtime_events(
                 else {
                     return Ok(normalized);
                 };
-                let Some((item_id, offset)) = state.stream_thinking_items.get_mut(&index) else {
+                let Some(item_id) = state.stream_thinking_items.get(&index) else {
                     return Ok(normalized);
                 };
-                let start = *offset;
-                *offset = offset.saturating_add(text.encode_utf16().count());
                 normalized.push(ClaudeCodeRuntimeEvent {
                     event_type: "agent.thought.delta",
                     payload: serde_json::json!({
                         "itemId": item_id,
-                        "textOffset": start,
                         "delta": text,
                     }),
                 });
@@ -3768,7 +3765,7 @@ mod tests {
     }
 
     #[test]
-    fn streamed_root_thinking_provides_offsets_without_exposing_completed_blocks() {
+    fn streamed_root_thinking_rejects_unbound_items_and_completed_blocks() {
         let session_id = "0bdd2166-d420-40c6-94be-70b93eb290c5";
         let mut state = ClaudeCodeStreamState::default();
         let emit = |state: &mut ClaudeCodeStreamState, event: Value| {
@@ -3804,8 +3801,7 @@ mod tests {
                 "delta":{"type":"thinking_delta","thinking":"继续"}}}),
         );
         assert_eq!(first[0].event_type, "agent.thought.delta");
-        assert_eq!(first[0].payload["textOffset"], 0);
-        assert_eq!(second[0].payload["textOffset"], 2);
+        assert_eq!(first[0].payload["itemId"], second[0].payload["itemId"]);
         assert_eq!(
             second[0].payload["itemId"],
             "claude-thinking:native-message:0"

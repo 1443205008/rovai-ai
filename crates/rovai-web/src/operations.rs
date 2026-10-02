@@ -244,8 +244,6 @@ pub enum Operation {
     Monitoring,
     #[serde(rename = "monitoring.execution")]
     ExecutionMetrics,
-    #[serde(rename = "monitoring.observableOutput")]
-    ObservableOutput,
     #[serde(rename = "skills.list")]
     Skills,
     #[serde(rename = "skills.get")]
@@ -385,29 +383,6 @@ impl Operation {
                     "issues",
                 ],
             ),
-            Self::ObservableOutput => {
-                if value.is_null() {
-                    value
-                } else {
-                    select_fields(
-                        &value,
-                        &[
-                            "agentRunId",
-                            "executionEpoch",
-                            "counterGeneration",
-                            "sequence",
-                            "algorithmVersion",
-                            "unicodeDataVersion",
-                            "sampledAtMs",
-                            "lastOutputAtMs",
-                            "publicTextUnits",
-                            "reasoningUnits",
-                            "reasoningSource",
-                            "streamConfirmed",
-                        ],
-                    )
-                }
-            }
             // Preserve only individually admitted actions and the Core decision.
             // Unknown/future actions remain unavailable at the network boundary.
             _ => {
@@ -568,7 +543,6 @@ impl Operation {
             Self::Subsystems => "runtime.subsystems.get",
             Self::Monitoring => "monitoring.snapshot",
             Self::ExecutionMetrics => "monitoring.execution",
-            Self::ObservableOutput => "monitoring.observableOutput",
             Self::Skills => "skills.list",
             Self::Skill => "skills.get",
             Self::ToolboxList => "toolbox.list",
@@ -699,25 +673,5 @@ mod tests {
         let withdraw = serde_json::from_value::<Operation>(json!("camp.messages.withdraw"))
             .expect("User message withdrawal should be admitted by the Web Host");
         assert_eq!(withdraw.method(), "camp.messages.withdraw");
-    }
-
-    #[test]
-    fn observable_output_network_projection_keeps_only_numeric_and_identity_fields() {
-        let projected = Operation::ObservableOutput.project(json!({
-            "agentRunId":"run-1", "executionEpoch":2, "counterGeneration":"generation-1",
-            "sequence":3, "algorithmVersion":"observable-output-heuristic-v3",
-            "unicodeDataVersion":"icu4x-2.2.0", "sampledAtMs":1000,
-            "lastOutputAtMs":900, "publicTextUnits":125, "reasoningUnits":60,
-            "reasoningSource":"stream_text", "streamConfirmed":true,
-            "delta":"PRIVATE_THINKING_MARKER", "payload":{"text":"PRIVATE_THINKING_MARKER"}
-        }));
-        assert_eq!(projected["reasoningUnits"], 60);
-        assert!(projected.get("delta").is_none());
-        assert!(projected.get("payload").is_none());
-        assert_eq!(
-            Operation::ObservableOutput.project(json!(null)),
-            json!(null)
-        );
-        assert_eq!(Operation::ExecutionMetrics.method(), "monitoring.execution");
     }
 }

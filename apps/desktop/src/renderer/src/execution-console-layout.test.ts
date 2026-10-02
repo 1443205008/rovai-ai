@@ -146,7 +146,7 @@ describe('execution console layout', () => {
       .toMatch(/min-height:\s*32px/)
   })
 
-  it('keeps live speed in the member header and only elapsed time in the running card', () => {
+  it('keeps context in the member header and elapsed time in the running card', () => {
     expect(styleBlock('.execution-process-stage.status-running .execution-run-trailing')).toMatch(/width:\s*77px/)
     expect(styleBlock('.execution-process-stage.status-running .execution-run-operations')).toMatch(/opacity:\s*0/)
     expect(styleBlock('.execution-process-stage.status-running .execution-run-operations')).toMatch(/right:\s*9px/)
@@ -155,7 +155,7 @@ describe('execution console layout', () => {
     expect(styleBlock(`${activeTitle} .execution-run-metric`)).toMatch(/opacity:\s*0/)
     expect(styleBlock('.execution-drawer-inspector .execution-drawer-header:not(.is-overview) .execution-header-metrics'))
       .toMatch(/grid-column:\s*3;\s*grid-row:\s*1/)
-    expect(workspaceSource).toMatch(/<span className="execution-header-metrics">[\s\S]*?<ExecutionLiveSpeed/)
+    expect(workspaceSource).toMatch(/<span className="execution-header-metrics">[\s\S]*?<ExecutionContextPopover/)
     expect(workspaceSource).toMatch(/if \(live\) return <span className="execution-run-metric">\{duration\}<\/span>/)
     expect(workspaceSource).toMatch(/hasUsage \? <ExecutionUsagePopover[^:]+: <ExecutionDurationPopover/)
     expect(styleBlock('.execution-metric-popover .execution-usage-duration')).toMatch(/border-top:\s*1px solid var\(--line\)/)

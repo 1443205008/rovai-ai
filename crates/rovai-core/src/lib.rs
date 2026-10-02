@@ -85,7 +85,6 @@ pub mod native_skills;
 mod native_usage;
 pub mod network_recovery;
 pub mod notification;
-pub mod observable_output;
 pub mod planned_shutdown;
 pub mod platform;
 pub mod read_model;

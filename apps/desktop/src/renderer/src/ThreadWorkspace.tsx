@@ -41,7 +41,6 @@ import {
 import { executionInitialFeedback, executionRunSummary } from './execution-run-summary'
 import { ComposerPrimaryAction } from './ComposerPrimaryAction'
 import { ThreadMemberFastToggle } from './ThreadMemberFastToggle'
-import { DISPLAY_DECIMALS, LiveTokenSpeedDisplay, SAMPLE_INTERVAL_MS, type OutputScope, type SpeedValue } from './execution-token-speed'
 import { useThreadMemberFast, type ThreadMemberFastControls } from './useThreadMemberFast'
 import type {
   ActionApprovalView,
@@ -53,7 +52,6 @@ import type {
   AgentRunExecutionEvidenceView,
   AgentRunView,
   RuntimeExecutionMetricsSnapshot,
-  ObservableOutputSample,
   BuiltinMemberAvatarRole,
   ThreadComposerDraftView,
   ComposerDocument,
@@ -6616,70 +6614,6 @@ function ExecutionContextPopover({ context }: { context: SessionContext | null }
   </Popover.Root>
 }
 
-function executionSpeedExplanation(scope: OutputScope): string {
-  switch (scope) {
-    case 'reasoning_text': return uiAttribute('根据当前执行收到的可观测思考增量估算')
-    case 'reasoning_summary': return uiAttribute('根据当前执行收到的思考摘要增量估算')
-    case 'mixed_text': return uiAttribute('根据当前执行收到的公开正文与可观测思考增量估算')
-    case 'mixed_summary': return uiAttribute('根据当前执行收到的公开正文与思考摘要增量估算')
-    default: return uiAttribute('根据当前执行收到的公开正文增量估算')
-  }
-}
-
-function ExecutionLiveSpeed({ run, threadId, client }: {
-  run: AgentRunView
-  threadId: string
-  client: ThreadClient
-}): JSX.Element | null {
-  const liveKey = `${run.id}:${run.executionEpoch}`
-  const [display, setDisplay] = useState<{ key: string; value: SpeedValue | null }>({ key: liveKey, value: null })
-  const meter = useRef<LiveTokenSpeedDisplay | null>(null)
-  useEffect(() => {
-    const now = window.performance.now()
-    meter.current = new LiveTokenSpeedDisplay(now)
-    let disposed = false
-    let inFlight = false
-    const poll = async (): Promise<void> => {
-      if (inFlight) return
-      inFlight = true
-      try {
-        const sample = await client.request<ObservableOutputSample | null>('monitoring.observableOutput', {
-          threadId, agentRunId: run.id, executionEpoch: run.executionEpoch
-        })
-        if (!disposed) meter.current?.observe(sample, window.performance.now())
-      } catch {
-        if (!disposed) meter.current?.observe(null, window.performance.now())
-      } finally {
-        inFlight = false
-      }
-    }
-    void poll()
-    const timer = window.setInterval(() => {
-      const sampledAt = window.performance.now()
-      const value = meter.current?.sample(sampledAt)
-      if (value !== undefined) {
-        setDisplay(previous => previous.key === liveKey
-          && previous.value?.speed === value?.speed && previous.value?.scope === value?.scope
-          ? previous : { key: liveKey, value: value ?? null })
-      }
-      void poll()
-    }, SAMPLE_INTERVAL_MS)
-    return () => {
-      disposed = true
-      window.clearInterval(timer)
-      meter.current = null
-    }
-  }, [liveKey, run.id, run.executionEpoch, threadId, client])
-  const value = display.key === liveKey ? display.value : null
-  if (value === null) return null
-  const explanation = executionSpeedExplanation(value.scope)
-  return <span className="execution-current-speed" role="img"
-    title={explanation}
-    aria-label={`${uiAttribute('当前估算输出速度：{0}', `${value.speed.toFixed(DISPLAY_DECIMALS)} tok/s`)} — ${explanation}`}>
-    <span>{value.speed.toFixed(DISPLAY_DECIMALS)}</span><span> tok/s</span>
-  </span>
-}
-
 function ExecutionRunMetric({ run, usage }: {
   run: AgentRunView
   usage: RunUsage | null
@@ -6943,8 +6877,6 @@ function ExecutionDrawer({
   const currentRuns = newestFirstRuns.filter((run) =>
     NON_TERMINAL_RUNS.has(run.status) && run.status !== 'queued'
   )
-  const speedRun = overview ? null : currentRuns.find((run) =>
-    run.status === 'running' && run.conversationId === currentConversationId) ?? null
   const queueBatches = executionQueueBatches(newestFirstRuns)
   const deliveryQueueBatches = executionDeliveryQueueBatches(process.waitingDeliveries)
   const historyRuns = newestFirstRuns.filter((run) => !NON_TERMINAL_RUNS.has(run.status))
@@ -7577,8 +7509,6 @@ function ExecutionDrawer({
             </div>
           </div>
           {!overview && <span className="execution-header-metrics">
-            {speedRun && metricsVisibility.visible && <ExecutionLiveSpeed key={`${speedRun.id}:${speedRun.executionEpoch}`}
-              run={speedRun} threadId={threadId} client={client} />}
             <ExecutionContextPopover context={sessionContext} />
           </span>}
         </header>

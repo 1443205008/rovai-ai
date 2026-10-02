@@ -202,7 +202,7 @@ impl PiTextState {
             message.pointer("/message/role").and_then(Value::as_str) == Some("assistant");
         if event == Some("message_start") && assistant {
             self.message_ordinal += 1;
-            self.assistant_active = crate::observable_output::is_root_output(message);
+            self.assistant_active = crate::runtime::is_root_output(message);
             self.native_message_id = message
                 .pointer("/message/id")
                 .and_then(Value::as_str)
@@ -225,7 +225,7 @@ impl PiTextState {
         }
         let (event_type, mut payload) = normalize_event(message);
         if event_type == "agent.thought.delta"
-            && (!self.assistant_active || !crate::observable_output::is_root_output(message))
+            && (!self.assistant_active || !crate::runtime::is_root_output(message))
         {
             return vec![];
         }

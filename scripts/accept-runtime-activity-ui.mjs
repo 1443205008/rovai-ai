@@ -37,9 +37,9 @@ const toolDetailsOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_TOOL_DETAILS_O
 const completeToolOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_COMPLETE_TOOL_ONLY === '1'
 const executionAutoFollowOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_AUTO_FOLLOW_ONLY === '1'
 const executionMetricsOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_ONLY === '1'
-const observableRealRuntime = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_OBSERVABLE_REAL === '1'
+const metricsRealRuntime = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_REAL === '1'
 const executionMetricsStreamOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_STREAM_ONLY === '1'
-  || observableRealRuntime
+  || metricsRealRuntime
 const placementRestartOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_PLACEMENT_RESTART_ONLY === '1'
 const withdrawalOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_WITHDRAWAL_ONLY === '1'
 const databasePath = join(dataDir, 'rovai.sqlite')
@@ -1195,17 +1195,15 @@ async function verifyExecutionMetricsRenderer(app, capturesRoot, onRestart) {
     const slot = stage?.querySelector('.execution-run-trailing')
     return {
       runId: stage?.dataset.agentRunId ?? null,
-      speed: document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim() ?? null,
       duration: duration?.textContent?.trim() ?? null,
-      cardHasSpeed: Boolean(stage?.querySelector('.execution-current-speed')),
       fitsSlot: duration.getBoundingClientRect().right <= slot.getBoundingClientRect().right + 1,
       slotWidth: slot?.getBoundingClientRect().width ?? null
     }
   })()`)
-  assert(running.runId === activeRunId && running.speed === null && !running.cardHasSpeed
+  assert(running.runId === activeRunId
     && /^1分 \d{2}秒$/.test(running.duration)
     && running.fitsSlot && running.slotWidth >= 76,
-  `Running card did not keep duration while an unsampled speed stayed hidden: ${JSON.stringify(running)}`)
+  `Running card did not keep duration: ${JSON.stringify(running)}`)
   const runningCapture = join(capturesRoot, 'execution-metrics-running.png')
   await capture(app.cdp, runningCapture)
 
@@ -1244,11 +1242,10 @@ async function verifyExecutionMetricsRenderer(app, capturesRoot, onRestart) {
       runId: stage?.dataset.agentRunId ?? null,
       durationInCard: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
       usage: group?.querySelector('.execution-usage-trigger')?.textContent?.trim() ?? null,
-      liveSpeedCount: document.querySelectorAll('.execution-drawer-header .execution-current-speed').length
     }
   })()`)
   assert(terminal.runId === activeRunId && terminal.usage === '2k'
-    && terminal.durationInCard === null && terminal.liveSpeedCount === 0,
+    && terminal.durationInCard === null,
   `Terminal card did not show only the Usage entry: ${JSON.stringify(terminal)}`)
   await evaluate(restarted.cdp, `document.querySelector(
     '.execution-process-stage.is-focused .execution-usage-trigger'
@@ -1272,7 +1269,7 @@ async function verifyExecutionMetricsRenderer(app, capturesRoot, onRestart) {
 }
 
 async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
-  if (observableRealRuntime) return verifyRealRuntimeObservableOutput(app, capturesRoot)
+  if (metricsRealRuntime) return verifyRealRuntimeExecutionMetrics(app, capturesRoot)
   const request = (method, params = {}) => evaluate(app.cdp,
     `window.rovai.request(${JSON.stringify(method)}, ${JSON.stringify(params)})`, true)
   const controlledCopilot = process.env.ROVAI_STREAMING_ACP_KIND === 'copilot-cli'
@@ -1328,20 +1325,6 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
     `document.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})?.click()`)
   await waitForExpression(app.cdp,
     `document.querySelector(${JSON.stringify(stageSelector)})?.classList.contains('status-running')`, 20_000)
-  await waitForExpression(app.cdp,
-    `document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 10_000)
-  const liveRun = (await request('camps.snapshot', { campId: streamCampId }))
-    .agentRuns.find((candidate) => candidate.id === runId)
-  assert(Number.isSafeInteger(liveRun?.executionEpoch), 'Controlled Run has no execution epoch')
-  const numericSample = await request('monitoring.observableOutput', {
-    campId: streamCampId, agentRunId: runId, executionEpoch: liveRun.executionEpoch
-  })
-  assert(numericSample?.algorithmVersion === 'observable-output-heuristic-v3'
-    && numericSample.publicTextUnits > 0 && numericSample.reasoningUnits > 0
-    && numericSample.reasoningUnits < 10_000
-    && numericSample.reasoningSource === 'stream_text'
-    && !JSON.stringify(numericSample).includes('V3_PRIVATE_REASONING_FIXTURE'),
-  `Core did not combine content-free public and thought counters: ${JSON.stringify(numericSample)}`)
   const leakedEvidence = await runSql(databasePath, `SELECT COUNT(*) FROM agent_run_execution_evidence
     WHERE agent_run_id = ${sqlLiteral(runId)}
       AND payload_preview_json LIKE '%V3_PRIVATE_REASONING_FIXTURE%';`)
@@ -1352,7 +1335,7 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
   const steadyCapture = join(capturesRoot, 'execution-metrics-stream-steady.png')
   await capture(app.cdp, steadyCapture)
 
-  // Leave and re-enter during the same stream. Earlier text becomes the new baseline.
+  // Leave and re-enter during the same stream; the running duration stays available.
   await openCamp(app.cdp, campId)
   await openCamp(app.cdp, streamCampId)
   await evaluate(app.cdp,
@@ -1362,29 +1345,10 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
       && document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric'))`, 10_000)
   const reopened = await evaluate(app.cdp, `(() => {
     const stage = document.querySelector(${JSON.stringify(stageSelector)})
-    return { speed: document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim() ?? null,
-      duration: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null }
+    return { duration: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null }
   })()`)
-  assert(reopened.speed === null && reopened.duration,
-    `Midstream entry did not establish a fresh display baseline: ${JSON.stringify(reopened)}`)
-  await evaluate(app.cdp, `(() => {
-    const header = document.querySelector('.execution-drawer-header')
-    const probe = { changes: [], last: null }
-    const record = () => {
-      const speed = header?.querySelector('.execution-current-speed')?.textContent?.trim() ?? null
-      if (speed !== probe.last) {
-        probe.last = speed
-        probe.changes.push({ at: performance.now(), speed })
-      }
-    }
-    record()
-    probe.observer = new MutationObserver(record)
-    probe.observer.observe(header, { subtree: true, childList: true, characterData: true })
-    window.__streamMetricsProbe = probe
-    return true
-  })()`)
-  await waitForExpression(app.cdp,
-    `document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 10_000)
+  assert(reopened.duration,
+    `Midstream entry lost the running duration: ${JSON.stringify(reopened)}`)
   await evaluate(app.cdp, `document.querySelector('.execution-history-toggle')?.click()`)
   const historySelector = `.execution-process-stage[data-agent-run-id="${setupRunId}"]`
   await evaluate(app.cdp,
@@ -1394,47 +1358,19 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
   const switched = await evaluate(app.cdp, `(() => {
     const active = document.querySelector(${JSON.stringify(stageSelector)})
     const history = document.querySelector(${JSON.stringify(historySelector)})
-    const speed = document.querySelector('.execution-drawer-header .execution-current-speed')
-    const context = document.querySelector('.execution-drawer-header .execution-context-trigger')
-    return { activeSpeed: speed?.textContent?.trim() ?? null,
-      activeDuration: active?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
-      sameLine: Boolean(speed && context && Math.abs(speed.getBoundingClientRect().top - context.getBoundingClientRect().top) < 12),
+    return { activeDuration: active?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
       activeExpanded: active?.querySelector('.execution-run-toggle')?.getAttribute('aria-expanded') === 'true',
       historyExpanded: history?.querySelector('.execution-run-toggle')?.getAttribute('aria-expanded') === 'true',
-      historyHasSpeed: Boolean(history?.querySelector('.execution-current-speed')),
       historyVisible: Boolean(history?.getClientRects().length) }
   })()`)
   assert(switched.historyVisible && switched.historyExpanded && !switched.activeExpanded
-    && !switched.historyHasSpeed && switched.activeSpeed
-    && switched.activeDuration && switched.sameLine,
+    && switched.activeDuration,
   `Switching current and historical Run cards mixed metrics: ${JSON.stringify(switched)}`)
   await evaluate(app.cdp,
     `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-toggle')?.click()`)
 
   await waitForExpression(app.cdp,
-    `!document.querySelector('.execution-drawer-header .execution-current-speed')`, 11_000)
-  const idleCapture = join(capturesRoot, 'execution-metrics-stream-tool-idle.png')
-  await capture(app.cdp, idleCapture)
-  await waitForExpression(app.cdp,
-    `document.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim()?.match(/^\\d+\\.\\d tok\\/s$/)`, 8_000)
-  const resumedCapture = join(capturesRoot, 'execution-metrics-stream-resumed.png')
-  await capture(app.cdp, resumedCapture)
-  await waitForExpression(app.cdp,
-    `document.querySelector(${JSON.stringify(stageSelector)})?.classList.contains('status-succeeded')`, 12_000)
-  const speedChanges = await evaluate(app.cdp, `(() => {
-    const probe = window.__streamMetricsProbe
-    probe.observer.disconnect()
-    return probe.changes
-  })()`)
-  const numericChanges = speedChanges.filter((change) => /^\d+\.\d tok\/s$/.test(change.speed ?? ''))
-  const terminalHasSpeed = await evaluate(app.cdp,
-    `Boolean(document.querySelector('.execution-drawer-header .execution-current-speed'))`)
-  assert(numericChanges.length >= 2
-    && speedChanges.some((change) => change.speed === null)
-    && !terminalHasSpeed
-    && numericChanges.every((change, index) => index === 0
-      || change.at - numericChanges[index - 1].at >= 850),
-  `Live Renderer did not respect warmup, idle, 1 Hz and terminal transition: ${JSON.stringify(speedChanges)}`)
+    `document.querySelector(${JSON.stringify(stageSelector)})?.classList.contains('status-succeeded')`, 30_000)
   const terminalBeforeUsage = await evaluate(app.cdp,
     `({ usage: document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-usage-trigger')?.textContent?.trim() ?? null,
       clock: Boolean(document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-duration-trigger')),
@@ -1483,38 +1419,38 @@ async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
     `The controlled private thought marker escaped into isolated Core files: ${JSON.stringify(leakedFiles)}`)
   assert(leakedIpc === 0, 'The controlled private thought marker escaped through public IPC')
   return {
-    verified: { streamCampId, runId, setupRunId, numericSample,
+    verified: { streamCampId, runId, setupRunId,
       leakedEvidence: Number(leakedEvidence.trim()), leakedRenderer, leakedFiles, leakedIpc,
-      reopened, switched, speedChanges, usageRows },
-    captures: { steady: steadyCapture, idle: idleCapture, resumed: resumedCapture, terminal: terminalCapture }
+      reopened, switched, usageRows },
+    captures: { steady: steadyCapture, terminal: terminalCapture }
   }
 }
 
-async function verifyRealRuntimeObservableOutput(app, capturesRoot) {
+async function verifyRealRuntimeExecutionMetrics(app, capturesRoot) {
   const request = (method, params = {}) => evaluate(app.cdp,
     `window.rovai.request(${JSON.stringify(method)}, ${JSON.stringify(params)})`, true)
-  const runtimeKind = process.env.ROVAI_OBSERVABLE_RUNTIME ?? 'codex-cli'
+  const runtimeKind = process.env.ROVAI_METRICS_RUNTIME ?? 'codex-cli'
   const agentId = runtimes.find((entry) => entry.key === 'codex').agentId
   const installation = await configureProductRuntime(request, runtimeKind, [agentId])
-  const modelId = process.env.ROVAI_OBSERVABLE_MODEL ?? (runtimeKind === 'codex-cli' ? 'gpt-6.1-sol' : null)
+  const modelId = process.env.ROVAI_METRICS_MODEL ?? (runtimeKind === 'codex-cli' ? 'gpt-6.1-sol' : null)
   if (modelId) {
     const profile = await request('members.get', { agentId })
     const selection = await request('members.runtime.set', { commandId: crypto.randomUUID(), command: {
       agentId, expectedVersion: profile.version, adapterKind: runtimeKind,
       permissions: profile.runtimeConfiguration.permissions,
       model: { mode: 'explicit', modelId,
-        options: process.env.ROVAI_OBSERVABLE_MODEL_OPTIONS ? JSON.parse(process.env.ROVAI_OBSERVABLE_MODEL_OPTIONS)
+        options: process.env.ROVAI_METRICS_MODEL_OPTIONS ? JSON.parse(process.env.ROVAI_METRICS_MODEL_OPTIONS)
           : runtimeKind === 'codex-cli' ? { reasoning_effort: 'high' } : {} }
     } })
     assert(selection.status === 'applied', 'Real Runtime acceptance model was not applied')
   }
   const workspace = await request('workspaces.inspect', { path: fixtureExecutionRoot })
   const setup = await createConfiguredCampAndSend(request, {
-    commandId: crypto.randomUUID(), name: `可观测输出真实 ${runtimeKind} 验收`, workspace,
+    commandId: crypto.randomUUID(), name: `原生执行指标 ${runtimeKind} 验收`, workspace,
     memberAgentIds: [agentId], defaultLeadAgentId: agentId,
-    body: await readFile(process.env.ROVAI_OBSERVABLE_PROMPT_FILE
-      ?? join(root, 'scripts', 'fixtures', 'observable-output-reasoning-task.txt'), 'utf8'),
-    purpose: 'Long native observable output through packaged Renderer'
+    body: await readFile(process.env.ROVAI_METRICS_PROMPT_FILE
+      ?? join(root, 'scripts', 'fixtures', 'native-execution-metrics-task.txt'), 'utf8'),
+    purpose: 'Native Usage and Context through packaged Renderer'
   })
   assert(setup.status === 'accepted', 'Real Runtime acceptance was not accepted')
   const liveCampId = setup.payload.threadId
@@ -1549,63 +1485,34 @@ async function verifyRealRuntimeObservableOutput(app, capturesRoot) {
   })()`)
   await waitForExpression(app.cdp, `document.querySelector(${JSON.stringify(stageSelector)})?.closest('.execution-drawer')?.querySelector('.execution-drawer-header')?.classList.contains('is-overview') === false`, 15_000)
   const drawerExpression = `document.querySelector(${JSON.stringify(stageSelector)})?.closest('.execution-drawer')`
-  await evaluate(app.cdp, `(() => {
-    const drawer = ${drawerExpression}
-    const probe = { changes: [], last: null }
-    const record = () => {
-      const speed = drawer?.querySelector('.execution-drawer-header .execution-current-speed')?.textContent?.trim() ?? null
-      if (speed !== probe.last) { probe.last = speed; probe.changes.push({ at: performance.now(), speed }) }
-    }
-    probe.observer = new MutationObserver(record)
-    probe.observer.observe(drawer.querySelector('.execution-drawer-header'),
-      { subtree: true, childList: true, characterData: true })
-    window.__streamMetricsProbe = probe
-  })()`)
-  const samples = [], started = Date.now(), capturePath = join(capturesRoot, `observable-real-${runtimeKind}.png`)
-  let captured = false, status = null, nextProgress = started + 30_000
+  const samples = [], started = Date.now()
+  let status = null, nextProgress = started + 30_000
   while (Date.now() - started < 480_000) {
     const state = await request('camps.snapshot', { campId: liveCampId })
-    const run = state.agentRuns.find((candidate) => candidate.id === runId)
-    status = run?.status
-    const value = await request('monitoring.observableOutput', {
-      campId: liveCampId, agentRunId: runId, executionEpoch: run.executionEpoch
-    })
+    status = state.agentRuns.find((candidate) => candidate.id === runId)?.status
     const ui = await evaluate(app.cdp, `(() => {
       const drawer = ${drawerExpression}
-      const speed = drawer?.querySelector('.execution-drawer-header .execution-current-speed')
-      const stage = document.querySelector(${JSON.stringify(`.execution-process-stage[data-agent-run-id="${runId}"]`)})
-      const context = drawer?.querySelector('.execution-drawer-header .execution-context-trigger')
-      return { speed: speed?.textContent?.trim() ?? null, scope: speed?.getAttribute('aria-label'),
-        selectedAgentId: [...((drawer?.closest('.execution-sidecar-panel') ?? drawer?.closest('.camp-workspace'))?.querySelectorAll('.run-pulse-chip.is-selected') ?? [])]
-          .find(chip => chip.getClientRects().length)?.dataset.agentId ?? null,
+      const stage = document.querySelector(${JSON.stringify(stageSelector)})
+      return {
         overview: drawer?.querySelector('.execution-drawer-header')?.classList.contains('is-overview') ?? null,
-        duration: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
-        speedInCard: Boolean(stage?.querySelector('.execution-current-speed')),
-        sameLine: Boolean(speed && context && Math.abs(speed.getBoundingClientRect().top - context.getBoundingClientRect().top) < 12) }
+        duration: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null
+      }
     })()`)
-    samples.push({ atMs: Date.now() - started, status, value, ui })
-    if (ui.speed && !captured) { await capture(app.cdp, capturePath); captured = true }
+    samples.push({ atMs: Date.now() - started, status, ui })
     if (['succeeded', 'failed', 'cancelled'].includes(status)) break
     if (Date.now() >= nextProgress) {
-      console.log(JSON.stringify({ stage: 'real-runtime-live', runtimeKind, status,
-        publicUnits: value?.publicTextUnits, reasoningUnits: value?.reasoningUnits, speed: ui.speed }))
+      console.log(JSON.stringify({ stage: 'native-metrics-live', runtimeKind, status }))
       nextProgress = Date.now() + 30_000
     }
-    await wait(250)
+    await wait(1000)
   }
-  const changes = await evaluate(app.cdp, `(() => {
-    window.__streamMetricsProbe.observer.disconnect()
-    return window.__streamMetricsProbe.changes
-  })()`)
-  const numericChanges = changes.filter((change) => /^\d+\.\d tok\/s$/.test(change.speed ?? ''))
-  await writeFile(join(capturesRoot, `observable-diagnostic-${runtimeKind}.json`), JSON.stringify({runtimeKind,status,samples,changes},null,2))
   const projection = await request('monitoring.execution', { campId: liveCampId, agentRunIds: [runId] })
   const usage = projection.runs.find(run => run.agentRunId === runId)
-  await writeFile(join(capturesRoot, `observable-diagnostic-${runtimeKind}.json`),
-    JSON.stringify({ runtimeKind, status, samples, changes, projection }, null, 2))
+  await writeFile(join(capturesRoot, `native-metrics-diagnostic-${runtimeKind}.json`),
+    JSON.stringify({ runtimeKind, status, samples, projection }, null, 2))
   assert(['succeeded', 'failed', 'cancelled'].includes(status),
     `Real Runtime did not reach a terminal within the 480s acceptance window; partial observations are retained`)
-  if (process.env.ROVAI_OBSERVABLE_VERIFY_USAGE === '1') {
+  if (process.env.ROVAI_METRICS_VERIFY_USAGE === '1') {
     assert(usage?.finalizedAt && usage.promptInputTotalTokens > 0 && usage.outputTokens > 0,
       'Real Runtime did not persist native Usage')
     await evaluate(app.cdp, `(() => {
@@ -1627,7 +1534,7 @@ async function verifyRealRuntimeObservableOutput(app, capturesRoot) {
   const usageRows = await evaluate(app.cdp, `[...document.querySelectorAll('.execution-metric-popover dl > div')]
     .map(row => [row.querySelector('dt')?.textContent, row.querySelector('dd')?.textContent])`)
   const metricK = value => value == null ? '—' : `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`
-  if (process.env.ROVAI_OBSERVABLE_VERIFY_USAGE === '1') {
+  if (process.env.ROVAI_METRICS_VERIFY_USAGE === '1') {
     assert(JSON.stringify(usageRows.slice(0, 4)) === JSON.stringify([
       ['Input Token', metricK(usage.promptInputTotalTokens)], ['Output Token', metricK(usage.outputTokens)],
       ['Cache Read', metricK(usage.cacheReadTokens)], ['Cache Write', metricK(usage.cacheWriteTokens)]
@@ -1637,7 +1544,7 @@ async function verifyRealRuntimeObservableOutput(app, capturesRoot) {
   }
   const contextLabel = await evaluate(app.cdp,
     `${drawerExpression}?.querySelector('.execution-drawer-header .execution-context-trigger')?.getAttribute('aria-label') ?? null`)
-  if (process.env.ROVAI_OBSERVABLE_VERIFY_CONTEXT === '1') {
+  if (process.env.ROVAI_METRICS_VERIFY_CONTEXT === '1') {
     const context = projection.sessions[0]
     assert(context && (context.usedTokens > 0 || context.nativeRatio != null)
       && contextLabel?.includes(metricK(context.usedTokens)) && contextLabel?.includes(metricK(context.windowTokens)),
@@ -1655,28 +1562,16 @@ async function verifyRealRuntimeObservableOutput(app, capturesRoot) {
     ]), 'Native ratio must not infer missing token quantities in the popover')
     await capture(app.cdp, join(capturesRoot, `native-context-${runtimeKind}.png`))
   }
-  const report = { runtimeKind, version: installation.snapshot?.reportedVersion, campId: liveCampId, runId, status,
-    publicUnits: Math.max(0, ...samples.map((sample) => sample.value?.publicTextUnits ?? 0)),
-    reasoningUnits: Math.max(0, ...samples.map((sample) => sample.value?.reasoningUnits ?? 0)),
-    rendererPublications: numericChanges.length, projection, usageRows, contextLabel, samples, changes }
-  const reportPath = join(capturesRoot, `observable-real-${runtimeKind}.json`)
+  const report = { runtimeKind, version: installation.snapshot?.reportedVersion, campId: liveCampId,
+    runId, status, projection, usageRows, contextLabel, samples }
+  const reportPath = join(capturesRoot, `native-metrics-${runtimeKind}.json`)
   await writeFile(reportPath, JSON.stringify(report, null, 2))
-  const requireReasoning = process.env.ROVAI_OBSERVABLE_REQUIRE_REASONING !== '0'
-  assert(status === 'succeeded' && report.publicUnits > 0
-    && (!requireReasoning || (report.reasoningUnits > 0
-      && samples.some((sample) => sample.value?.reasoningSource === (runtimeKind === 'codex-cli' ? 'stream_summary' : 'stream_text')
-        && sample.ui.speed && (sample.ui.scope?.includes('思考') || sample.ui.scope?.includes('摘要')))))
-    && numericChanges.length > 10 && captured
-    && numericChanges.every((change, index) => index === 0 || change.at - numericChanges[index - 1].at >= 850)
-    && samples.filter((sample) => sample.status === 'running').every((sample) =>
-      sample.ui.selectedAgentId === agentId && sample.ui.overview === false)
-    && samples.filter((sample) => sample.ui.speed).every((sample) =>
-      sample.ui.duration && sample.ui.sameLine && !sample.ui.speedInCard)
-    && samples.at(-1).ui.speed === null,
-  `Real Runtime output acceptance failed; numeric evidence is in ${reportPath}`)
-  return { verified: { status, version: report.version, publicUnits: report.publicUnits,
-    reasoningUnits: report.reasoningUnits, rendererPublications: report.rendererPublications },
-  captures: { speed: capturePath, report: reportPath } }
+  assert(status === 'succeeded'
+    && samples.filter(sample => sample.status === 'running').every(sample =>
+      sample.ui.overview === false && sample.ui.duration),
+  `Real Runtime native metrics acceptance failed; evidence is in ${reportPath}`)
+  return { verified: { status, version: report.version, projection, usageRows, contextLabel },
+    captures: { report: reportPath } }
 }
 
 async function waitForControlledMessageRun(request, campId, messageId) {

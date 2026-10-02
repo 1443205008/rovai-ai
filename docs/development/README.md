@@ -121,7 +121,7 @@ App，以受控本机 API 和时钟验证页面框架、截止时间与 authorit
 模型。它们保持独立，不进入普通 commit 门禁；运行前先阅读对应文档。
 
 修改执行台指标读取生命周期时运行 `pnpm test:execution-metrics-ui`：使用生产 CampWorkspace 和 CSS、
-隔离 Electron 与 500 个合成 Run，验证视口范围、展开、隐藏／恢复、速度重新预热、稳定终态停止轮询、
+隔离 Electron 与 500 个合成 Run，验证视口范围、展开、隐藏／恢复、稳定终态停止轮询、
 迟到 Usage 和 Session Context 换代／失效；不启动 Core 或真实 Runtime。
 
 ## 按任务阅读

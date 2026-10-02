@@ -58,7 +58,7 @@ target_version: "v1.72"
 
 ## 打包 App 动态验收
 
-最终候选 `d2193d5d` 使用 `pnpm package:mac:daily` 构建，arm64 App/Core/Host/CLI、Bundle ID 与 ad-hoc 签名门通过。已签名 Core SHA-256 为 `73c21d50a85158f16459815a849fd868e9b6b254b51e113ef3b1fdd4dbc46bd2`。各次 App 使用独立临时 userData、Skill Library 和 MCP，日常宿主持续运行。字段级结果见[实际 Renderer 证据](fixtures/round4-observable-output-renderer-acceptance.json)，完整数字轨迹、脱敏 Native 形态和截图在本地附件 `observable-output-20260930/`；可重复入口见[测试与 Smoke](../../development/testing.md#可观测输出真实-runtime-验收)。
+最终候选 `d2193d5d` 使用 `pnpm package:mac:daily` 构建，arm64 App/Core/Host/CLI、Bundle ID 与 ad-hoc 签名门通过。已签名 Core SHA-256 为 `73c21d50a85158f16459815a849fd868e9b6b254b51e113ef3b1fdd4dbc46bd2`。各次 App 使用独立临时 userData、Skill Library 和 MCP，日常宿主持续运行。字段级结果见[实际 Renderer 证据](fixtures/round4-observable-output-renderer-acceptance.json)，完整数字轨迹、脱敏 Native 形态和截图在本地附件 `observable-output-20260930/`；可重复入口见[测试与 Smoke](https://github.com/murray17/rovai-ai/blob/ee444ab103d248c7573143992eb0c1141d0df1b1/docs/development/testing.md#可观测输出真实-runtime-验收)。
 
 - 固定 ACP 流混合 3 个原生 offset 帧和 4 个无 messageId/offset 的实时帧，并发送不合格完整 snapshot。观测快照为正文 15200、思考 3780 单位；这是运行中的部分累计，不是终态总量。途中打开先建立基线，切历史 Run 不改变当前队员顶部速度，工具停顿后隐藏、恢复重新预热，运行耗时保持。私有标记在 Evidence 为 0 行，Renderer 未出现，隔离 userData 常规文件扫描为空。
 - Run 先结束后，用独立 fixture 数据库投递晚到 Usage，完成卡片刷新为 `2k`；气泡为四项 Usage 加执行耗时，卡片上没有独立耗时文字。合成数据不作为真实 Runtime Usage 支持证明。

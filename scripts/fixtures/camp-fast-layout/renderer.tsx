@@ -45,7 +45,6 @@ let metricMode = false
 let metricValue: number | null = null
 let metricGeneration = 1
 let metricSessionVisible = true
-let metricStartedAt = 0
 let metricRuns: AgentRunView[] = []
 const checkFailures = new Set(['agent-4'])
 const heldChecks = new Map<string, Promise<void>>()
@@ -82,13 +81,6 @@ Object.assign(window, { rovai: {
         sessionGeneration: metricGeneration, runtimeKind: 'claude-code-cli', modelKey: `model-${metricGeneration}`,
         usedTokens: null, windowTokens: null, nativeRatio: metricGeneration === 1 ? 0.25 : 0.32,
         source: 'fixture', dialectId: 'fixture', observedAt: now }] : [] }
-    if (method === 'monitoring.observableOutput') {
-      const sampledAtMs = Math.floor(performance.now())
-      return metricMode ? { agentRunId: params!.agentRunId, executionEpoch: params!.executionEpoch,
-        counterGeneration: 'fixture', sequence: Math.floor(sampledAtMs), algorithmVersion: 'observable-output-heuristic-v3',
-        unicodeDataVersion: 'fixture', publicTextUnits: Math.floor((sampledAtMs - metricStartedAt) * 5),
-        reasoningUnits: 0, reasoningSource: 'none', streamConfirmed: true, sampledAtMs, lastOutputAtMs: sampledAtMs } : null
-    }
     if (method === 'skills.list' || method === 'skills.deliveryGroups.list') return []
     if (method === 'camp.pendingInputs.get') return {threadId, executionActive: false,
       items: [...submissionOutcomes.values()].filter(item => item.state === 'queued').map((item, index) => ({
@@ -200,7 +192,6 @@ let releaseStop: (() => void) | null = null
 Object.assign(window, { fastTest: {
   showMetrics: () => {
     metricMode = true
-    metricStartedAt = performance.now()
     ;(window as any).fastTest.showExecution()
     updateSnapshot(current => {
       const active = current.agentRuns.find(run => run.id === 'run-agent-0')!

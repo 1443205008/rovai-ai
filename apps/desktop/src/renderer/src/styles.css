@@ -2281,8 +2281,6 @@ button.file-preview-html-feedback:hover,
 .execution-drawer.is-resizing, .execution-drawer.is-resizing * { cursor: ns-resize; user-select: none; }
 .execution-drawer-header { --faint: var(--muted); display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px 9px; border-bottom: 1px solid var(--line); background: var(--conversation-surface); }
 .execution-header-metrics { display: inline-flex; min-width: 0; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 8px; }
-.execution-current-speed { display: inline-flex; align-items: baseline; color: var(--muted); font: 400 10.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.execution-current-speed > span:first-child { color: var(--ink); }
 .execution-drawer-agent { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .execution-drawer-agent > div { display: grid; min-width: 0; gap: 1px; }
 .execution-drawer-title-line { display: flex; min-width: 0; align-items: center; gap: 8px; }

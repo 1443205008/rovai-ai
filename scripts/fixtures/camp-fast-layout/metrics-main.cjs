@@ -34,10 +34,8 @@ app.whenReady().then(async () => {
     await waitFor('document.querySelector(".execution-context-value")?.textContent === "25%"', 'Current Session ratio was not loaded')
     let reads = (await requests()).filter(request => request.method === 'monitoring.execution')
     assert.ok(reads.every(request => request.params.agentRunIds.length < 20), 'Initial reads queried hidden historical Runs')
-    await waitFor('!!document.querySelector(".execution-current-speed")', 'Visible output did not warm up')
-    assert.equal(await run('document.querySelectorAll(".execution-run-card-header .execution-current-speed").length'), 0)
 
-    // A mounted but hidden panel must stop both persisted metrics and observable-speed reads.
+    // A mounted but hidden panel must stop persisted metrics reads.
     await run('document.querySelector(".execution-drawer").style.display = "none"')
     await wait(250)
     const hiddenPanelReads = (await requests()).length
@@ -45,7 +43,6 @@ app.whenReady().then(async () => {
     assert.equal((await requests()).length, hiddenPanelReads, 'Hidden panel continued UI requests')
     await run('document.querySelector(".execution-drawer").style.display = ""')
     await waitFor(`window.fastTest.metricsRequests().length > ${hiddenPanelReads}`, 'Panel reopening did not immediately refresh')
-    await waitFor('!!document.querySelector(".execution-current-speed")', 'Panel reopening did not rewarm the speed baseline')
     window.hide()
     await waitFor('document.hidden', 'Electron did not hide the page')
     await wait(250)
@@ -76,7 +73,6 @@ app.whenReady().then(async () => {
 
     await run('document.querySelector(".execution-drawer-body").scrollTop = 0')
     await run('window.fastTest.metricsTerminal()')
-    await waitFor('!document.querySelector(".execution-current-speed")', 'Terminal retained the speed')
     await wait(4_500) // The finite terminal tail has completed.
     const beforeStable = (await requests()).length
     await wait(10_500)
@@ -97,8 +93,10 @@ app.whenReady().then(async () => {
       await run('window.fastTest.settle()')
       writeFileSync(join(dirname(userData), `metrics-${theme}.png`), (await window.webContents.capturePage()).toPNG())
     }
+    assert.ok((await requests()).every(request => request.method === 'monitoring.execution'), 'Unexpected metrics polling')
+    assert.equal(await run('document.querySelectorAll(".execution-header-metrics > *").length'), 1, 'Header must contain only the Context entry')
     const report = { ok: true, cases: ['visible collapsed history', '500 Run scoped reads', 'scroll and expansion',
-      'hidden panel and page', 'restored speed baseline', 'stable terminal', 'late post-tail Usage', 'Session replacement/removal'],
+      'hidden panel and page', 'immediate visibility refresh', 'stable terminal', 'late post-tail Usage', 'Session replacement/removal'],
       maximumRequestedRuns: Math.max(...(await requests()).filter(request => request.method === 'monitoring.execution').map(request => request.params.agentRunIds.length)) }
     writeFileSync(join(dirname(userData), 'metrics-report.json'), JSON.stringify(report, null, 2))
     console.log(JSON.stringify(report))

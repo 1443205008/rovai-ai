@@ -9,13 +9,12 @@ import { performance } from 'node:perf_hooks'
 import { startQualificationCore } from './lib/qualification-core.mjs'
 import { configureProductRuntime } from './configure-product-runtime.mjs'
 import { createConfiguredCampAndSend, composerDocumentForAddress } from './lib/create-configured-camp.mjs'
-import { LiveTokenSpeedDisplay } from '../apps/desktop/src/renderer/src/execution-token-speed.ts'
 import { querySqliteRows } from './lib/sqlite.mjs'
 
 const repository = resolve(import.meta.dirname, '..')
 const kind = process.argv[2]
-const coldRestart = process.env.ROVAI_OBSERVABLE_COLD_RESTART === '1'
-const compactAfterRestart = process.env.ROVAI_OBSERVABLE_GROK_COMPACT_AFTER_RESTART === '1'
+const coldRestart = process.env.ROVAI_METRICS_COLD_RESTART === '1'
+const compactAfterRestart = process.env.ROVAI_METRICS_GROK_COMPACT_AFTER_RESTART === '1'
 if (compactAfterRestart && (kind !== 'grok-build' || !coldRestart)) {
   throw new Error('Native Grok compaction acceptance requires a cold restart')
 }
@@ -37,10 +36,10 @@ const commands = {
   'antigravity-app': null
 }
 if (!Object.hasOwn(commands, kind)) throw new Error('Select an in-scope Runtime')
-const fixture = await realpath(process.env.ROVAI_OBSERVABLE_FIXTURE_ROOT ?? await mkdtemp(join(tmpdir(), `rovai-observable-${kind}-`)))
+const fixture = await realpath(process.env.ROVAI_METRICS_FIXTURE_ROOT ?? await mkdtemp(join(tmpdir(), `rovai-runtime-metrics-${kind}-`)))
 const data = join(fixture, 'user-data'), workspacePath = join(fixture, 'workspace')
 const rawPath = join(fixture, 'native-shapes.jsonl')
-const coreSource = process.env.ROVAI_OBSERVABLE_CORE ?? join(repository, 'resources/bin/macos-arm64/rovai-core')
+const coreSource = process.env.ROVAI_METRICS_CORE ?? join(repository, 'resources/bin/macos-arm64/rovai-core')
 const fixtureCore = join(fixture, 'rovai-core')
 await copyFile(coreSource, fixtureCore); await chmod(fixtureCore, 0o700)
 await copyFile(join(dirname(coreSource), 'rovai'), join(fixture, 'rovai'))
@@ -60,26 +59,26 @@ if (kind === 'pi') {
     await chmod(join(piHome, name), 0o600)
   }
   process.env.PI_CODING_AGENT_DIR = piHome
-  if (process.env.ROVAI_OBSERVABLE_THINKING_LEVEL) {
+  if (process.env.ROVAI_METRICS_THINKING_LEVEL) {
     const settingsPath = join(piHome, 'settings.json')
     const settings = JSON.parse(await readFile(settingsPath, 'utf8'))
-    settings.defaultThinkingLevel = process.env.ROVAI_OBSERVABLE_THINKING_LEVEL
+    settings.defaultThinkingLevel = process.env.ROVAI_METRICS_THINKING_LEVEL
     await writeFile(settingsPath, JSON.stringify(settings), { mode: 0o600 })
   }
 }
-if (process.env.ROVAI_OBSERVABLE_NATIVE_HOME) {
+if (process.env.ROVAI_METRICS_NATIVE_HOME) {
   const nativeHome = join(fixture, 'native-home')
   await mkdir(nativeHome, { mode: 0o700 })
   const names = kind === 'grok-build' ? ['config.toml'] : ['settings.yaml', 'cordis.patch.yml']
   for (const name of names) {
     try {
-      await copyFile(join(process.env.ROVAI_OBSERVABLE_NATIVE_HOME, name), join(nativeHome, name))
+      await copyFile(join(process.env.ROVAI_METRICS_NATIVE_HOME, name), join(nativeHome, name))
       await chmod(join(nativeHome, name), 0o600)
     } catch (error) { if (error.code !== 'ENOENT') throw error }
   }
   if (kind === 'grok-build') process.env.GROK_HOME = nativeHome
   if (kind === 'deepseek-harness') {
-    try { await cp(join(process.env.ROVAI_OBSERVABLE_NATIVE_HOME, 'profiles'), join(nativeHome, 'profiles'), { recursive: true }) } catch (error) { if (error.code !== 'ENOENT') throw error }
+    try { await cp(join(process.env.ROVAI_METRICS_NATIVE_HOME, 'profiles'), join(nativeHome, 'profiles'), { recursive: true }) } catch (error) { if (error.code !== 'ENOENT') throw error }
     process.env.DSH_HOME = nativeHome; process.env.DSH_AGENTS_HOME = join(fixture, 'agents-home')
   }
   if (['grok-build', 'deepseek-harness'].includes(kind)) {
@@ -109,9 +108,9 @@ if (process.env.ROVAI_OBSERVABLE_NATIVE_HOME) {
       if (!keyName || !token) throw new Error('Probe credential reference is unavailable')
       process.env[keyName] = token
       config = config.replaceAll('gpt-6-sol', claude.ANTHROPIC_MODEL)
-      if (process.env.ROVAI_OBSERVABLE_THINKING_LEVEL) {
+      if (process.env.ROVAI_METRICS_THINKING_LEVEL) {
         const model = claude.ANTHROPIC_MODEL
-        const effort = process.env.ROVAI_OBSERVABLE_THINKING_LEVEL
+        const effort = process.env.ROVAI_METRICS_THINKING_LEVEL
         // The copied custom route has no installed catalog metadata. Declare
         // only the effort being exercised, in the supported native settings.
         config = config.replace(new RegExp(`(id: ${model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\n)([ ]+)`),
@@ -126,7 +125,7 @@ if (process.env.ROVAI_OBSERVABLE_NATIVE_HOME) {
     }
   }
 }
-if (kind === 'kimi-code-cli' && process.env.ROVAI_OBSERVABLE_SUB2API === '1') {
+if (kind === 'kimi-code-cli' && process.env.ROVAI_METRICS_SUB2API === '1') {
   const claude = JSON.parse(await readFile(join(homedir(), '.claude/settings.json'), 'utf8')).env
   const origin = new URL(claude.ANTHROPIC_BASE_URL).origin
   const token = claude.ANTHROPIC_AUTH_TOKEN ?? claude.ANTHROPIC_API_KEY
@@ -191,18 +190,15 @@ with open(${JSON.stringify(rawPath)},'a',buffering=1) as out:
         try:
             v=json.loads(line); p=v.get('params') or {}; u=p.get('update') or {}; a=v.get('assistantMessageEvent') or {}; e=v.get('event') or {}; d=v.get('delta') or {}
             if not isinstance(p,dict): p={}
-            text=(p.get('data') or {}).get('deltaContent') or p.get('delta') or u.get('content',{}).get('text') or a.get('delta') or d.get('thinking') or d.get('text') or ''
-            if isinstance(e,dict) and isinstance(e.get('delta'),dict): text=e['delta'].get('thinking') or e['delta'].get('text') or text
-            if not isinstance(text,str): text=''
             item=p.get('item') or {}
-            out.write(json.dumps({'observerGeneration':observer_generation,'atMs':round(time.monotonic()*1000),'method':v.get('method'),'type':v.get('type') or p.get('type'),'itemType':item.get('type'),'sessionUpdate':u.get('sessionUpdate'),'deltaType':a.get('type') or d.get('type') or (e.get('delta') or {}).get('type'),'keys':sorted(v.keys()),'paramsKeys':sorted(p.keys()),'dataKeys':sorted((p.get('data') or {}).keys()),'nativeModel':(p.get('data') or {}).get('model') if isinstance((p.get('data') or {}).get('model'),str) else None,'nativeTimestamp':p.get('timestamp') if isinstance(p.get('timestamp'),str) and len(p['timestamp'])<=40 else None,'updateKeys':sorted(u.keys()),'contentKeys':sorted((u.get('content') or {}).keys()),'eventKeys':sorted(e.keys()),'itemId':identity(p.get('itemId') or item.get('id') or u.get('messageId') or (e.get('message') or {}).get('id')),'turnId':identity(p.get('turnId')),'summaryIndex':p.get('summaryIndex'),'contentIndex':p.get('contentIndex',a.get('contentIndex')),'textOffset':p.get('textOffset',u.get('textOffset')),'parentPresent':any(u.get(k)!=None for k in ['agentId','sourceAgentId','subagentId','parentAgentId','parentSessionId']) or v.get('parent_tool_use_id')!=None,'usageFields':numeric(v),'managedContext':managed_context(v),'bytes':len(text.encode('utf-8')),'scalars':len(text)})+'\\n')
+            out.write(json.dumps({'observerGeneration':observer_generation,'atMs':round(time.monotonic()*1000),'method':v.get('method'),'type':v.get('type') or p.get('type'),'itemType':item.get('type'),'sessionUpdate':u.get('sessionUpdate'),'deltaType':a.get('type') or d.get('type') or (e.get('delta') or {}).get('type'),'keys':sorted(v.keys()),'paramsKeys':sorted(p.keys()),'dataKeys':sorted((p.get('data') or {}).keys()),'nativeModel':(p.get('data') or {}).get('model') if isinstance((p.get('data') or {}).get('model'),str) else None,'nativeTimestamp':p.get('timestamp') if isinstance(p.get('timestamp'),str) and len(p['timestamp'])<=40 else None,'updateKeys':sorted(u.keys()),'contentKeys':sorted((u.get('content') or {}).keys()),'eventKeys':sorted(e.keys()),'itemId':identity(p.get('itemId') or item.get('id') or u.get('messageId') or (e.get('message') or {}).get('id')),'turnId':identity(p.get('turnId')),'summaryIndex':p.get('summaryIndex'),'contentIndex':p.get('contentIndex',a.get('contentIndex')),'textOffset':p.get('textOffset',u.get('textOffset')),'parentPresent':any(u.get(k)!=None for k in ['agentId','sourceAgentId','subagentId','parentAgentId','parentSessionId']) or v.get('parent_tool_use_id')!=None,'usageFields':numeric(v),'managedContext':managed_context(v)})+'\\n')
         except Exception: pass
         sys.stdout.buffer.write(line);sys.stdout.buffer.flush()
 sys.exit(child.wait())
 `, { mode: 0o700 })
   process.env[override] = wrapper
 }
-const events = [], samples = [], displays = [], metrics = [], runs = [], restartChecks = []
+const events = [], metrics = [], runs = [], restartChecks = []
 const started = performance.now()
 const startCore = () => startQualificationCore({
   coreExecutable: fixtureCore,
@@ -225,35 +221,29 @@ try {
       new Promise((_, reject) => { configurationDeadline = setTimeout(() => reject(new Error('timed out configuring Runtime')), 90000) })
     ])
   } finally { clearTimeout(configurationDeadline) }
-  if (process.env.ROVAI_OBSERVABLE_MODEL) {
+  if (process.env.ROVAI_METRICS_MODEL) {
     const profile = await core.request('members.get', { agentId: 'agent_1' })
-    const options = process.env.ROVAI_OBSERVABLE_MODEL_OPTIONS ? JSON.parse(process.env.ROVAI_OBSERVABLE_MODEL_OPTIONS) : {}
+    const options = process.env.ROVAI_METRICS_MODEL_OPTIONS ? JSON.parse(process.env.ROVAI_METRICS_MODEL_OPTIONS) : {}
     const changed = await core.request('members.runtime.set', { commandId: crypto.randomUUID(), command: {
       agentId: 'agent_1', expectedVersion: profile.version, adapterKind: kind,
       permissions: profile.runtimeConfiguration.permissions,
-      model: { mode: 'explicit', modelId: process.env.ROVAI_OBSERVABLE_MODEL, options }
+      model: { mode: 'explicit', modelId: process.env.ROVAI_METRICS_MODEL, options }
     } })
     if (changed.status !== 'applied') throw new Error('Explicit probe model was not applied')
   }
   const workspace = await core.request('workspaces.inspect', { path: workspacePath })
   const accepted = await createConfiguredCampAndSend(core.request, { commandId: crypto.randomUUID(), workspace,
     memberAgentIds: ['agent_1'], defaultLeadAgentId: 'agent_1',
-    body: (process.env.ROVAI_OBSERVABLE_PROMPT_FILE ? await readFile(process.env.ROVAI_OBSERVABLE_PROMPT_FILE, 'utf8') : process.env.ROVAI_OBSERVABLE_PROMPT) ?? 'This is an isolated output metrics acceptance. Analyze a resilient library catalogue design: discuss consistency, retries, concurrency, Unicode, recovery, and observability. Emit three substantial public assistant commentary sections, about 800 English words each, outside tool arguments, while you work. Between sections run the shell command sleep 6 once so the acceptance observes a tool pause and resumed output. Do not delegate or modify files. Finally use rovai send --public-only for a brief completion, following Session Charter. Finish normally.',
-    purpose: 'Long real output and native observable reasoning acceptance' })
-  campId = accepted.payload.campId
-  const deadline = performance.now() + Number(process.env.ROVAI_OBSERVABLE_TIMEOUT_MS ?? 480000)
-  let meter = null, nextProgress = performance.now() + 30000
+    body: (process.env.ROVAI_METRICS_PROMPT_FILE ? await readFile(process.env.ROVAI_METRICS_PROMPT_FILE, 'utf8') : process.env.ROVAI_METRICS_PROMPT) ?? 'This is an isolated native usage and context acceptance. Analyze consistency, retries and recovery in a library catalogue. Use a read-only shell command to inspect the workspace, then explain the design in about 600 words. Do not delegate or modify files. Finally use rovai send --public-only for a brief completion, following Session Charter. Finish normally.',
+    purpose: 'Native Usage and Session Context acceptance' })
+  campId = accepted.payload.threadId ?? accepted.payload.campId
+  const deadline = performance.now() + Number(process.env.ROVAI_METRICS_TIMEOUT_MS ?? 480000)
+  let nextProgress = performance.now() + 30000
   while (performance.now() < deadline) {
     const snapshot = await core.request('camps.snapshot', { campId }, 15000)
     run = snapshot.agentRuns.find(candidate => !runs.some(old => old.id === candidate.id))
     if (run) {
       const now = performance.now()
-      meter ??= new LiveTokenSpeedDisplay(now)
-      const value = await core.request('monitoring.observableOutput', { campId, agentRunId: run.id, executionEpoch: run.executionEpoch }, 15000)
-      meter.observe(value, now)
-      const display = meter.sample(now)
-      samples.push({ atMs: Math.round(now - started), status: run.status, value })
-      if (display !== undefined) displays.push({ atMs: Math.round(now - started), value: display })
       const projection = await core.request('monitoring.execution', { campId, agentRunIds: [run.id] }, 15000)
       if (JSON.stringify(projection) !== JSON.stringify(metrics.at(-1)?.projection)) {
         metrics.push({ atMs: Math.round(now - started), status: run.status, projection })
@@ -267,7 +257,7 @@ try {
           throw new Error('Cold restart did not retain the exact native Session binding')
         }
         runs.push({ id: run.id, executionEpoch: run.executionEpoch, status: run.status, nativeBinding, projection })
-        if ((process.env.ROVAI_OBSERVABLE_RESUME === '1' || coldRestart)
+        if ((process.env.ROVAI_METRICS_RESUME === '1' || coldRestart)
           && runs.length === 1 && run.status === 'succeeded') {
           if (coldRestart) {
             const stopped = await core.stop()
@@ -281,24 +271,23 @@ try {
               recoveredProjection: recovered, unchanged, compactAfterRestart })
             if (!unchanged) throw new Error('Isolated Core restart changed persisted metrics')
           }
-          const followup = process.env.ROVAI_OBSERVABLE_FOLLOWUP_PROMPT_FILE
-            ? await readFile(process.env.ROVAI_OBSERVABLE_FOLLOWUP_PROMPT_FILE, 'utf8')
+          const followup = process.env.ROVAI_METRICS_FOLLOWUP_PROMPT_FILE
+            ? await readFile(process.env.ROVAI_METRICS_FOLLOWUP_PROMPT_FILE, 'utf8')
             : 'Continue in this same native session for a second isolated metrics acceptance. Explain retry ownership in about 250 words, run sleep 3 once, then briefly describe recovery. Do not delegate or change files. Send a short completion with rovai send --public-only and finish normally.'
           await core.request('camp.messages.send', { commandId: crypto.randomUUID(), campId,
             content: composerDocumentForAddress({ mode: 'default' }, followup),
             sourceAttachments: [], quotes: [], replyToCampMessageId: null,
             execution: { taskId: null, purpose: 'Same Session successor Usage baseline', completionRole: 'required' } })
-          meter = null
           continue
         }
         break
       }
       if (now >= nextProgress) {
-        console.log(JSON.stringify({ kind, stage: 'live', status: run.status, publicUnits: value?.publicTextUnits, reasoningUnits: value?.reasoningUnits }))
+        console.log(JSON.stringify({ kind, stage: 'live', status: run.status }))
         nextProgress = now + 30000
       }
     }
-    await new Promise(done => setTimeout(done, 500))
+    await new Promise(done => setTimeout(done, 1000))
   }
   if (!['succeeded', 'failed', 'cancelled'].includes(run?.status)) failure = 'acceptance_deadline'
 } catch (error) {
@@ -319,8 +308,8 @@ try {
   const groups = {}
   for (const event of raw) {
     const key = [event.method, event.type, event.sessionUpdate, event.deltaType].filter(Boolean).join('/')
-    groups[key] ??= { count: 0, textScalars: 0, firstAtMs: event.atMs, lastAtMs: event.atMs }
-    groups[key].count++; groups[key].textScalars += event.scalars
+    groups[key] ??= { count: 0, firstAtMs: event.atMs, lastAtMs: event.atMs }
+    groups[key].count++
     groups[key].firstAtMs = Math.min(groups[key].firstAtMs, event.atMs)
     groups[key].lastAtMs = Math.max(groups[key].lastAtMs, event.atMs)
   }
@@ -335,11 +324,6 @@ try {
           .filter(word => (failure.detail ?? '').toLowerCase().includes(word)) }
     })() : null,
     rawGroups: groups,
-    publicUnits: Math.max(0, ...samples.map(s => s.value?.publicTextUnits ?? 0)),
-    reasoningUnits: Math.max(0, ...samples.map(s => s.value?.reasoningUnits ?? 0)),
-    reasoningSources: [...new Set(samples.map(s => s.value?.reasoningSource).filter(Boolean))],
-    streamConfirmed: samples.some(s => s.value?.streamConfirmed),
-    meterDisplayCount: displays.filter(s => s.value !== null).length,
     rendererVerified: false, stopped: stopped.code === 0 }
   report.runs = runs
   report.restartChecks = restartChecks
@@ -350,6 +334,6 @@ try {
     'Context observation has no time', 'Runtime Usage token field is outside the safe integer range',
     'Runtime Usage cache buckets exceed prompt input total', 'dropped fenced ACP message',
   ].filter(message => stopped.stderrTail.includes(message))
-  await writeFile(join(fixture, 'evidence.json'), JSON.stringify({ report, samples, displays, events }, null, 2))
+  await writeFile(join(fixture, 'evidence.json'), JSON.stringify({ report, events }, null, 2))
   console.log(JSON.stringify({ ...report, metrics: undefined }))
 }

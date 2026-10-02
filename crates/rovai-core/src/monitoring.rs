@@ -3394,8 +3394,8 @@ pub fn parse_acp_usage_message(
 
         if adapter_kind == AdapterKind::GrokBuild
             && reported_version_is(runtime_version, [1, 0, 44])
-            && crate::observable_output::is_root_output(params)
-            && crate::observable_output::is_root_output(update)
+            && crate::runtime::is_root_output(params)
+            && crate::runtime::is_root_output(update)
             && let Some(used) = integer_at_any(params, &["/_meta/totalTokens"])
         {
             // Grok's per-notification metadata is current context, distinct

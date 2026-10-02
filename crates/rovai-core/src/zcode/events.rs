@@ -289,11 +289,11 @@ impl SessionEvents {
                 ));
             }
             ("model.streaming", Some("reasoning_delta"))
-                if crate::observable_output::is_root_output(event) =>
+                if crate::runtime::is_root_output(event) =>
             {
                 // Native seq is already de-duplicated above and owns this exact
                 // input/turn. Forward only genuine increments; complete parts,
-                // signatures and tool input never become observable output.
+                // signatures and tool input never become public evidence.
                 if let (Some(message), Some(delta)) = (
                     payload["assistantMessageId"]
                         .as_str()
@@ -304,7 +304,7 @@ impl SessionEvents {
                         session,
                         json!({
                             "sessionUpdate": "agent_thought_chunk", "messageId": message,
-                            "nativeSequence": seq, "content": {"type": "text", "text": delta}
+                            "content": {"type": "text", "text": delta}
                         }),
                     ));
                 }
@@ -638,10 +638,6 @@ mod tests {
         assert_eq!(
             translated.messages[0]["params"]["update"]["sessionUpdate"],
             "agent_thought_chunk"
-        );
-        assert_eq!(
-            translated.messages[0]["params"]["update"]["nativeSequence"],
-            2
         );
         assert_eq!(
             translated.messages[0]["params"]["update"]["messageId"],

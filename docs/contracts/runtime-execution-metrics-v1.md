@@ -4,12 +4,14 @@ contract: runtime-execution-metrics
 version: 1
 status: accepted
 source_version: v1.72
-last_updated: 2026-10-01
+last_updated: 2026-10-02
 ---
 
 # Runtime Execution Metrics v1
 
-本合同把执行台的三种数据分开：当前速度属于 `AgentRun + executionEpoch` 的 Core 临时计数及 Renderer 临时显示状态；四项原生用量属于逻辑 `AgentRun`，沿用 [Runtime Usage Monitoring v4](runtime-usage-monitoring-v4.md)；上下文属于当前原生 `Conversation / Binding / Session`。三者不互相填补。
+本合同区分两种原生数据：四项用量属于逻辑 `AgentRun`，沿用 [Runtime Usage Monitoring v4](runtime-usage-monitoring-v4.md)；上下文属于当前原生 `Conversation / Binding / Session`。两者不互相填补。
+
+2026-10-02 按用户要求撤下所有 Runtime 的输出测速。Core 不再分类或累计正文／思考字符，Desktop／Web 不再提供临时测速接口，Renderer 不再轮询、平滑或显示 `tok/s`。原生用量、上下文和思考内容隔离继续保留；本次不修改数据库结构或已有数据。
 
 ## 读取与归属
 
@@ -19,9 +21,8 @@ last_updated: 2026-10-01
 
 ### Renderer 读取生命周期
 
-执行面板用实际可见性与页面可见性共同控制 UI 读取；隐藏时停止用量、Context 和临时速度请求，
-Core 的原生采集、落盘与临时计数继续运行。恢复可见、重新聚焦或连接失效通知后立即重读；
-重新挂载速度显示先以最新数值建立基线，再预热，不播放隐藏期间的积压。
+执行面板用实际可见性与页面可见性共同控制 UI 读取；隐藏时停止用量和 Context 请求，
+Core 的原生采集与落盘继续运行。恢复可见、重新聚焦或连接失效通知后立即重读。
 
 `monitoring.execution` 只请求当前活动、视口内卡片以及新展开的 Run；可见但收起的卡片仍读取 token
 入口。活动期间的 4 秒兜底只读取活动 Run。终态转换立即读取，并在 250ms／1s／4s 做有限尾读，
@@ -80,27 +81,14 @@ ACP 广告模型与实际调用模型的差异，不把广告标签当作实际 
 
 ## 显示
 
-- 当前 `tok/s` 在队员名称行右侧、上下文圆环左侧显示为不可点击的纯文字，不随所展开的历史 Run 卡片切换；没有有效流式采样时隐藏。运行中的 Run 卡片保留原有执行耗时。`observable-output-heuristic-v3` 在 Core 内估算当前根 Agent 的公开正文增量，以及经方言和身份验证的明文思考增量或流式思考摘要。思考全文、加密推理、工具和子 Agent 输出不参与；正文与思考不传入同一个 Renderer 文本测速器。它是显示粗估，不等于原生 Usage。页面每 500 ms 读取当前 Run 的累计数值快照，以同一 Core 单调时钟间隔求一次合并速度，并用 2.5 秒时间常数平滑；首次有效输出后至少 1 秒才显示，屏幕最多每 1 秒发布一次，5 秒无新增输出后隐藏，重新输出重新预热；终态立即停止采样。该值不进入原生 Usage、费用、Context 或持久化。
+- 运行中的 Run 卡片保留原有执行耗时；执行台标题保留当前 Session 上下文入口。
 - 终态卡片不直接显示耗时。收到任一有效原生用量字段时，显示 `xxk` 用量入口；只有成功、Run summary 已结算、Input 与 Output 都已得到时，入口值为 `Input + Output`；Cache 是 Input 的子集，不再次相加。失败、取消及部分观测仍能在气泡查看已收到的字段，入口值为未知。完全没有用量字段时保留时钟入口，点击查看执行耗时；迟到用量落盘后入口切换为 token 数字。
 - 用量气泡显示 Input Token、Output Token、Cache Read、Cache Write 四项和分隔后的执行耗时，不加用量合计行、Run 编号或摘要。上下文入口是弱化小圆环，默认并排显示四舍五入的整数百分比，比例未知时显示 `—`；气泡只显示 `used / window` 与比例。缺乏数量与原生比例时不显示 `0%`；可靠原生零比例可显示 `0%`，不从比例反推精确 used。
-
-## 临时测速协议
-
-`monitoring.observableOutput({threadId, agentRunId, executionEpoch})` 兼容旧 `campId` 输入并拒绝同义字段重复；只在请求的 Run 属于 Thread、仍运行且代次匹配时返回最近数值；其他情况返回 `null`。`agentRunId + executionEpoch + counterGeneration` 是计数身份，`sequence` 单调递增；`sampledAtMs` 与 `lastOutputAtMs` 均来自同一 Core 进程单调时钟。返回 `algorithmVersion`、`unicodeDataVersion`、`publicTextUnits`、`reasoningUnits`、`reasoningSource`、`streamConfirmed`，单位为 0.01 个显示估算 token。接口不含正文、思考、摘要、工具 payload 或内容哈希；Web 对返回字段再做一次白名单投影。Core 重启、计数缺口或容量重建会更换 `counterGeneration`，Renderer 先建立基线；网络断开超过 2 秒同样重新建基线，不把积压量回放成当前速度。
-
-分类使用 ICU4X 2.2.0 随程序打包的 Unicode 属性数据：空白与指定格式字符为 0，可打印 ASCII 和 Latin 为 0.25，Han／Kana／Hangul／明确的 CJK 共享标点为 0.60，其他图形符号为 1.00，其余标量为 0.50。单个标量只能归入一类；`Script_Extensions` 只用于共享字符的单次归类。假名、韩文、符号与其他脚本的权重未按具体模型校准。旧 `visible-text-heuristic-v2` 不再驱动速度。
-
-准入的实时增量使用原生 UTF-16 offset、原生序号，或已经过 Host／Session／当前 prompt（Codex 为 thread／turn）栅栏的 stdio 接收身份。接收身份在 Core 分发前产生，同一通知的 Core 重试沿用该身份；它不证明两个独立 wire 通知不是上游重发。没有原生游标的通道依赖已核验的实时投递语义，历史恢复必须在进入计数前隔离，不通过保存全文或内容哈希去重。新方言存在未声明的重复、回放或完整块语义时保持未验证。
-
-- Codex 只计 `item/reasoning/summaryTextDelta`，以根 item 和当前 turn 的接收身份去重；`summaryIndex` 是摘要分段编号，不是 offset。原文 `textDelta`、终态完整 reasoning item 不计，也不进入公开 Evidence。
-- Pi 只计当前根 assistant `message_start` 到 `message_end` 之间的 `thinking_delta`，以 message 身份／本次 message 序号、`contentIndex` 与接收序号归属。`partial` 完整块不保留；start/end 不携带计数增量。
-- 标准 ACP 的实时 `agent_thought_chunk` 可以不带 `messageId`／offset，此时用当前 native prompt 身份和已栅栏的接收序号。`LoadingReplay`、闲置／终态 owner、显式子 Agent、replay 和 snapshot 不计。ZCode 的私有 `reasoning_delta` 先用原生 input／turn／seq 栅栏，再映射为该临时来源。
-- DeepSeek Harness 当前官方 ACP profile 从已提交的 `assistant/message` 投影完整正文和 reasoning 块（0.1.5-rc.3 已核验），即使事件名为 `*_chunk` 也不计实时速度。接入新的真正实时来源后才可改变该资格。
-
-来源模式由 Runtime 方言确定，不由原文／摘要哪个先到决定。同 item 的明文与摘要互斥；完整块不补计。只有实际实时分片才能确认流，不能用多个已完成调用的完整块制造 `streamConfirmed`。
 
 ## 证据门槛
 
 字段资格由 Runtime、版本及实际 wire 方言决定。Parser 命中、安装版本、端到端 Run、持久化和 UI 是不同证据阶段；未经过当前安装版本与真实调用核验的字段保持“未验证”。原生输入为缓存包含总量时直接使用原生总量；互斥桶只有齐全才合成 Input。Reasoning 已包含在 Output 时不重加。重复模型调用与终态统计按来源身份去重，恢复累计量由 checkpoint 建立基线；失败、取消和超时保留部分观测。
 
-本轮 Qoder／Grok／OpenCode／Copilot 字段证据见[原生比例与当前占用核验](../research/runtime-monitoring/native-context-ratio-verification-2026-10-01.md)。上一轮原生 Usage、Context、思考和打包 App 证据见[原生来源补接与核验](../research/runtime-monitoring/native-usage-context-verification-2026-09-30.md)；[第二轮执行指标核验记录](../research/runtime-monitoring/execution-metrics-verification-2026-09-29.md)与[v3 思考流接通](../research/runtime-monitoring/observable-output-v3-verification-2026-09-30.md)保留各自当时的支持范围。[首轮 v3 核验](../research/runtime-monitoring/observable-output-v3-verification-2026-09-29.md)保留当时的 offset 限制与验证状态，不作为最新支持结论。
+本轮 Qoder／Grok／OpenCode／Copilot 字段证据见[原生比例与当前占用核验](../research/runtime-monitoring/native-context-ratio-verification-2026-10-01.md)。上一轮原生 Usage、Context 和打包 App 证据见[原生来源补接与核验](../research/runtime-monitoring/native-usage-context-verification-2026-09-30.md)；[第二轮执行指标核验记录](../research/runtime-monitoring/execution-metrics-verification-2026-09-29.md)与[v3 思考流接通](../research/runtime-monitoring/observable-output-v3-verification-2026-09-30.md)保留各自当时的支持范围。[首轮 v3 核验](../research/runtime-monitoring/observable-output-v3-verification-2026-09-29.md)保留当时的 offset 限制与验证状态，不作为最新支持结论。
+
+上述思考流与速度记录仅描述退役前的实现，不代表当前功能；历史探针和算法可在 Git 提交 `ee444ab1` 查阅。
