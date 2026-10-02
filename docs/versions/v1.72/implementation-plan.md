@@ -539,10 +539,10 @@ Runtime/Context 合同无需变化；稳定交互规则同步至 [Member Identit
 
 - `pnpm typecheck`；Runtime 批量恢复、既有单队员保存和语言目录共 21 项 Vitest 通过。
 - `pnpm test:rust:pr`：439 项通过、1 项人工 Runtime smoke 维持忽略；没有修改、新增、删除或禁用 Rust 测试。
-- `pnpm test:member-runtime-apply`：50 项检查通过，零 Renderer console error，覆盖真实按钮操作、草稿隔离、
+- `pnpm test:member-runtime-apply`：51 项检查通过，零 Renderer console error，覆盖真实按钮操作、草稿隔离、
   部分失败重试、未知回执读回、并发版本冲突、读取失败恢复和键盘焦点约束。
 - 生产组件截图人工核验：桌面覆盖提示、375px 英文夜间、390px 中文日间与 200% 缩放；另外自动检查
-  430px 手机、844×390 横屏及 1040/1440/2560 桌面视口、搜索/空状态、两种主题和减少动态效果。
+  430px 手机、844×390 横屏及 1040/1440/2560 桌面视口、375px 超长队员名、搜索/空状态、两种主题和减少动态效果。
 - `node --test scripts/lib/member-editor.test.mjs`：原有 19 项队员编辑验收通过。
 - `pnpm test`：227 个 Vitest 文件、2438 项通过；随后 Node 回归 328 项通过、2 项平台跳过。
 - `pnpm build:desktop`、文档普通门禁与基于真实 `91b315e9` 的 `pnpm docs:check:ci` 通过。

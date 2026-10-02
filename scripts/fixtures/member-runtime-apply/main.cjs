@@ -168,8 +168,10 @@ app.whenReady().then(async () => {
     await capture([width,height,language,theme].join('-'))
   }
   await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
+  window.setContentSize(375, 812)
   await reset('many'); await open()
   await check('large roster search and reduced motion', '!!document.querySelector(".apply-search") && getComputedStyle(document.querySelector(".runtime-apply-dialog")).animationName==="none"')
+  await check('long teammate names fit within phone rows', '[...document.querySelectorAll(".apply-target-copy")].every(e=>e.scrollWidth<=e.clientWidth+1)')
   await click('.apply-search'); await window.webContents.insertText('not-a-teammate')
   await check('search retains selected targets', 'document.querySelectorAll(".apply-target").length===0 && !document.querySelector("[data-apply-submit]").disabled')
   await reset('empty'); await open(); await capture('mobile-empty')
