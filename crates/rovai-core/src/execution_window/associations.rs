@@ -60,6 +60,9 @@ pub(super) fn carrier_targets(
             continue;
         }
         let single = first == last;
+        if !single && last - first <= 1 {
+            continue;
+        }
         let range = if single {
             first.saturating_sub(1)..=first.saturating_add(1)
         } else {

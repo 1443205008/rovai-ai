@@ -6760,6 +6760,26 @@ mod slow_tests {
             "execution carrier probe: canonical_rows=10000 read_ms={}",
             started.elapsed().as_millis()
         );
+        // A historical started/ended lifetime can have no sequence strictly inside it.
+        // Core callbacks elsewhere do not turn that empty interval into an invalid range.
+        for (id, sequence, event) in [
+            ("adjacent-start", end + 2, "activity.started"),
+            ("adjacent-end", end + 3, "activity.completed"),
+        ] {
+            database.connection().execute(
+                "INSERT INTO agent_run_execution_evidence(id, agent_run_id, execution_epoch, sequence, event_type, kind, phase, payload_preview_json, content_byte_count, is_truncated, occurred_at)
+                 VALUES(?1, ?2, 0, ?3, ?4, 'command', 'completed', ?5, 100, 0, ?6)",
+                params![id, run, sequence, event, json!({"item":{"type":"commandExecution","command":"rovai task get --task-id fixture"}}).to_string(), now],
+            ).unwrap();
+        }
+        database.connection().execute(
+            "INSERT INTO canonical_runtime_activity(agent_run_id, execution_epoch, operation_id, classifier_version, activity_domain, phase, outcome, credibility, coverage_level, source_authority, source_evidence_ids_json, first_evidence_sequence, last_evidence_sequence, revision, created_at, updated_at)
+             VALUES(?1, 0, 'adjacent-shell', 'activity-v1', 'shell', 'terminal', 'succeeded', 'runtime_structured', 'fine_grained', 'runtime', '[\"adjacent-start\",\"adjacent-end\"]', ?2, ?3, 1, ?4, ?4)",
+            params![run, end + 2, end + 3, now],
+        ).unwrap();
+        let adjacent = read_block_page(database, camp, run, None, None, 1).unwrap();
+        assert_eq!(adjacent.blocks[0].tool_count, 1);
+        assert_eq!(adjacent.blocks[0].evidence[0].sequence, end + 2);
     }
 
     #[test]
