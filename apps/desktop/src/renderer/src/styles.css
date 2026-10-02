@@ -4327,10 +4327,11 @@ button.task-event-card:focus-visible .task-card-chevron { color: var(--brand-ink
 .camp-inspector-runtime-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
 .camp-inspector-runtime-toggle.runtime-ready { color: var(--success); }
 .camp-inspector-runtime-toggle.runtime-attention { color: var(--attention); }
-.camp-inspector-runtime-detail { display: grid; min-width: 0; grid-column: 2 / -1; gap: 3px; width: 100%; margin: -2px 0 2px; padding: 6px 8px; border-left: 1px solid var(--line-strong); background: var(--surface-subtle); }
-.camp-inspector-runtime-detail > div { display: grid; min-width: 0; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; }
-.camp-inspector-runtime-detail dt { color: var(--faint); font-size: 8.5px; }
-.camp-inspector-runtime-detail dd { min-width: 0; overflow: hidden; margin: 0; font: 600 8.7px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.camp-inspector-runtime-detail { display: grid; min-width: 0; grid-column: 2 / -1; gap: 7px; width: 100%; margin: 0 0 4px; padding: 2px 0; }
+.camp-inspector-runtime-detail > div { display: grid; min-width: 0; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; }
+:lang(en) .camp-inspector-runtime-detail > div { grid-template-columns: 100px minmax(0, 1fr); }
+.camp-inspector-runtime-detail dt { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.camp-inspector-runtime-detail dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 11px; line-height: 1.45; }
 .camp-inspector-member-state.is-away strong { color: var(--faint); }
 .camp-inspector-member-state .runtime-ready { color: var(--success); }
 .camp-inspector-member-state .runtime-attention { color: var(--attention); }

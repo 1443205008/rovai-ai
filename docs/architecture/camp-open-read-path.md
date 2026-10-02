@@ -3,7 +3,7 @@ document_type: architecture
 architecture: camp-open-read-path
 authority: desktop-camp-enter-and-progressive-read-boundaries
 status: accepted
-last_updated: 2026-09-28
+last_updated: 2026-10-02
 ---
 
 # Camp Open Read Path 架构
@@ -41,6 +41,9 @@ Open 仅读取当前 Camp 的业务表。它及其嵌套 loader、CTE、view 不
 `load_open_messages()` 复用正文、附件和 presentation hydration，但不查询 publication event sequence。
 附件 hydration 对 source refs、Managed v2 和 legacy rows 统一返回无路径 View 与
 `availability = unknown`；Open、earlier、around、thread 和 timeline 不为可用性访问文件系统。
+消息模型信息按当前返回窗口的消息 ID 一次性关联已有 source Run 冻结配置，检查 Thread 与作者身份；
+只投影 adapter、model、effort，不复制持久数据，也不依赖独立的 96 Run 窗口。分页与 around 使用相同 hydration，
+缺失记录不回退到当前 AgentProfile，且不扩大消息窗口或访问事件／证据历史。
 `throughGlobalSequence` 仍从 `event_sequence` singleton 读取，不通过事件表求最大值。移除 timeline 与其
 exact count 后，打开成本不随其他 Camp 的事件历史增长；执行详情改由独立窗口读取，完整历史仍可按需访问。
 

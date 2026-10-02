@@ -1249,6 +1249,8 @@ export interface ThreadMessageView {
   authorId: string
   authorDisplayName?: string | null
   sourceAgentRunId: string | null
+  /** Read-only source Run metadata; absent in older projections. Never inferred from a profile. */
+  runtimeModel?: ThreadMessageRuntimeModelView | null
   body: string
   content: StructuredThreadMessageContent
   attachments: ThreadMessageAttachmentView[]
@@ -1261,6 +1263,13 @@ export interface ThreadMessageView {
   withdrawn: boolean
   canWithdraw: boolean
   version: number
+}
+
+export interface ThreadMessageRuntimeModelView {
+  adapterKind: string
+  /** Null means the Run used Agent defaults with no native model observation. */
+  modelId: string | null
+  reasoningEffort: string | null
 }
 
 export interface ThreadMessageAttachmentView {
