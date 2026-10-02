@@ -519,3 +519,35 @@ Typecheck、Rust format 与基于 `63225393` 的文档门禁通过。Open 的 3 
 旧 v99 fixture 降级时遇到主线新增的 `agent_v2` 约束，修复 test-only downgrade 后该用例单独复跑通过。
 真实模型执行及实体手机软键盘尚未在本切片验收；
 隔离 fixture 只证明交互和投影，不宣称模型端到端或发布安装完成。
+
+## 2026-10-02 队员运行配置应用
+
+Principal 确认交互稿后授权独立 worktree 实现、PR 到 main 并合入。工作基线 `91b315e9`，分支
+`rovai/member-runtime-apply`。范围为队员设置中的“应用到其他队员”，不包含新手训练的配置复制。
+沿用正式队员页、Dialog、主题和 Runtime 表单；中英文共用状态，手机使用可滚动底部面板和固定操作区。
+
+入口只应用来源队员已保存的 Runtime、模型原生选项和权限；打开时冻结来源配置及目标版本，默认只选未配置队员。
+已有配置显示替换前后摘要；目标 Runtime 草稿、保存中与平台只读配置不可选，身份草稿独立保留。
+逐队员复用 `members.runtime.set` 和原有目录拒绝恢复，不新增批量命令或数据库结构。
+仅有效 applied 回执记为保存成功，部分失败保留已完成项；结果未知先读回核对，不自动重放。
+并发冲突重新读取并展示选择，用户复核后才使用新版本提交。提交期间保护关闭与页面导航。
+
+本次是既有命令的可逆界面组合，无新增 Version Decision 准入事项。当前 Architecture、Contract、版本指针和
+Runtime/Context 合同无需变化；稳定交互规则同步至 [Member Identity](../../ui/components/member-identity.md#应用运行配置到其他队员)。
+
+已验证：
+
+- `pnpm typecheck`；Runtime 批量恢复、既有单队员保存和语言目录共 21 项 Vitest 通过。
+- `pnpm test:rust:pr`：439 项通过、1 项人工 Runtime smoke 维持忽略；没有修改、新增、删除或禁用 Rust 测试。
+- `pnpm test:member-runtime-apply`：51 项检查通过，零 Renderer console error，覆盖真实按钮操作、草稿隔离、
+  部分失败重试、未知回执读回、并发版本冲突、读取失败恢复和键盘焦点约束。
+- 生产组件截图人工核验：桌面覆盖提示、375px 英文夜间、390px 中文日间与 200% 缩放；另外自动检查
+  430px 手机、844×390 横屏及 1040/1440/2560 桌面视口、375px 超长队员名、搜索/空状态、两种主题和减少动态效果。
+- `node --test scripts/lib/member-editor.test.mjs`：原有 19 项队员编辑验收通过。
+- `pnpm test`：227 个 Vitest 文件、2438 项通过；随后 Node 回归 328 项通过、2 项平台跳过。
+- `pnpm build:desktop`、文档普通门禁与基于真实 `91b315e9` 的 `pnpm docs:check:ci` 通过。
+
+Electron 采用独立临时 userData/Skill Library 与显式内存 transport，不启动 Core/Runtime 或读取日用数据。
+原生 fixture 字段保持原值；上述证据不代表真实模型执行、实体手机或已打包安装。首轮验收末项暴露 200% 缩放下
+测试驱动的 CSS/DIP 坐标差，按 zoomFactor 修正点击坐标后全量通过，未以改动产品布局绕过该检查。
+最终截图复核修正了短视口继承旧 `.dialog-actions` 背景的问题；新弹窗操作区保持本层背景，位置由固定 footer 管理。

@@ -1,5 +1,5 @@
 ---
-version: 16
+version: 17
 slug: "member-workspace"
 primary_target: "apps/desktop/src/renderer/src/MemberManagement.tsx"
 related_targets:
@@ -191,5 +191,16 @@ The production-component regression is `node --test scripts/lib/member-editor.te
 Electron fixture, covers both saves, cross-member drafts, conflicts, inline creation, keyboard focus and
 1440×920 / 1040×700 / 2560×1440 / 200% layouts, and can retain screenshots with
 `ROVAI_KEEP_MEMBER_EDITOR_FIXTURE=1`. This fixture contains explicit test data; production always reads Core.
+
+The Runtime save row also offers “应用到其他队员…”. Use the already saved configuration as the immutable source;
+disable the entry for pending Runtime edits, conflicts, active saving or a frozen configuration. The neutral dialog
+shows the source snapshot and a selectable roster, preselecting only unconfigured targets. Existing configurations
+require selection and an inline replacement preview. Runtime drafts, busy targets and frozen configurations cannot
+be overwritten; independent identity drafts survive. Per-target receipt, retry and unknown-outcome behavior belongs
+to the [member configuration UI contract](../../../../docs/ui/components/member-identity.md#应用运行配置到其他队员).
+Mobile presents the same content in a bottom sheet with fixed actions and 44px touch controls. Keep both themes,
+language switching and native Runtime values on this same component tree. `pnpm test:member-runtime-apply` verifies
+the production component with explicit transport fixtures, including unknown responses, version conflicts, phone
+portrait/landscape and zoom; no real Runtime or daily profile participates.
 
 Selected roster rows use a neutral surface and text without a left selection rail. Keep the roster background and identity assets unchanged.
