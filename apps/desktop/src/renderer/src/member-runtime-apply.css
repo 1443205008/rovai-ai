@@ -5,6 +5,7 @@
 .runtime-apply-entry:hover:not(:disabled) { color: var(--ink); background: transparent; }
 .runtime-apply-save-row .member-editor-save-status { margin-left: auto; }
 :root .dialog-content.app-dialog.runtime-apply-dialog { width: min(520px, calc(100vw - 48px)); }
+.runtime-apply-dialog .app-dialog-footer .dialog-actions { position: static; background: transparent; }
 .apply-source { padding: 2px 0 14px; border-bottom: 1px solid var(--line); }
 .apply-source-identity { display: flex; align-items: center; gap: 10px; padding-bottom: 16px; }
 .apply-source-identity > .member-avatar { width: 36px; height: 36px; flex-basis: 36px; }
