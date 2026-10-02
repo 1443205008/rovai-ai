@@ -10173,6 +10173,7 @@ impl Core {
                         params.camp_id.as_str(),
                         &params.agent_run_id,
                         params.after_change_sequence,
+                        &params.refresh_evidence_ids,
                         params.limit.unwrap_or(96),
                     )?)?
                 } else {

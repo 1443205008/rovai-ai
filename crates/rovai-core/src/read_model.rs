@@ -6692,7 +6692,7 @@ mod slow_tests {
                 params![end + 2, run],
             )
             .unwrap();
-        let changed = read_block_changes(database, camp, run, end + 1, 1).unwrap();
+        let changed = read_block_changes(database, camp, run, end + 1, &[], 1).unwrap();
         assert_eq!(changed.blocks.len(), 1);
         assert_eq!(changed.blocks[0].key, group.key);
         assert_eq!(changed.blocks[0].counts.failed, 1);
@@ -6706,6 +6706,60 @@ mod slow_tests {
             read_group_changes(database, camp, run, 102, end + 1, 126, Some(149), 24).unwrap();
         assert!(outside.evidence.is_empty());
         assert_eq!(outside.next_after_change_sequence, end + 2);
+        let last_id = format!("block-fixture-{end}");
+        database.connection().execute(
+            "INSERT INTO canonical_runtime_activity(agent_run_id, execution_epoch, operation_id, classifier_version, activity_domain, phase, outcome, credibility, coverage_level, source_authority, source_evidence_ids_json, first_evidence_sequence, last_evidence_sequence, revision, created_at, updated_at)
+             VALUES(?1, 0, ?2, 'activity-v1', 'shell', 'started', 'unknown', 'runtime_structured', 'fine_grained', 'runtime', ?3, ?4, ?4, 1, ?5, ?5)",
+            params![run, last_id, json!([last_id]).to_string(), end, now],
+        ).unwrap();
+        database.connection().execute("UPDATE agent_run_execution_evidence SET payload_preview_json = '{\"item\":{\"type\":\"commandExecution\"}}', phase = 'started' WHERE id = ?1", [&last_id]).unwrap();
+        let visibility: Value = serde_json::from_str(include_str!(
+            "../../../packages/contracts/fixtures/execution-shell-visibility.json"
+        ))
+        .unwrap();
+        for case in visibility.as_array().unwrap() {
+            database.connection().execute("UPDATE canonical_runtime_activity SET presentation_hint = ?1, tool_name = ?2 WHERE agent_run_id = ?3 AND operation_id = ?4", params![case["title"].as_str(), case["toolName"].as_str(), run, last_id]).unwrap();
+            let page = read_block_page(database, camp, run, None, None, 2).unwrap();
+            let visible = case["visible"] == true;
+            assert_eq!(
+                page.blocks[0].tool_count,
+                if visible { 10000 } else { 9999 },
+                "{case}"
+            );
+            assert_eq!(
+                page.blocks[0].evidence[0].sequence,
+                if visible { end } else { end - 1 },
+                "hidden tail must not hide earlier work: {case}"
+            );
+        }
+        // Exercise the real catalog/digest path, including repeated response digests.
+        // Modern carriers are adjacent candidates in one in-memory index, not N SQL scans.
+        let tx = database.connection_mut().transaction().unwrap();
+        for sequence in 102..=end {
+            let shell = sequence % 2 == 0;
+            let id = format!("block-fixture-{sequence}");
+            let payload = if shell {
+                json!({"resultDigest":"same-result", "item":{"type":"commandExecution","command":"rovai task get --task-id fixture"}})
+            } else {
+                json!({"sourceAuthority":"core", "canonicalTool":"team.get_task", "agentOutputDigest":"same-result", "coreEnvelope":{"ok":true,"operation":"team.get_task"}})
+            };
+            tx.execute("UPDATE agent_run_execution_evidence SET event_type = ?1, phase = 'completed', payload_preview_json = ?2 WHERE id = ?3", params![if shell { "activity.completed" } else { "runtime.action" }, payload.to_string(), id]).unwrap();
+            tx.execute(
+                "INSERT OR REPLACE INTO canonical_runtime_activity(agent_run_id, execution_epoch, operation_id, classifier_version, activity_domain, phase, outcome, credibility, coverage_level, source_authority, source_evidence_ids_json, first_evidence_sequence, last_evidence_sequence, revision, created_at, updated_at)
+                 VALUES(?1, 0, ?2, 'activity-v1', ?3, 'terminal', 'succeeded', ?4, 'fine_grained', ?5, ?6, ?7, ?7, 1, ?8, ?8)",
+                params![run, id, if shell { "shell" } else { "tool" }, if shell { "runtime_structured" } else { "core_verified" }, if shell { "runtime" } else { "core" }, json!([id]).to_string(), sequence, now],
+            ).unwrap();
+        }
+        tx.commit().unwrap();
+        let started = std::time::Instant::now();
+        let page = read_block_page(database, camp, run, None, None, 2).unwrap();
+        // Repeated adjacent equal responses are ambiguous for every middle Shell, and remain separate.
+        assert_eq!(page.blocks[0].tool_count, 9999);
+        assert!(serde_json::to_vec(&page).unwrap().len() < 16384);
+        eprintln!(
+            "execution carrier probe: canonical_rows=10000 read_ms={}",
+            started.elapsed().as_millis()
+        );
     }
 
     #[test]

@@ -560,7 +560,13 @@ Electron 采用独立临时 userData/Skill Library 与显式内存 transport，�
 - Rust 测试准入：扩展原有 slow-tests 的 SQLite pagination owner，复用完整 schema fixture 覆盖万条组、游标、归属与旧子项变更。
   纯命令语法 proof 使用无 I/O 的独立单测，拥有与读取计数相关的静态语法边界，不复制 SQLite fixture。
 - 初步隔离样本：10,000 commands 的首屏（组摘要及后一正文）1,621 bytes，单次本机读取约 325 ms。
-  这是单 fixture 观测，不是跨机器基准；薄索引仍 O(N)。
+  这是单 fixture 观测，不是跨机器基准；薄索引仍需全量元数据扫描，有序载体候选索引为 O(N log N)。
 - 自动验收复用生产 Run/Tool 组件和临时 Electron userData，无 Core/真实 Runtime；覆盖底部/侧栏、日夜主题、
   初次补齐、组内与主线失败重试、独立游标、缓存、输出/diff 惰性读取、键盘和位置锚点。
 - 完整门禁、独立审核与合入结果在任务收口时补记；不据本机模拟扩大真实 Runtime/移动设备资格。
+
+审核修正：规范轴发现逐 Shell 全 Run SQL 扫描和 generic Shell 可见性分歧；需求轴另发现流式正文遗漏、自动组分页
+误关跟随、静止加载边界无法由新滚动意图重启。改为批量候选索引，现代载体只检查相邻 Core；无 digest 历史结果
+按候选惰性取证。共享载体与可见性 fixture 覆盖两端规则；扩展既有正文 owner，验证 1,000 个 delta 不写 SQLite
+但窗口正文继续增长。组自动续接保留跟随，新 wheel/key 即使不发生 scroll 也重新检查边界。
+新增样本：10,000 带 canonical 的载体／Core 行（相同 digest，保留歧义）读取约 458 ms；此数字同样是本机单次观测。

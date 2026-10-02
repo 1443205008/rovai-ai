@@ -30,6 +30,12 @@ module.exports = async function assertBlockPagination(window, run, capture) {
     assert.equal(state.groupRequests.length, 0, 'folded groups perform no child reads')
     assert.equal(state.toolRows, 0)
     await capture(`block-first-fill-${placement}`)
+    await open('sparse', placement)
+    await run('document.querySelector(".tool-group-summary").click()')
+    await waitFor('Number(document.querySelector(".tool-activity-group").dataset.executionGroupLoaded) === 96')
+    assert.equal((await run('window.campOpenTest.executionWindowState()')).toolRows, 0)
+    await scroll('')
+    await waitFor('Number(document.querySelector(".tool-activity-group").dataset.executionGroupLoaded) > 96')
     await open('failure', placement)
     await waitFor('document.querySelector(".execution-history-loader.is-error") !== null')
     const failed = await run(`(() => {

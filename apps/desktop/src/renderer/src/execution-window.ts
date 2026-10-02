@@ -179,7 +179,11 @@ export class ExecutionWindow {
       let more = true
       while (more && generation === this.generation && !this.hasNewer) {
         const after = this.cursor
-        const refreshEvidenceIds: string[] = []
+        const refreshEvidenceIds = this.evidence.filter(item =>
+          item.eventType === 'agent.text.block' && item.payload !== null && typeof item.payload === 'object'
+            && 'status' in item.payload && item.payload.status === 'streaming'
+          || item.revision == null && (item.phase === 'updated' || item.phase === 'started'))
+          .slice(0, 256).map(item => item.id)
         const page = await this.changes({ threadId: this.threadId, agentRunId: this.agentRunId,
           afterChangeSequence: after, refreshEvidenceIds, limit: 96 })
         if (generation !== this.generation) return
@@ -188,8 +192,8 @@ export class ExecutionWindow {
           || !Number.isSafeInteger(page.throughChangeSequence) || page.nextAfterChangeSequence < after
           || page.nextAfterChangeSequence > page.throughChangeSequence || (page.hasMore && page.nextAfterChangeSequence <= after)
           || (!page.hasMore && page.nextAfterChangeSequence !== page.throughChangeSequence)
-          || page.blocks.length > 96
-          || !this.valid(page.blocks, page.throughSequence)) {
+          || page.blocks.length > 96 || (page.refreshedBlocks?.length ?? 0) > 256
+          || !this.valid([...page.blocks, ...(page.refreshedBlocks ?? [])], page.throughSequence)) {
           throw new Error('执行记录增量数据不兼容')
         }
         // Returning after a long absence must not replay an entire Run before reaching its tail.
@@ -202,7 +206,7 @@ export class ExecutionWindow {
         this.runtimePhase = page.runtimePhase
         // Ignore old operation updates outside the contiguous loaded interval.
         const first = this.before === null ? 0 : this.before
-        this.merge(page.blocks.filter(item => item.sequence >= first
+        this.merge([...page.blocks, ...(page.refreshedBlocks ?? [])].filter(item => item.sequence >= first
           || this.blocks.some(old => old.sequence === item.sequence)))
         this.latestPage = { schemaVersion: 3, threadId: this.threadId, agentRunId: this.agentRunId,
           requestedBeforeSequence: null, throughSequence: page.throughSequence,

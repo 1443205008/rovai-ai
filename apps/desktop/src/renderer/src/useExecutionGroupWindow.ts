@@ -32,10 +32,10 @@ export function useExecutionGroupWindow(
       .find(item => item.getBoundingClientRect().bottom > top)
     if (element) anchor.current = { element, top: element.getBoundingClientRect().top, host: viewport }
   }
-  const move = async (direction: 'initial' | 'earlier' | 'newer' | 'retry') => {
+  const move = async (direction: 'initial' | 'earlier' | 'newer' | 'retry', automatic = false) => {
     if (!window || !block || window.loading) return
     capture()
-    if (direction === 'earlier') setFollowing?.(false)
+    if (direction === 'earlier' && !automatic) setFollowing?.(false)
     if (direction === 'retry') await window.retry(block)
     else { await window.read(direction); await window.refresh(block) }
   }
@@ -68,7 +68,19 @@ export function useExecutionGroupWindow(
   useEffect(() => {
     const viewport = host()
     if (!window || !expanded || !viewport) return
-    const reading = () => { automaticPages.current = 0 }
+    const reading = (event: Event) => {
+      automaticPages.current = 0
+      if (event.target instanceof Element && event.target.closest('pre, textarea, input, [contenteditable=true]')) return
+      const bounds = viewport.getBoundingClientRect()
+      const visible = (element: HTMLElement | null) => element && element.getBoundingClientRect().bottom >= bounds.top
+        && element.getBoundingClientRect().top <= bounds.bottom
+      const upward = event instanceof WheelEvent ? event.deltaY < 0
+        : event instanceof KeyboardEvent && ['ArrowUp', 'PageUp', 'Home'].includes(event.key)
+      const downward = event instanceof WheelEvent ? event.deltaY > 0
+        : event instanceof KeyboardEvent && ['ArrowDown', 'PageDown', 'End'].includes(event.key)
+      if (upward && window.state.hasEarlier && visible(before.current)) void current.current.move('earlier')
+      else if (downward && window.state.hasNewer && visible(after.current)) void current.current.move('newer')
+    }
     viewport.addEventListener('wheel', reading, { passive: true })
     viewport.addEventListener('touchmove', reading, { passive: true })
     viewport.addEventListener('keydown', reading)
@@ -84,7 +96,7 @@ export function useExecutionGroupWindow(
       const entry = entries.find(entry => entry.isIntersecting)
       if (!entry) return
       automaticPages.current++
-      void current.current.move(entry.target === before.current ? 'earlier' : 'newer')
+      void current.current.move(entry.target === before.current ? 'earlier' : 'newer', true)
     }, { root: viewport, rootMargin: '80px 0px' })
     if (window.state.hasEarlier && before.current) observer.observe(before.current)
     if (window.state.hasNewer && after.current) observer.observe(after.current)

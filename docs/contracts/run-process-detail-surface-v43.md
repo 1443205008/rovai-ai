@@ -21,7 +21,7 @@ last_updated: 2026-10-02
 读取一个 Tool 组。两者互斥。历史 CampTurn 归属继续有效，越域和无效游标拒绝。
 
 Core 在同一个 SQLite 读事务内由已有 logical operation index 构造薄索引，只读取分类需要的元数据、
-公开命令、canonical 状态与 diff 可用性，不读取普通输出、patch 或完整 narration。正文、plan、diagnostic、
+公开命令、canonical 状态与 diff 可用性，不读取普通输出、patch 或完整 narration。无 digest 的历史载体证明是兼容例外：只读取同 epoch 的相邻／包围候选结果，每个候选在一次请求内最多读取一次。正文、plan、diagnostic、
 compaction 与 epoch 边界分隔连续 Tool 组；暂不可见的根项仍保留分组边界，以免后续补齐改变已存在组身份。
 组键为 `tools:<首逻辑 sequence>`，根项为 `item:<sequence>`，只在当前 Run 范围使用。
 
@@ -41,7 +41,7 @@ page 的 `beforeSequence/afterSequence` 互斥，以块首 sequence 排序和返
 只预取相邻更早一页；输出不预取。
 
 changes 使用 Run-wide `afterChangeSequence`，每次最多 96 个改变的块，按变更水位推进；旧子项结果更新必须更新
-同一个组摘要。变成不可见的块返回空摘要，使客户端原位移除其显示。主线最多保留 2,048 块／8 MiB 元数据，
+同一个组摘要。已读 streaming 正文另用至多 256 个 refreshEvidenceIds 请求 refreshedBlocks，叠加内存正文但不推进持久水位。变成不可见的块返回空摘要，使客户端原位移除其显示。主线最多保留 2,048 块／8 MiB 元数据，
 视口和尚未结算活动受保护；超限淘汰相反方向，重新阅读用游标恢复。跨 Run 缓存沿用最多 8 Run／24 MiB。
 
 ## 展开组独立分页
@@ -71,8 +71,8 @@ throughChangeSequence 和有界 Evidence。不存在的组、冲突游标和归�
 
 ## 性能与验收边界
 
-折叠传输量取决于块数及有限代表项，不取决于长组的命令数。薄索引仍按 Run 历史长度扫描，成本为 O(N)，
-不是常数时间读取，也没有新增持久化聚合表。当前选择减少传输、序列化正文与 Renderer 工作，接受读取端元数据扫描；
+折叠传输量取决于块数及有限代表项，不取决于长组的命令数。薄索引仍按 Run 历史长度扫描，建立有序候选索引的成本为 O(N log N)，历史包围候选比较另计，
+不是常数时间读取，也没有新增持久化聚合表。当前选择减少传输、序列化正文与 Renderer 工作，接受读取端元数据扫描；现代单记录载体只比较相邻 Core 候选，禁止每条 Shell 再扫描整个 Run；
 后续如优化索引必须保留相同身份、分类与快照水位，不用缓存猜测执行事实。
 
 验收覆盖：万条闭合 command 的有界首屏；同组双向游标与旧子项更新；纯载体与混合命令计数；首次短内容自动补齐；

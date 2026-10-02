@@ -17,6 +17,7 @@ use crate::{
 
 pub const DEFAULT_WINDOW_LIMIT: i64 = 24;
 
+mod associations;
 mod blocks;
 mod carrier;
 pub use blocks::{read_block_changes, read_block_page, read_group_changes, read_group_page};

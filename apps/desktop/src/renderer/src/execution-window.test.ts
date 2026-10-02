@@ -78,8 +78,24 @@ describe('continuous execution history', () => {
     expect(current.evidence[0].sequence).toBe(first)
     expect(current.evidence[0].payload).toEqual({ text: 'complete body' })
     expect(current.evidence.at(-1)?.sequence).toBe(102)
-    expect(changes.mock.calls[0][0].refreshEvidenceIds).toEqual([])
+    expect(changes.mock.calls[0][0].refreshEvidenceIds).toEqual([`e-${first}`])
     expect(request.mock.calls.map(([params]) => params.beforeSequence)).toEqual([null, 89, 77])
+  })
+
+  it('refreshes a streaming block without a durable change or a new display position', async () => {
+    const { request, changes } = source(1)
+    const streaming: Evidence = { ...evidence(1), phase: 'updated', payload: { status: 'streaming', text: 'hello' } }
+    const current = new ExecutionWindow('camp', 'run', 12, async params => ({ ...await request(params), blocks: [block(streaming)] }), () => {},
+      async params => {
+        expect(params.refreshEvidenceIds).toEqual(['e-1'])
+        return { ...await changes(params), refreshedBlocks: [block({ ...streaming, payload: { status: 'streaming', text: 'hello world' } })] }
+      })
+    await current.latest()
+    await current.refresh()
+    expect(current.blocks).toHaveLength(1)
+    expect(current.evidence[0].payload).toEqual({ status: 'streaming', text: 'hello world' })
+    expect(current.blocks[0].changeSequence).toBe(1)
+    expect(request).toHaveBeenCalledTimes(1)
   })
 
   it('reads larger historical batches, prefetches one neighbor and revisits loaded data offline', async () => {

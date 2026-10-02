@@ -2055,6 +2055,8 @@ export interface AgentRunExecutionBlockPage extends Omit<AgentRunExecutionWindow
 export interface AgentRunExecutionBlockChanges extends Omit<AgentRunExecutionWindowChanges, 'schemaVersion' | 'evidence' | 'refreshedEvidence'> {
   schemaVersion: 3
   blocks: AgentRunExecutionBlock[]
+  /** Watched in-memory text may grow without advancing the durable change cursor. */
+  refreshedBlocks?: AgentRunExecutionBlock[]
 }
 
 export interface AgentRunExecutionGroupPage {

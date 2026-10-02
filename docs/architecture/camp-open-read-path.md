@@ -211,7 +211,7 @@ Evidence/Canonical operation index 在读取事务中计算块边界、完整组
 Renderer 的 ExecutionWindow 拥有主线块游标，ExecutionGroupWindow 拥有单组子窗口，公开输出仍由既有
 content cache 与精确详情请求拥有。两个窗口同用 Run 原生滚动容器，缓存、展开、内容和 DOM 窗口分别有界。
 
-薄索引扫描保留 O(N) 成本，折叠组传输量与子项数脱钩；不把这项优化声称为常数时间数据库查询。初次短内容
+薄索引保留全 Run 元数据扫描与有序候选索引成本，折叠组传输量与子项数脱钩；不把这项优化声称为常数时间数据库查询。初次短内容
 有界自动补齐，失败原位恢复，历史阅读锚点优先于后台更新。协议和预算见
 [Run Process Detail Surface v43](../contracts/run-process-detail-surface-v43.md)，取舍见
 [V1.72-D10](../versions/v1.72/decisions.md#v1-72-d10)。

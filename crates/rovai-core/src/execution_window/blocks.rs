@@ -57,6 +57,7 @@ pub struct ExecutionBlockChanges {
     pub through_change_sequence: i64,
     pub has_more: bool,
     pub blocks: Vec<ExecutionBlock>,
+    pub refreshed_blocks: Vec<ExecutionBlock>,
 }
 
 #[derive(Debug, Serialize)]
@@ -147,6 +148,12 @@ fn index(connection: &Connection, run: &str) -> Result<Vec<Block>> {
               'tool', json_extract(payload_preview_json, '$.item.tool'),
               'title', json_extract(payload_preview_json, '$.item.title')),
             'command', json_extract(payload_preview_json, '$.command'),
+            'canonicalTool', json_extract(payload_preview_json, '$.canonicalTool'),
+            'sourceAuthority', json_extract(payload_preview_json, '$.sourceAuthority'),
+            'resultDigest', json_extract(payload_preview_json, '$.resultDigest'),
+            'agentOutputDigest', json_extract(payload_preview_json, '$.agentOutputDigest'),
+            'coreEnvelope', json_object('ok', json_extract(payload_preview_json, '$.coreEnvelope.ok'),
+              'operation', json_extract(payload_preview_json, '$.coreEnvelope.operation')),
             'input', CASE WHEN json_type(payload_preview_json, '$.input') = 'text'
               THEN json_extract(payload_preview_json, '$.input')
               ELSE json_object('command', COALESCE(json_extract(payload_preview_json, '$.input.command'),
@@ -156,7 +163,8 @@ fn index(connection: &Connection, run: &str) -> Result<Vec<Block>> {
             'status', COALESCE(json_extract(payload_preview_json, '$.status'), json_extract(payload_preview_json, '$.item.status')),
             'tool', json_extract(payload_preview_json, '$.tool'),
             'hasContent', CASE WHEN event_type IN ('agent.text.block', 'agent.text.delta')
-              THEN length(COALESCE(json_extract(payload_preview_json, '$.text'), json_extract(payload_preview_json, '$.delta'), '')) > 0
+              THEN json_extract(payload_preview_json, '$.status') = 'streaming'
+                OR length(COALESCE(json_extract(payload_preview_json, '$.text'), json_extract(payload_preview_json, '$.delta'), '')) > 0
               WHEN event_type IN ('runtime.plan', 'runtime.plan.delta')
               THEN length(COALESCE(json_extract(payload_preview_json, '$.explanation'), json_extract(payload_preview_json, '$.delta'), '')) > 0
                 OR COALESCE(json_array_length(payload_preview_json, '$.plan'), 0) > 0
@@ -196,25 +204,18 @@ fn index(connection: &Connection, run: &str) -> Result<Vec<Block>> {
         .map(|item| item.3.clone())
         .collect::<Vec<_>>();
     crate::read_model::attach_canonical_activity_projection(connection, &mut metadata, true)?;
+    let mut associations = super::associations::carrier_targets(connection, &metadata)?;
     let mut blocks: Vec<Block> = Vec::new();
     for ((sequence, ids, change, _), metadata) in indexed.into_iter().zip(metadata) {
         let tool = matches!(
             metadata.event_type.as_str(),
             "activity.started" | "activity.completed" | "runtime.action"
         );
-        let carrier_for =
-            supporting_builtin_invocation(connection, &metadata)?.and_then(|(id, operation)| {
-                (super::carrier::pure_builtin_operation(
-                    public_command(&metadata.payload).unwrap_or(""),
-                )
-                .as_deref()
-                    == Some(crate::thread_compat::canonical_operation(&operation)))
-                .then_some(id)
-            });
+        let carrier_for = associations.remove(&metadata.id);
         let visible = if tool {
             carrier_for.is_none() && visible_tool(&metadata)
         } else {
-            metadata.payload["hasContent"] != 0
+            metadata.payload["hasContent"].as_i64() == Some(1)
         };
         let item = Item {
             sequence,
@@ -276,22 +277,17 @@ fn visible_tool(item: &AgentRunExecutionEvidenceView) -> bool {
     {
         return false;
     }
-    if item
-        .canonical
-        .as_ref()
-        .is_some_and(|canonical| canonical.activity_domain == "shell")
-        && status(item) == "running"
-        && public_command(&item.payload).is_none()
-        && item
-            .canonical
-            .as_ref()
-            .and_then(|canonical| canonical.presentation_hint.as_deref())
-            .or_else(|| item.payload["title"].as_str())
-            .is_none_or(|title| {
+    if let Some(canonical) = &item.canonical {
+        if canonical.activity_domain == "shell"
+            && status(item) == "running"
+            && public_command(&item.payload).is_none()
+        {
+            let generic = |title: &str| {
                 [
-                    "",
-                    "command",
-                    "command execution",
+                    "bash",
+                    "execute",
+                    "exec_command",
+                    "execute_command",
                     "run command",
                     "run_command",
                     "shell",
@@ -299,10 +295,22 @@ fn visible_tool(item: &AgentRunExecutionEvidenceView) -> bool {
                     "执行 shell 命令",
                     "终端操作",
                 ]
-                .contains(&title.trim().to_lowercase().as_str())
-            })
-    {
-        return false;
+                .contains(&title.to_lowercase().as_str())
+            };
+            let specific = canonical
+                .presentation_hint
+                .as_deref()
+                .filter(|title| !title.is_empty() && !generic(title))
+                .or_else(|| {
+                    canonical
+                        .tool_name
+                        .as_deref()
+                        .filter(|title| !title.is_empty() && !generic(title))
+                });
+            if specific.is_none() {
+                return false;
+            }
+        }
     }
     true
 }
@@ -372,7 +380,7 @@ pub fn read_group_changes(
     })
 }
 
-fn public_command(payload: &Value) -> Option<&str> {
+pub(super) fn public_command(payload: &Value) -> Option<&str> {
     [
         "/item/command",
         "/input",
@@ -560,8 +568,10 @@ pub fn read_block_changes(
     thread: &str,
     run: &str,
     after: i64,
+    watched: &[String],
     limit: i64,
 ) -> Result<ExecutionBlockChanges> {
+    ensure!(watched.len() <= 256, "Invalid execution refresh set");
     let tx = database.connection_mut().transaction()?;
     let (through_sequence, through_change_sequence) = watermarks(&tx, thread, run)?;
     ensure!(
@@ -583,12 +593,24 @@ pub fn read_block_changes(
     } else {
         through_change_sequence
     };
+    let mut refreshed_blocks = blocks
+        .iter()
+        .filter(|block| {
+            block.change() <= after
+                && block
+                    .items
+                    .iter()
+                    .any(|item| watched.contains(&item.metadata.id))
+        })
+        .map(|block| project(&tx, run, block))
+        .collect::<Result<Vec<_>>>()?;
     let mut blocks = changed
         .into_iter()
         .map(|block| project(&tx, run, block))
         .collect::<Result<Vec<_>>>()?;
     tx.commit()?;
     overlay(database, &mut blocks)?;
+    overlay(database, &mut refreshed_blocks)?;
     Ok(ExecutionBlockChanges {
         schema_version: 3,
         thread_id: thread.into(),
@@ -599,6 +621,7 @@ pub fn read_block_changes(
         through_change_sequence,
         has_more,
         blocks,
+        refreshed_blocks,
     })
 }
 

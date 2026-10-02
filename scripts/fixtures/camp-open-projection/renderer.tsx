@@ -59,7 +59,7 @@ const executionTails = new Map<string, number>()
 let executionReadFailure = false
 let runningExecutionScenario = false
 let commandInteraction = false
-let blockScenario: 'regular' | 'short' | 'long' = 'regular'
+let blockScenario: 'regular' | 'short' | 'long' | 'sparse' = 'regular'
 const pendingCommandResults = new Map<string, { resolve(): void; reject(error: Error): void }>()
 const executionRun = { ...textRun, id: 'window-run', executionEvidenceCount: 1000 }
 function windowEvidence(sequence: number): AgentRunExecutionEvidenceView {
@@ -71,14 +71,14 @@ function windowEvidence(sequence: number): AgentRunExecutionEvidenceView {
       phase: 'started', tokens: { before: 12345 }, summaryText: '压缩摘要预览' },
     contentBlobId: 'fixture-compact-body', contentByteCount: 2000, isTruncated: true, occurredAt: now
   }
-  const narration = !commandInteraction && blockScenario !== 'long' && sequence % (blockScenario === 'short' ? 2 : 8) === 0
+  const narration = !commandInteraction && !['long', 'sparse'].includes(blockScenario) && sequence % (blockScenario === 'short' ? 2 : 8) === 0
   const file = sequence === 999
   return {
     id, agentRunId: executionRun.id, executionEpoch: 1, sequence, revision: 1, changeSequence: sequence,
     eventType: narration ? 'agent.text.block' : 'activity.completed',
     kind: narration ? 'narration' : 'command', phase: 'completed',
     payload: narration ? { blockId: id, itemId: id, text: blockScenario === 'short' ? `记录 ${sequence}` : `记录 ${sequence}：${'这一页的执行说明。'.repeat(30)}`, status: 'completed' }
-      : { item: { id, type: file ? 'fileChange' : 'commandExecution', status: 'completed', command: file ? undefined : commandInteraction && sequence === 79 ? "sed -n '1,10p' src/a.ts; sed -n '1,10p' src/b.ts" : `TOKEN=fixture-value echo ${sequence}` } },
+      : { item: { id, type: file ? 'fileChange' : blockScenario === 'sparse' && sequence <= 200 ? 'agentMessage' : 'commandExecution', status: 'completed', command: file ? undefined : commandInteraction && sequence === 79 ? "sed -n '1,10p' src/a.ts; sed -n '1,10p' src/b.ts" : `TOKEN=fixture-value echo ${sequence}` } },
     canonical: narration ? null : {
       operationId: id, classifierVersion: 'activity-v4', activityDomain: file ? 'file' : 'shell',
       semanticKind: file ? 'file.write' : 'shell.execute', toolName: null,
@@ -106,7 +106,7 @@ function windowBlocks(): AgentRunExecutionBlock[] {
       blocks.push(block)
     }
     block.lastSequence = sequence; block.changeSequence = sequence; block.evidence = [item]
-    if (tool) { block.toolCount++; block.counts[item.canonical?.phase === 'started' ? 'running' : 'completed']++ }
+    if (tool && !(blockScenario === 'sparse' && sequence <= 200)) { block.toolCount++; block.counts[item.canonical?.phase === 'started' ? 'running' : 'completed']++ }
   }
   return blocks
 }
@@ -697,12 +697,12 @@ Object.assign(window, { campOpenTest: {
     updateSnapshot(current)
   },
   showTextEvidence: () => reactRoot.render(<RunExecutionDisclosure run={textRun} threadId={threadId} />),
-  showBlockPagination: (scene: 'short' | 'long' | 'failure', placement: 'bottom' | 'inspector') => {
+  showBlockPagination: (scene: 'short' | 'long' | 'sparse' | 'failure', placement: 'bottom' | 'inspector') => {
     blockScenario = scene === 'failure' ? 'short' : scene
     commandInteraction = false
     executionReadFailure = scene === 'failure'
     executionRun.id = `blocks-${scene}-${placement}`
-    executionThrough = scene === 'long' ? 120 : scene === 'failure' ? 40 : 14
+    executionThrough = scene === 'sparse' ? 220 : scene === 'long' ? 120 : scene === 'failure' ? 40 : 14
     runningExecutionScenario = false
     executionRequests.length = 0; executionGroupRequests.length = 0; executionContentReads.length = 0
     const run = { ...executionRun, agentId: agent.agentId, executionEvidenceCount: executionThrough, threadTurnId: 'stopped-turn' }
