@@ -7,7 +7,7 @@ import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { ActionApprovalView, AgentRunFileChangesDetailView, AgentRunFileChangesView, ComposerDocument, FilePreviewApi, OpenFilePreviewRequest, ResolvedFilePreview, ResolvedTheme, TaskView } from '@contracts'
 import { AppHeader } from '../../../apps/desktop/src/renderer/src/App'
-import { AgentRunFileChangesTimelineCard, ApprovalDock, RuntimeRecoveryDock, TaskTimelineCard } from '../../../apps/desktop/src/renderer/src/ThreadWorkspace'
+import { AgentRunFileChangesTimelineCard, ApprovalDock, RuntimeRecoveryDock, TaskTimelineCard, ThreadWorkspace } from '../../../apps/desktop/src/renderer/src/ThreadWorkspace'
 import { FilePreviewProvider, useFilePreview, type FilePreviewContextValue } from '../../../apps/desktop/src/renderer/src/FilePreviewContext'
 import { FilePreviewResizeHandle, FilePreviewWorkspace } from '../../../apps/desktop/src/renderer/src/FilePreviewLayout'
 import { FilePreviewPane } from '../../../apps/desktop/src/renderer/src/FilePreviewPane'
@@ -19,6 +19,7 @@ import { FILE_PREVIEW_RATIO_STORAGE_KEY } from '../../../apps/desktop/src/render
 import { openAgentRunCurrentFilePreview } from '../../../apps/desktop/src/renderer/src/agent-run-file-preview'
 import { applyAppearanceSnapshot } from '../../../apps/desktop/src/renderer/src/theme'
 import { DEFAULT_APPEARANCE } from '../../../apps/desktop/src/shared/appearance'
+import { agents, initial, initialDraft, installations, run as fixtureRun } from '../host-web-parity/data'
 import '../../../apps/desktop/src/renderer/src/styles.css'
 
 const file: ResolvedFilePreview = {
@@ -153,7 +154,7 @@ async function resolvePreview(request: OpenFilePreviewRequest) {
   return { ok: true as const, value: { kind: 'file_preview' as const, file: { ...target, handleId } } }
 }
 const api: FilePreviewApi = {
-  bindCamp: async (threadId) => { campBindings.push(threadId) },
+  bindThread: async (threadId) => { campBindings.push(threadId) },
   open: async (request) => {
     fileOpens.push(request)
     return resolvePreview(request)
@@ -245,9 +246,13 @@ const pickerChanges: AgentRunFileChangesView = {
   }))
 }
 Object.assign(window, { rovai: {
+  platform: 'darwin',
+  onEvent: () => () => {},
+  composerAttachments: { discard: async () => {} },
   windowControls: (window as unknown as { previewWindowControls: unknown }).previewWindowControls,
   filePreview: api,
-  request: async (method: string, request: { threadId: string; agentRunId: string; executionEpoch: number }): Promise<AgentRunFileChangesDetailView> => {
+  request: async (method: string, request: { threadId: string; agentRunId: string; executionEpoch: number }): Promise<unknown> => {
+    if (method === 'skills.list' || method === 'skills.deliveryGroups.list') return []
     const source = [changes, pickerChanges].find(card => card.agentRunId === request.agentRunId)
     if (method !== 'agentRunFileChanges.get' || request.threadId !== 'camp-1' || !source) return unsupported()
     reviewRequests.push(request)
@@ -329,7 +334,7 @@ function Workspace(): React.JSX.Element {
               <button aria-pressed="true">会话</button><button aria-pressed="false">地图</button>
             </div>
           </div>
-          <div className="camp-timeline timeline-scroll" tabIndex={-1}>
+          <div className="thread-timeline camp-timeline timeline-scroll" tabIndex={-1}>
             <div className="timeline-track">
               <h2>文件预览比例与拖拽</h2>
               <p>从会话内的文件引用打开预览。文字自然换行，不影响任务、文件变化与输入区域。</p>
@@ -416,6 +421,31 @@ function ToolRows(): React.JSX.Element {
     </div>
   </section>
 }
+const initialExecutionCase = new URLSearchParams(location.search).get('initial-execution')
+let claimFirstRun: () => void
+let executionPhase = ''
+function InitialExecutionWorkspace(): React.JSX.Element {
+  previewController = useFilePreview()
+  const [phase, setPhase] = useState('pending')
+  executionPhase = phase
+  claimFirstRun = () => setPhase('running')
+  const snapshot = {
+    ...initial,
+    thread: { ...initial.thread, id: 'camp-1', title: '首次 Run 宽度验收',
+      activationState: phase === 'pending' && initialExecutionCase !== 'existing' ? 'pending' as const : 'active' as const,
+      missionId: initialExecutionCase === 'mission' ? 'mission-1' : undefined },
+    messages: phase === 'pending' ? [] : [initial.messages[0]],
+    agentRuns: phase === 'running' ? [{ ...fixtureRun, inputMessageIds: [initial.messages[0].id] }] : []
+  }
+  return <ThreadWorkspace snapshot={snapshot} projectName="Fixture" agents={agents} installations={installations}
+    initialComposerDraft={{ ...initialDraft, threadId: 'camp-1' }} busy={false} executionPlacement="right"
+    onSend={async () => {
+      setPhase('submitted')
+      return { threadMessageId: initial.messages[0].id, deliveryIds: ['delivery-1'], agentRunIds: [], addressedAgentIds: [agents[0].agentId] }
+    }} onChangeLead={async () => {}} onTasksChanged={async () => {}} onResolveApproval={() => {}}
+    onStop={() => {}} onNotifyError={message => console.error('Initial execution fixture:', message)} worldMapEnabled={false} />
+}
+
 function Fixture(): React.JSX.Element {
   const [camp, setCamp] = useState('camp-1')
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>('day')
@@ -431,7 +461,7 @@ function Fixture(): React.JSX.Element {
     <div className="app-shell app-shell-camp">
       <aside style={{ gridRow: '1 / -1', padding: '48px 24px', background: 'var(--rail)' }}>Rovai AI</aside>
       <AppHeader threadTitle="文件预览验收" contextLabel="Rovai AI" thread={null} onFocusApprovals={() => {}} />
-      <main className="content task-content"><Workspace /></main>
+      <main className="content task-content">{initialExecutionCase ? <InitialExecutionWorkspace /> : <Workspace />}</main>
     </div>
     {toolRowsVisible && <ToolRows />}
   </FilePreviewProvider>
@@ -466,6 +496,14 @@ async function settle(): Promise<void> {
 
 Object.assign(window, { previewTest: {
   settle,
+  claimFirstRun: () => claimFirstRun(),
+  executionPhase: () => executionPhase,
+  activeTabKind: () => previewController.activeTab?.kind,
+  openExecution: () => previewController.openExecution(),
+  openActivity: () => previewController.openMissionActivity('mission-1'),
+  selectExecution: () => previewController.activate(previewController.tabs.find(tab => tab.kind === 'execution')!.id),
+  hidePane: () => previewController.hidePane(),
+  showPane: () => previewController.showPane(),
   pointerEvents,
   showToolRows: () => showToolRows(),
   toolState: () => ({ requests: [...fileRestores], notices: [...toolNotices], tabs: previewController.tabs.length, activeTabId: previewController.activeTabId }),
