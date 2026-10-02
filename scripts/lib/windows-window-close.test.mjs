@@ -22,7 +22,7 @@ test('Windows close choice uses production Main, preload and UI; hide preserves 
       build: { outDir: join(fixture, 'renderer') } })
     for (const entry of ['owner', 'preload']) {
       await build({ configFile: false, root, logLevel: 'error',
-        plugins: [{ name: 'fixture-native-assets', load(id) { if (id.endsWith('?asset')) return `export default ${JSON.stringify(id.slice(0, -6))}` } }],
+        plugins: [{ name: 'fixture-native-assets', enforce: 'pre', load(id) { if (id.endsWith('?asset')) return `export default ${JSON.stringify(id.slice(0, -6))}` } }],
         build: { ssr: join(source, `${entry}.ts`), outDir: join(fixture, entry), minify: false,
           rollupOptions: { external: ['electron'], output: { format: 'cjs', entryFileNames: 'index.cjs' } } } })
     }
