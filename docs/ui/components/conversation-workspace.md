@@ -2,7 +2,7 @@
 document_type: ui-component-contract
 authority: renderer-camp-workspace
 status: accepted
-last_updated: 2026-09-30
+last_updated: 2026-10-02
 ---
 
 # Camp 会话工作区
@@ -765,16 +765,22 @@ Claude Code `Edit` 的 exact mutation 展开只显示 `− oldText / + newText` 
 失败/缺失 result 与 `replace_all=true` 保持普通 Tool Activity。
 
 每个 terminal `agentRunId + executionEpoch` 可以在对应 Run 的会话位置追加一张独立卡片，标题固定为
-`Files Changed`。卡片紧跟来源 Run 的最后一条公开消息；没有公开消息时才以完成时间定位。并行 Run 分别产生卡片，
+`Files Changed`。卡片位于来源 Run 最后一条公开消息后的结果区域；同 Run 有入队卡片时，顺序固定为
+“最后一条公开回复 → 入队卡片 → Files Changed”。没有公开消息时才以完成时间定位。并行 Run 分别产生卡片，
 不共享、不覆盖，也不会因相邻完成而视觉归属到其他队员。移除明确的 `runtime_diff_no_changes` 后，每个文件只要
 仍有一个或多个可靠 Diff，就按既有归约显示逐文件 `+A −D`；同文件的 path-only operation 只保留在时序和
 operation count 中，不阻止可靠 Diff 参与统计。只有所有文件都有可靠统计时，卡片显示
 `N 个文件 · +A −D`；任一文件只有 operation-only 时，整张卡片回退为 `N 个文件 · M 次修改`。
 
-Run 已成功、失败或取消但没有公开消息时，图片与文件变化按精确 `agentRunId` 组成运行产物区域，
+Run 已成功、失败或取消但没有公开消息时，图片、入队卡片与文件变化按精确 `agentRunId` 组成运行产物区域，
 直接使用该 `AgentRun.agentId` 显示队员头像和姓名。同 Run 的多个 epoch 共用一次作者头，图片排在文件卡之前；
 不同 Run 保持各自作者和归属。头像、姓名沿用公开消息的人物信息卡资格与缺失头像回退，离队或移除队员保持静态。
 该区域不创建 CampMessage、不合成正文，也不提供消息复制或回复；来源 Run 未加载时保留文件卡，不猜测作者。
+
+入队卡片仅在其明确来源 Run 终态后出现，同 Run 的多张入队卡片按创建时间、创建 ID 排序，并始终排在
+Files Changed 之前。两类卡片共用宽度不超过 620px、左缩进 42px 的结果列，距回复 14px、卡片间距 12px；
+会话容器不超过 480px 时取消缩进，占满内容列，保留现有 MobileUI 外侧留白。
+静态回执、旧记录兼容及缺失 Run 的回退由 [Member Creation Flow v1](../../contracts/member-creation-flow-v1.md) 拥有。
 
 文件行按“目录/文件名”连续展示，目录与分隔符保持次级灰色，文件名保持主文字色。display root 根目录文件只显示文件名，
 不补“当前目录”。宽度不足时优先从目录右侧按完整目录段省略，例如 `/xxx/.../CONTEXT.md`，文件名优先保留；

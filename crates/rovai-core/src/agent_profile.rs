@@ -2433,6 +2433,7 @@ impl AgentProfileService {
                     source,
                     &crate::member_studio::MemberCreationView {
                         creation_id: envelope.command_id.clone(),
+                        source_agent_run_id: Some(source.agent_run_id.clone()),
                         agent_id: id.clone(),
                         display_name: identity.display_name.clone(),
                         avatar_ref: envelope.payload.avatar_ref.clone(),

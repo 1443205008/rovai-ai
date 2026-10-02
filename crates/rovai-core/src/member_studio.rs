@@ -165,6 +165,8 @@ pub fn create_member(
 #[serde(rename_all = "camelCase")]
 pub struct MemberCreationView {
     pub creation_id: String,
+    #[serde(default)]
+    pub source_agent_run_id: Option<String>,
     pub agent_id: String,
     pub display_name: String,
     pub avatar_ref: Option<String>,

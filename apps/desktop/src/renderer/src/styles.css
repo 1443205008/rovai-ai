@@ -2839,7 +2839,8 @@ button.camp-world-map-live-caption { cursor: pointer; font: inherit; }
   margin: 14px 0;
 }
 .agent-message-output > .timeline-node { margin-top: 0; margin-bottom: 0; }
-.agent-message-output > .run-file-changes-card { margin-top: 14px; }
+.run-result-stack { display: grid; gap: 12px; margin-top: 14px; }
+.run-result-stack > :is(.member-joined-card, .run-file-changes-card) { width: 100%; min-width: 0; margin: 0; }
 .agent-message-output.same-author { margin-top: 8px; }
 .conversation-bubble:has(+ .agent-message-output.same-author),
 .agent-message-output:has(+ .conversation-bubble.same-author),
@@ -3734,7 +3735,9 @@ button.task-event-card:hover .task-card-chevron,
 button.task-event-card:focus-visible .task-card-chevron { color: var(--brand-ink); transform: translateX(1px); }
 
 .task-event-card,
-.run-file-changes-card {
+.run-file-changes-card,
+.member-joined-card,
+.run-result-stack {
   width: min(620px, calc(100% - 42px));
   margin-left: 42px;
 }
@@ -8215,7 +8218,7 @@ html[lang="en"] .runtime-parameter-picker-menu:has(.permission-menu-guidance) { 
   .conversation-bubble.system { max-width: 100%; margin-left: 0; }
   .timeline-scroll { padding-right: 12px; padding-left: 12px; }
   .task-event-card,
-  .run-file-changes-card { width: 100%; margin-left: 0; }
+  .run-file-changes-card, .member-joined-card, .run-result-stack { width: 100%; margin-left: 0; }
   .agent-message-output > .agent-message-output-actions { margin-left: -5px; }
   .task-event-card { grid-template-columns: 26px minmax(0, 1fr); gap: 8px; padding: 10px; }
   .task-card-glyph { width: 26px; height: 26px; border-radius: 7px; }
@@ -9390,7 +9393,7 @@ button.skill-file-current:hover, .skill-file-current[aria-expanded="true"] { bac
 .member-sidebar-select { cursor: grab; }
 .member-reorder-avatar { display: flex; flex: 0 0 auto; touch-action: none; }
 .member-reorder-menu-anchor { position: absolute; top: 0; left: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; pointer-events: none; }
-.member-joined-card { display: block; width: min(100%, 520px); margin: 16px 0; border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.member-joined-card { display: block; margin-top: 16px; margin-bottom: 16px; border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden; background: var(--surface); }
 .member-joined-heading { display: flex; align-items: center; gap: 6px; padding: 11px 16px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .member-joined-heading svg { width: 17px; height: 17px; fill: none; stroke: var(--success); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .member-joined-body { display: flex; gap: 18px; padding: 18px 16px; }

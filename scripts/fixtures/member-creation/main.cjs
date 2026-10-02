@@ -22,6 +22,24 @@ app.whenReady().then(async () => {
   const key = async (keyCode, modifiers=[]) => { window.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers}); window.webContents.sendInputEvent({type:'keyUp',keyCode,modifiers}); await settle() }
   const type = async text => { await click('.structured-mention-editor'); await key('a',['meta']); await key('Backspace'); await window.webContents.insertText(text); await settle() }
   const capture = async name => writeFileSync(join(dirname(userData), `${name}.png`), (await window.webContents.capturePage()).toPNG())
+  const checkResults = async expectedIndent => {
+    const layout = await run(`(() => {
+      const card = document.querySelector('.member-joined-card'), diff = document.querySelector('.run-file-changes-card');
+      const stack = card.parentElement, output = stack.parentElement;
+      const r = card.getBoundingClientRect(), d = diff.getBoundingClientRect(), o = output.getBoundingClientRect();
+      const reply = output.querySelector('[data-message-id]').getBoundingClientRect();
+      return { left: r.left - d.left, right: r.right - d.right, indent: r.left - o.left,
+        width: r.width, parentWidth: o.width, replyGap: r.top - reply.bottom, gap: d.top - r.bottom,
+        stack: stack.className, lastReply: output.querySelector('[data-message-id]').dataset.messageId };
+    })()`)
+    assert.equal(layout.stack, 'run-result-stack')
+    assert.equal(layout.lastReply, 'review-message-3')
+    for (const [key, value] of Object.entries({ left: 0, right: 0, indent: expectedIndent, replyGap: 14, gap: 12 })) {
+      assert.ok(Math.abs(layout[key] - value) < 1, `${key}: ${JSON.stringify(layout)}`)
+    }
+    assert.ok(Math.abs(layout.width - Math.min(620, layout.parentWidth - expectedIndent)) < 1)
+    console.log(JSON.stringify({ resultLayout: layout }))
+  }
   await window.loadFile(renderer)
   await wait('!!document.querySelector(".member-add-split")')
   stage = 'AI entry and starter'
@@ -57,14 +75,26 @@ app.whenReady().then(async () => {
   await click('.composer-primary-action.is-send')
   await wait('document.querySelectorAll(".camp-draft-badge").length === 0')
   assert.equal(await run(`window.memberCreationQA.threads.get(${JSON.stringify(first)}).messages.length`), 1)
-  stage = 'static joined receipt and existing away settings'
+  stage = 'joined receipt waits for the creating Run to finish'
   await run(`window.memberCreationQA.join(${JSON.stringify(first)})`)
+  await wait('!!document.querySelector("[data-message-id=review-message-2]")')
+  assert.equal(await run('document.querySelectorAll(".member-joined-card").length'), 0)
+  await run(`window.memberCreationQA.finish(${JSON.stringify(first)})`)
   await wait('document.querySelectorAll(".member-joined-card").length === 1')
+  await checkResults(42)
+  stage = 'static joined receipt and existing away settings'
   const card = await run('document.querySelector(".member-joined-card").innerText')
   await run('window.memberCreationQA.away()')
   await settle()
   assert.equal(await run('document.querySelector(".member-joined-card").innerText'), card)
   await capture('desktop-joined-zh')
+  stage = 'narrow desktop result column'
+  // Exercise the conversation container breakpoint independently of the mobile viewport.
+  await run('document.querySelector(".timeline-pane").style.width = "440px"'); await settle()
+  await checkResults(0)
+  await capture('narrow-desktop-joined-zh')
+  await run('document.querySelector(".timeline-pane").style.removeProperty("width")'); await settle()
+  stage = 'existing away settings'
   await click('.member-joined-configure')
   await wait('!!document.querySelector(".member-editor-page:not([hidden]) .member-header-runtime")')
   assert.ok((await run('document.querySelector(".member-editor-page:not([hidden])").innerText')).includes('Nova renamed'))
@@ -118,13 +148,17 @@ app.whenReady().then(async () => {
   await settle()
   const last = await run('[...window.memberCreationQA.threads.keys()].at(-1)')
   await run(`window.memberCreationQA.join(${JSON.stringify(last)})`)
+  await wait('!!document.querySelector("[data-message-id=review-message-2]")')
+  assert.equal(await run('document.querySelectorAll(".member-joined-card").length'), 0)
+  await run(`window.memberCreationQA.finish(${JSON.stringify(last)})`)
   await wait('!!document.querySelector(".member-joined-card")')
+  await checkResults(0)
   assert.ok((await run('document.querySelector(".member-joined-card").innerText')).includes('Configure an Agent'))
   assert.equal(await run('document.documentElement.scrollWidth > innerWidth'), false)
   await capture('mobile-joined-en')
   await run('window.memberCreationQA.theme("night")'); await settle(); await capture('mobile-joined-night-en')
   assert.deepEqual(await run('window.memberCreationQA.errors'), [])
-  console.log(JSON.stringify({ok:true,cases:['single available helper','no sidebar before typing','editable starters','fresh draft every time','window-local draft switching','rejected send retains draft','accepted send activates','static receipt after rename/away','existing runtime settings link','automatic manual fallback','split manual action','mobile native touch reorder','mobile English starters and Return newline','mobile light/dark joined card']}))
+  console.log(JSON.stringify({ok:true,cases:['single available helper','no sidebar before typing','editable starters','fresh draft every time','window-local draft switching','rejected send retains draft','accepted send activates','receipt hidden until Run ends','last reply then receipt then diff','desktop/mobile shared result geometry','static receipt after rename/away','existing runtime settings link','automatic manual fallback','split manual action','mobile native touch reorder','mobile English starters and Return newline','mobile light/dark joined card']}))
   app.exit(0)
 }).catch(async error => {
   if (window) {

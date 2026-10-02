@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { AgentProfile, AgentRunView, ThreadMessageView, ThreadSnapshot } from '@contracts'
+import type { AgentProfile, AgentRunView, MemberCreationView, ThreadMessageView, ThreadSnapshot } from '@contracts'
 import { ThreadWorkspace, campConversationTimeline } from './ThreadWorkspace'
 
 const createdAt = '2026-09-06T06:00:00Z'
@@ -89,10 +89,21 @@ function publicMessage(source: AgentRunView): ThreadMessageView {
 
 const avatars = (markup: string): number => (markup.match(/class="member-avatar(?: |")/g) ?? []).length
 
+function receipt(overrides: Partial<MemberCreationView> = {}): MemberCreationView {
+  return { creationId: 'creation-1', sourceAgentRunId: 'run-1', agentId: 'created-member',
+    displayName: 'Nova', avatarRef: null, teamRole: 'Research partner',
+    professionalResponsibilities: 'Compare evidence.', personalityTraits: ['Curious'],
+    creatorAgentId: 'agent_1', creatorDisplayName: '奥黛丽', createdAt, ...overrides }
+}
+
+const timeline = (candidate: ThreadSnapshot) => campConversationTimeline(candidate.messages, candidate.turns,
+  candidate.agentRuns, candidate.tasks, candidate.agentRunFileChanges, candidate.agentRunImages, candidate.memberCreations)
+
 describe('Run artifacts retain their execution author', () => {
   it.each(['failed', 'cancelled', 'succeeded'] as const)('%s output without a public message has one author', status => {
     for (const [images, files] of [[true, true], [true, false], [false, true]]) {
       const candidate = snapshot([run({ status })], images, files)
+      candidate.memberCreations = [receipt()]
       const markup = renderTimeline(candidate)
       expect(avatars(markup)).toBe(1)
       expect(markup).toContain('<strong>奥黛丽</strong>')
@@ -100,7 +111,8 @@ describe('Run artifacts retain their execution author', () => {
       expect(markup).not.toContain('data-message-id=')
       expect(markup).not.toContain('class="message-actions')
       if (files) expect(markup).toContain('run-file-changes-card')
-      if (images && files) expect(markup.indexOf('image-gallery')).toBeLessThan(markup.indexOf('run-file-changes-card'))
+      if (images) expect(markup.indexOf('image-gallery')).toBeLessThan(markup.indexOf('member-joined-card'))
+      if (files) expect(markup.indexOf('member-joined-card')).toBeLessThan(markup.indexOf('run-file-changes-card'))
     }
   })
 
@@ -147,5 +159,65 @@ describe('Run artifacts retain their execution author', () => {
     candidate.agentRuns = [run({ status: 'running', endedAt: null })]
     candidate.agentRunFileChanges = []
     expect(campConversationTimeline([], [], candidate.agentRuns, [], [], candidate.agentRunImages)).toEqual([])
+  })
+})
+
+describe('Member creation results belong to the creating Run', () => {
+  it.each(['queued', 'running', 'waiting'] as const)('withholds a receipt while its Run is %s, even after a public reply', status => {
+    const candidate = snapshot([run({ status, endedAt: null })], false, false)
+    candidate.memberCreations = [receipt()]
+    candidate.messages = [publicMessage(candidate.agentRuns[0])]
+    expect(timeline(candidate).map(item => item.kind)).toEqual(['camp_message'])
+    expect(renderTimeline(candidate)).not.toContain('member-joined-card')
+  })
+
+  it.each(['succeeded', 'failed', 'cancelled'] as const)('keeps successful creations in order after a %s Run, with or without a reply or diff', status => {
+    for (const hasReply of [true, false]) {
+      for (const files of [true, false]) {
+        const candidate = snapshot([run({ status })], false, files)
+        // Input order and IDs deliberately disagree with the creation order.
+        candidate.memberCreations = [receipt({ creationId: 'a', displayName: 'Later', createdAt: '2026-09-06T06:00:30Z' }),
+          receipt({ creationId: 'z', displayName: 'Earlier' })]
+        if (hasReply) candidate.messages = [publicMessage(candidate.agentRuns[0])]
+        const markup = renderTimeline(candidate)
+        expect(avatars(markup)).toBe(1)
+        expect(markup.match(/class="run-result-stack"/g)).toHaveLength(1)
+        expect(markup.match(/class="timeline-node member-joined-card"/g)).toHaveLength(2)
+        expect(markup.indexOf('Earlier</h3>')).toBeLessThan(markup.indexOf('Later</h3>'))
+        if (files) expect(markup.indexOf('Later</h3>')).toBeLessThan(markup.indexOf('run-file-changes-card'))
+        if (hasReply) {
+          expect(markup.indexOf('已完成部分修改。')).toBeLessThan(markup.indexOf('member-joined-card'))
+          expect(markup.match(/class="message-actions /g)).toHaveLength(1)
+        } else {
+          expect(markup).toContain('data-run-artifact-output-id="run-1"')
+          expect(markup).not.toContain('data-message-id=')
+          expect(markup).not.toContain('class="message-actions')
+        }
+      }
+    }
+  })
+
+  it('anchors to the exact Run’s last public message across parallel Runs by the same member and clock rollback', () => {
+    const candidate = snapshot([run(), run({ id: 'run-2' })], false)
+    candidate.memberCreations = [receipt(), receipt({ creationId: 'creation-2', sourceAgentRunId: 'run-2' })]
+    const first = publicMessage(candidate.agentRuns[0])
+    candidate.messages = [first,
+      { ...publicMessage(candidate.agentRuns[1]), id: 'other-run', sequence: 2 },
+      { ...first, id: 'last-reply', sequence: 3, createdAt: '2026-09-06T05:59:00Z' }]
+    expect(timeline(candidate).map(item => item.id)).toEqual([
+      'public-message', 'other-run', 'creation-2', 'run-file-changes:run-2:1',
+      'last-reply', 'creation-1', 'run-file-changes:run-1:1'
+    ])
+  })
+
+  it('keeps legacy and unavailable-Run receipts readable without inferring a source from their creator', () => {
+    const candidate = snapshot([run({ status: 'running', endedAt: null })], false, false)
+    candidate.messages = [publicMessage(candidate.agentRuns[0])]
+    candidate.memberCreations = [receipt({ sourceAgentRunId: null }),
+      receipt({ creationId: 'missing-run-receipt', sourceAgentRunId: 'unavailable-run' })]
+    expect(timeline(candidate).filter(item => item.kind === 'member_joined')).toHaveLength(2)
+    const markup = renderTimeline(candidate)
+    expect(markup).not.toContain('run-result-stack')
+    expect(markup).not.toContain('run-artifact-output')
   })
 })

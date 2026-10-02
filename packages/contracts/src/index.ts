@@ -1754,6 +1754,8 @@ export interface FilePreviewApi {
 /** Creation-time snapshot, independent of the current member's configuration and presence. */
 export interface MemberCreationView {
   creationId: string
+  /** Authenticated creating Run; absent only on receipts written before Run association. */
+  sourceAgentRunId?: string | null
   agentId: string
   displayName: string
   avatarRef: string | null
