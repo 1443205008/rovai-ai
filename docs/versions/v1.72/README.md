@@ -11,6 +11,13 @@ last_updated: 2026-10-02
 
 # Rovai-ai v1.72：Lark 独立渠道
 
+## 已实现：User 统一称呼
+
+[上下文变更说明 r2](model-context-change-principal-user.md)与[完整前后对照](principal-user-context-comparison.md)
+整理 Principal 改为 User、`--to-user` 与 `@User` 的已确认文本和兼容边界。旧 Native Session 保留原绑定及冻结
+Bootstrap，尚无 Bootstrap 的公开执行统一使用当前公开模板；Skill 沿用随包原路径同步。
+用户已于 2026-10-02 确认 r2、创建 PR 与合入 main，并免除上下文 Gate 模型评测。实现及本地兼容回归通过，准备 PR 合入；当前规范见 [User Naming v1](../../contracts/user-naming-v1.md)。
+
 ## 并行实施：Thread 统一命名
 
 Principal 已确认 [Camp → Thread r2](model-context-change-thread-rename.md) 开始实施：公开范围使用 `threadId`，
@@ -159,3 +166,14 @@ Claude Code 保留 `--print` 结构化输出，增加 stream-json 输入与 stdi
 2026-10-01 的 Qoder／Grok／OpenCode Context 与 Copilot 重新核验见[字段与场景证据](../../research/runtime-monitoring/native-context-ratio-verification-2026-10-01.md)。schema 127 → 128 → 129 和已安装 schema 128 → 129 均有迁移 owner；179 失败时回滚字段、收据和 marker，旧数量保留且原生比例为空。
 
 同日追加的[原生边界验收](../../research/runtime-monitoring/native-boundaries-verification-2026-10-01.md)补齐 Codex 真实压缩降值、四类健康冷恢复及 App 重开、Grok 同次思考速度 UI 和 OpenCode 显式有效窗口；Qoder 正缓存写只有明确标注的受控链路证据。默认 Provider 容量、真实正缓存写及异常恢复仍按记录保持未验证，不改变 schema 或字段合同。
+## 并行交付：AI 优先添加队员
+
+按 Principal 确认稿，名册只保留 AI/手动分段添加入口，列表直接拖拽排序并保留可调分隔线。
+AI 创建使用一位可用协助者的普通草稿会话；三个起步提示可编辑，输入后出现窗口内侧栏草稿。
+成功 `member.create` 产生静态入队回执，配置链接进入已有队员设置，右侧表单及离队资料行为保持。
+Desktop/Mobile、中文/英文共用生产组件。
+
+[Member Creation Flow v1](../../contracts/member-creation-flow-v1.md)拥有当前行为，
+[V1.72-D09](decisions.md#v1-72-d09)记录取舍；原 main 的 Migration 180 将 schema 129 升为 130；与已安装指标分支整合后，当前 Migration 181/182 分别交付 User 投影与队员创建，最终 schema 为 **132**。两条指标和 main 的已部署 128/129/130 来源只按完整结构与收据组合准入，原子收口且保留业务数据、既有收据时间和冻结证据。
+[实施验收](implementation-plan.md#2026-10-02-ai-优先添加队员)区分自动化与真实模型/实体手机边界。
+本切片不改变模型 Bootstrap、Tool Schema、上下文格式或发布 Skill。

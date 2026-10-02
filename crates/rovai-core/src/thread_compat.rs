@@ -73,7 +73,7 @@ pub fn canonical_flag<'a>(operation: &str, flag: &'a str) -> &'a str {
         ("thread.search" | "thread.read", "--camp-id") => "--thread-id",
         ("thread.read", "--thread") => "--reply-chain",
         ("history.search", "--camp-ids") => "--thread-ids",
-        ("thread.message.send", "--to-user") => "--to-principal",
+        ("thread.message.send", "--to-principal") => "--to-user",
         _ => flag,
     }
 }

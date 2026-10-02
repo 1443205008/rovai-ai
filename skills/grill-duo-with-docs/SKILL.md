@@ -27,7 +27,7 @@ Keep unanswered questions, numbers and advice. Add no new questions mid-round. F
 
 - Request: `rovai send --to <partner-agent-id> --body <questions>`.
 - Advice: `rovai send --to <requester-agent-id> --body <advice>`.
-- User questions/final confirmation: `rovai send --public-only --to-principal --body <questions-or-summary>`.
+- User questions/final confirmation: `rovai send --public-only --to-user --body <questions-or-summary>`.
 
 After dispatch, finish other current inputs and end while waiting. Follow CLI recovery on failure; do not blindly resend.
 

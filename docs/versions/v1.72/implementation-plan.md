@@ -487,3 +487,49 @@ Principal 确认 v3 HTML 后授权实施、创建 PR 并合入 main。本次范�
 
 本次可逆行操作沿用既有导航权威，无新增 Version Decision 准入事项。当前 Contract、Architecture 与 UI 同步更新，
 版本指针与 Runtime/Context 合同确认无需变化。
+
+## 2026-10-02 AI 优先添加队员
+
+Principal 确认实现并要求独立 worktree、PR 到 main 后合入。工作基线 `9028e5fb`，分支
+`rovai/ai-first-member-creation`。本切片保留队员页右侧信息/Runtime 表单与离队资料；只调整名册入口、
+直接排序、普通草稿会话的起步操作与静态成功卡片。合同与理由见
+[Member Creation Flow v1](../../contracts/member-creation-flow-v1.md)和[V1.72-D09](decisions.md#v1-72-d09)。
+
+实现采用单个可用协助者、窗口内草稿 overlay 和现有发送激活事务。Profile、静态回执及最近成功协助者在同一
+Gateway 事务中提交；Migration 180/schema 130 增加两张业务表，不改模型上下文或 Skill。
+
+测试准入：扩展现有 `team_tool` 的幂等创建 owner，覆盖回执失败导致 Profile 回滚、重试只出一张卡、改名/离队后快照
+不变、Open 可读且不增加消息/会话成员。新增迁移测试独立拥有当时 schema 129→130 原子边界；不复制旧 migration owner。
+Renderer 的纯函数覆盖可用性优先、回退和过滤后排序；Electron 使用 production BusinessApp 与隔离内存 transport，
+不启动真实 Core/Runtime，不读取日用 userData/Skill Library。
+
+已验证：
+
+- `pnpm typecheck`、`cargo test --workspace`。
+- 现有 member-create 扩展 owner 与新 Migration 180 owner。
+- `node --test scripts/lib/member-editor.test.mjs`：19 项，含排序保存失败回退、键盘操作、分隔线、设置表单及桌面双主题。
+- `pnpm test:member-creation`：14 项，含新空草稿、输入后侧栏、同窗口恢复、发送拒绝、普通激活、静态卡、离队配置跳转、
+  无可用协助者手动降级、手机原生触摸拖拽、英文 starter/Return 换行与明暗卡片。
+- 人工检查生产 fixture 的桌面入队卡、390px 英文名册及手机夜间入队卡，未见水平溢出或头像遮挡。
+
+合并主线 `63225393` 后，本切片顺延为 Migration 180/schema 130、V1.72-D09；新旧 Migration 的完成准入逐级衔接。
+`pnpm test` 全通过：226 个 Vitest 文件/2,431 项，Node 回归 328 通过、2 项平台跳过。`pnpm build:desktop`、
+Typecheck、Rust format 与基于 `63225393` 的文档门禁通过。Open 的 3 项慢测试证明零 event-log 读取、
+标题分页稳定与无关会话规模不扩大读取。最终 `cargo test --workspace` 为 439 通过、1 项人工 Runtime smoke 保持忽略。DB 扩展组 96 项中 95 项首轮通过；
+旧 v99 fixture 降级时遇到主线新增的 `agent_v2` 约束，修复 test-only downgrade 后该用例单独复跑通过。
+真实模型执行及实体手机软键盘尚未在本切片验收；
+隔离 fixture 只证明交互和投影，不宣称模型端到端或发布安装完成。
+
+
+## 2026-10-02 安装前的双分支迁移收口
+
+合入 main `91b315e9` 时，本机日常库仍是指标预览的 schema 128 / Migration 178。
+保留指标分支 178/179 和 Thread 收口 180，User 投影、队员回执顺延为 181/182，当前 schema 132。
+main 已部署的 schema 128/129/130 按完整表、约束与连续收据组合识别；补建空指标投影并原子追加缺失收据，
+不修改既有收据时间、业务行或冻结输入证据。未知、缺损或混杂布局拒绝升级。
+
+测试继续扩展 `db::thread_names` 的既有双分支收口 owner，增加 main 129/130、收据失败回滚、损坏结构拒绝、
+原队员创建回执与偏好保留、重新打开幂等性；没有新增独立 Rust 测试函数。
+已安装指标 schema 128 的旧数量与 null 比例仍由 `session_context_migration` owner 验证。
+最小命令为 `cargo test -p rovai-core --features extended-tests --lib db::`；
+打包验收使用按日常只读 DDL 构造的空 schema 128 fixture，不复制日常业务行或凭据。

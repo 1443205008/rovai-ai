@@ -14,7 +14,7 @@ last_updated: 2026-10-01
 身份点，不表示运行、权限、审批、Presence、Lead、Capability 或选中状态。
 
 一个受控 `avatarRef` 同时解析完整 portrait 与紧凑 icon，不增加第二个 Profile 字段。portrait
-只用于队员详情、身份编辑和外观预设；圆形 icon 用于名册、详情标题、队员选择、Mention 候选和
+只用于队员详情、身份编辑、外观预设和静态入队回执；圆形 icon 用于名册、详情标题、队员选择、Mention 候选和
 消息身份位。两种 rendition 必须来自同一内置或受管复合资产。
 
 未知引用、缺文件、完整性失败或图片加载失败统一回退到由队员名称派生的可读首字母；不能显示
@@ -105,3 +105,23 @@ Rovai 概念。该表单由 Desktop 与 Mobile 共用；版本不兼容也复用
 `member-identity-save.test.ts` 覆盖；真实 App 验收仍遵循[开发隔离规则](../../development/local-workflow.md)。
 
 模型菜单的搜索、输入法、默认语义及跨入口交互由 `pnpm test:runtime-model-picker` 的生产组件 Electron fixture 验证。
+
+## 添加队员与名册排序
+
+名册标题只保留分段“添加”按钮：主按钮进入对话添加，右侧菜单打开现有手动表单。移除旧名册选项和独立折叠按钮；
+1px 分隔线的拖动、折叠/展开、双击/Home 复位及方向键行为保持。Desktop 拖动队员行，Mobile 从头像拖动；
+不进入排序模式、不用手柄遮挡头像。拖动保留选择，同 Presence 组内换位，过滤外行保留；取消不提交，保存失败回退。
+键盘焦点行支持 Alt+Up/Down，右键或菜单键可打开上移/下移操作。
+
+AI 草稿复用普通会话所有结构；仅空态标题与三个起步操作不同：从喜欢的角色开始、按工作需要找搭档、设计原创伙伴。
+快捷操作只填入正文，等待用户编辑和发送。没有换人控件、续建选择或预创建名牌。手机沿用既有折叠起步操作、
+统一导航抽屉、列表/详情切换和 16px 输入；Return 换行。选择协助者、草稿边界与降级见
+[Member Creation Flow v1](../../contracts/member-creation-flow-v1.md)。
+
+成功后在时间线呈现静态入队卡片，使用创建时 portrait、名字、角色、职责、性格和协助者署名。
+唯一“配置智能体”链接进入原运行配置区。卡片无当前 Runtime/Presence 状态，配置后不变成“开始对话”；
+离队资料照常可读，移除后的目标处理沿用队员页。入队卡片也可使用 portrait，不扩展身份资产权限。
+
+`pnpm test:member-creation` 使用 production BusinessApp 与隔离 transport 验证选择、草稿切换、发送失败、
+入队回执、配置跳转、手动降级、中英文及手机原生输入；`ROVAI_KEEP_MEMBER_CREATION_FIXTURE=1` 保留截图。
+它与既有 member-editor 测试共同保护右侧设置。

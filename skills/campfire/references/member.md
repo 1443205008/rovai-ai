@@ -14,7 +14,7 @@ Handle this discussion's requests in the current batch; process other inputs nor
 rovai send --to <requester-agent-id> --body <complete-result>
 ```
 
-Follow the reply contract in `SKILL.md`. Follow CLI recovery on failure; do not blindly resend. If a Runtime final response is required, keep the same complete view there. Do not request Principal attention.
+Follow the reply contract in `SKILL.md`. Follow CLI recovery on failure; do not blindly resend. If a Runtime final response is required, keep the same complete view there. Do not request User attention.
 
 For an independent view, use only the requested topic, shared facts and assigned perspective. Do not cite, follow or rebut views already on the public screen.
 

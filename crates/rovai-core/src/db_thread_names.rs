@@ -131,7 +131,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
         anyhow::ensure!(
             matches!(
                 classify_database_contract(&tx)?,
-                DatabaseContractClassification::Current(_)
+                DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 130
             ),
             "Thread migration failed current schema admission"
         );
@@ -147,6 +147,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 // Reverse only synthetic test fixtures; no product path downgrades stored evidence.
 #[cfg(test)]
 pub(super) fn downgrade_for_test(connection: &Connection) {
+    user_projection::downgrade_for_test(connection);
     if !connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=180)",
@@ -273,7 +274,7 @@ mod tests {
         );
         assert!(matches!(
             classify_database_contract(database.connection()).unwrap(),
-            DatabaseContractClassification::Current(_)
+            DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 130
         ));
         // Reproduce main's deployed schema 128 independently of the metrics
         // preview: v32 constraints and receipt 178, but no context projection.
@@ -331,6 +332,106 @@ mod tests {
             3
         );
         drop(reopened);
-        std::fs::remove_dir_all(directory).unwrap();
+        std::fs::remove_dir_all(&directory).unwrap();
+
+        // The same convergence owner covers main's later User/member lineages.
+        // Each has distinct receipt collisions, and must preserve old receipts,
+        // application rows and frozen evidence through rollback and reopen.
+        for source_schema in [129, 130] {
+            let mut database = crate::test_support::fresh_schema_database_at(&directory);
+            if source_schema == 129 {
+                member_creation::downgrade_for_test(database.connection());
+            }
+            database.connection().execute_batch("INSERT INTO camp(id,title,project_binding_kind,project_path,created_at,updated_at)
+                VALUES ('main-camp','preserve main data','quick_chat','','2026-01-01','2026-01-01');").unwrap();
+            if source_schema == 130 {
+                database.connection().execute_batch("INSERT INTO member_creation VALUES('creation','main-camp','{}','2026-01-01');
+                    INSERT INTO member_creation_preference VALUES(1,'agent_1');").unwrap();
+            }
+            database.connection().execute_batch(&format!("DROP TABLE runtime_session_context_latest;
+                DELETE FROM schema_migration WHERE version>{};
+                UPDATE rovai_data_contract SET projection_schema_version={source_schema} WHERE singleton=1;
+                UPDATE schema_migration SET applied_at='preserved-main-receipt' WHERE version>=178;", source_schema+50)).unwrap();
+            let before =
+                public_history_claim_preserved_evidence_digest(database.connection()).unwrap();
+            assert!(
+                matches!(classify_database_contract(database.connection()).unwrap(),
+                DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == source_schema)
+            );
+            // A known marker alone cannot admit a damaged source.
+            let tx = database.connection().unchecked_transaction().unwrap();
+            tx.execute_batch("DROP TRIGGER context_manifest_v32_only_insert;")
+                .unwrap();
+            assert!(matches!(
+                classify_database_contract(&tx).unwrap(),
+                DatabaseContractClassification::Unknown(_)
+            ));
+            tx.rollback().unwrap();
+            database
+                .connection()
+                .execute_batch(
+                    "CREATE TEMP TRIGGER reject_main_convergence BEFORE INSERT ON schema_migration
+                WHEN NEW.version=181 BEGIN SELECT RAISE(ABORT,'main convergence failure'); END;",
+                )
+                .unwrap();
+            assert!(
+                database
+                    .reconcile_main_metrics_lineage()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("main convergence failure")
+            );
+            assert!(!runtime_session_context_schema_matches(database.connection()).unwrap());
+            assert!(
+                matches!(classify_database_contract(database.connection()).unwrap(),
+                DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == source_schema)
+            );
+            database
+                .connection()
+                .execute_batch("DROP TRIGGER reject_main_convergence;")
+                .unwrap();
+            drop(database);
+            let reopened = Database::open(&directory).unwrap();
+            assert!(matches!(
+                classify_database_contract(reopened.connection()).unwrap(),
+                DatabaseContractClassification::Current(_)
+            ));
+            assert!(runtime_session_context_ratio_schema_matches(reopened.connection()).unwrap());
+            assert_eq!(
+                before,
+                public_history_claim_preserved_evidence_digest(reopened.connection()).unwrap()
+            );
+            assert_eq!(
+                reopened
+                    .connection()
+                    .query_row("SELECT title FROM camp WHERE id='main-camp'", [], |row| row
+                        .get::<_, String>(0))
+                    .unwrap(),
+                "preserve main data"
+            );
+            assert_eq!(reopened.connection().query_row("SELECT count(*) FROM schema_migration WHERE applied_at='preserved-main-receipt'", [], |row| row.get::<_,i64>(0)).unwrap(), source_schema-127);
+            if source_schema == 130 {
+                assert_eq!(reopened.connection().query_row("SELECT snapshot_json FROM member_creation WHERE creation_id='creation'", [], |row| row.get::<_,String>(0)).unwrap(), "{}");
+                assert_eq!(
+                    reopened
+                        .connection()
+                        .query_row(
+                            "SELECT helper_agent_id FROM member_creation_preference",
+                            [],
+                            |row| row.get::<_, String>(0)
+                        )
+                        .unwrap(),
+                    "agent_1"
+                );
+            }
+            drop(reopened);
+            let reopened_again = Database::open(&directory).unwrap();
+            assert!(matches!(
+                classify_database_contract(reopened_again.connection()).unwrap(),
+                DatabaseContractClassification::Current(_)
+            ));
+            drop(reopened_again);
+            std::fs::remove_dir_all(&directory).unwrap();
+        }
     }
 }

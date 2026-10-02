@@ -104,6 +104,7 @@ type MembersViewProps = {
   onReload(): Promise<void>
   onProfileCommitted?(profile: AgentProfile): void
   onOpenRuntimeSettings(): void
+  onCreateWithAI?(): Promise<boolean>
 }
 
 type GuardedTransition = {
@@ -130,6 +131,7 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
     const [visited, setVisited] = useState<string[]>([])
     const [hasNewDraft, setHasNewDraft] = useState(false)
     const [creating, setCreating] = useState(false)
+    const [creatingWithAI, setCreatingWithAI] = useState(false)
     const [personalSelected, setPersonalSelected] = useState(false)
     const [personalVisited, setPersonalVisited] = useState(false)
     const creatingRef = useRef(creating)
@@ -287,7 +289,16 @@ export const MembersView = forwardRef<MembersViewHandle, MembersViewProps>(
               )
             }
             onSelect={select}
-            onCreate={create}
+            creating={creatingWithAI}
+            onCreate={() => {
+              if (creatingWithAI) return
+              void requestTransition(async () => {
+                setCreatingWithAI(true)
+                try { if (!await props.onCreateWithAI?.()) create() }
+                finally { setCreatingWithAI(false) }
+              })
+            }}
+            onManualCreate={create}
             onReload={props.onReload}
           />
           {hasNewDraft && (

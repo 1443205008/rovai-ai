@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::{
     camp_content::{
         StructuredThreadMessageContent, mentions_current_user, normalize_content,
-        render_agent_plain_text, validate_content,
+        render_agent_plain_text, render_agent_search_projection, validate_content,
     },
     camp_id::{CAMP_ID_PATTERN, ThreadId},
     camp_message_publication::public_camp_message_publication_cte,
@@ -883,9 +883,14 @@ fn load_current_body_candidates(
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
     let (mut candidates, mut incomplete) = body_candidates(rows, query, budget, short)?;
-    if query_matches_principal(query) {
-        incomplete |=
-            merge_current_principal_candidates(transaction, fence, query, budget, &mut candidates)?;
+    if query_matches_user_mention(query) {
+        incomplete |= merge_current_user_mention_candidates(
+            transaction,
+            fence,
+            query,
+            budget,
+            &mut candidates,
+        )?;
     }
     Ok((candidates, incomplete))
 }
@@ -990,18 +995,24 @@ fn load_history_body_candidates(
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
     let (mut candidates, mut incomplete) = body_candidates(rows, query, budget, short)?;
-    if query_matches_principal(query) {
-        incomplete |=
-            merge_history_principal_candidates(transaction, scope, query, budget, &mut candidates)?;
+    if query_matches_user_mention(query) {
+        incomplete |= merge_history_user_mention_candidates(
+            transaction,
+            scope,
+            query,
+            budget,
+            &mut candidates,
+        )?;
     }
     Ok((candidates, incomplete))
 }
 
-fn query_matches_principal(query: &str) -> bool {
-    fold_text(query).contains("@principal")
+fn query_matches_user_mention(query: &str) -> bool {
+    let query = fold_text(query);
+    query.contains("@user") || query.contains("@principal")
 }
 
-fn merge_current_principal_candidates(
+fn merge_current_user_mention_candidates(
     transaction: &Transaction<'_>,
     fence: &RunFence,
     query: &str,
@@ -1048,7 +1059,7 @@ fn merge_current_principal_candidates(
     Ok(incomplete)
 }
 
-fn merge_history_principal_candidates(
+fn merge_history_user_mention_candidates(
     transaction: &Transaction<'_>,
     scope: &HistorySearchScope<'_>,
     query: &str,
@@ -1279,9 +1290,11 @@ fn reproject_search_candidates(
     candidates: &mut CandidateMap,
 ) -> Result<()> {
     for candidate in candidates.values_mut() {
-        candidate.message.body = projected_message_body(transaction, &candidate.message.id)?;
+        let content = load_message_content(transaction, &candidate.message.id)?;
+        let (body, user_offsets) = render_agent_search_projection(transaction, &content)?;
+        candidate.message.body = body;
         let (occurrence_count, first_match_offset) =
-            literal_match_rank(&candidate.message.body, query);
+            user_mention_match_rank(&candidate.message.body, query, &user_offsets);
         candidate.occurrence_count = occurrence_count;
         candidate.first_match_offset = first_match_offset;
         candidate.body_length = candidate.message.body.chars().count();
@@ -1372,6 +1385,42 @@ fn literal_match_rank(body: &str, query: &str) -> (usize, usize) {
         if body[offset..offset + query.len()] == query {
             count = (count + 1).min(32);
             first = first.min(offset);
+            if count == 32 {
+                break;
+            }
+        }
+    }
+    (count, first)
+}
+
+// Keep query text literal except when it matches a structured current-user atom.
+// All ranks and snippets use offsets in the returned @User projection.
+fn user_mention_match_rank(body: &str, query: &str, user_offsets: &[usize]) -> (usize, usize) {
+    if user_offsets.is_empty() || !fold_text(query).contains("@principal") {
+        return literal_match_rank(body, query);
+    }
+    let body = body.chars().map(fold_char).collect::<Vec<_>>();
+    let query = query.chars().map(fold_char).collect::<Vec<_>>();
+    let legacy = "@principal".chars().collect::<Vec<_>>();
+    let mut count = 0;
+    let mut first = usize::MAX;
+    for start in 0..body.len() {
+        let (mut offset, mut matched) = (start, 0);
+        while offset < body.len() && matched < query.len() {
+            if user_offsets.binary_search(&offset).is_ok() && query[matched..].starts_with(&legacy)
+            {
+                offset += "@User".chars().count();
+                matched += legacy.len();
+            } else if body[offset] == query[matched] {
+                offset += 1;
+                matched += 1;
+            } else {
+                break;
+            }
+        }
+        if matched == query.len() {
+            first = first.min(start);
+            count += 1;
             if count == 32 {
                 break;
             }
@@ -1854,6 +1903,13 @@ fn load_visible_message(
 }
 
 fn projected_message_body(transaction: &Transaction<'_>, message_id: &str) -> Result<String> {
+    render_agent_plain_text(transaction, &load_message_content(transaction, message_id)?)
+}
+
+fn load_message_content(
+    transaction: &Transaction<'_>,
+    message_id: &str,
+) -> Result<StructuredThreadMessageContent> {
     let content_json: String = transaction.query_row(
         "SELECT structured_content_json FROM camp_message WHERE id = ?1",
         [message_id],
@@ -1863,7 +1919,7 @@ fn projected_message_body(transaction: &Transaction<'_>, message_id: &str) -> Re
         &content_json,
     )?);
     validate_content(&content)?;
-    render_agent_plain_text(transaction, &content)
+    Ok(content)
 }
 
 fn load_timeline_page(
@@ -2446,35 +2502,34 @@ mod slow_tests {
         )]);
         reproject_search_candidates(&transaction, "authoritative", &mut candidates).unwrap();
         let search = ranked_search_response(candidates, "authoritative", 10, false, false).unwrap();
-        assert_eq!(
-            search["results"][0]["snippet"],
-            "@Principal authoritative body"
-        );
+        assert_eq!(search["results"][0]["snippet"], "@User authoritative body");
 
-        let mut principal_candidates = CandidateMap::new();
-        assert!(
-            !merge_current_principal_candidates(
-                &transaction,
-                &RunFence {
-                    manifest_id: "manifest-1".to_string(),
-                    current_camp_id: "rvcamp_01h47kvsy5fk1shh6w1g60eecf".to_string(),
-                    current_boundary: 1,
-                    global_boundary: 1,
-                },
-                "@Principal",
-                8,
-                &mut principal_candidates,
-            )
-            .unwrap()
-        );
-        reproject_search_candidates(&transaction, "@Principal", &mut principal_candidates).unwrap();
-        let principal_search =
-            ranked_search_response(principal_candidates, "@Principal", 10, false, false).unwrap();
-        assert_eq!(principal_search["results"].as_array().unwrap().len(), 1);
-        assert_eq!(
-            principal_search["results"][0]["snippet"],
-            "@Principal authoritative body"
-        );
+        for query in ["@User", "@Principal"] {
+            let mut principal_candidates = CandidateMap::new();
+            assert!(
+                !merge_current_user_mention_candidates(
+                    &transaction,
+                    &RunFence {
+                        manifest_id: "manifest-1".to_string(),
+                        current_camp_id: "rvcamp_01h47kvsy5fk1shh6w1g60eecf".to_string(),
+                        current_boundary: 1,
+                        global_boundary: 1,
+                    },
+                    query,
+                    8,
+                    &mut principal_candidates,
+                )
+                .unwrap()
+            );
+            reproject_search_candidates(&transaction, query, &mut principal_candidates).unwrap();
+            let principal_search =
+                ranked_search_response(principal_candidates, query, 10, false, false).unwrap();
+            assert_eq!(principal_search["results"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                principal_search["results"][0]["snippet"],
+                "@User authoritative body"
+            );
+        }
 
         let rows = load_ordered_messages(
             &transaction,
@@ -2490,7 +2545,31 @@ mod slow_tests {
             None,
         )
         .unwrap();
-        assert_eq!(rows[0].body, "@Principal authoritative body");
+        assert_eq!(rows[0].body, "@User authoritative body");
+        // Only structured atoms accept the alias; literal old text and mixed queries remain literal.
+        let body = "😀 @User literal @Principal then @User";
+        let offsets = [2, body.chars().count() - "@User".chars().count()];
+        for (query, expected) in [
+            ("@Principal literal @Principal then @User", (1, 2)),
+            ("@User literal @Principal then @Principal", (1, 2)),
+            ("literal @User", (0, usize::MAX)),
+            ("@Principal", (3, 2)),
+            ("literal @Principal", (1, 8)),
+        ] {
+            assert_eq!(
+                user_mention_match_rank(body, query, &offsets),
+                expected,
+                "{query}"
+            );
+        }
+        assert_eq!(
+            user_mention_match_rank("literal @Principal", "@User", &[]),
+            (0, usize::MAX)
+        );
+        assert_eq!(
+            user_mention_match_rank("literal @Principal", "@Principal", &[]),
+            (1, 8)
+        );
     }
 
     #[test]
@@ -2827,7 +2906,7 @@ mod slow_tests {
         };
         let item = read_item(&transaction, &target, &run, "message-1").unwrap();
         let item = &item["items"][0];
-        assert_eq!(item["body"], "@Principal A😀中B");
+        assert_eq!(item["body"], "@User A😀中B");
         assert!(item.get("bodyLength").is_none());
         assert!(item.get("nextBodyOffset").is_none());
         assert_eq!(item["attachmentCount"], 13);

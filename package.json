@@ -168,6 +168,7 @@
     "test:remote-connection-review": "tsc --noEmit -p scripts/fixtures/remote-connection/tsconfig.json && node --test scripts/lib/remote-connection-review.test.mjs",
     "test:host-web-parity": "node --test scripts/lib/host-web-parity.test.mjs",
     "test:host-web-mobile": "node --test scripts/lib/host-web-mobile.test.mjs",
+    "test:member-creation": "node --test scripts/lib/member-creation.test.mjs",
     "test:mission-board": "node --test scripts/lib/mission-board.test.mjs"
   },
   "dependencies": {
