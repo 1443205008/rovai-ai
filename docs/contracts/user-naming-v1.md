@@ -34,7 +34,7 @@ resume／压缩补发不改写这些字节，不改变 Session ID 或 generation
 已冻结 `agent_v1` 输入、Manifest、Delivery 和成功工具回执仍按原版本验证摘要并复用。
 A2A Guidance 新证据为 3，历史 1／2 的原句与摘要继续有效；未知版本、缺失证据、摘要不符和 audience 混标拒绝。
 普通 Formatter／Manifest 28、公开 32、Profile 7／10 与 Run Facts 6／9 均保持。
-Migration 179 只把 context_manifest 的 audience CHECK 扩展为 `agent_v1 | agent_v2`，schema 从 128 升至 129；
+原 main 的 Migration 179 将 schema 128 升至 129。与已安装指标分支整合后，保留其既有 178/179/180 收据，当前 Migration 181 将 schema 130 升至 131，只把 context_manifest 的 audience CHECK 扩展为 `agent_v1 | agent_v2`；
 复制时校验冻结证据不变，失败原子回滚，不改写原行或 Blob。
 
 ## Skill 更新

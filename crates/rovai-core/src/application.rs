@@ -217,10 +217,11 @@ use rovai_core::{
         runtime_waiting_camps, runtime_waiting_recipients,
     },
     monitoring::{
-        MonitoringFilter, MonitoringService, ParsedRuntimeUsage, RuntimeUsageBuffer,
-        RuntimeUsageFlushTarget, acp_usage_source_identity, codex_usage_source_identity,
-        parse_acp_usage_message, parse_claude_result_usage, parse_codex_usage_message,
-        parse_pi_usage_message, pi_usage_source_identity,
+        MonitoringExecutionParams, MonitoringFilter, MonitoringService, ParsedRuntimeUsage,
+        RuntimeUsageBuffer, RuntimeUsageCounterMode, RuntimeUsageFields, RuntimeUsageFlushTarget,
+        acp_usage_source_identity, codex_context_source_identity, codex_usage_source_identity,
+        parse_acp_usage_message, parse_claude_observed_usage, parse_claude_result_usage,
+        parse_codex_usage_message, parse_pi_usage_message, pi_usage_source_identity,
     },
     network_recovery::{
         NetworkFailureCategory, NetworkRecoveryAttempt, NetworkRecoveryQueue,
@@ -802,6 +803,7 @@ fn request_runs_outside_main_queue(method: &str) -> bool {
             | "diagnostics.check"
             | "diagnostics.export"
             | "monitoring.snapshot"
+            | "monitoring.execution"
             | "runtime.installations.refresh"
             | "runtime.discovery.rescan"
             | "runtime.product.ensure"
@@ -10740,6 +10742,12 @@ impl Core {
                 );
                 result
             }
+            "monitoring.execution" => {
+                let params: MonitoringExecutionParams =
+                    serde_json::from_value(request.params.clone())?;
+                let database = self.database.lock().await;
+                MonitoringService::execution_snapshot(&database, &params)
+            }
             "diagnostics.export" => {
                 let report = self.diagnostics_report().await;
                 let database = self.database.lock().await;
@@ -15456,6 +15464,22 @@ impl Core {
         managed_output_root: &Path,
         event: &claude::ClaudeCodeRuntimeEvent,
     ) -> Result<()> {
+        if matches!(
+            event.event_type,
+            "runtime.usage.observed" | "runtime.context.observed"
+        ) {
+            let observations = parse_claude_observed_usage(event.event_type, &event.payload);
+            let identity = canonical_json_digest(&event.payload)?;
+            buffer_runtime_usage(
+                self,
+                &execution.agent_run_id,
+                execution.execution_epoch,
+                &identity,
+                &observations,
+            )
+            .await?;
+            return Ok(());
+        }
         if event.event_type == "claude.permission_request" {
             if let Err(error) = self
                 .prepare_claude_permission_action(execution, &event.payload)
@@ -19009,7 +19033,14 @@ async fn process_agent_run_pi_message(
         .to_string();
     let usage = parse_pi_usage_message(&message, native_session_id, native_prompt_id);
     if !usage.is_empty() {
-        match pi_usage_source_identity(&message, native_session_id, native_prompt_id) {
+        let source = if message_type == "rovai.context_usage" {
+            Ok(Some(format!(
+                "pi-context:{host_instance_id}:{native_prompt_id}:{sequence}"
+            )))
+        } else {
+            pi_usage_source_identity(&message, native_session_id, native_prompt_id)
+        };
+        match source {
             Ok(Some(source_identity)) => {
                 if let Err(error) = buffer_runtime_usage(
                     core,
@@ -19028,6 +19059,9 @@ async fn process_agent_run_pi_message(
                 "dropped Pi Usage without a stable source identity for AgentRun {agent_run_id}: {error:#}"
             ),
         }
+    }
+    if message_type == "rovai.context_usage" {
+        return Ok(());
     }
     let (message, completed_action) = runtime.observe(message).await?;
     if message_type == "extension_ui_request" {
@@ -19100,7 +19134,7 @@ async fn process_agent_run_pi_message(
             &execution.agent_run_id,
             execution.execution_epoch,
             &execution.runtime.model.source,
-            Some(execution.runtime.model.model_id.clone()),
+            runtime.observed_model_id().await,
         )
         .await;
     }
@@ -19763,6 +19797,60 @@ async fn process_acp_events(
                 )
                 .await;
             }
+            AcpIncoming::LateSessionContext {
+                adapter_kind,
+                agent_run_id,
+                execution_epoch,
+                native_session_id,
+                message,
+            } => {
+                let params = &message["params"];
+                if params["sessionId"].as_str() != Some(native_session_id.as_str()) {
+                    continue;
+                }
+                let method = message["method"].as_str().unwrap_or("");
+                for mut usage in parse_acp_usage_message(adapter_kind, None, method, params) {
+                    if usage.scope != "session"
+                        || usage.native_session_id.as_deref() != Some(native_session_id.as_str())
+                    {
+                        continue;
+                    }
+                    // Only qualified numeric metadata contributes to identity;
+                    // unrelated private native fields never enter this digest.
+                    let Ok(identity) = canonical_json_digest(&json!({
+                        "sessionId": native_session_id,
+                        "dialect": usage.dialect_id,
+                        "used": usage.fields.context_used_tokens,
+                        "window": usage.fields.context_size_tokens,
+                        "ratio": usage.fields.native_context_ratio,
+                    })) else {
+                        continue;
+                    };
+                    usage.occurred_at = Some(chrono::Utc::now().to_rfc3339());
+                    let result = {
+                        let mut database = core.database.lock().await;
+                        MonitoringService::record_late_session_context(
+                            &mut database,
+                            &agent_run_id,
+                            execution_epoch,
+                            adapter_kind,
+                            &identity,
+                            &usage,
+                        )
+                    };
+                    match result {
+                        Ok(true) => emit(
+                            &output,
+                            "monitoring.changed",
+                            json!({"reason": "late_session_context"}),
+                        ),
+                        Ok(false) => {}
+                        Err(error) => eprintln!(
+                            "failed to persist late ACP Context for AgentRun {agent_run_id}: {error:#}"
+                        ),
+                    }
+                }
+            }
             AcpIncoming::ZcodeBackground {
                 agent_run_id,
                 execution_epoch,
@@ -20377,13 +20465,54 @@ async fn process_agent_run_acp_message(
         return;
     }
 
-    let usage = parse_acp_usage_message(adapter_kind, runtime.reported_version(), &method, &params);
+    let mut usage =
+        parse_acp_usage_message(adapter_kind, runtime.reported_version(), &method, &params);
+    if usage.iter().any(|item| {
+        matches!(
+            item.dialect_id.as_str(),
+            "grok-acp-meta-context-v1" | "kiro-acp-context-percentage-v1"
+        )
+    }) {
+        let window = runtime.observed_context_window().await;
+        for item in &mut usage {
+            if matches!(
+                item.dialect_id.as_str(),
+                "grok-acp-meta-context-v1" | "kiro-acp-context-percentage-v1"
+            ) {
+                item.fields.context_size_tokens = window;
+            }
+        }
+    }
+    if runtime.native_usage_selected().await {
+        // A prompt selects one billing source before dispatch. Restated ACP
+        // totals cannot also claim the native journal's model calls.
+        usage.retain_mut(|item| {
+            if item.counter_mode == RuntimeUsageCounterMode::Gauge {
+                return true;
+            }
+            if item.cost.is_some() {
+                item.fields = RuntimeUsageFields::default();
+                return true;
+            }
+            false
+        });
+    }
     if !usage.is_empty()
         && let Err(error) = buffer_runtime_usage(
             core,
             agent_run_id,
             execution_epoch,
-            &acp_usage_source_identity(adapter_kind, &method, &params)
+            &if usage.iter().any(|item| {
+                matches!(
+                    item.dialect_id.as_str(),
+                    "grok-acp-meta-context-v1" | "kiro-acp-context-percentage-v1"
+                )
+            }) {
+                // Metadata rides on text/thought notifications. Its stable
+                // receipt identity must not hash their private content.
+                format!("native-context:{host_instance_id}:{native_prompt_id}:{sequence}")
+            } else {
+                acp_usage_source_identity(adapter_kind, &method, &params)
                 .unwrap_or_else(|error| {
                     eprintln!(
                         "failed to derive {} Usage identity for AgentRun {agent_run_id}: {error:#}",
@@ -20395,7 +20524,8 @@ async fn process_agent_run_acp_message(
                     canonical_json_digest(&message).unwrap_or_else(|_| {
                         format!("acp:{method}:{agent_run_id}:{execution_epoch}")
                     })
-                }),
+                })
+            },
             &usage,
         )
         .await
@@ -20404,6 +20534,48 @@ async fn process_agent_run_acp_message(
             "failed to persist {} Usage for AgentRun {agent_run_id}: {error:#}",
             adapter_kind.as_str()
         );
+    }
+    if adapter_kind == AdapterKind::KiroCli && method == "_kiro.dev/metadata" {
+        return;
+    }
+    if acp::is_session_catalog_update(&message) {
+        // A Grok catalog notification may carry native Context. Its numeric
+        // observation has been collected; catalog contents stay out of Evidence
+        // and Renderer IPC just as they did before this observation was routed.
+        return;
+    }
+    if adapter_kind == AdapterKind::CopilotCli && method == "github.com/copilot/sessionEvent" {
+        // Drop private events before Evidence or Renderer IPC.
+        if usage
+            .iter()
+            .any(|item| item.dialect_id == "copilot-native-call-usage-v1")
+            && let Some(model) = params.pointer("/data/model").and_then(Value::as_str)
+        {
+            // ACP's advertised default can differ from the model that actually
+            // served the root call. Use the validated native Usage observation.
+            let execution = {
+                let database = core.database.lock().await;
+                ExecutionRuntimeService::default().load_agent_run_execution(
+                    &database,
+                    agent_run_id,
+                    execution_epoch,
+                )
+            };
+            if let Ok(Some(execution)) = execution {
+                record_available_runtime_model(
+                    core,
+                    output,
+                    adapter_kind,
+                    &execution.camp_id,
+                    agent_run_id,
+                    execution_epoch,
+                    &execution.runtime.model.source,
+                    Some(model.to_string()),
+                )
+                .await;
+            }
+        }
+        return;
     }
     if let Some(images) = runtime.observe_images(native_prompt_id, &message).await {
         persist_runtime_images(
@@ -20873,6 +21045,26 @@ async fn process_runtime_event(
     let Some(_runtime_route_permit) = core.planned_shutdown.enter_runtime_route().await else {
         return Ok(());
     };
+    if scope.adapter_kind == AdapterKind::AntigravityApp
+        && event_type == "runtime.antigravity.usage"
+    {
+        let usage: rovai_core::monitoring::ParsedRuntimeUsage =
+            serde_json::from_value(payload.clone())?;
+        let identity = format!(
+            "antigravity:{}:{}",
+            usage.native_session_id.as_deref().unwrap_or(""),
+            usage.identity_suffix
+        );
+        buffer_runtime_usage(
+            core,
+            scope.agent_run_id,
+            scope.execution_epoch,
+            &identity,
+            &[usage],
+        )
+        .await?;
+        return Ok(());
+    }
     if event_type == agent_run_image::IMAGE_EVENT {
         if let Ok(images) = serde_json::from_value::<RuntimeImageObservation>(payload.clone()) {
             persist_runtime_images(
@@ -22206,6 +22398,41 @@ async fn flush_runtime_usage(
     // A terminal flush must observe the result of any periodic flush that
     // already drained this Run before deciding that its bookkeeping is idle.
     let _flush_guard = core.runtime_usage_flush.lock().await;
+    // Poll under the same serialization as drain/persist. A terminal cannot
+    // finish this Run between advancing the native cursor and buffering it.
+    for kind in [
+        AdapterKind::CodebuddyCli,
+        AdapterKind::KimiCodeCli,
+        AdapterKind::OpencodeCli,
+        AdapterKind::QoderCli,
+        AdapterKind::TraeCnCli,
+    ] {
+        let Some(adapter) = core.acp_adapter(kind) else {
+            continue;
+        };
+        for (agent_run_id, execution_epoch, runtime) in adapter.native_usage_runs().await {
+            if let RuntimeUsageFlushTarget::Run {
+                agent_run_id: target_id,
+                execution_epoch: target_epoch,
+            } = &target
+                && (&agent_run_id != target_id || execution_epoch != *target_epoch)
+            {
+                continue;
+            }
+            let prompt_end =
+                reason == "terminal_flush" && matches!(target, RuntimeUsageFlushTarget::Run { .. });
+            for item in runtime.poll_native_usage(prompt_end).await {
+                buffer_runtime_usage(
+                    core,
+                    &agent_run_id,
+                    execution_epoch,
+                    &item.source_identity,
+                    &[item.usage],
+                )
+                .await?;
+            }
+        }
+    }
     let batches = {
         let mut usage = core.runtime_usage.lock().await;
         let batches = usage.drain(target.clone());
@@ -22219,18 +22446,40 @@ async fn flush_runtime_usage(
     }
     let persistence = {
         let mut database = core.database.lock().await;
-        MonitoringService::record_usage_batches(&mut database, &batches)
+        let result =
+            MonitoringService::record_usage_batches_with_deferred_context(&mut database, &batches);
+        // Active UI has a scoped safety poll. A periodic commit after terminal
+        // must invalidate readers even after their bounded terminal tail ends.
+        let notify_late = if !notify_monitoring
+            && matches!(target, RuntimeUsageFlushTarget::Periodic)
+            && result.as_ref().is_ok_and(|(inserted, _)| *inserted > 0)
+        {
+            MonitoringService::has_terminal_usage_batches(&database, &batches).unwrap_or_else(
+                |error| {
+                    eprintln!("failed to classify committed Runtime Usage notification: {error:#}");
+                    true // The data has committed; a conservative invalidation does not duplicate Usage.
+                },
+            )
+        } else {
+            false
+        };
+        result.map(|(inserted, deferred)| (inserted, deferred, notify_late))
     };
     match persistence {
-        Ok(inserted) => {
+        Ok((inserted, deferred_context, notify_late)) => {
             let mut usage = core.runtime_usage.lock().await;
+            if matches!(target, RuntimeUsageFlushTarget::Periodic) {
+                // Native Usage has already been persisted. Only one numeric
+                // Context per Run waits for the existing input acceptance gate.
+                usage.restore(deferred_context)?;
+            }
             usage.finish_idle_target_after_flush(&target);
             drop(usage);
-            if inserted > 0 && notify_monitoring {
+            if inserted > 0 && (notify_monitoring || notify_late) {
                 emit(
                     &core.output,
                     "monitoring.changed",
-                    json!({ "reason": reason, "observationCount": inserted }),
+                    json!({ "reason": if notify_late { "late_usage_flush" } else { reason }, "observationCount": inserted }),
                 );
             }
             Ok(inserted)
@@ -22565,19 +22814,25 @@ async fn process_agent_run_codex_message(
         }
     }
     let usage = parse_codex_usage_message(&method, &params);
-    if !usage.is_empty()
-        && let Err(error) = buffer_runtime_usage(
+    for observation in &usage {
+        let source_identity = if observation.scope == "session" {
+            codex_context_source_identity(&params)
+        } else {
+            codex_usage_source_identity(&params)
+        }
+        .or_else(|_| canonical_json_digest(&message))
+        .unwrap_or_else(|_| format!("codex:{method}:{agent_run_id}:{execution_epoch}"));
+        if let Err(error) = buffer_runtime_usage(
             core,
             agent_run_id,
             execution_epoch,
-            &codex_usage_source_identity(&params)
-                .or_else(|_| canonical_json_digest(&message))
-                .unwrap_or_else(|_| format!("codex:{method}:{agent_run_id}:{execution_epoch}")),
-            &usage,
+            &source_identity,
+            std::slice::from_ref(observation),
         )
         .await
-    {
-        eprintln!("failed to persist Codex Usage for AgentRun {agent_run_id}: {error:#}");
+        {
+            eprintln!("failed to persist Codex Usage for AgentRun {agent_run_id}: {error:#}");
+        }
     }
     if method == "thread/tokenUsage/updated" {
         return;
@@ -30349,6 +30604,34 @@ done
 
     #[test]
     fn acp_agent_message_events_preserve_only_safe_message_identity_metadata() {
+        let thought = json!({"sessionUpdate":"agent_thought_chunk",
+            "content":{"type":"text","text":"PRIVATE_THOUGHT"}});
+        assert!(rovai_core::runtime::is_root_output(&thought));
+        for field in ["subagentId", "parent_tool_use_id", "replay", "snapshot"] {
+            for path in ["", "/_meta", "/content", "/content/_meta"] {
+                let mut excluded = thought.clone();
+                if path == "/_meta" {
+                    excluded["_meta"] = json!({});
+                }
+                if path == "/content/_meta" {
+                    excluded["content"]["_meta"] = json!({});
+                }
+                let container = if path.is_empty() {
+                    &mut excluded
+                } else {
+                    excluded.pointer_mut(path).unwrap()
+                };
+                container[field] = json!(true);
+                assert!(!rovai_core::runtime::is_root_output(&excluded));
+                let container = if path.is_empty() {
+                    &mut excluded
+                } else {
+                    excluded.pointer_mut(path).unwrap()
+                };
+                container[field] = Value::Null;
+                assert!(rovai_core::runtime::is_root_output(&excluded));
+            }
+        }
         let (_, update_identity) = normalize_acp_event(
             AdapterKind::OpencodeCli,
             "session/update",

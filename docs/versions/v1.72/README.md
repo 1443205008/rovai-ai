@@ -38,7 +38,7 @@ Bootstrap，尚无 Bootstrap 的公开执行统一使用当前公开模板；Ski
 Principal 已确认 [Camp → Thread r2](model-context-change-thread-rename.md) 开始实施：公开范围使用 `threadId`，
 回复链用 `--reply-chain`，兼容旧 Camp 输入，保留旧 Native Session 的绑定与 bootstrap，并沿用 Skill 原路径更新。
 实现已完成，完整模型文本见[前后对照](thread-rename-comparison.md)；测试证据与真实任务 Gate 缺口见[验收记录](thread-rename-verification.md)。
-Migration 178 将数据 schema 127 升为 128，只扩展新 Context 的准入，不迁移 ID、目录或旧 Session。
+main 原 Migration 178 / schema 128 只扩展新 Context 的准入；与指标分支合并后由 Migration 180 收口至 schema 130，兼容已安装指标 schema 128/129 与 main 的 Thread schema 128，不迁移 ID、目录或旧 Session。
 
 前置：[v1.71](../v1.71/README.md)。本版把 Lark 从飞书 provider 下未接通的品牌选项，改为与飞书、钉钉并列的独立渠道。
 飞书与 Lark 可以同时连接各自的开发者账号，同一队员可以同时拥有飞书 Bot 与 Lark Bot，两家的账号、Bot、会话和
@@ -101,6 +101,16 @@ Migration 177 从 v1.72/schema 126 升到 schema 127，只在 camp 增加摘要�
 同时，原生 Skills 发现由上下文缓存改为目录缓存，容量 128 个目录、TTL 300 秒；同目录在途扫描和一次 Camp
 手动刷新均去重，不预热或增加异步订阅。取舍见 [V1.72-D02](decisions.md#v1-72-d02)，实现与验收记录见
 [实施计划](implementation-plan.md)。
+
+## 并行交付：执行指标
+
+2026-10-02 按用户要求移除指标专用 CLI 版本门槛，保留产品最低版本资格；补接 CodeBuddy 最新调用占用、Kiro 原生百分比、TRAE 本地 Usage 与 Antigravity 根 step Usage。OpenCode 1.18.32 真实恢复验证通过，失败占位零不再清空 Context。字段支持、未决项与原始到数据库读回证据见[原生格式兼容验收](../../research/runtime-monitoring/native-format-compatibility-2026-10-02.md)。本切片不改变 schema、模型上下文、测速退役结论或界面布局。
+
+执行面板的可见范围读取、隐藏暂停、终态有限尾读与引用复用已收口；周期 Flush 只为终态迟到数据
+增加落盘后失效提示。生产 Renderer 的 500 Run 动态验收、最低层竞争和字段引用证据见
+[读取生命周期验收](../../research/runtime-monitoring/execution-metrics-refresh-verification-2026-10-01.md)。
+
+执行台分别呈现每 Run 原生四项用量与当前原生 Session 上下文。2026-10-02 按用户要求移除全部 Runtime 的输出测速，包括 Core 字符计数、临时接口、前端轮询与显示；思考内容仍隔离于公开 Evidence 和 Renderer。用量复用 Monitoring Run summary；Migration 178 增加当前 Session 上下文小投影，把 v1.72/schema 127 升至 schema 128；Migration 179 以原子增量升级现有 schema 128 至 129，保留当前上下文数据并独立承接原生比例，不从比例反推数量；Migration 180 在合入 Thread 命名后收口至 schema 130，保留两条已部署路径的业务数据和冻结证据。没有真实回包的 Runtime 字段维持未验证，不回填历史 Run 的结束上下文。字段与 UI 规则由 [Runtime Execution Metrics v5](../../contracts/runtime-execution-metrics-v5.md) 和 [Camp 会话工作区](../../ui/components/conversation-workspace.md#camp-执行过程) 拥有；最新用量、上下文和 App 核验见[原生边界验收](../../research/runtime-monitoring/native-boundaries-verification-2026-10-01.md)，早期[第二轮记录](../../research/runtime-monitoring/execution-metrics-verification-2026-09-29.md)和[v3 长回合验收](../../research/runtime-monitoring/observable-output-v3-verification-2026-09-30.md)保留各自范围。
 
 ## 并行交付：公开 Composer 队外 Mention
 
@@ -178,6 +188,9 @@ Claude Code 保留 `--print` 结构化输出，增加 stream-json 输入与 stdi
 | Documentation routing | 已更新 | 文档任务入口、合同索引、架构索引、当前决定导航与版本指针路由到 Lark v1、Feishu v17、Navigation Read v1、DingTalk v14 与 v1.72；版本内新增[Agent 指令变更说明](model-context-change-agent-english.md)及完整对照；新增 Thread r2、前后对照、验收记录及上述当前合同入口 |
 | Root README | 确认无需更新 | Lark 未完成真实租户验收，按 Lark Channel v1 第 8 节不得在根 README 宣称支持 |
 
+2026-10-01 的 Qoder／Grok／OpenCode Context 与 Copilot 重新核验见[字段与场景证据](../../research/runtime-monitoring/native-context-ratio-verification-2026-10-01.md)。schema 127 → 128 → 129 和已安装 schema 128 → 129 均有迁移 owner；179 失败时回滚字段、收据和 marker，旧数量保留且原生比例为空。
+
+同日追加的[原生边界验收](../../research/runtime-monitoring/native-boundaries-verification-2026-10-01.md)补齐 Codex 真实压缩降值、四类健康冷恢复及 App 重开、Grok 同次思考速度 UI 和 OpenCode 显式有效窗口；Qoder 正缓存写只有明确标注的受控链路证据。默认 Provider 容量、真实正缓存写及异常恢复仍按记录保持未验证，不改变 schema 或字段合同。
 ## 并行交付：AI 优先添加队员
 
 按 Principal 确认稿，名册只保留 AI/手动分段添加入口，列表直接拖拽排序并保留可调分隔线。
@@ -189,9 +202,14 @@ Desktop/Mobile、中文/英文共用生产组件。
 Run 产物作者头。入队卡与文件卡共用桌面/窄列宽度、缩进和间距；旧回执保持可读，不按队员或时间猜测来源。
 
 [Member Creation Flow v1](../../contracts/member-creation-flow-v1.md)拥有当前行为，
-[V1.72-D09](decisions.md#v1-72-d09)记录取舍；Migration 180 将 schema 129 升为 **130**。
+[V1.72-D09](decisions.md#v1-72-d09)记录取舍；原 main 的 Migration 180 将 schema 129 升为 130；与已安装指标分支整合后，当前 Migration 181/182 分别交付 User 投影与队员创建，最终 schema 为 **132**。两条指标和 main 的已部署 128/129/130 来源只按完整结构与收据组合准入，原子收口且保留业务数据、既有收据时间和冻结证据。
 [实施验收](implementation-plan.md#2026-10-02-ai-优先添加队员)区分自动化与真实模型/实体手机边界。
 本切片不改变模型 Bootstrap、Tool Schema、上下文格式或发布 Skill。
+
+
+2026-10-03 追加[五类原生来源验收](../../research/runtime-monitoring/native-source-completion-2026-10-03.md)：
+Antigravity 四项与 Context、Qoder 数量、TRAE Context、Kiro 窗口已补接；仍区分原生缺失和未验证，
+不把 null/null 一致当作字段完整。无 schema 迁移或测速恢复，比例数字统一一位小数。
 
 ## 并行交付：Run 内容块与 command 组分页
 

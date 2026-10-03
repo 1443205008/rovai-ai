@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { configureProductRuntime } from './configure-product-runtime.mjs'
-import { createConfiguredCampAndSend } from './lib/create-configured-camp.mjs'
+import { composerDocumentForAddress, createConfiguredCampAndSend } from './lib/create-configured-camp.mjs'
 import { claudeSendReceipt } from './lib/claude-send-receipt.mjs'
 import {
   coreDataDirectoryArguments,
@@ -98,7 +98,7 @@ try {
   }
   const threadId = first.payload.threadId
   let camp = await waitFor(async () => {
-    const value = await core.request('camps.snapshot', { threadId })
+    const value = await core.request('threads.snapshot', { threadId })
     const run = value.agentRuns[0]
     return run?.status === 'succeeded'
       && value.messages.some((message) =>
@@ -146,7 +146,7 @@ try {
     throw new Error(`Claude Code follow-up failed: ${JSON.stringify(followUp)}`)
   }
   camp = await waitFor(async () => {
-    const value = await core.request('camps.snapshot', { threadId })
+    const value = await core.request('threads.snapshot', { threadId })
     const response = value.messages.find((message) =>
       message.sourceAgentRunId
         && message.body.includes('ROVAI_CLAUDE_RUN_TWO')
@@ -205,7 +205,7 @@ try {
   }
   const commandRunId = await waitForAgentRunId(core, threadId, [firstRun.id, secondRun.id])
   camp = await waitFor(async () => {
-    const value = await core.request('camps.snapshot', { threadId })
+    const value = await core.request('threads.snapshot', { threadId })
     const commandRun = value.agentRuns.find((agentRun) => agentRun.id === commandRunId)
     if (commandRun?.status === 'failed' || commandRun?.status === 'cancelled') {
       throw new Error(`Claude Code command-output AgentRun entered ${commandRun.status}: ${JSON.stringify({
@@ -263,7 +263,7 @@ try {
     firstRun.id, secondRun.id, commandRunId
   ])
   camp = await waitFor(async () => {
-    const value = await core.request('camps.snapshot', { threadId })
+    const value = await core.request('threads.snapshot', { threadId })
     const editRun = value.agentRuns.find((agentRun) => agentRun.id === editRunId)
     if (editRun?.status === 'failed' || editRun?.status === 'cancelled') {
       throw new Error(`Claude Code Edit AgentRun entered ${editRun.status}: ${JSON.stringify({
@@ -330,10 +330,16 @@ try {
     purpose: 'Verify Claude Code cancellation and descendant cleanup.'
   })
   const cancellationCampId = cancellationRequest.payload?.threadId
-  if (cancellationRequest.status !== 'accepted' || !cancellationCampId) {
+  const cancellationMessageId = cancellationRequest.payload?.threadMessageId
+  if (cancellationRequest.status !== 'accepted' || !cancellationCampId || !cancellationMessageId) {
     throw new Error(`Claude Code cancellation intake failed: ${JSON.stringify(cancellationRequest)}`)
   }
-  const cancellationRunId = await waitForAgentRunId(core, cancellationCampId)
+  const cancellationRunId = await waitFor(async () => {
+    const snapshot = await core.request('threads.snapshot', { threadId: cancellationCampId })
+    return snapshot.agentRuns.find((run) =>
+      run.inputMessageIds?.includes(cancellationMessageId)
+        || run.anchorMessageId === cancellationMessageId)?.id ?? null
+  }, 'Claude Code cancellation AgentRun')
   const cancellationStarted = await waitFor(async () => {
     const event = core.events.find((candidate) =>
       candidate.method === 'runtime.action'
@@ -350,7 +356,7 @@ try {
     if (unexpectedAction) {
       throw new Error(`Claude Code started an unexpected cancellation action: ${JSON.stringify(unexpectedAction)}`)
     }
-    const value = await core.request('camps.snapshot', { threadId: cancellationCampId })
+    const value = await core.request('threads.snapshot', { threadId: cancellationCampId })
     const run = value.agentRuns.find((agentRun) => agentRun.id === cancellationRunId)
     if (run && ['succeeded', 'failed', 'cancelled'].includes(run.status)) {
       throw new Error(`Claude Code cancellation target became ${run.status} before the Bash start event: ${JSON.stringify({
@@ -361,7 +367,7 @@ try {
     }
     return null
   }, 'Claude Code cancellable Bash action')
-  camp = await core.request('camps.snapshot', { threadId: cancellationCampId })
+  camp = await core.request('threads.snapshot', { threadId: cancellationCampId })
   const cancellationRun = camp.agentRuns.find((agentRun) => agentRun.id === cancellationRunId)
   if (!cancellationRun || !['queued', 'running', 'waiting_approval'].includes(cancellationRun.status)) {
     throw new Error(`Claude Code cancellation target was not active: ${JSON.stringify({
@@ -381,7 +387,7 @@ try {
     throw new Error(`Claude Code cancellation was rejected: ${JSON.stringify(cancellationResult)}`)
   }
   camp = await waitFor(async () => {
-    const value = await core.request('camps.snapshot', { threadId: cancellationCampId })
+    const value = await core.request('threads.snapshot', { threadId: cancellationCampId })
     const run = value.agentRuns.find((agentRun) => agentRun.id === cancellationRunId)
     if (run?.status === 'failed' || run?.status === 'succeeded') {
       throw new Error(`Claude Code cancellation target entered ${run.status}: ${JSON.stringify({
@@ -480,7 +486,7 @@ async function runClaudeApprovalScenario(core, workspace, decision) {
   const runId = await waitForAgentRunId(core, threadId)
   let resolvedApprovalId = null
   const result = await waitFor(async () => {
-    const snapshot = await core.request('camps.snapshot', { threadId })
+    const snapshot = await core.request('threads.snapshot', { threadId })
     const action = snapshot.actions.find((candidate) => candidate.agentRunId === runId)
     const approval = snapshot.approvals.find((candidate) =>
       candidate.actionId === action?.id && candidate.status === 'pending'
@@ -523,7 +529,7 @@ async function runClaudeApprovalScenario(core, workspace, decision) {
     }
     return null
   }, `Claude ${decision} Approval`)
-  const finalSnapshot = await core.request('camps.snapshot', { threadId })
+  const finalSnapshot = await core.request('threads.snapshot', { threadId })
   const action = finalSnapshot.actions.find((candidate) => candidate.agentRunId === runId)
   const published = finalSnapshot.messages.some((message) => message.body === marker)
   const sendReceipt = await claudeSendReceipt(core.request, threadId, runId, marker, finalSnapshot)
@@ -603,7 +609,7 @@ async function waitFor(probe, label) {
 
 async function waitForAgentRunId(core, threadId, excludedIds = []) {
   return waitFor(async () => {
-    const snapshot = await core.request('camps.snapshot', { threadId })
+    const snapshot = await core.request('threads.snapshot', { threadId })
     return snapshot.agentRuns.find((run) => !excludedIds.includes(run.id))?.id ?? null
   }, `AgentRun in Camp ${threadId}`)
 }
@@ -634,15 +640,29 @@ function runtimeNarration(events, agentRunId) {
 }
 
 async function sendThreadMessage(request, threadId, body, execution) {
-  return request('camp.messages.send', {
+  const sent = await request('thread.messages.send', {
     commandId: crypto.randomUUID(),
     threadId,
-    content: { version: 2, segments: [{ kind: 'text', text: body }] },
+    content: composerDocumentForAddress({ mode: 'default' }, body),
     sourceAttachments: [],
     quotes: [],
     replyToThreadMessageId: null,
     execution
   })
+  const messageId = sent.commandResult?.payload?.threadMessageId
+  if (sent.commandResult?.status !== 'accepted' || !messageId) return sent
+  const runId = await waitFor(async () => {
+    const camp = await request('threads.snapshot', { threadId })
+    return camp.agentRuns.find((run) =>
+      run.inputMessageIds?.includes(messageId) || run.anchorMessageId === messageId)?.id ?? null
+  }, `AgentRun for Camp message ${messageId}`)
+  return {
+    ...sent,
+    commandResult: {
+      ...sent.commandResult,
+      payload: { ...sent.commandResult.payload, agentRunIds: [runId] }
+    }
+  }
 }
 
 async function run(command, args, cwd) {

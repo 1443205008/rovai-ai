@@ -26,8 +26,8 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         anyhow::ensure!(
             matches!(classify_database_contract(&tx)?, DatabaseContractClassification::SupportedMigrationSource(ref marker)
-                if marker.contract_version == "v1.72" && marker.projection_schema_version == 128),
-            "User projection migration requires v1.72/schema 128"
+                if marker.contract_version == "v1.72" && marker.projection_schema_version == 130),
+            "User projection migration requires v1.72/schema 130"
         );
         let before = public_history_claim_preserved_evidence_digest(&tx)?;
         let source = manifest_schema(&tx)?;
@@ -38,8 +38,8 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
         let target = replacement_table_schema_v171(source, "context_manifest")
             .replace(LEGACY_CHECK, CURRENT_CHECK);
         rebuild_table_v171(&tx, "context_manifest", &target, &[], &[])?;
-        tx.execute_batch("INSERT INTO schema_migration VALUES (179, datetime('now'));
-            UPDATE rovai_data_contract SET projection_schema_version=129, updated_at=datetime('now') WHERE singleton=1;")?;
+        tx.execute_batch("INSERT INTO schema_migration VALUES (181, datetime('now'));
+            UPDATE rovai_data_contract SET projection_schema_version=131, updated_at=datetime('now') WHERE singleton=1;")?;
         anyhow::ensure!(
             before == public_history_claim_preserved_evidence_digest(&tx)?,
             "User projection migration changed frozen evidence"
@@ -48,7 +48,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
         anyhow::ensure!(
             matches!(
                 classify_database_contract(&tx)?,
-                DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 129
+                DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 131
             ),
             "User projection migration failed schema admission"
         );
@@ -81,8 +81,8 @@ pub(super) fn downgrade_for_test(connection: &Connection) {
         .replace(CURRENT_CHECK, LEGACY_CHECK);
     rebuild_table_v171(&tx, "context_manifest", &target, &[], &[]).unwrap();
     tx.execute_batch(
-        "DELETE FROM schema_migration WHERE version=179;
-        UPDATE rovai_data_contract SET projection_schema_version=128 WHERE singleton=1;",
+        "DELETE FROM schema_migration WHERE version=181;
+        UPDATE rovai_data_contract SET projection_schema_version=130 WHERE singleton=1;",
     )
     .unwrap();
     tx.commit().unwrap();
@@ -99,7 +99,7 @@ mod tests {
         let mut database = crate::test_support::fresh_schema_database_at(&directory);
         downgrade_for_test(database.connection());
         let before = public_history_claim_preserved_evidence_digest(database.connection()).unwrap();
-        database.connection().execute_batch("CREATE TEMP TRIGGER reject_user_receipt BEFORE INSERT ON schema_migration WHEN NEW.version=179 BEGIN SELECT RAISE(ABORT,'user receipt failure'); END;").unwrap();
+        database.connection().execute_batch("CREATE TEMP TRIGGER reject_user_receipt BEFORE INSERT ON schema_migration WHEN NEW.version=181 BEGIN SELECT RAISE(ABORT,'user receipt failure'); END;").unwrap();
         assert!(
             migrate(&mut database)
                 .unwrap_err()
@@ -112,7 +112,7 @@ mod tests {
             public_history_claim_preserved_evidence_digest(database.connection()).unwrap()
         );
         assert!(
-            matches!(classify_database_contract(database.connection()).unwrap(), DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 128)
+            matches!(classify_database_contract(database.connection()).unwrap(), DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 130)
         );
         database
             .connection()
@@ -125,7 +125,7 @@ mod tests {
         );
         assert!(matches!(
             classify_database_contract(database.connection()).unwrap(),
-            DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 129
+            DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 131
         ));
         drop(database);
         std::fs::remove_dir_all(directory).unwrap();

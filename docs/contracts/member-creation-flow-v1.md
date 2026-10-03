@@ -53,9 +53,9 @@ it adds no CampMessage, Thread member, tool-output field, ContextManifest field 
 New receipts copy `sourceAgentRunId` from the authenticated creating Run inside the creation transaction. This is a
 Run association, not an execution-epoch or creator-name match. Earlier JSON receipts may omit it or read as null;
 they stay readable without migration, evidence replay or inferred backfill. Idempotent replay preserves the original
-association. The optional additive field does not change schema 130 or the tool result.
+association. The optional additive field does not change the projection schema or the tool result.
 
-Migration 180 admits exactly v1.72/schema 129 and atomically advances to schema 130. `member_creation` stores one JSON
+Main originally shipped Migration 180 from schema 129 to 130. After convergence with the deployed metrics lineage, Migration 182 admits exactly v1.72/schema 131 and atomically advances to schema 132. `member_creation` stores one JSON
 snapshot per command identity with a Thread foreign key and `(camp_id, created_at, creation_id)` index. Thread deletion
 cascades its receipts. `member_creation_preference` is an instance-wide singleton helper ID, retained independently of
 Thread deletion; a deleted or unavailable helper is skipped by entry preflight. Existing profiles are unchanged and
@@ -93,7 +93,7 @@ status and never becomes a start-conversation action.
 
 - Existing `team_tool` member-create transaction test owns rollback, direct-user authorization, idempotent replay,
   no added public message/membership, immutable snapshots and Open projection.
-- `db_member_creation` owns the new schema 129 to 130 boundary, rollback and profile preservation.
+- `db_member_creation` owns the current schema 131 to 132 boundary, rollback and profile preservation.
 - Renderer helper/navigation tests own deterministic selection and local draft overlay; Run artifact tests own
   terminal gating, exact Run/last-message association, creation order, author grouping and historical fallback.
 - `pnpm test:member-creation` exercises production conversation/member surfaces with isolated transport and native input;

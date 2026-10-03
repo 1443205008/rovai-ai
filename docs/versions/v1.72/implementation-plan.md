@@ -499,7 +499,7 @@ Principal 确认实现并要求独立 worktree、PR 到 main 后合入。工作�
 Gateway 事务中提交；Migration 180/schema 130 增加两张业务表，不改模型上下文或 Skill。
 
 测试准入：扩展现有 `team_tool` 的幂等创建 owner，覆盖回执失败导致 Profile 回滚、重试只出一张卡、改名/离队后快照
-不变、Open 可读且不增加消息/会话成员。新增迁移测试独立拥有 schema 129→129 原子边界；不复制旧 migration owner。
+不变、Open 可读且不增加消息/会话成员。新增迁移测试独立拥有当时 schema 129→130 原子边界；不复制旧 migration owner。
 Renderer 的纯函数覆盖可用性优先、回退和过滤后排序；Electron 使用 production BusinessApp 与隔离内存 transport，
 不启动真实 Core/Runtime，不读取日用 userData/Skill Library。
 
@@ -519,6 +519,20 @@ Typecheck、Rust format 与基于 `63225393` 的文档门禁通过。Open 的 3 
 旧 v99 fixture 降级时遇到主线新增的 `agent_v2` 约束，修复 test-only downgrade 后该用例单独复跑通过。
 真实模型执行及实体手机软键盘尚未在本切片验收；
 隔离 fixture 只证明交互和投影，不宣称模型端到端或发布安装完成。
+
+
+## 2026-10-02 安装前的双分支迁移收口
+
+合入 main `91b315e9` 时，本机日常库仍是指标预览的 schema 128 / Migration 178。
+保留指标分支 178/179 和 Thread 收口 180，User 投影、队员回执顺延为 181/182，当前 schema 132。
+main 已部署的 schema 128/129/130 按完整表、约束与连续收据组合识别；补建空指标投影并原子追加缺失收据，
+不修改既有收据时间、业务行或冻结输入证据。未知、缺损或混杂布局拒绝升级。
+
+测试继续扩展 `db::thread_names` 的既有双分支收口 owner，增加 main 129/130、收据失败回滚、损坏结构拒绝、
+原队员创建回执与偏好保留、重新打开幂等性；没有新增独立 Rust 测试函数。
+已安装指标 schema 128 的旧数量与 null 比例仍由 `session_context_migration` owner 验证。
+最小命令为 `cargo test -p rovai-core --features extended-tests --lib db::`；
+打包验收使用按日常只读 DDL 构造的空 schema 128 fixture，不复制日常业务行或凭据。
 
 ## 2026-10-02 队员运行配置应用
 
@@ -551,6 +565,47 @@ Electron 采用独立临时 userData/Skill Library 与显式内存 transport，�
 原生 fixture 字段保持原值；上述证据不代表真实模型执行、实体手机或已打包安装。首轮验收末项暴露 200% 缩放下
 测试驱动的 CSS/DIP 坐标差，按 zoomFactor 修正点击坐标后全量通过，未以改动产品布局绕过该检查。
 最终截图复核修正了短视口继承旧 `.dialog-actions` 背景的问题；新弹窗操作区保持本层背景，位置由固定 footer 管理。
+
+## 2026-10-02 指标原生格式兼容与补采
+
+用户明确要求指标采集不以 CLI 精确版本或指标专用最小版本阻断；Grok 等产品最低准入继续生效。
+实现改为原生格式、根 Session、workspace、模型和字段语义校验。CodeBuddy、Kiro、TRAE、Antigravity
+新增来源，OpenCode 补失败占位记录过滤。两轮同 Session 冷恢复及独立 raw fixture 见
+[原生格式兼容验收](../../research/runtime-monitoring/native-format-compatibility-2026-10-02.md)。
+
+当前合同为 [Runtime Usage Monitoring v8](../../contracts/runtime-usage-monitoring-v8.md) 和
+[Runtime Execution Metrics v5](../../contracts/runtime-execution-metrics-v5.md)；不新增迁移、输出测速、
+模型提示或 Renderer 布局。未验证字段保持未知，CLI 实测版本和版本准入明确分开。
+默认 Rust gate 与生产 Renderer 500 Run 回放通过；真实逐 Runtime 同调用打包 App、正缓存写、
+未提供窗口和其他来源的 Context 仍按验收记录保留边界。
+
+## 2026-10-03 缺失字段修正
+
+补接 DSH 原生 totalTokens 与 ZCode 原生 Session snapshot 的 contextUsage；不添加版本门槛、
+历史上下文、测速或 UI 布局。修正先前 null/null 一致被当作完整采集通过的结论。
+真实打包 App 已复跑和核对：DSH 93.6k，ZCode 18.8k / 200k、9.4%；整体仍有缺口，
+见[逐字段证据与未决项](../../research/runtime-monitoring/missing-fields-verification-2026-10-03.md)。
+
+## 2026-10-03 五类原生来源补查
+
+补接 Antigravity 原生 SQLite 同调用数值、Qoder 明确配置窗口与原生输入的配对、TRAE 原生校准占用，
+以及 Kiro 精确 Session 的模型窗口。CodeBuddy 当前自定义模型窗口、Kiro 精确 used/Run token
+在已查来源中仍缺失，不从比例反推或借用其他模型容量。Kiro 卡头与气泡的比例统一为一位小数。
+[Usage v8](../../contracts/runtime-usage-monitoring-v8.md) 与
+[Execution Metrics v5](../../contracts/runtime-execution-metrics-v5.md)拥有新增来源；schema 不变。
+
+Rust 测试准入、原始字段与实际 App 证据见[本轮来源验收](../../research/runtime-monitoring/native-source-completion-2026-10-03.md)。
+新增唯一 extended SQLite owner，TRAE 保留原进程边界 owner 并增补目录读取，其他扩展既有 owner。
+本切片为已有指标的局部来源补齐，不新增 Version Decision，不改变模型上下文、运行配置或发布 Skill。
+
+
+## Usage 分批刷盘一致性收口（2026-10-03）
+
+按 [Usage v8](../../contracts/runtime-usage-monitoring-v8.md) 在入缓冲时逐调用归一化，保留累计帧序、
+单调用去重与缓存请求计数。summary 的已有质量字段承接 Input/Output 部分状态；
+[Execution Metrics v5](../../contracts/runtime-execution-metrics-v5.md) 把完整性送入现有总量入口守卫。
+本次无数据库迁移、正文或历史回填；合成回放证明刷盘分区不影响数值及完整性，不扩大 Runtime 原生支持结论。
+证据与测试归属见[分批刷盘验收](../../research/runtime-monitoring/flush-partition-verification-2026-10-03.md)。
 
 ## 2026-10-02 Run 内容块与 command 组分页
 
