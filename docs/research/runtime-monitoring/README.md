@@ -10,11 +10,13 @@ baseline_ref: "4b4fe088b15ef785cd76f54f221e5d87c9d639a4"
 # Rovai AI 运行监控指标可采集性审计
 
 > 2026-10-02：按用户要求撤下全部 Runtime 的输出测速。以下速度、v2/v3、思考计数及旧探针记录均为历史证据，
-> 对应代码保留在 Git 提交 `ee444ab1`。当前只保留原生用量与 Session 上下文，见[执行指标合同](../../contracts/runtime-execution-metrics-v4.md)。
+> 对应代码保留在 Git 提交 `ee444ab1`。当前只保留原生用量与 Session 上下文，见[执行指标合同](../../contracts/runtime-execution-metrics-v5.md)。
 
 当前执行台的取数范围、隐藏暂停、引用复用与迟到刷新收口见[执行指标读取验收](execution-metrics-refresh-verification-2026-10-01.md)。
 
-2026-10-03 最新[空值与 Kiro used 复核](kiro-and-field-audit-2026-10-03.md)：更正旧探针遗漏 `breakdown` 的结论；Kiro 分类 token 估算与总体比例不一致，不能作为 used。复核 15 类实际 Renderer 与 26 次根调用，列出剩余字段及模型/版本标注勘误。
+2026-10-03 [分批刷盘一致性修复](flush-partition-verification-2026-10-03.md)：逐调用归一化与请求计数、累计基线/重置、部分状态；使用合成固定回放。
+
+同日[空值与 Kiro used 复核](kiro-and-field-audit-2026-10-03.md)：更正旧探针遗漏 `breakdown` 的结论；Kiro 分类 token 估算与总体比例不一致，不能作为 used。复核 15 类实际 Renderer 与 26 次根调用，列出剩余字段及模型/版本标注勘误。
 
 同日[五类原生来源补查](native-source-completion-2026-10-03.md)：Antigravity 四项与 Context、Qoder 数量、TRAE Context、Kiro 窗口补接；CodeBuddy 当前模型窗口及 Kiro 精确 used/Token 仍未取得。
 

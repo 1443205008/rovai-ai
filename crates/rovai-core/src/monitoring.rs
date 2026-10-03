@@ -22,7 +22,7 @@ use crate::{
 };
 
 const USAGE_SCHEMA_VERSION: i64 = 2;
-const USAGE_PARSER_VERSION: i64 = 4;
+const USAGE_PARSER_VERSION: i64 = 5;
 const JS_MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const CHECKPOINT_TTL_HOURS: i64 = 72;
 const RETENTION_DAYS: i64 = 45;
@@ -278,6 +278,7 @@ impl BufferedUsageKey {
 struct BufferedUsageRecord {
     key: BufferedUsageKey,
     usage: ParsedRuntimeUsage,
+    normalized: UsageCounters,
     source_identities: Vec<String>,
 }
 
@@ -301,7 +302,7 @@ pub enum RuntimeUsageFlushTarget {
 #[derive(Debug, Default)]
 pub struct RuntimeUsageBuffer {
     runs: BTreeMap<UsageRunKey, RuntimeUsageRun>,
-    pending: BTreeMap<BufferedUsageKey, BufferedUsageRecord>,
+    pending: BTreeMap<BufferedUsageKey, Vec<BufferedUsageRecord>>,
     pending_since: BTreeMap<UsageRunKey, Instant>,
     seen_source_identities: BTreeSet<(BufferedUsageKey, String)>,
 }
@@ -343,8 +344,7 @@ impl RuntimeUsageBuffer {
             if usage.occurred_at.is_none() {
                 usage.occurred_at = Some(Utc::now().to_rfc3339());
             }
-            validate_usage(&usage)?;
-            normalize_usage(&usage)?;
+            let normalized = normalize_usage(&usage)?;
             let key = BufferedUsageKey::new(&run.key, &usage);
             if !self
                 .seen_source_identities
@@ -356,9 +356,10 @@ impl RuntimeUsageBuffer {
             let incoming = BufferedUsageRecord {
                 key: key.clone(),
                 usage,
+                normalized,
                 source_identities: vec![source_identity.to_string()],
             };
-            merge_buffered_record(&mut self.pending, incoming)?;
+            merge_buffered_record(&mut self.pending, incoming);
         }
         Ok(())
     }
@@ -385,8 +386,8 @@ impl RuntimeUsageBuffer {
             .cloned()
             .collect::<Vec<_>>();
         for key in keys {
-            if let Some(record) = self.pending.remove(&key) {
-                records.entry(key.run.clone()).or_default().push(record);
+            if let Some(pending) = self.pending.remove(&key) {
+                records.entry(key.run.clone()).or_default().extend(pending);
             }
         }
         records
@@ -410,11 +411,11 @@ impl RuntimeUsageBuffer {
                 .and_modify(|current| *current = (*current).min(batch.pending_since))
                 .or_insert(batch.pending_since);
             for record in batch.records {
-                merge_buffered_record(&mut self.pending, record)?;
+                merge_buffered_record(&mut self.pending, record);
             }
         }
-        for record in newer.into_values() {
-            merge_buffered_record(&mut self.pending, record)?;
+        for record in newer.into_values().flatten() {
+            merge_buffered_record(&mut self.pending, record);
         }
         Ok(())
     }
@@ -444,79 +445,17 @@ impl RuntimeUsageBuffer {
 }
 
 fn merge_buffered_record(
-    pending: &mut BTreeMap<BufferedUsageKey, BufferedUsageRecord>,
+    pending: &mut BTreeMap<BufferedUsageKey, Vec<BufferedUsageRecord>>,
     incoming: BufferedUsageRecord,
-) -> Result<()> {
-    let Some(current) = pending.get_mut(&incoming.key) else {
-        pending.insert(incoming.key.clone(), incoming);
-        return Ok(());
-    };
-    for identity in incoming.source_identities {
-        if !current.source_identities.contains(&identity) {
-            current.source_identities.push(identity);
-        }
-    }
-    if current.usage.counter_mode == RuntimeUsageCounterMode::Delta {
-        merge_delta_fields(&mut current.usage.fields, &incoming.usage.fields)?;
-        match (current.usage.cost.as_mut(), incoming.usage.cost.as_ref()) {
-            (Some(current), Some(incoming)) => {
-                current.amount = add_decimal(&current.amount, &incoming.amount)?;
-            }
-            (None, Some(incoming)) => current.usage.cost = Some(incoming.clone()),
-            _ => {}
-        }
-    } else {
-        current.usage.fields = incoming.usage.fields;
-        current.usage.cost = incoming.usage.cost;
-    }
-    current.usage.occurred_at = incoming
-        .usage
-        .occurred_at
-        .or_else(|| current.usage.occurred_at.clone());
-    Ok(())
-}
-
-fn merge_delta_fields(
-    current: &mut RuntimeUsageFields,
-    incoming: &RuntimeUsageFields,
-) -> Result<()> {
-    add_optional(&mut current.input_tokens, incoming.input_tokens)?;
-    add_optional(
-        &mut current.uncached_input_tokens,
-        incoming.uncached_input_tokens,
-    )?;
-    add_optional(&mut current.output_tokens, incoming.output_tokens)?;
-    add_optional(
-        &mut current.reasoning_output_tokens,
-        incoming.reasoning_output_tokens,
-    )?;
-    add_optional(
-        &mut current.cache_read_input_tokens,
-        incoming.cache_read_input_tokens,
-    )?;
-    add_optional(
-        &mut current.cache_write_input_tokens,
-        incoming.cache_write_input_tokens,
-    )?;
-    current.context_used_tokens = incoming.context_used_tokens.or(current.context_used_tokens);
-    current.context_size_tokens = incoming.context_size_tokens.or(current.context_size_tokens);
-    current.native_context_ratio = incoming
-        .native_context_ratio
-        .or(current.native_context_ratio);
-    Ok(())
-}
-
-fn add_optional(current: &mut Option<i64>, incoming: Option<i64>) -> Result<()> {
-    let Some(incoming) = incoming else {
-        return Ok(());
-    };
-    *current = Some(
-        current
-            .unwrap_or(0)
-            .checked_add(incoming)
-            .context("Runtime Usage counter overflow")?,
-    );
-    Ok(())
+) {
+    // Group only for flushing. Every independent call has already been
+    // normalized: another call cannot supply its missing buckets or turn three
+    // cache-observable requests into one. Keep cumulative observations ordered
+    // too, including initial baselines and resets, even within one flush.
+    pending
+        .entry(incoming.key.clone())
+        .or_default()
+        .push(incoming);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -575,7 +514,8 @@ fn execution_run_usage_rows(
     let mut run_query = connection.prepare(r#"
             SELECT ar.id, ar.execution_epoch, s.prompt_input_total_tokens, s.output_tokens,
                    s.cache_read_tokens, s.cache_write_tokens,
-                   s.finalized_at, s.last_observed_at
+                   s.finalized_at, s.last_observed_at,
+                   COALESCE(s.parser_version >= 5 AND s.usage_quality = 'runtime_reported', 0)
             FROM json_each(?2) requested
             JOIN agent_run ar ON ar.id = requested.value
             JOIN conversation c ON c.id = ar.conversation_id
@@ -602,6 +542,7 @@ fn execution_run_usage_rows(
                     "cacheWriteTokens": row.get::<_, Option<i64>>(5)?,
                     "finalizedAt": row.get::<_, Option<String>>(6)?,
                     "lastObservedAt": row.get::<_, Option<String>>(7)?,
+                    "inputOutputComplete": row.get::<_, bool>(8)?,
                 }))
             },
         )?
@@ -815,6 +756,7 @@ impl MonitoringService {
             run: run.clone(),
             records: vec![BufferedUsageRecord {
                 key: BufferedUsageKey::new(&run.key, usage),
+                normalized: normalize_usage(usage)?,
                 usage: usage.clone(),
                 source_identities: vec![source_identity.to_string()],
             }],
@@ -843,6 +785,7 @@ impl MonitoringService {
         let batch = RuntimeUsageFlushBatch {
             records: vec![BufferedUsageRecord {
                 key: BufferedUsageKey::new(&run.key, usage),
+                normalized: normalize_usage(usage)?,
                 usage: usage.clone(),
                 source_identities: vec![source_identity.to_string()],
             }],
@@ -1059,8 +1002,7 @@ fn persist_usage_record(
     run: &RuntimeUsageRun,
     record: &BufferedUsageRecord,
 ) -> Result<bool> {
-    validate_usage(&record.usage)?;
-    let normalized = normalize_usage(&record.usage)?;
+    let normalized = &record.normalized;
     let enrolled: bool = transaction.query_row(
         r#"
         SELECT EXISTS(
@@ -1074,7 +1016,16 @@ fn persist_usage_record(
     if !enrolled {
         return Ok(false);
     }
-    let checkpoint_key = checkpoint_key(run, &record.usage)?;
+    let source_key = checkpoint_key(run, &record.usage)?;
+    let checkpoint_key = if record.usage.counter_mode == RuntimeUsageCounterMode::Delta {
+        // A checkpoint belongs to a native call, not to whichever calls happened
+        // to share a timer tick. Replaying a committed batch is idempotent too.
+        crate::command::canonical_json_digest(&json!({
+            "source": source_key, "identities": record.source_identities,
+        }))?
+    } else {
+        source_key
+    };
     let event_digest = crate::command::canonical_json_digest(&json!({
         "identities": record.source_identities,
         "dialect": record.usage.dialect_id,
@@ -1104,7 +1055,7 @@ fn persist_usage_record(
         RuntimeUsageCounterMode::Cumulative | RuntimeUsageCounterMode::Gauge => {
             let delta = existing
                 .as_ref()
-                .map(|checkpoint| subtract_counters(&normalized, &checkpoint.baseline))
+                .map(|checkpoint| subtract_counters(normalized, &checkpoint.baseline))
                 .unwrap_or_else(|| {
                     // This verified dialect identifies a root message started
                     // inside this Run. Its first cumulative call observation
@@ -1148,6 +1099,15 @@ fn persist_usage_record(
             &record.usage,
             &delta,
             cost_delta.as_ref(),
+            delta.any_observed().then(|| {
+                normalized.prompt_input_total_tokens.is_some()
+                    && normalized.output_tokens.is_some()
+                    && existing.as_ref().is_none_or(|checkpoint| {
+                        record.usage.counter_mode == RuntimeUsageCounterMode::Delta
+                            || (checkpoint.baseline.prompt_input_total_tokens.is_some()
+                                && checkpoint.baseline.output_tokens.is_some())
+                    })
+            }),
             occurred_at,
             &now,
         )?;
@@ -1167,7 +1127,7 @@ fn persist_usage_record(
         &record.usage,
         &checkpoint_key,
         &event_digest,
-        &normalized,
+        normalized,
         &now,
     )?;
     Ok(true)
@@ -1485,6 +1445,7 @@ fn update_run_summary(
     usage: &ParsedRuntimeUsage,
     delta: &UsageCounters,
     cost_delta: Option<&RuntimeUsageCost>,
+    input_output_complete: Option<bool>,
     occurred_at: &str,
     updated_at: &str,
 ) -> Result<()> {
@@ -1502,6 +1463,9 @@ fn update_run_summary(
                 ELSE 'mixed'
             END,
             usage_quality = CASE
+                WHEN ?14 IS NULL THEN usage_quality
+                WHEN ?14 = 0 OR usage_quality = 'runtime_reported_partial'
+                    THEN 'runtime_reported_partial'
                 WHEN usage_quality IS NULL THEN 'runtime_reported'
                 WHEN usage_quality = 'runtime_reported' THEN usage_quality
                 ELSE 'mixed'
@@ -1551,6 +1515,7 @@ fn update_run_summary(
             delta.cache_observable_request_count,
             delta.cache_hit_request_count,
             occurred_at,
+            input_output_complete,
         ],
     )?;
     if let Some(cost) = cost_delta {
@@ -1895,12 +1860,10 @@ fn normalize_usage(usage: &ParsedRuntimeUsage) -> Result<UsageCounters> {
     {
         anyhow::bail!("Runtime Usage reasoning output exceeds output total");
     }
-    // ZCode aggregates multiple provider calls into a terminal Turn. A cache
-    // total does not establish how many individual requests hit the cache.
-    let cache_observable = (usage.dialect_id != "zcode-native-turn-usage-v1"
-        && (read.is_some() || write.is_some()))
-    .then_some(1);
-    let cache_hit = cache_observable.map(|_| i64::from(read.unwrap_or(0) > 0));
+    // Only an individual model call with an observed cache-read bucket proves
+    // a hit or a miss. Cache-write alone and turn/session totals cannot do so.
+    let cache_observable = (usage.scope == "model_call" && read.is_some()).then_some(1);
+    let cache_hit = cache_observable.and_then(|_| read.map(|read| i64::from(read > 0)));
     Ok(UsageCounters {
         prompt_input_total_tokens: prompt_total,
         uncached_input_tokens: uncached,
@@ -2983,7 +2946,7 @@ pub fn parse_codex_usage_message(method: &str, params: &Value) -> Vec<ParsedRunt
             identity_suffix: "last".to_string(),
             dialect_id: "codex-thread-token-usage-v2".to_string(),
             source: "runtime_event".to_string(),
-            scope: "turn".to_string(),
+            scope: "model_call".to_string(),
             counter_mode: RuntimeUsageCounterMode::Delta,
             input_semantics: RuntimeInputSemantics::CacheInclusiveTotal,
             native_session_id: native_session_id.clone(),
@@ -3098,7 +3061,8 @@ pub fn parse_antigravity_step_usage(step: &Value) -> Option<ParsedRuntimeUsage> 
 fn dsh_exact_prompt_total(usage: &Value, fields: &RuntimeUsageFields) -> Option<i64> {
     let total = integer_at_any(usage, &["/totalTokens"])?;
     let input = total.checked_sub(fields.output_tokens?)?;
-    let known = fields.uncached_input_tokens?
+    let known = fields
+        .uncached_input_tokens?
         .checked_add(fields.cache_read_input_tokens.unwrap_or(0))?
         .checked_add(fields.cache_write_input_tokens.unwrap_or(0))?;
     if input < known
@@ -3319,8 +3283,12 @@ pub fn parse_acp_usage_message(
         let update = &params["update"];
         if update["sessionUpdate"] == "usage_update"
             && let (Some(seq), Some(revision), Some(used), Some(size)) = (
-                update.pointer("/_meta/zcodeContext/eventSeq").and_then(Value::as_u64),
-                update.pointer("/_meta/zcodeContext/stateRevision").and_then(Value::as_u64),
+                update
+                    .pointer("/_meta/zcodeContext/eventSeq")
+                    .and_then(Value::as_u64),
+                update
+                    .pointer("/_meta/zcodeContext/stateRevision")
+                    .and_then(Value::as_u64),
                 integer_at_any(update, &["/used"]),
                 integer_at_any(update, &["/size"]).filter(|n| *n > 0),
             )
@@ -4033,9 +4001,15 @@ mod tests {
             execution_epoch: 1,
         });
         assert_eq!(batches.len(), 1);
-        assert_eq!(batches[0].records.len(), 1);
-        assert_eq!(batches[0].records[0].usage.fields.input_tokens, Some(14));
-        assert_eq!(batches[0].records[0].usage.fields.output_tokens, Some(9));
+        assert_eq!(batches[0].records.len(), 2);
+        let totals = batches[0].records.iter().fold((0, 0, 0), |sum, record| {
+            (
+                sum.0 + record.normalized.prompt_input_total_tokens.unwrap(),
+                sum.1 + record.normalized.output_tokens.unwrap(),
+                sum.2 + record.normalized.cache_observable_request_count.unwrap(),
+            )
+        });
+        assert_eq!(totals, (37, 9, 2));
 
         assert!(
             parse_pi_usage_message(
@@ -4186,16 +4160,16 @@ mod tests {
             CREATE TABLE runtime_usage_run_summary (
                 agent_run_id TEXT, collection_epoch TEXT, prompt_input_total_tokens INTEGER,
                 output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER,
-                finalized_at TEXT, last_observed_at TEXT
+                finalized_at TEXT, last_observed_at TEXT, parser_version INTEGER, usage_quality TEXT
             );
             INSERT INTO conversation VALUES ('conversation-a', 'camp-a'), ('conversation-b', 'camp-b');
             INSERT INTO agent_run VALUES ('run-a', 'conversation-a', 2, 'succeeded'), ('run-b', 'conversation-a', 1, 'running'), ('foreign', 'conversation-b', 1, 'failed');
             INSERT INTO runtime_usage_collection_state VALUES (1, 'current');
             INSERT INTO runtime_usage_run_summary VALUES
-                ('run-a', 'current', 100, 20, NULL, 0, 'final', 'observed'),
-                ('run-a', 'old', 999, 999, 999, 999, 'old', 'old'),
-                ('run-b', 'current', NULL, NULL, NULL, NULL, NULL, NULL),
-                ('foreign', 'current', 200, 40, 10, 0, 'final', 'observed');
+                ('run-a', 'current', 100, 20, NULL, 0, 'final', 'observed', 5, 'runtime_reported'),
+                ('run-a', 'old', 999, 999, 999, 999, 'old', 'old', 4, 'runtime_reported'),
+                ('run-b', 'current', NULL, NULL, NULL, NULL, NULL, NULL, 5, NULL),
+                ('foreign', 'current', 200, 40, 10, 0, 'final', 'observed', 5, 'runtime_reported');
         "#).unwrap();
         let params = |ids: Vec<&str>| MonitoringExecutionParams {
             camp_id: "camp-a".into(),
@@ -4215,6 +4189,17 @@ mod tests {
         assert_eq!(rows[1]["cacheReadTokens"], Value::Null);
         assert_eq!(rows[1]["cacheWriteTokens"], 0);
         assert_eq!(rows[1]["finalizedAt"], "final");
+        assert_eq!(rows[1]["inputOutputComplete"], true);
+        assert_eq!(rows[0]["inputOutputComplete"], false);
+        for (version, quality) in [(5, "runtime_reported_partial"), (4, "runtime_reported")] {
+            connection.execute("UPDATE runtime_usage_run_summary SET parser_version=?1, usage_quality=?2 WHERE agent_run_id='run-a'", params![version,quality]).unwrap();
+            let read = execution_run_usage_rows(&connection, &params(vec!["run-a"])).unwrap();
+            assert_eq!(read[0]["promptInputTotalTokens"], 100, "keep observed sums");
+            assert_eq!(
+                read[0]["inputOutputComplete"], false,
+                "partial or legacy unknown is not a complete total"
+            );
+        }
         assert!(
             execution_run_usage_rows(&connection, &params(vec![]))
                 .unwrap()
@@ -4437,6 +4422,122 @@ mod tests {
         tx.commit().unwrap();
     }
 
+    #[cfg(feature = "extended-tests")]
+    #[test]
+    fn call_normalization_and_request_counts_do_not_depend_on_flush_partition() {
+        let directory =
+            std::env::temp_dir().join(format!("rovai-usage-partitions-{}", uuid::Uuid::new_v4()));
+        let mut database = Database::open(&directory).unwrap();
+        let (epoch, started_at) = collection_identity(&database).unwrap();
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/runtime-usage/flush-partitions.json"
+        ))
+        .unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let mode: RuntimeUsageCounterMode =
+                serde_json::from_value(case["counterMode"].clone()).unwrap();
+            let semantics = serde_json::from_value(case["inputSemantics"].clone()).unwrap();
+            let calls = case["rawCalls"].as_array().unwrap();
+            let expected = &case["expected"];
+            for partition in 0..(1 << (calls.len() - 1)) {
+                let run = RuntimeUsageRun {
+                    key: UsageRunKey {
+                        agent_run_id: format!("{name}-{partition}"),
+                        execution_epoch: 1,
+                    },
+                    runtime_kind: AdapterKind::OpencodeCli,
+                    runtime_version: None,
+                    provider_key: Some(format!("{name}-{partition}")),
+                    model_key: None,
+                    service_tier: None,
+                };
+                database.connection().execute(
+                    "INSERT INTO runtime_usage_run_summary(collection_epoch,agent_run_id,runtime_kind,parser_version,eligible_mask,input_semantics,enrolled_at) VALUES(?1,?2,'opencode-cli',?3,127,'unknown',?4)",
+                    params![epoch,run.key.agent_run_id,USAGE_PARSER_VERSION,started_at]).unwrap();
+                let mut buffer = RuntimeUsageBuffer::default();
+                let mut failed = None;
+                let mut injected_failure = false;
+                for (index, raw) in calls.iter().enumerate() {
+                    let mut call = usage(mode, semantics, None, None, None, None);
+                    call.fields = serde_json::from_value(raw.clone()).unwrap();
+                    call.scope = case["scope"].as_str().unwrap().into();
+                    call.occurred_at = Some(started_at.clone());
+                    // Same native session/turn/buffer key; distinct root model calls.
+                    for _ in 0..2 {
+                        buffer
+                            .observe_run(
+                                &run,
+                                &format!("call-{index}"),
+                                &[call.clone()],
+                                Instant::now(),
+                            )
+                            .unwrap();
+                    }
+                    if index + 1 == calls.len() || partition & (1 << index) != 0 {
+                        if let Some(batches) = failed.take() {
+                            // Older failed records precede newer arrivals, including baselines/resets.
+                            buffer.restore(batches).unwrap();
+                        }
+                        let batches = buffer.drain(RuntimeUsageFlushTarget::All);
+                        if !injected_failure {
+                            database.connection().execute_batch("CREATE TEMP TRIGGER reject_usage_flush BEFORE INSERT ON runtime_usage_checkpoint BEGIN SELECT RAISE(ABORT, 'injected usage flush failure'); END;").unwrap();
+                            assert!(
+                                MonitoringService::record_usage_batches(&mut database, &batches)
+                                    .is_err()
+                            );
+                            database
+                                .connection()
+                                .execute_batch("DROP TRIGGER reject_usage_flush;")
+                                .unwrap();
+                            let observed: bool = database.connection().query_row("SELECT last_observed_at IS NOT NULL FROM runtime_usage_run_summary WHERE agent_run_id=?1", [&run.key.agent_run_id], |row| row.get(0)).unwrap();
+                            assert!(
+                                !observed,
+                                "summary and checkpoint writes must roll back together"
+                            );
+                            injected_failure = true;
+                            if index + 1 < calls.len() {
+                                failed = Some(batches);
+                                continue;
+                            }
+                        }
+                        buffer.restore(batches).unwrap();
+                        let batches = buffer.drain(RuntimeUsageFlushTarget::All);
+                        MonitoringService::record_usage_batches(&mut database, &batches).unwrap();
+                        if mode == RuntimeUsageCounterMode::Delta {
+                            assert_eq!(
+                                MonitoringService::record_usage_batches(&mut database, &batches)
+                                    .unwrap(),
+                                0,
+                                "retrying committed calls cannot charge them twice"
+                            );
+                        }
+                    }
+                }
+                MonitoringService::finalize_usage_run(&mut database, &run.key.agent_run_id)
+                    .unwrap();
+                let actual = database.connection().query_row(
+                    "SELECT prompt_input_total_tokens,uncached_input_tokens,cache_read_tokens,cache_write_tokens,output_tokens,cache_observable_request_count,cache_hit_request_count,usage_quality FROM runtime_usage_run_summary WHERE agent_run_id=?1",
+                    [&run.key.agent_run_id], |row| Ok(json!([
+                        row.get::<_,Option<i64>>(0)?,row.get::<_,Option<i64>>(1)?,row.get::<_,Option<i64>>(2)?,
+                        row.get::<_,Option<i64>>(3)?,row.get::<_,Option<i64>>(4)?,row.get::<_,Option<i64>>(5)?,
+                        row.get::<_,Option<i64>>(6)?,row.get::<_,Option<String>>(7)?
+                    ]))).unwrap();
+                assert_eq!(&actual, expected, "{name}, flush partition {partition}");
+                let hourly = database.connection().query_row(
+                    "SELECT SUM(prompt_input_total_tokens),SUM(uncached_input_tokens),SUM(cache_read_tokens),SUM(cache_write_tokens),SUM(output_tokens),SUM(cache_observable_request_count),SUM(cache_hit_request_count) FROM runtime_usage_hourly WHERE provider_key=?1",
+                    [&run.key.agent_run_id], |row| (0..7).map(|i| row.get::<_,Option<i64>>(i)).collect::<rusqlite::Result<Vec<_>>>()).unwrap();
+                assert_eq!(
+                    json!(hourly),
+                    json!(&expected.as_array().unwrap()[..7]),
+                    "hourly: {name}, partition {partition}"
+                );
+            }
+        }
+        drop(database);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn cumulative_checkpoint_dedupes_resets_and_fences_resume_before_terminal() {
         let directory = std::env::temp_dir().join(format!(
@@ -4488,6 +4589,7 @@ mod tests {
                     run: run.clone(),
                     records: vec![BufferedUsageRecord {
                         key: BufferedUsageKey::new(&run.key, &parsed),
+                        normalized: normalize_usage(&parsed).unwrap(),
                         usage: parsed,
                         source_identities: vec![source_identity.to_string()],
                     }],
@@ -4587,6 +4689,7 @@ mod tests {
                     run: claude_run.clone(),
                     records: vec![BufferedUsageRecord {
                         key: BufferedUsageKey::new(&claude_run.key, &parsed),
+                        normalized: normalize_usage(&parsed).unwrap(),
                         usage: parsed,
                         source_identities: vec![format!("{message}:{output}")],
                     }],
@@ -4658,6 +4761,7 @@ mod tests {
                 run: run.clone(),
                 records: vec![BufferedUsageRecord {
                     key: BufferedUsageKey::new(&run.key, &parsed),
+                    normalized: normalize_usage(&parsed).unwrap(),
                     usage: parsed,
                     source_identities: vec!["codex-price-source".to_string()],
                 }],
@@ -5169,23 +5273,51 @@ mod tests {
         // Native exact totals can establish Input even when an optional cache
         // bucket is omitted. Missing is still missing in the cache projection.
         for (usage, expected) in [
-            (json!({"inputTokens":258,"outputTokens":115,"totalTokens":13429,"cacheReadTokens":13056}), Some(13314)),
-            (json!({"inputTokens":0,"outputTokens":0,"totalTokens":0}), Some(0)),
-            (json!({"inputTokens":20,"outputTokens":7,"cacheReadTokens":80}), None),
-            (json!({"inputTokens":20,"outputTokens":7,"cacheReadTokens":80,"cacheWriteTokens":5}), Some(105)),
-            (json!({"inputTokens":20,"outputTokens":7,"totalTokens":6}), None),
-            (json!({"inputTokens":20,"outputTokens":7,"totalTokens":100,"cacheReadTokens":80}), None),
-            (json!({"inputTokens":20,"outputTokens":7,"totalTokens":110,"cacheReadTokens":80,"cacheWriteTokens":5}), None),
+            (
+                json!({"inputTokens":258,"outputTokens":115,"totalTokens":13429,"cacheReadTokens":13056}),
+                Some(13314),
+            ),
+            (
+                json!({"inputTokens":0,"outputTokens":0,"totalTokens":0}),
+                Some(0),
+            ),
+            (
+                json!({"inputTokens":20,"outputTokens":7,"cacheReadTokens":80}),
+                None,
+            ),
+            (
+                json!({"inputTokens":20,"outputTokens":7,"cacheReadTokens":80,"cacheWriteTokens":5}),
+                Some(105),
+            ),
+            (
+                json!({"inputTokens":20,"outputTokens":7,"totalTokens":6}),
+                None,
+            ),
+            (
+                json!({"inputTokens":20,"outputTokens":7,"totalTokens":100,"cacheReadTokens":80}),
+                None,
+            ),
+            (
+                json!({"inputTokens":20,"outputTokens":7,"totalTokens":110,"cacheReadTokens":80,"cacheWriteTokens":5}),
+                None,
+            ),
             (json!({"inputTokens":20,"totalTokens":110}), None),
-            (json!({"inputTokens":20,"outputTokens":7,"totalTokens":"107"}), None),
+            (
+                json!({"inputTokens":20,"outputTokens":7,"totalTokens":"107"}),
+                None,
+            ),
         ] {
             let raw = json!({"sessionId":"dsh-session","update":{"sessionUpdate":"usage_update","_meta":{"dshUsage":[
                 {"schemaVersion":1,"sessionId":"dsh-session","seq":12,"turn":2,"usage":usage}
             ]}}});
-            let parsed = parse_acp_usage_message(AdapterKind::DeepseekHarness, None, "session/update", &raw);
+            let parsed =
+                parse_acp_usage_message(AdapterKind::DeepseekHarness, None, "session/update", &raw);
             let normalized = normalize_usage(&parsed[0]).unwrap();
             assert_eq!(normalized.prompt_input_total_tokens, expected, "{usage}");
-            assert_eq!(normalized.cache_write_tokens, usage["cacheWriteTokens"].as_i64());
+            assert_eq!(
+                normalized.cache_write_tokens,
+                usage["cacheWriteTokens"].as_i64()
+            );
             assert_eq!(normalized.output_tokens, usage["outputTokens"].as_i64());
         }
 
@@ -5509,14 +5641,20 @@ mod tests {
         let context = batches[0]
             .records
             .iter()
-            .find(|record| record.usage.scope == "session")
-            .unwrap();
-        assert_eq!(context.usage.fields.context_used_tokens, Some(90));
-        assert_eq!(context.source_identities.len(), 2);
+            .filter(|record| record.usage.scope == "session")
+            .collect::<Vec<_>>();
+        assert_eq!(context.len(), 2);
+        assert_eq!(context[0].usage.fields.context_used_tokens, Some(150));
+        assert_eq!(context[1].usage.fields.context_used_tokens, Some(90));
+        assert!(
+            context
+                .iter()
+                .all(|record| record.source_identities.len() == 1)
+        );
         let run_usage = batches[0]
             .records
             .iter()
-            .find(|record| record.usage.scope == "turn")
+            .find(|record| record.usage.scope == "model_call")
             .unwrap();
         assert_eq!(run_usage.source_identities.len(), 1);
         assert_eq!(run_usage.usage.fields.input_tokens, Some(120));
@@ -5576,15 +5714,21 @@ mod tests {
         let context = batches[0]
             .records
             .iter()
-            .find(|record| record.usage.scope == "session")
-            .unwrap();
-        assert_eq!(context.usage.fields.context_used_tokens, Some(13262));
-        assert_eq!(context.usage.fields.context_size_tokens, Some(258400));
-        assert_eq!(context.source_identities.len(), 2);
+            .filter(|record| record.usage.scope == "session")
+            .collect::<Vec<_>>();
+        assert_eq!(context.len(), 2);
+        assert_eq!(context[0].usage.fields.context_used_tokens, Some(20620));
+        assert_eq!(context[1].usage.fields.context_used_tokens, Some(13262));
+        assert_eq!(context[1].usage.fields.context_size_tokens, Some(258400));
+        assert!(
+            context
+                .iter()
+                .all(|record| record.source_identities.len() == 1)
+        );
         let run_usage = batches[0]
             .records
             .iter()
-            .find(|record| record.usage.scope == "turn")
+            .find(|record| record.usage.scope == "model_call")
             .unwrap();
         assert_eq!(run_usage.source_identities.len(), 1);
         // Run consumption uses native last-call buckets; total identifies the

@@ -12,6 +12,13 @@ export function executionMetricRunActive(run: ExecutionMetricRun): boolean {
   return ACTIVE_STATUSES.has(run.status)
 }
 
+/** A finalized partial sum is still partial; cache is already included in Input. */
+export function executionUsageTotal(run: ExecutionMetricRun, usage: Snapshot['runs'][number] | null): number | null {
+  if (run.status !== 'succeeded' || usage?.finalizedAt == null || usage.inputOutputComplete !== true
+    || usage.promptInputTotalTokens === null || usage.outputTokens === null) return null
+  return usage.promptInputTotalTokens + usage.outputTokens
+}
+
 function sameFields<T extends object>(left: T, right: T): boolean {
   const keys = Object.keys(left) as Array<keyof T>
   return keys.length === Object.keys(right).length && keys.every(key => Object.is(left[key], right[key]))

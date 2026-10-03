@@ -573,8 +573,8 @@ Electron 采用独立临时 userData/Skill Library 与显式内存 transport，�
 新增来源，OpenCode 补失败占位记录过滤。两轮同 Session 冷恢复及独立 raw fixture 见
 [原生格式兼容验收](../../research/runtime-monitoring/native-format-compatibility-2026-10-02.md)。
 
-当前合同为 [Runtime Usage Monitoring v7](../../contracts/runtime-usage-monitoring-v7.md) 和
-[Runtime Execution Metrics v4](../../contracts/runtime-execution-metrics-v4.md)；不新增迁移、输出测速、
+当前合同为 [Runtime Usage Monitoring v8](../../contracts/runtime-usage-monitoring-v8.md) 和
+[Runtime Execution Metrics v5](../../contracts/runtime-execution-metrics-v5.md)；不新增迁移、输出测速、
 模型提示或 Renderer 布局。未验证字段保持未知，CLI 实测版本和版本准入明确分开。
 默认 Rust gate 与生产 Renderer 500 Run 回放通过；真实逐 Runtime 同调用打包 App、正缓存写、
 未提供窗口和其他来源的 Context 仍按验收记录保留边界。
@@ -591,9 +591,18 @@ Electron 采用独立临时 userData/Skill Library 与显式内存 transport，�
 补接 Antigravity 原生 SQLite 同调用数值、Qoder 明确配置窗口与原生输入的配对、TRAE 原生校准占用，
 以及 Kiro 精确 Session 的模型窗口。CodeBuddy 当前自定义模型窗口、Kiro 精确 used/Run token
 在已查来源中仍缺失，不从比例反推或借用其他模型容量。Kiro 卡头与气泡的比例统一为一位小数。
-[Usage v7](../../contracts/runtime-usage-monitoring-v7.md) 与
-[Execution Metrics v4](../../contracts/runtime-execution-metrics-v4.md)拥有新增来源；schema 不变。
+[Usage v8](../../contracts/runtime-usage-monitoring-v8.md) 与
+[Execution Metrics v5](../../contracts/runtime-execution-metrics-v5.md)拥有新增来源；schema 不变。
 
 Rust 测试准入、原始字段与实际 App 证据见[本轮来源验收](../../research/runtime-monitoring/native-source-completion-2026-10-03.md)。
 新增唯一 extended SQLite owner，TRAE 保留原进程边界 owner 并增补目录读取，其他扩展既有 owner。
 本切片为已有指标的局部来源补齐，不新增 Version Decision，不改变模型上下文、运行配置或发布 Skill。
+
+
+## Usage 分批刷盘一致性收口（2026-10-03）
+
+按 [Usage v8](../../contracts/runtime-usage-monitoring-v8.md) 在入缓冲时逐调用归一化，保留累计帧序、
+单调用去重与缓存请求计数。summary 的已有质量字段承接 Input/Output 部分状态；
+[Execution Metrics v5](../../contracts/runtime-execution-metrics-v5.md) 把完整性送入现有总量入口守卫。
+本次无数据库迁移、正文或历史回填；合成回放证明刷盘分区不影响数值及完整性，不扩大 Runtime 原生支持结论。
+证据与测试归属见[分批刷盘验收](../../research/runtime-monitoring/flush-partition-verification-2026-10-03.md)。

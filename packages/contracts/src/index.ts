@@ -660,6 +660,8 @@ export interface RuntimeExecutionMetricsSnapshot {
     cacheWriteTokens: number | null
     finalizedAt: string | null
     lastObservedAt: string | null
+    /** Coverage of received Input/Output contributions; missing/legacy evidence is not complete. */
+    inputOutputComplete?: boolean
   }>
   sessions: Array<{
     conversationId: string

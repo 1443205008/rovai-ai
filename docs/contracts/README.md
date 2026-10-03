@@ -114,11 +114,13 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Runtime Launch and Verification v31（历史）](runtime-launch-and-verification-v31.md) | v30 的 Pi wire/安全语义不变；三平台改为明确的可运行 experimental preview，仍不宣称 qualified |
 | [Runtime Launch and Verification v30（历史）](runtime-launch-and-verification-v30.md) | v29 保留；增加 Pi JSONL Host、专属 Ready/exact resume、managed receipt、动态 Skills/MCP、Action/Usage 与三平台未准入边界 |
 | [Runtime Launch and Verification v29（历史）](runtime-launch-and-verification-v29.md) | v28 保留；现有 Check Manager 的 Fast metadata 与单执行原生覆盖 |
-| [Runtime Usage Monitoring v7（当前）](runtime-usage-monitoring-v7.md) | Antigravity 同调用原生 SQLite 数值补充与完整输入分类 |
+| [Runtime Usage Monitoring v8（当前）](runtime-usage-monitoring-v8.md) | 逐调用归一化、批次无关计数与 Input/Output 部分状态 |
+| [Runtime Usage Monitoring v7（历史）](runtime-usage-monitoring-v7.md) | Antigravity 同调用原生 SQLite 数值补充与完整输入分类 |
 | [Runtime Usage Monitoring v6（历史）](runtime-usage-monitoring-v6.md) | DSH 原生完整调用 total 接通，缓存缺失继续保留未知 |
 | [Runtime Usage Monitoring v5（历史）](runtime-usage-monitoring-v5.md) | 按原生格式准入、去除指标版本门槛；TRAE journal 与 Antigravity step 补采 |
 | [Runtime Usage Monitoring v4（历史）](runtime-usage-monitoring-v4.md) | v3 保留；可选实际档位、observed 优先与未知撤回估价 |
-| [Runtime Execution Metrics v4（当前）](runtime-execution-metrics-v4.md) | Antigravity 原生窗口、TRAE 校准占用、Qoder 数量配对及 Kiro 原生窗口 |
+| [Runtime Execution Metrics v5（当前）](runtime-execution-metrics-v5.md) | Run 完整性投影与已有部分用量入口守卫 |
+| [Runtime Execution Metrics v4（历史）](runtime-execution-metrics-v4.md) | Antigravity 原生窗口、TRAE 校准占用、Qoder 数量配对及 Kiro 原生窗口 |
 | [Runtime Execution Metrics v3（历史）](runtime-execution-metrics-v3.md) | ZCode 原生 Session 快照的 used/size 接通，数值专用投递 |
 | [Runtime Execution Metrics v2（历史）](runtime-execution-metrics-v2.md) | Kiro 原生比例、CodeBuddy 最新调用占用；无指标版本白名单 |
 | [Runtime Execution Metrics v1（历史）](runtime-execution-metrics-v1.md) | 执行台当前估速、Run 四项用量与当前原生 Session 上下文的独立归属和读取 |

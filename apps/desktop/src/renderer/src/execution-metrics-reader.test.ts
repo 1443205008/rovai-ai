@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeExecutionMetricsSnapshot } from '@contracts'
-import { ExecutionMetricsReader, mergeExecutionMetrics, type ExecutionMetricRun, type ExecutionMetricsScope } from './execution-metrics-reader'
+import { ExecutionMetricsReader, mergeExecutionMetrics, executionUsageTotal, type ExecutionMetricRun, type ExecutionMetricsScope } from './execution-metrics-reader'
 
 const run = (id: string, status: ExecutionMetricRun['status'] = 'succeeded', executionEpoch = 1): ExecutionMetricRun =>
   ({ id, status, executionEpoch })
 const row = (id: string, value: number | null = 100): RuntimeExecutionMetricsSnapshot['runs'][number] => ({
   agentRunId: id, executionEpoch: 1, promptInputTotalTokens: value, outputTokens: 20,
-  cacheReadTokens: null, cacheWriteTokens: 0, finalizedAt: 'final', lastObservedAt: 'observed'
+  cacheReadTokens: null, cacheWriteTokens: 0, finalizedAt: 'final', lastObservedAt: 'observed', inputOutputComplete: true
 })
 const session: RuntimeExecutionMetricsSnapshot['sessions'][number] = {
   conversationId: 'conversation', agentId: 'agent', sessionGeneration: 1, runtimeKind: 'qoder-cli',
@@ -47,6 +47,27 @@ describe('execution metric structural sharing', () => {
     expect(fresh.sessions[0]).toMatchObject({ usedTokens: null, windowTokens: 200, nativeRatio: null, sessionGeneration: 2 })
     const renewed = mergeExecutionMetrics(initial, { ...initial, sessions: [{ ...session, observedAt: 'later' }] }, [], [run('r1'), run('r2')])
     expect(renewed.sessions[0]).not.toBe(initial.sessions[0])
+  })
+})
+
+describe('execution usage total qualification', () => {
+  it('keeps the synthetic partial 70 + 15 unknown and exposes only complete succeeded totals', () => {
+    const partial = { ...row('r1', 70), outputTokens: 15, inputOutputComplete: false }
+    expect(executionUsageTotal(run('r1'), partial)).toBeNull()
+    const complete = { ...row('r1', 200), outputTokens: 18, cacheReadTokens: 20 }
+    expect(executionUsageTotal(run('r1'), complete)).toBe(218)
+    expect(executionUsageTotal(run('r1'), { ...complete, inputOutputComplete: undefined })).toBeNull()
+    for (const status of ['running', 'failed', 'cancelled'] as const) {
+      expect(executionUsageTotal(run('r1', status), complete)).toBeNull()
+    }
+    expect(executionUsageTotal(run('r1'), { ...complete, finalizedAt: null })).toBeNull()
+    expect(executionUsageTotal(run('r1'), { ...complete, outputTokens: null })).toBeNull()
+    expect(executionUsageTotal(run('r1'), { ...row('r1', 0), outputTokens: 0 })).toBe(0)
+    const initial = { ...snapshot(['r1', 'r2']), runs: [{ ...partial, inputOutputComplete: true }, row('r2')] }
+    const next = { ...initial, runs: [partial, initial.runs[1]] }
+    const merged = mergeExecutionMetrics(initial, next, ['r1', 'r2'], [run('r1'), run('r2')])
+    expect(merged.runs[0]).not.toBe(initial.runs[0])
+    expect(merged.runs[1]).toBe(initial.runs[1])
   })
 })
 

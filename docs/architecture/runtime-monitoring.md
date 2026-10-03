@@ -3,12 +3,12 @@ document_type: architecture
 architecture: runtime-monitoring
 authority: runtime-usage-metering-and-read-boundaries
 status: accepted
-last_updated: 2026-10-02
+last_updated: 2026-10-03
 ---
 
 # Runtime Monitoring 架构
 
-精确字段与方法见 [Runtime Usage Monitoring v7](../contracts/runtime-usage-monitoring-v7.md)；执行台的原生用量与上下文另见 [Runtime Execution Metrics v4](../contracts/runtime-execution-metrics-v4.md)。长期最小化、
+精确字段与方法见 [Runtime Usage Monitoring v8](../contracts/runtime-usage-monitoring-v8.md)；执行台的原生用量与上下文另见 [Runtime Execution Metrics v5](../contracts/runtime-execution-metrics-v5.md)。长期最小化、
 稀疏语义、clean break 与 Cost grain 由
 [Evidence 与 Usage 不变量](foundational-invariants.md#evidence-usage)拥有。本架构只说明 Usage Transport、内存归一化、
 Projection/Rollup、Read Side 和 Renderer 如何组合。
@@ -19,7 +19,7 @@ Projection/Rollup、Read Side 和 Renderer 如何组合。
 | --- | --- |
 | Runtime adapter parser | 从已证明的 Runtime wire path 提取稀疏 Token/Cache/Cost；不估算缺失值 |
 | Native Usage reader | 在 prompt 发送前冻结当前根 Session cursor，按已验证字段结构只读本地数值元数据；不保存正文或历史回填 |
-| Usage buffer | 以内存 source identity 去重，合并兼容 update，保持 cumulative/gauge baseline |
+| Usage buffer | 按调用归一化并以 source identity 去重；保留有序数值帧与 cumulative/gauge baseline |
 | Usage flush service | 周期最多每 4 秒一次；一个短事务更新 checkpoint、Run summary 与 hourly rollup |
 | Pricing catalog | 按 model key、service tier 与 effective date 提供版本化公开费率；不访问网络 |
 | AgentRun terminal boundary | 在结算前等待该 Run pending Usage Flush；权威状态 transition finalizes summary 并删除 checkpoint |
@@ -39,7 +39,7 @@ Execution Evidence、Canonical Activity、AgentRun、Approval、Delivery、Recov
 Runtime event/result
   -> adapter/format parser
   -> sparse normalized Usage in memory
-  -> source-identity dedupe + compatible merge
+  -> source-identity dedupe + ordered per-source numeric buffer
   -> 4s periodic flush OR terminal forced flush
   -> one short SQLite transaction
        runtime_usage_checkpoint
@@ -53,6 +53,12 @@ Claude 已核验的 `claude-stream-call-usage-v1 / model_call` 身份在当前 R
 counter reset 只重建 baseline。Run summary 以 logical `agent_run_id` 为粒度，Recovery execution epoch 只隔离
 checkpoint，避免重复 Run 和 Coverage。Runtime 事件处理不写 raw/normalized observation row，也不追加
 Execution Evidence。
+
+原始 input/read/write 不跨独立调用合并。请求命中计数在已验证的单调用边界生成，
+summary/hourly 只加已归一的 contribution；缺 Input/Output 的 contribution 会将 summary 标为部分，
+终态不会把部分和升级为完整总量。失败恢复保留旧数值帧在新帧之前，累计首次基线与 reset 不能被
+“只保留最后一帧”覆盖。Delta checkpoint 按调用身份暂存，仍遵守 terminal 删除与 72 小时上限。
+执行台根据新完整性字段决定是否能显示 Input＋Output，四项已观测值继续可读。
 
 指标层没有 CLI 版本白名单或私设最低版本。实际字段、来源身份和计量语义决定准入；产品本身的
 Runtime 最低版本和平台门槛保持。OpenCode prompt result 不能证明整轮范围，使用原生逐调用
@@ -76,7 +82,7 @@ CodeBuddy、Kimi Code、Qoder 与 TRAE 使用当前 workspace／Session 下的 J
 这些 reader 只保留有界调用身份、offset、文件身份和必要数值。JSONL 的非 Usage 字段由封闭 DTO 跳过，
 SQLite 不读取 part／正文；原始行只在本次解析缓冲中存在，不进入 Evidence、Blob、日志或 Renderer。
 选定本地 Token 来源后不再混加 ACP Token；Gauge 和 Cost 独立处理。最新版本与字段语义由
-[Usage v7](../contracts/runtime-usage-monitoring-v7.md)及其继承的原生来源合同拥有。
+[Usage v8](../contracts/runtime-usage-monitoring-v8.md)及其继承的原生来源合同拥有。
 
 Antigravity 在当前根 DONE step 进入 buffer 前，只读对应原生 SQLite 的同调用数值，
 交叉核对 stream 与本地身份/计数后替换稀疏观测；Context 读取同一 generator 的原生窗口估计。
@@ -104,7 +110,7 @@ used/size，在 prompt 终态之前交给现有绑定栅栏；不增加轮询或
 Codex Run summary 可记录实际 service tier；费用投影先用原生观察、再用冻结/发送时请求档位。未知不套
 Standard 价，实际回退 Standard 不按请求 Fast 计价；失去档位依据时撤回旧目录估价。这个小型 metadata
 写入不新增计费系统，也不替代 Claude 等 Runtime 的原生 reported cost。精确行为由
-[Runtime Usage Monitoring v7](../contracts/runtime-usage-monitoring-v7.md) 拥有。
+[Runtime Usage Monitoring v8](../contracts/runtime-usage-monitoring-v8.md) 拥有。
 
 ```text
 visible Settings page
@@ -142,7 +148,7 @@ epoch、Database contract `v0.99` 与 projection schema `47`。不存在回填�
 ## References
 
 - [Evidence 与 Usage 不变量](foundational-invariants.md#evidence-usage)
-- [Runtime Usage Monitoring v7](../contracts/runtime-usage-monitoring-v7.md)
+- [Runtime Usage Monitoring v8](../contracts/runtime-usage-monitoring-v8.md)
 - [v0.99 implementation plan](../versions/v0.99/implementation-plan.md)
 - [Runtime monitoring feasibility audit](../research/runtime-monitoring/README.md)
 - [Core 受管内容不变量](foundational-invariants.md#core-managed-content)

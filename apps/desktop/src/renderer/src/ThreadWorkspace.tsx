@@ -10,6 +10,7 @@ import { useMobileLayout } from './MobileLayout'
 import { useThreadClient, useEditingRecovery, type ThreadClient } from './camp-client'
 import { useExecutionDisclosureAnchor } from './useExecutionDisclosureAnchor'
 import { useExecutionMetrics, useExecutionMetricsVisibility } from './useExecutionMetrics'
+import { executionUsageTotal } from './execution-metrics-reader'
 import { RunningText } from './RunningText'
 import { ExecutionContentContext, ExecutionVirtualList } from './ExecutionVirtualList'
 import { ExecutionNarration } from './ExecutionNarration'
@@ -6546,11 +6547,8 @@ type RunUsage = RuntimeExecutionMetricsSnapshot['runs'][number]
 type SessionContext = RuntimeExecutionMetricsSnapshot['sessions'][number]
 
 function ExecutionUsagePopover({ run, usage }: { run: AgentRunView; usage: RunUsage | null }): JSX.Element {
-  const complete = run.status === 'succeeded' && usage?.finalizedAt != null
-    && usage.promptInputTotalTokens !== null && usage.outputTokens !== null
-  const total = complete
-    ? usage!.promptInputTotalTokens! + usage!.outputTokens!
-    : null
+  const total = executionUsageTotal(run, usage)
+  const complete = total !== null
   const rows = [
     ['Input Token', usage?.promptInputTotalTokens ?? null],
     ['Output Token', usage?.outputTokens ?? null],
