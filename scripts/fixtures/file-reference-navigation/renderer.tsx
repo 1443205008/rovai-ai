@@ -82,7 +82,7 @@ const targetBody = [
   ...Array.from({ length: 4 }, () => prose)
 ].join('\n\n')
 const snapshot: ThreadSnapshot = {
-  schemaVersion: 34, throughGlobalSequence: 36,
+  schemaVersion: 35, throughGlobalSequence: 36,
   thread: { id: threadId, title: '文件引用回归', activationState: 'active', projectBindingKind: 'directory',
     projectPath: '/fixture', defaultLeadAgentId: 'author', membershipGeneration: 1, version: 1,
     createdAt: '2026-08-31T00:00:00Z', updatedAt: '2026-08-31T00:00:00Z' },

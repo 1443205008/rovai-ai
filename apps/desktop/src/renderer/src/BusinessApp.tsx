@@ -11,6 +11,7 @@ import { readErrorMessage } from './error-message'
 import { CoreSubsystemNotice } from './CoreSubsystemNotice'
 import { Activity, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
+import { THREAD_SNAPSHOT_SCHEMA_VERSION } from '@contracts'
 import type {
   AdapterInstallation,
   AdapterKind,
@@ -458,7 +459,7 @@ export function campOpenProjectionAsSnapshot(
   const totalCount = Math.max(projection.coverage.messages.totalCount, loadedCount)
   const omittedCount = Math.max(0, totalCount - loadedCount)
   return {
-    schemaVersion: 34,
+    schemaVersion: THREAD_SNAPSHOT_SCHEMA_VERSION,
     throughGlobalSequence: projection.throughGlobalSequence,
     thread: projection.thread,
     members: projection.members,
@@ -3169,16 +3170,7 @@ export function BusinessApp({
           const availableSnapshot = campSnapshotRef.current?.thread.id === action.threadId
             ? campSnapshotRef.current
             : campSnapshotCache.current.get(action.threadId) ?? null
-          let run = availableSnapshot?.agentRuns.find(({ id }) => id === action.agentRunId) ?? null
-          if (!run) {
-            const fullSnapshot = await client.request<ThreadSnapshot>('threads.snapshot', {
-              threadId: action.threadId
-            })
-            if (fullSnapshot.schemaVersion !== 34 || fullSnapshot.thread.id !== action.threadId) {
-              throw new Error(uiAttribute('执行定位合同不兼容。'))
-            }
-            run = fullSnapshot.agentRuns.find(({ id }) => id === action.agentRunId) ?? null
-          }
+          const run = await resolveNotificationAgentRun(client, action.threadId, action.agentRunId, availableSnapshot)
           if (!run) {
             result = {
               status: 'failed',
@@ -4954,6 +4946,23 @@ export function notificationMessageIsVisible(messageId: string): boolean {
   const viewport = target?.closest<HTMLElement>('.timeline-scroll') ?? null
   if (!target || !viewport) return false
   return rectanglesIntersect(target.getBoundingClientRect(), viewport.getBoundingClientRect())
+}
+
+export async function resolveNotificationAgentRun(
+  client: Pick<RovaiApi, 'request'>,
+  threadId: string,
+  agentRunId: string,
+  availableSnapshot: ThreadSnapshot | null
+): Promise<AgentRunView | null> {
+  const cachedRun = availableSnapshot?.thread.id === threadId
+    ? availableSnapshot.agentRuns.find(({ id }) => id === agentRunId)
+    : null
+  if (cachedRun) return cachedRun
+  const snapshot = await client.request<ThreadSnapshot>('threads.snapshot', { threadId })
+  if (snapshot.schemaVersion !== THREAD_SNAPSHOT_SCHEMA_VERSION || snapshot.thread.id !== threadId) {
+    throw new Error(uiAttribute('执行定位合同不兼容。'))
+  }
+  return snapshot.agentRuns.find(({ id }) => id === agentRunId) ?? null
 }
 
 export function notificationFocusMatchesAction(

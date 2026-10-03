@@ -242,8 +242,8 @@ try {
     return button?.getAttribute('aria-pressed') === 'true' && !timeline?.hidden
   })()`)
   const initialSnapshot = await request(running.cdp, 'camps.snapshot', { threadId })
-  assert(initialSnapshot.schemaVersion === 34,
-    `Camp snapshot schema is not v34: ${initialSnapshot.schemaVersion}`)
+  assert(initialSnapshot.schemaVersion === 35,
+    `Thread snapshot schema is not v35: ${initialSnapshot.schemaVersion}`)
   assert(
     deepEqual(initialSnapshot.members.map((member) => member.agentId), targetMemberIds),
     `Camp does not contain exactly the three target members: ${JSON.stringify(initialSnapshot.members)}`

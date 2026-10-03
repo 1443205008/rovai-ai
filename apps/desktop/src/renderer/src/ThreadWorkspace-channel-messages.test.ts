@@ -46,7 +46,7 @@ function quote(overrides: Partial<ExternalQuote> = {}): ExternalQuote {
 
 function renderMessages(messages: ThreadMessageView[]): string {
   const snapshot: ThreadSnapshot = {
-    schemaVersion: 34,
+    schemaVersion: 35,
     throughGlobalSequence: messages.length,
     thread: {
       id: 'camp-channel-presentation',

@@ -66,7 +66,7 @@ function snapshotFor(count: number, revision: number, recipientCount = 0): Threa
     }
   })
   return {
-    schemaVersion: 34, throughGlobalSequence: revision + 1,
+    schemaVersion: 35, throughGlobalSequence: revision + 1,
     thread: { id: threadId, title: '执行台头像轨道', activationState: 'active', projectBindingKind: 'directory',
       projectPath: '/fixture/workspace', defaultLeadAgentId: profiles[0]?.agentId ?? null,
       membershipGeneration: 1, version: 1, createdAt: now, updatedAt: now },

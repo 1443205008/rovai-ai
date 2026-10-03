@@ -50,7 +50,7 @@ let deferredProjection: (() => void) | null = null
 const submissionOutcomes = new Map<string, PendingThreadInputSubmissionOutcome>()
 const eventListeners = new Set<(event: CoreEvent) => void>()
 const initial: ThreadSnapshot = {
-  schemaVersion: 34, throughGlobalSequence: 1,
+  schemaVersion: 35, throughGlobalSequence: 1,
   thread: { id: threadId, title: '响应模式与紧凑会话验收', activationState: 'active', projectBindingKind: 'directory',
     projectPath: '/fixture/workspace', defaultLeadAgentId: agents[0].agentId, membershipGeneration: 1, version: 1, createdAt: now, updatedAt: now },
   members: agents.map((agent, index) => ({ agentId: agent.agentId, displayName: agent.displayName, avatarRef: null,

@@ -72,7 +72,7 @@ function renderMessage(
     ...messageOverrides
   }
   const snapshot: ThreadSnapshot = {
-    schemaVersion: 34,
+    schemaVersion: 35,
     throughGlobalSequence: 1,
     thread: {
       id: 'camp-current-user-markdown',
