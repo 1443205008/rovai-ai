@@ -737,8 +737,23 @@ fn effective_startup_configuration(
 }
 
 /// Only native checks use the current scoped configuration. Executions use their frozen snapshot.
-pub fn custom_api_snapshot(kind: AdapterKind) -> Option<crate::runtime_custom_api::CustomApiSnapshot> {
-    effective_startup_configuration(kind)?.custom_api_snapshot
+pub fn custom_api_snapshot(
+    kind: AdapterKind,
+) -> anyhow::Result<Option<crate::runtime_custom_api::CustomApiSnapshot>> {
+    let Some(configuration) = effective_startup_configuration(kind) else {
+        return Ok(None);
+    };
+    let Some(snapshot) = configuration.custom_api_snapshot else {
+        return Ok(None);
+    };
+    if snapshot.preview {
+        return Ok(Some(snapshot));
+    }
+    let current =
+        crate::runtime_custom_api::native::read(&snapshot.context, snapshot.configuration.mode())?;
+    Ok(Some(
+        current.snapshot(&snapshot.context, snapshot.explicit_mode),
+    ))
 }
 
 fn configured_environment_variable(kind: AdapterKind, key: &str) -> Option<OsString> {

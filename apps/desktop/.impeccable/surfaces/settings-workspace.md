@@ -323,34 +323,23 @@ Draft checks and restore-auto previews read fresh private search inputs. Failed 
 to the saved program/version as though it had just been checked. Editing or leaving invalidates older
 preview responses. A fallback search source retains a local warning without exposing environment values.
 
-### Custom API
+### Native connection editor
 
-Claude Code, Codex CLI, Kimi Code and Grok Build extend the same open startup form with a custom API
-section between the program path and environment variables. This Operate surface keeps the existing
-section dividers, neutral controls and shared save/discard row. State the current Host and Runtime scope
-once: the setting applies to every teammate using that Runtime on this Host. Keep the enabled switch,
-address, API Key and Runtime-specific fields directly visible.
+Only Claude Code and Codex extend the existing startup form. Preserve the established dividers,
+semantic theme tokens, compact fields and common save/discard row. Choose Official sign-in or Custom API;
+login status is separate and signed-in uses success green. Login instructions refer to this computer.
 
-| Runtime | Fields and local guidance |
-| --- | --- |
-| Claude Code | Address and API Key, followed by five optional overrides: main, Thinking, Haiku, Sonnet and Opus model. Blank model fields keep the inherited value. The concise note identifies Anthropic Messages/Bearer compatibility and makes Thinking support conditional on the Runtime version. |
-| Codex CLI | One shared address/key and an editable model list containing only model ID, optional display name and one default choice. Keep add/delete actions beside the list; deleting the current default requires choosing a replacement first. The note identifies OpenAI Responses. |
-| Kimi Code | Kimi / Anthropic / OpenAI interface selector, address, API Key and one default model. |
-| Grok Build | Address, API Key and one default model on the native API-key route. Explain that the model must already be recognized by the Runtime and auxiliary features use the same connection. |
+Claude has five optional model mappings; Codex has ID, optional display name and one default per model
+row. Keep row identities independent of edited IDs. No provider, reference-model, capability or protocol editor.
+Native configuration is read on entry and after saving, with retry on read failure only. Existing credentials
+show a status-derived mask; the eye reveals new input only. Clear is explicit and separate from sign-out.
 
-The API Key password input is empty after reading or saving. Its saved-state placeholder comes from the
-configured boolean, never a returned credential. Keep, replace and clear are distinct draft operations;
-“保持原密钥” cancels a pending replacement or clear. Clearing a saved key requires disabling the custom
-API first and takes effect only on save. Disabling retains all fields and the saved key. Enabled copy
-states that requests may carry prompts, code and tool results to the entered service; an HTTP address
-shows its transport warning inline.
+Save only edited fields. Preserve unrelated external changes and every draft while resolving a true conflict
+inline. Read-only credential references may still be replaced through a supported native binding; show a
+specific source and remedy only for actual restrictions. A URL text change does not invalidate a static key.
 
-Custom API edits participate in the existing dirty state, local validation, save recovery, discard and
-back-navigation guard. Save persists configuration locally; it does not probe the endpoint or model and
-does not claim connectivity. Keep the existing explicit Runtime “检查状态” action in the program section;
-do not add a separate Test API action or automatic endpoint/model checks.
-
-Porcelain Day and Steel Night share the same fields and state structure through semantic tokens. Wide
-forms align muted labels beside their controls. At widths up to 600px, labels stack above inputs; each
-Codex row shows its own model ID, display-name and default labels while keeping default/delete actions
-beside the row. Preserve the existing field surfaces, compact spacing and accessible control names.
+State shared native-config impact once. Keep Base URL/protocol/default-model/key semantics in concise field
+labels and collapsed help. No persistent reread control, Test API button, polling or extra save confirmation.
+Porcelain Day / Steel Night and the <=600px stacked model rows retain the existing surfaces and control names.
+Current behavior is owned by [Runtime Launch v47](../../../../docs/contracts/runtime-launch-and-verification-v47.md)
+and [native connection UI](../../../../docs/ui/components/app-shell-navigation.md#原生连接设置).

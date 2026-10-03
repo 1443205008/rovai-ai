@@ -524,6 +524,10 @@ impl ClaudeCodeCliRuntimeAdapter {
         } else {
             None
         };
+        rovai_core::runtime_custom_api::guard_frozen_absence(
+            rovai_core::agent_profile::AdapterKind::ClaudeCodeCli,
+            request.runtime.custom_api.as_ref(),
+        )?;
         let mut inline_settings = match &request.runtime.custom_api {
             Some(api) => api.claude_settings()?,
             None => serde_json::json!({}),
@@ -534,6 +538,12 @@ impl ClaudeCodeCliRuntimeAdapter {
             rovai_core::agent_profile::AdapterKind::ClaudeCodeCli,
             &mut command,
         );
+        if let Some(api) = &request.runtime.custom_api {
+            rovai_core::runtime_custom_api::claude_native::configure_environment(
+                api,
+                &mut command,
+            )?;
+        }
         if let Some(config) = &request.builtin_tools {
             config.configure_command(&mut command)?;
         }
@@ -710,8 +720,15 @@ impl ClaudeCodeCliRuntimeAdapter {
             permission_mode.to_string(),
             request.runtime_events.clone(),
         );
-        let redactor = request.runtime.custom_api.as_ref().map(|api| api.redactor()).transpose()?;
-        Arc::get_mut(&mut protocol).expect("unshared protocol").set_credential_redactor(redactor);
+        let redactor = request
+            .runtime
+            .custom_api
+            .as_ref()
+            .map(|api| api.redactor())
+            .transpose()?;
+        Arc::get_mut(&mut protocol)
+            .expect("unshared protocol")
+            .set_credential_redactor(redactor);
         *process_control.protocol.lock().unwrap() = Some(protocol.clone());
         let _protocol_guard = ControlReadGuard(protocol.clone());
         let stdout = child

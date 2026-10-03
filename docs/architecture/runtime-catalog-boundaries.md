@@ -79,17 +79,21 @@ Desktop 只编辑草稿，不拥有第二份有效配置。SQLite 保存与旧 m
 草稿检查只复用读取步骤，在临时快照叠加草稿；不发布全局环境、安装、正式可用性或模型缓存。
 列表和指南共用正式入口；重新检测仍是目录浅检，不是主动检查的前置操作。
 
-### 当前 Host 的自定义 API
+### Claude Code 与 Codex 原生连接编辑
 
-四种连接作为 Startup Settings 的结构化子配置：Claude 五项可选模型映射、Codex 多模型及默认项、
-Kimi 单模型与三种原生类型、Grok 单模型 API-key 端点覆盖。成员共享当前 Host 同一 Runtime Kind 的连接，
-明确选模与权限继续由成员拥有。Key 使用已有 private_storage 文件边界，普通 JSON 只有引用／状态；
-原生环境和目录是派生物，不是第二个可编辑配置源。
+Startup Settings 提供原生配置的读取、回显、编辑与执行接入。原生文件、环境和凭据引用是连接权威；
+Rovai 普通记录只拥有程序路径、普通环境和独立连接方式，不新建 Key 私存或同步系统。进入页面不写文件，
+已有连接无需先保存。修改按字段对最新内容合并，保留未知设置；真正冲突保留草稿并按字段处理。
 
-冻结 Runtime 的连接／凭据版本进入既有 host、binding 与恢复摘要；已冻结执行保留原快照。
-生成文件按修订隔离，旧引用仍在使用时不覆盖／删除。保存不做网络探活；原有协议与资格检查继续存在。
-接口错误由正常执行反馈，不将原生能力默认值描述为真实接口验证。适配与平台边界见
-[自定义 API 验收](../versions/v1.72/runtime-custom-api-verification.md)，字段合同见 [Runtime Launch v47](../contracts/runtime-launch-and-verification-v47.md)。
+官方登录和自定义 API 选择独立于登录状态，原生 CLI 继续拥有 OAuth 和刷新。切换必须落实到真实执行路径，
+不删除登录文件；原生机制无法无损保留两条路径时报告具体限制。修改共享原生配置可能影响其他 CLI／应用，
+不承诺只有本 Rovai 实例受到影响。只有 Claude Code 与 Codex 新增表单，其他 Runtime 维持现有路径。
+
+连接身份、凭据摘要和模型目录参与 Host／binding 兼容性。新执行读取实际来源；重建或恢复旧快照时检查来源变化，
+不靠保留旧密钥副本恢复认证。活跃进程按已捕获值完成，外部会话的生效时机仍由原生运行时决定。
+保存只做本地校验；目录、协议初始化和真实接口能力分别验收。字段与限制见
+[Runtime Launch v47](../contracts/runtime-launch-and-verification-v47.md)，实际版本／平台见
+[原生连接验收](../versions/v1.72/runtime-custom-api-verification.md)。
 
 ## 浅检测与按需深检
 

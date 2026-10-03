@@ -1263,9 +1263,16 @@ impl AgentProfileService {
                 .context("failed to list Adapter installations")?
         };
         for installation in &mut installations {
-            installation.custom_api_model_ids = crate::runtime_startup::load(database, installation.adapter_kind)?
-                .configuration.custom_api.as_ref().and_then(|api| api.configured_model_ids());
-            if let (Some(ids), Some(snapshot)) = (&installation.custom_api_model_ids, &mut installation.snapshot) {
+            installation.custom_api_model_ids =
+                crate::runtime_startup::load(database, installation.adapter_kind)?
+                    .configuration
+                    .custom_api
+                    .as_ref()
+                    .and_then(|api| api.configured_model_ids());
+            if let (Some(ids), Some(snapshot)) = (
+                &installation.custom_api_model_ids,
+                &mut installation.snapshot,
+            ) {
                 snapshot.models.retain(|model| ids.contains(&model.id));
             }
             installation.member_runtime_defaults = if installation.enabled
@@ -2666,11 +2673,19 @@ impl AgentProfileService {
                     .as_ref()
                     == Some(&binding.model);
             if let (Some(api), ModelSelection::Explicit { model_id, .. }) = (
-                crate::runtime_startup::snapshot_from_connection(transaction, binding.adapter_kind)?, &binding.model)
-                && !api.model_is_configured(model_id) {
-                return Ok(CommandHandlerResult::rejected("runtime_model_unavailable", json!({
-                    "modelId": model_id, "detail": "当前接口未配置此模型，请重新选择。"
-                })));
+                crate::runtime_startup::snapshot_from_connection(
+                    transaction,
+                    binding.adapter_kind,
+                )?,
+                &binding.model,
+            ) && !api.model_is_configured(model_id)
+            {
+                return Ok(CommandHandlerResult::rejected(
+                    "runtime_model_unavailable",
+                    json!({
+                        "modelId": model_id, "detail": "当前接口未配置此模型，请重新选择。"
+                    }),
+                ));
             }
             if ready.preflight_required && !matches!(binding.model, ModelSelection::RuntimeDefault)
             {
@@ -4251,13 +4266,31 @@ fn resolve_frozen_runtime_binding_with_snapshot(
     let is_rebound = frozen_api.is_some();
     let custom_api = match frozen_api {
         Some(snapshot) => snapshot,
-        None => crate::runtime_startup::snapshot_from_connection(transaction, binding.adapter_kind)?,
+        None => {
+            crate::runtime_startup::snapshot_from_connection(transaction, binding.adapter_kind)?
+        }
     };
+    if is_rebound
+        && custom_api.is_none()
+        && crate::runtime_startup::snapshot_from_connection(transaction, binding.adapter_kind)?
+            .is_some()
+    {
+        return Ok(Err(runtime_blocker(
+            "runtime_connection_changed",
+            json!({
+                "detail":"此执行冻结时没有连接覆盖，当前原生连接已切换；请重新建立执行，未沿用新凭据恢复旧会话。"
+            }),
+        )));
+    }
     if let (Some(api), ModelSelection::Explicit { model_id, .. }) = (&custom_api, &binding.model)
-        && !api.model_is_configured(model_id) {
-        return Ok(Err(runtime_blocker("runtime_model_unavailable", json!({
-            "modelId": model_id, "detail": "当前接口未配置此模型，请重新选择。"
-        }))));
+        && !api.model_is_configured(model_id)
+    {
+        return Ok(Err(runtime_blocker(
+            "runtime_model_unavailable",
+            json!({
+                "modelId": model_id, "detail": "当前接口未配置此模型，请重新选择。"
+            }),
+        )));
     }
     let installation_id = binding.installation_id.clone();
     let installation = transaction
@@ -4392,8 +4425,13 @@ fn resolve_frozen_runtime_binding_with_snapshot(
     // existing Dispatch Preflight deep-checks the Runtime and rebinds this frozen configuration.
     // Permissions are still validated against the statically discovered schema before claim.
     let mut validation_binding = binding.clone();
-    let custom_connection_rebind = is_rebound && (custom_api.is_some()
-        || crate::runtime_startup::snapshot_from_connection(transaction, binding.adapter_kind)?.is_some());
+    let custom_connection_rebind = is_rebound
+        && (custom_api.is_some()
+            || crate::runtime_startup::snapshot_from_connection(
+                transaction,
+                binding.adapter_kind,
+            )?
+            .is_some());
     if preflight_required || custom_connection_rebind {
         validation_binding.model = ModelSelection::RuntimeDefault;
     }
@@ -4413,7 +4451,10 @@ fn resolve_frozen_runtime_binding_with_snapshot(
         Err(blocker) => return Ok(Err(blocker)),
     };
     if model.source == "runtime_default"
-        && let Some(id) = custom_api.as_ref().and_then(|api| api.configuration.default_model()) {
+        && let Some(id) = custom_api
+            .as_ref()
+            .and_then(|api| api.configuration.default_model())
+    {
         model.model_id = id.to_owned();
     }
     let mut capabilities: Vec<String> =
@@ -6643,25 +6684,88 @@ mod slow_tests {
         // Reusing this fixture keeps executable/permission evidence identical across cases.
         let api = crate::runtime_custom_api::CustomApiSnapshot {
             configuration: crate::runtime_custom_api::CustomApiConfiguration::Codex {
-                enabled: true, base_url: "https://old.example/prefix".into(),
-                models: vec![crate::runtime_custom_api::CustomApiModel { id: frozen.model.model_id.clone(), display_name: String::new() }],
+                mode: Some(crate::runtime_custom_api::ConnectionMode::CustomApi),
+                base_url: "https://old.example/prefix".into(),
+                models: vec![crate::runtime_custom_api::CustomApiModel {
+                    row_id: "fixture".into(),
+                    id: frozen.model.model_id.clone(),
+                    display_name: String::new(),
+                }],
                 default_model: frozen.model.model_id.clone(),
-            }, revision: 1, credential_version: uuid::Uuid::new_v4().to_string(), storage_root: executable_path.parent().unwrap().join("private-api"),
+                default_row_id: Some("fixture".into()),
+            },
+            native_revision: "fixture".into(),
+            credential_version: uuid::Uuid::new_v4().to_string(),
+            provider_id: "relay".into(),
+            explicit_mode: true,
+            draft_key: None,
+            preview: false,
+            credential_source: crate::runtime_custom_api::native::CredentialSource::Missing,
+            context: crate::runtime_custom_api::native::NativeContext {
+                kind: AdapterKind::CodexCli,
+                directory: executable_path.parent().unwrap().join("native"),
+                artifact_root: executable_path.parent().unwrap().join("artifacts"),
+                environment: Default::default(),
+            },
         };
-        let custom = resolve_frozen_runtime_binding_with_snapshot(&transaction, &runtime_binding, Some(Some(api.clone()))).unwrap().unwrap();
+        let custom = resolve_frozen_runtime_binding_with_snapshot(
+            &transaction,
+            &runtime_binding,
+            Some(Some(api.clone())),
+        )
+        .unwrap()
+        .unwrap();
         assert_ne!(custom.host_config_digest, frozen.host_config_digest);
-        assert_ne!(custom.binding_compatibility_digest, frozen.binding_compatibility_digest);
-        let mut rotated = api.clone(); rotated.credential_version = uuid::Uuid::new_v4().to_string(); rotated.revision += 1;
-        let changed = resolve_frozen_runtime_binding_with_snapshot(&transaction, &runtime_binding, Some(Some(rotated.clone()))).unwrap().unwrap();
+        assert_ne!(
+            custom.binding_compatibility_digest,
+            frozen.binding_compatibility_digest
+        );
+        let mut rotated = api.clone();
+        rotated.credential_version = uuid::Uuid::new_v4().to_string();
+        rotated.native_revision = "changed".into();
+        let changed = resolve_frozen_runtime_binding_with_snapshot(
+            &transaction,
+            &runtime_binding,
+            Some(Some(rotated.clone())),
+        )
+        .unwrap()
+        .unwrap();
         assert_ne!(changed.host_config_digest, custom.host_config_digest);
-        assert_ne!(changed.binding_compatibility_digest, custom.binding_compatibility_digest);
-        let mut stored = serde_json::to_value(crate::runtime_startup::RuntimeStartupConfiguration {
-            custom_api: Some(rotated.configuration.clone()), ..Default::default()
-        }).unwrap();
-        stored["_customApiState"] = json!({"revision":rotated.revision,"credentialVersion":rotated.credential_version});
+        assert_ne!(
+            changed.binding_compatibility_digest,
+            custom.binding_compatibility_digest
+        );
+        let mut stored =
+            serde_json::to_value(crate::runtime_startup::RuntimeStartupConfiguration {
+                custom_api: Some(rotated.configuration.clone()),
+                ..Default::default()
+            })
+            .unwrap();
+        stored.as_object_mut().unwrap().remove("customApi");
+        stored["_connectionMode"] = json!("official_login");
         transaction.execute("INSERT INTO runtime_startup_setting(runtime_kind,revision,configuration_json,updated_at) VALUES('codex-cli',2,?1,datetime('now'))", [stored.to_string()]).unwrap();
-        assert_eq!(resolve_frozen_runtime_binding_with_snapshot(&transaction, &runtime_binding, Some(custom.custom_api.clone())).unwrap().unwrap().custom_api, Some(api));
-        assert!(resolve_frozen_runtime_binding_with_snapshot(&transaction, &runtime_binding, Some(frozen.custom_api.clone())).unwrap().unwrap().custom_api.is_none());
+        assert_eq!(
+            resolve_frozen_runtime_binding_with_snapshot(
+                &transaction,
+                &runtime_binding,
+                Some(custom.custom_api.clone())
+            )
+            .unwrap()
+            .unwrap()
+            .custom_api,
+            Some(api)
+        );
+        assert_eq!(
+            resolve_frozen_runtime_binding_with_snapshot(
+                &transaction,
+                &runtime_binding,
+                Some(frozen.custom_api.clone())
+            )
+            .unwrap()
+            .unwrap_err()
+            .code,
+            "runtime_connection_changed"
+        );
         drop(transaction);
         let verified_identity = service
             .verified_executable_identity(

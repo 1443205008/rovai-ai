@@ -33,7 +33,7 @@ class Api(http.server.BaseHTTPRequestHandler):
         if not authorization and self.headers.get("x-api-key"):
             authorization = "Bearer " + self.headers["x-api-key"]
         version = 1 if authorization == "Bearer " + FAKE_KEY else 2 if authorization == "Bearer " + ROTATED_FAKE_KEY else 0
-        REQUESTS.append({"path": self.path, "model": body.get("model"), "keyMatches": version > 0, "keyVersion": version, "authHeader": auth_header})
+        REQUESTS.append({"path": self.path, "model": body.get("model"), "keyMatches": version > 0, "keyVersion": version, "authHeader": auth_header, "nativeHeaderPreserved":self.headers.get("x-rovai-fixture") == "preserved"})
         model = body.get("model", "fixture")
         route = self.path.split("?", 1)[0]
         if route.endswith("/messages"):
@@ -136,23 +136,16 @@ class Native:
             self.child.wait()
 
 
-def run(kind, executable, helper, root, base, kimi_api_type="openai"):
-    config = {"kind": {"claude": "claude-code-cli", "codex": "codex-cli", "kimi": "kimi-code-cli", "grok": "grok-build"}[kind], "enabled": True, "baseUrl": base}
+def run(kind, executable, helper, root, base):
+    config = {"kind": {"claude": "claude-code-cli", "codex": "codex-cli"}[kind], "mode": "custom_api", "baseUrl": base}
     if kind == "codex":
         (root / "codex").mkdir()
-        config.update(models=[{"id": "gpt-6.1-sol", "displayName": "Known"}, {"id": "rovai-unknown", "displayName": "Unknown"}], defaultModel="rovai-unknown")
+        (root / "codex/config.toml").write_text('model_provider="relay"\n[model_providers.relay]\nname="Fixture relay"\nbase_url="http://127.0.0.1:1/old"\nwire_api="responses"\n[model_providers.relay.http_headers]\nx-rovai-fixture="preserved"\n')
+        config.update(models=[{"rowId":"known", "id": "gpt-6.1-sol", "displayName": "Known"}, {"rowId":"unknown", "id": "rovai-unknown", "displayName": "Unknown"}], defaultModel="rovai-unknown", defaultRowId="unknown")
     elif kind == "claude":
         config["models"] = {"model": "rovai-main", "reasoningModel": "rovai-thinking", "haikuModel": "rovai-haiku", "sonnetModel": "rovai-sonnet", "opusModel": "rovai-opus"}
         (root / "claude").mkdir()
-        (root / "claude/settings.json").write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:1/old", "ANTHROPIC_AUTH_TOKEN": "old-fake-key", "ANTHROPIC_MODEL": "old-model"}}))
-    elif kind == "kimi":
-        config.update(apiType=kimi_api_type, model="rovai-unknown")
-    else:
-        config["model"] = "grok-4.6"
-        (root / "grok").mkdir()
-        old = root / "grok/.env"
-        old.write_text("XAI_API_KEY=old-fake-key\n")
-        old.chmod(0o600)
+        (root / "claude/settings.json").write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:1/old", "ANTHROPIC_AUTH_TOKEN": "old-fake-key", "ANTHROPIC_MODEL": "old-model", "ANTHROPIC_CUSTOM_HEADERS":"x-rovai-fixture: preserved"}}))
     start = len(REQUESTS)
     native = Native(helper, executable, root, config)
     try:
@@ -171,17 +164,18 @@ def run(kind, executable, helper, root, base, kimi_api_type="openai"):
             native.rpc("initialize", {"clientInfo": {"name": "rovai_fixture", "version": "1"}, "capabilities": {"experimentalApi": True}})
             native.send({"method": "initialized", "params": {}})
             effective = native.rpc("config/read", {"cwd": str(root), "includeLayers": False})["config"]
-            assert effective["model_provider"] == "rovai_custom"
-            provider = effective["model_providers"]["rovai_custom"]
+            provider_id = effective["model_provider"]
+            assert provider_id.startswith("rovai_custom_")
+            provider = effective["model_providers"][provider_id]
             assert provider["base_url"] == base and provider["env_key"] == "ROVAI_CUSTOM_API_KEY"
             catalog = native.rpc("model/list", {"includeHidden": True, "limit": 100})["data"]
             ids = {m["model"] for m in catalog}
             assert {"gpt-6.1-sol", "rovai-unknown"} <= ids
             sessions = []
             for model in ["gpt-6.1-sol", "rovai-unknown"]:
-                session = native.rpc("thread/start", {"cwd": str(root), "model": model, "modelProvider": "rovai_custom", "approvalPolicy": "never", "sandbox": "read-only", "ephemeral": False})
+                session = native.rpc("thread/start", {"cwd": str(root), "model": model, "modelProvider": provider_id, "approvalPolicy": "never", "sandbox": "read-only", "ephemeral": False})
                 sessions.append(session["thread"]["id"])
-                assert session["modelProvider"] == "rovai_custom" and session["model"] == model
+                assert session["modelProvider"] == provider_id and session["model"] == model
                 native.rpc("turn/start", {"threadId": session["thread"]["id"], "input": [{"type": "text", "text": "Reply OK."}]})
                 result = native.wait(lambda f: f.get("method") == "turn/completed")
                 assert result["params"]["turn"]["status"] == "completed", "Codex turn failed"
@@ -192,7 +186,9 @@ def run(kind, executable, helper, root, base, kimi_api_type="openai"):
             try:
                 rotated.rpc("initialize", {"clientInfo": {"name": "rovai_fixture", "version": "1"}})
                 rotated.send({"method": "initialized", "params": {}})
-                fresh = rotated.rpc("thread/start", {"cwd":str(root),"model":"rovai-unknown","modelProvider":"rovai_custom","approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
+                rotated_provider = rotated.rpc("config/read", {"cwd":str(root),"includeLayers":False})["config"]["model_provider"]
+                assert rotated_provider != provider_id
+                fresh = rotated.rpc("thread/start", {"cwd":str(root),"model":"rovai-unknown","modelProvider":rotated_provider,"approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
                 boundary = len(REQUESTS)
                 rotated.rpc("turn/start", {"threadId": fresh["thread"]["id"], "input": [{"type":"text","text":"Reply OK."}]})
                 result = rotated.wait(lambda f:f.get("method") == "turn/completed")
@@ -204,8 +200,8 @@ def run(kind, executable, helper, root, base, kimi_api_type="openai"):
                 assert result["params"]["turn"]["status"] == "completed"
                 assert REQUESTS[boundary:] and all(r["keyVersion"] == 1 and not r["path"].startswith("/custom/prefix/rotated/") for r in REQUESTS[boundary:])
                 native.close()  # release the native writer before resuming its persisted thread
-                resumed = rotated.rpc("thread/resume", {"threadId": sessions[-1], "cwd": str(root), "model": "rovai-unknown", "modelProvider": "rovai_custom", "approvalPolicy": "never", "sandbox": "read-only"})
-                assert resumed["modelProvider"] == "rovai_custom" and resumed["model"] == "rovai-unknown"
+                resumed = rotated.rpc("thread/resume", {"threadId": sessions[-1], "cwd": str(root), "model": "rovai-unknown", "modelProvider": rotated_provider, "approvalPolicy": "never", "sandbox": "read-only"})
+                assert resumed["modelProvider"] == rotated_provider and resumed["model"] == "rovai-unknown"
                 boundary = len(REQUESTS)
                 rotated.rpc("turn/start", {"threadId":sessions[-1],"input":[{"type":"text","text":"Reply OK."}]})
                 result = rotated.wait(lambda f:f.get("method") == "turn/completed")
@@ -213,33 +209,68 @@ def run(kind, executable, helper, root, base, kimi_api_type="openai"):
                 assert REQUESTS[boundary:] and all(r["keyVersion"] == 2 and r["path"].startswith("/custom/prefix/rotated/") for r in REQUESTS[boundary:])
             finally:
                 rotated.close()
-        else:
-            native.rpc("initialize", {"protocolVersion": 1, "clientCapabilities": {}})
-            if kind == "grok":
-                native.rpc("authenticate", {"methodId": "xai.api_key"})
-            session = native.rpc("session/new", {"cwd": str(root), "mcpServers": []})
-            if kind == "kimi":
-                result = native.rpc("session/set_config_option", {"sessionId": session["sessionId"], "configId": "model", "value": "__kimi_env_model__"})
-                assert next(o["currentValue"] for o in result["configOptions"] if o["id"] == "model") == "__kimi_env_model__"
+        native.close()
+        if kind == "claude":
+            # Reuse a shell-only credential without copying it into native settings.
+            path = root / "claude/settings.json"
+            data = json.loads(path.read_text())
+            data["env"].pop("ANTHROPIC_AUTH_TOKEN")
+            path.write_text(json.dumps(data))
+            (root / "shell-credential-fixture").touch()
+            shell = Native(helper, executable, root, config)
+            try:
+                shell.control("initialize")
+                resolved, status = shell.control("get_settings"), shell.control("get_status")
+                assert "ANTHROPIC_AUTH_TOKEN" not in resolved["effective"]["env"]
+                rows = {row["label"]: row["value"] for section in status["sections"] for row in section["rows"]}
+                assert rows["Auth token"] == "ANTHROPIC_AUTH_TOKEN"
+                shell.send({"type":"user","session_id":rows["Session ID"],"message":{"role":"user","content":"Reply OK."},"parent_tool_use_id":None})
+                assert not shell.wait(lambda f:f.get("type") == "result").get("is_error")
+                assert FAKE_KEY not in path.read_text(), "shell credentials must not be copied into a file"
+            finally:
+                shell.close()
+        # Switching modes selects an official route without rewriting the dormant API key.
+        config_path = root / ("claude/settings.json" if kind == "claude" else "codex/config.toml")
+        native_before = config_path.read_bytes()
+        official = Native(helper, executable, root, {**config, "mode":"official_login"})
+        try:
+            if kind == "codex":
+                official.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
+                official.send({"method":"initialized","params":{}})
+                resolved = official.rpc("config/read", {"cwd":str(root),"includeLayers":False})["config"]
+                assert resolved["model_provider"] == "openai"
+                assert resolved["openai_base_url"] == "https://chatgpt.com/backend-api/codex"
+                assert resolved["model"] != "rovai-unknown"
+                account = official.rpc("account/read", {"refreshToken":False})
+                assert account["account"] is None, "no native login in the isolated fixture"
             else:
-                assert session["models"]["currentModelId"] == "grok-4.6"
-            native.rpc("session/prompt", {"sessionId": session["sessionId"], "prompt": [{"type": "text", "text": "Reply OK."}]})
+                official.control("initialize")
+                settings, status = official.control("get_settings"), official.control("get_status")
+                for name in ["ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_API_KEY"]:
+                    assert settings["effective"]["env"][name] == ""
+                rows = {row["label"]:row["value"] for section in status["sections"] for row in section["rows"]}
+                assert "Auth token" not in rows and "API key" not in rows and "Anthropic base URL" not in rows
+            assert config_path.read_bytes() == native_before, "mode selection must not erase dormant API configuration"
+        finally:
+            official.close()
         requests = REQUESTS[start:]
         assert requests and all(r["keyMatches"] and r["path"].startswith("/custom/prefix/") for r in requests), requests
-        if kind in ["claude", "codex", "grok"]:
+        if kind in ["claude", "codex"]:
             assert all(r["authHeader"] == "bearer" for r in requests)
-        expected = {"claude": {"rovai-main"}, "codex": {"gpt-6.1-sol", "rovai-unknown"}, "kimi": {"rovai-unknown"}, "grok": {"grok-4.6"}}[kind]
+        expected = {"claude": {"rovai-main"}, "codex": {"gpt-6.1-sol", "rovai-unknown"}}[kind]
         assert expected <= {r["model"] for r in requests}, requests
-        return {"runtime": kind, **({"apiType":kimi_api_type} if kind == "kimi" else {}), "status": "passed", "requests": requests}
+        assert all(r["nativeHeaderPreserved"] for r in requests)
+        return {"runtime": kind, "status": "passed", "requests": requests}
     finally:
         native.close()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for kind in ["claude", "codex", "kimi", "grok"]:
+    for kind in ["claude", "codex"]:
         parser.add_argument("--" + kind, type=Path)
     parser.add_argument("--helper", type=Path, default=Path("target/debug/examples/custom_api_native_fixture"))
+    parser.add_argument("--fixture-root", type=Path, required=True, help="Explicit isolated acceptance directory")
     args = parser.parse_args()
     helper = args.helper.resolve()
     assert helper.is_file(), "build the native fixture helper first"
@@ -247,19 +278,20 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     results = []
     try:
-        for kind in ["claude", "codex", "kimi", "grok"]:
+        for kind in ["claude", "codex"]:
             executable = getattr(args, kind)
             if executable is None:
                 continue
-            for api_type in (["kimi", "anthropic", "openai"] if kind == "kimi" else ["openai"]):
-                with tempfile.TemporaryDirectory(prefix="rovai-custom-api-") as directory:
-                    try:
-                        result = run(kind, executable.resolve(), helper, Path(directory), "http://127.0.0.1:" + str(server.server_port) + "/custom/prefix", api_type)
-                    except Exception as error:
-                        import traceback
-                        result = {"runtime": kind, "status": "failed", "error": traceback.format_exc().replace(FAKE_KEY, "<fake-key>").replace(ROTATED_FAKE_KEY, "<rotated-fake-key>")}
-                    results.append(result)
-                    print(json.dumps(result, ensure_ascii=False), flush=True)
+            directory = args.fixture_root.resolve() / (kind + "-native")
+            directory.mkdir(parents=True, exist_ok=False)
+            print("Isolated native fixture: " + str(directory), flush=True)
+            try:
+                result = run(kind, executable.resolve(), helper, directory, "http://127.0.0.1:" + str(server.server_port) + "/custom/prefix")
+            except Exception:
+                import traceback
+                result = {"runtime":kind,"status":"failed","error":traceback.format_exc().replace(FAKE_KEY,"<fake-key>").replace(ROTATED_FAKE_KEY,"<rotated-fake-key>")}
+            results.append(result)
+            print(json.dumps(result,ensure_ascii=False),flush=True)
     finally:
         server.shutdown()
     assert results and all(result["status"] == "passed" for result in results), "native acceptance failed"

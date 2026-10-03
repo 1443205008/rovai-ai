@@ -1,82 +1,53 @@
-const assert = require('node:assert/strict')
-module.exports = async ({window,run,click,settle,waitFor,navigate,capture,noOverflow}) => {
-  const save = '.runtime-startup-actions button[type=submit]'
-  const discard = '.runtime-startup-actions button[type=button]'
-  const toggle = '.runtime-custom-api input[role=switch]'
-  const key = '.runtime-custom-api input[type=password]'
-  const address = '.runtime-custom-api input[type=url]'
-  const fill = async (selector, value) => {
-    await click(selector)
-    await run(`(() => { const e=document.querySelector(${JSON.stringify(selector)});e.select();document.execCommand('insertText',false,${JSON.stringify(value)}) })()`)
-    await settle()
-  }
-  const open = async label => {
-    await navigate('general'); await navigate('runtime')
-    await click(`.runtime-product-settings[aria-label="${label} 启动设置"]`)
-    await waitFor("document.querySelector('.runtime-startup-form') && document.querySelector('.runtime-startup-page').getAttribute('aria-busy')==='false'")
-  }
-  await open('Codex CLI')
-  assert.equal(await run(`document.querySelector('${toggle}').checked`), false)
-  const checksBefore = await run("window.settingsTest.requests.filter(r=>['runtime.startup.check','runtime.startup.inspect'].includes(r.method)).length")
-  await click(toggle); await fill(address, 'https://offline.invalid/custom-prefix'); await fill(key, 'isolated-ui-key')
-  for (const [index,id] of [[1,'private-a'],[2,'private-b']]) {
-    await click('.runtime-custom-api-models > button')
-    await fill(`input[aria-label="模型 ID ${index}"]`, id)
-  }
-  await click('input[aria-label="设为默认模型 private-a"]')
-  await click('button[aria-label="删除模型 private-a"]')
-  assert.equal(await run("document.querySelectorAll('.runtime-api-model-row').length"), 2)
-  assert.ok(await run("document.querySelector('.runtime-custom-api-models [role=alert]').textContent.includes('先指定')"))
-  await click('input[aria-label="设为默认模型 private-b"]')
-  await run("window.settingsTest.state.failure='runtime.startup.save'")
-  await click(save); await waitFor("document.querySelector('.runtime-startup-form .inline-error')")
-  assert.equal(await run(`document.querySelector('${key}').value`), 'isolated-ui-key', 'failed save keeps the private draft')
-  await click(save); await waitFor(`document.querySelector('${save}').disabled`)
-  assert.equal(await run(`document.querySelector('${key}').value`), '')
-  assert.equal(await run("window.settingsTest.state.startup['codex-cli'].configuration.customApi.defaultModel"), 'private-b')
-  assert.equal(await run("window.settingsTest.state.startup['codex-cli'].apiKeyConfigured"), true)
-  await fill('input[aria-label="显示名称 1"]', '开发模型')
-  await click(save); await waitFor(`document.querySelector('${save}').disabled`)
-  assert.equal(await run("window.settingsTest.requests.filter(r=>r.method==='runtime.startup.save').at(-1).params.apiKey.action"), 'keep')
-  assert.equal(await run("window.settingsTest.requests.filter(r=>['runtime.startup.check','runtime.startup.inspect'].includes(r.method)).length"), checksBefore, 'save must not trigger an API/check probe')
-  await fill(key, 'discard-this-key'); await click('.runtime-startup-back')
-  await waitFor("document.querySelector('[role=dialog]')")
-  assert.ok(await run("document.querySelector('[role=dialog]').textContent.includes('尚未保存')"))
-  await click('[data-dialog-autofocus]'); await click(discard)
-  assert.equal(await run(`document.querySelector('${key}').value`), '')
-  await click(toggle); await click(save); await waitFor(`document.querySelector('${save}').disabled`)
-  assert.equal(await run("window.settingsTest.state.startup['codex-cli'].apiKeyConfigured"), true, 'disable keeps key')
-  await click('.runtime-custom-api-key-actions .danger-text'); await click(save); await waitFor(`document.querySelector('${save}').disabled`)
-  assert.equal(await run("window.settingsTest.requests.filter(r=>r.method==='runtime.startup.save').at(-1).params.apiKey.action"), 'clear')
-  assert.equal(await run("window.settingsTest.state.startup['codex-cli'].apiKeyConfigured"), false)
-  // Reopen each production form with saved fake data for desktop/narrow theme coverage.
-  const configs = {
-    'claude-code-cli': { models: {model:'relay-main',reasoningModel:'relay-thinking',haikuModel:'relay-haiku',sonnetModel:'relay-sonnet',opusModel:'relay-opus'} },
-    'codex-cli': { models: [{id:'private-a',displayName:'开发模型'},{id:'private-b',displayName:'轻量模型'}], defaultModel:'private-b' },
-    'kimi-code-cli': { apiType:'openai', model:'private-model' },
-    'grok-build': { model:'grok-4.6' }
-  }
-  for (const [kind,label] of [['claude-code-cli','Claude Code'],['codex-cli','Codex CLI'],['kimi-code-cli','Kimi Code'],['grok-build','Grok Build']]) {
-    await run(`window.settingsTest.state.startup[${JSON.stringify(kind)}]={runtimeKind:${JSON.stringify(kind)},revision:4,apiKeyConfigured:true,configuration:{programPath:null,environment:[],customApi:${JSON.stringify({kind,enabled:true,baseUrl:'https://relay.example/custom-prefix',...configs[kind]})}}}`)
-    await open(label)
-    assert.equal(await run("document.querySelectorAll('.runtime-custom-api input[type=password]').length"), 1)
-    assert.equal(await run("document.querySelectorAll('.runtime-custom-api select').length"), kind==='kimi-code-cli'?1:0)
-    assert.equal(await run(`document.querySelector('${key}').value`), '')
-    if(kind==='claude-code-cli') assert.equal(await run("document.querySelectorAll('.runtime-custom-api input:not([type])').length"), 5)
-    for (const theme of ['day','night']) {
-      await run(`document.documentElement.dataset.theme=${JSON.stringify(theme)}`)
-      for (const [size,width,height] of [['desktop',1440,1100],['narrow',390,1100]]) {
-        window.setContentSize(width,height); await settle()
-        await run("document.querySelector('.runtime-startup-page').scrollIntoView({block:'start'})"); await settle()
-        await noOverflow(`${kind}/${theme}/${size}`); await capture(`custom-api-${kind}-${theme}-${size}`)
-      }
-    }
-    if(kind==='kimi-code-cli') {
-      await run("document.querySelector('.runtime-custom-api select').focus()")
-      window.webContents.sendInputEvent({type:'keyDown',keyCode:'A'}); window.webContents.sendInputEvent({type:'keyUp',keyCode:'A'})
-      await settle(); await click(discard)
-    }
-  }
-  window.setContentSize(1440,920)
-  console.error('settings fixture: custom API interactions passed')
+const assert=require('node:assert/strict')
+module.exports=async({window,run,click,settle,waitFor,navigate,capture,noOverflow})=>{
+ const input=async(selector,value)=>{await run(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}))})()`);await settle()}
+ const text=()=>run('document.body.textContent')
+ const save='button[type="submit"]'
+ await navigate('claude-code-cli');await waitFor('document.querySelector("input[type=url]")')
+ assert.equal(await run(`document.querySelector(${JSON.stringify(save)}).disabled`),true,'native first read does not require saving')
+ assert.ok((await text()).includes('已从原生配置读取，无需重新输入。'))
+ assert.equal(await run('document.querySelector(".runtime-custom-api-key-input input").value'),'')
+ assert.ok(!(await text()).includes('重新读取'))
+ await input('input[type=url]','https://relay.example/other-prefix')
+ await click(save)
+ assert.equal(await run('window.settingsTest.requests.at(-1).params.apiKey.action'),'keep','URL editing preserves static key')
+ await input('.runtime-custom-api-key-input input','fixture-new-key')
+ await click('.runtime-key-visibility')
+ assert.equal(await run('document.querySelector(".runtime-custom-api-key-input input").type'),'text')
+ await input('.runtime-custom-api-key-input input','')
+ assert.equal(await run('document.querySelector(".runtime-custom-api-key-input input").type'),'password')
+ await input('.runtime-custom-api-key-input input','fixture-new-key')
+ await run(`window.settingsTest.state.failure='runtime.startup.save'`)
+ await click(save);assert.equal(await run('document.querySelector(".runtime-custom-api-key-input input").value'),'fixture-new-key')
+ await click(save);assert.equal(await run('document.querySelector(".runtime-custom-api-key-input input").value'),'')
+ await click('input[value="official_login"]')
+ assert.ok((await text()).includes('已登录'));assert.ok((await text()).includes('在本机终端运行'));assert.ok(!(await text()).includes('Host'))
+ await click(save);await click('input[value="custom_api"]');await click(save)
+ // An unrelated external update is retained while an edited field reports a real conflict.
+ await input('input[type=url]','https://mine.example/prefix')
+ await run(`window.settingsTest.state.startup['claude-code-cli'].configuration.customApi.baseUrl='https://external.example/prefix';window.settingsTest.state.startup['claude-code-cli'].configuration.environment=[{name:'EXTERNAL',value:'preserve'}]`)
+ await click(save);await waitFor('document.querySelector(".runtime-save-conflict")')
+ assert.equal(await run('document.querySelector("input[type=url]").value'),'https://mine.example/prefix')
+ assert.ok((await text()).includes('https://external.example/prefix'))
+ await capture('claude-field-conflict')
+ await click('.runtime-conflict-actions button:first-child');await click(save)
+ assert.equal(await run("window.settingsTest.state.startup['claude-code-cli'].configuration.environment[0].name"),'EXTERNAL')
+ await navigate();await navigate('codex-cli');await waitFor('document.querySelector(".runtime-api-model-row")')
+ const row='.runtime-api-model-row:first-of-type input'
+ const id='.runtime-api-model-row input[aria-label="模型 ID 1"]'
+ await run(`window.rowBefore=document.querySelector('[data-model-row="one"]');document.querySelector(${JSON.stringify(id)}).focus()`)
+ await input(id,'');assert.equal(await run('document.querySelector("input[type=radio][name$=default]:checked").closest(".runtime-api-model-row").dataset.modelRow'),'one')
+ for(const value of ['r','re','renamed']) {await input(id,value);assert.equal(await run('document.querySelector("[data-model-row=one]")===window.rowBefore'),true);assert.equal(await run('document.activeElement.getAttribute("aria-label")'),'模型 ID 1')}
+ await click(save)
+ assert.equal(await run("window.settingsTest.state.startup['codex-cli'].configuration.customApi.defaultModel"),'renamed')
+ await click('[data-model-row="one"] button');assert.ok((await text()).includes('请先指定新的默认模型'))
+ await input('.runtime-api-model-row input[aria-label="模型 ID 2"]','renamed');await click(save);assert.ok((await text()).includes('不能重复'))
+ await input('.runtime-api-model-row input[aria-label="模型 ID 2"]','model-b');
+ await click('[data-model-row="two"] input[type=radio]');await click('[data-model-row="one"] button');await click(save)
+ assert.equal(await run("window.settingsTest.state.startup['codex-cli'].configuration.customApi.models.length"),1)
+ for(const theme of ['day','night']){await run(`document.documentElement.dataset.theme=${JSON.stringify(theme)}`);await settle();await noOverflow(theme);await capture('codex-'+theme)}
+ window.setContentSize(520,920);await settle();await noOverflow('compact');await capture('codex-compact')
+ await navigate();await run(`window.settingsTest.state.failure='runtime.startup.get'`);await navigate('claude-code-cli');await waitFor('document.querySelector(".runtime-native-read-error")');await click('.runtime-native-read-error button');await waitFor('document.querySelector("input[type=url]")')
+ await click('.runtime-key-clear');await click(save);assert.equal(await run("window.settingsTest.state.startup['claude-code-cli'].credential.status"),'missing')
+ assert.ok(!(await text()).includes('测试 API'))
 }

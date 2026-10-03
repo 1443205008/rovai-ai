@@ -110,22 +110,31 @@ impl ClaudeControl {
         (control, ready, receiver)
     }
 
-    pub(crate) fn set_credential_redactor(&mut self, redactor: Option<rovai_core::runtime_custom_api::CredentialRedactor>) {
+    pub(crate) fn set_credential_redactor(
+        &mut self,
+        redactor: Option<rovai_core::runtime_custom_api::CredentialRedactor>,
+    ) {
         self.credential_redactor = redactor;
     }
 
     pub(crate) fn redact_frame(&self, value: &Value) -> Result<Vec<u8>> {
         let mut value = value.clone();
-        if let Some(redactor) = &self.credential_redactor { redactor.value(&mut value); }
+        if let Some(redactor) = &self.credential_redactor {
+            redactor.value(&mut value);
+        }
         Ok(serde_json::to_vec(&value)?)
     }
 
     pub(crate) fn redact_text(&self, value: &str) -> String {
-        self.credential_redactor.as_ref().map_or_else(|| value.to_owned(), |redactor| redactor.text(value))
+        self.credential_redactor
+            .as_ref()
+            .map_or_else(|| value.to_owned(), |redactor| redactor.text(value))
     }
 
     fn emit(&self, event_type: &'static str, mut payload: Value) {
-        if let Some(redactor) = &self.credential_redactor { redactor.value(&mut payload); }
+        if let Some(redactor) = &self.credential_redactor {
+            redactor.value(&mut payload);
+        }
         if let Some(events) = &self.events {
             let _ = events.send(ClaudeCodeRuntimeEvent {
                 event_type,
@@ -167,12 +176,22 @@ impl ClaudeControl {
     pub(crate) async fn private_configuration(&self, subtype: &str) -> Result<Value> {
         let id = format!("rovai-config-{}", uuid::Uuid::new_v4());
         let (sent, received) = oneshot::channel();
-        self.private_requests.lock().unwrap().insert(id.clone(), sent);
+        self.private_requests
+            .lock()
+            .unwrap()
+            .insert(id.clone(), sent);
         let result = async {
-            self.write(json!({"type":"control_request", "request_id":id, "request":{"subtype":subtype}}), None).await?;
-            tokio::time::timeout(INITIALIZE_TIMEOUT, received).await
-                .context("Claude Code 最终配置读取超时。")?.context("Claude Code 配置读取已中断。")?
-        }.await;
+            self.write(
+                json!({"type":"control_request", "request_id":id, "request":{"subtype":subtype}}),
+                None,
+            )
+            .await?;
+            tokio::time::timeout(INITIALIZE_TIMEOUT, received)
+                .await
+                .context("Claude Code 最终配置读取超时。")?
+                .context("Claude Code 配置读取已中断。")?
+        }
+        .await;
         self.private_requests.lock().unwrap().remove(&id);
         result
     }
@@ -230,10 +249,17 @@ impl ClaudeControl {
                     .get("response")
                     .context("Claude control response has no response")?;
                 if let Some(id) = response.get("request_id").and_then(Value::as_str)
-                    && let Some(sender) = self.private_requests.lock().unwrap().remove(id) {
-                    let value = if response["subtype"] == "success" && response["response"].is_object() {
+                    && let Some(sender) = self.private_requests.lock().unwrap().remove(id)
+                {
+                    let value = if response["subtype"] == "success"
+                        && response["response"].is_object()
+                    {
                         Ok(response["response"].clone())
-                    } else { Err(anyhow::anyhow!("当前 Claude Code 无法读取最终配置；此版本的自定义 API 路径尚不兼容。")) };
+                    } else {
+                        Err(anyhow::anyhow!(
+                            "当前 Claude Code 无法读取最终配置；此版本的自定义 API 路径尚不兼容。"
+                        ))
+                    };
                     let _ = sender.send(value);
                     return Ok(true);
                 }

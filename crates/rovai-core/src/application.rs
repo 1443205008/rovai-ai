@@ -3019,7 +3019,6 @@ impl Core {
 
     async fn cleanup_mcp_projections_best_effort(&self) {
         let database = self.database.lock().await;
-        let _ = rovai_core::runtime_startup::cleanup_unused_credentials(&database);
         if let Err(error) = self.mcp_projection.cleanup_terminal_and_orphaned(&database) {
             eprintln!("failed to clean MCP Runtime projections: {error:#}");
         }
@@ -14558,7 +14557,11 @@ impl Core {
                 runtime.validate_explicit_model(model).await?;
                 Some(model)
             }
-            "runtime_default" => execution.runtime.custom_api.as_ref().map(|_| model),
+            "runtime_default" => execution
+                .runtime
+                .custom_api
+                .as_ref()
+                .and_then(|api| api.configuration.default_model()),
             _ => anyhow::bail!("Codex model source is invalid"),
         };
         let mut session_bootstrap = {

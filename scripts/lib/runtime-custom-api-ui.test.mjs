@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
@@ -14,7 +14,8 @@ const root = resolve(import.meta.dirname, '../..')
 const source = join(root, 'scripts/fixtures/runtime-custom-api')
 test('custom API forms preserve secret operations, local validation and defaults across themes and sizes', { timeout: 240_000 }, async t => {
   if (!admitElectronIntegrationTest(t)) return
-  const fixture = await mkdtemp(join(tmpdir(), 'rovai-custom-api-ui-'))
+  const fixture = process.env.ROVAI_CUSTOM_API_FIXTURE_ROOT ? resolve(process.env.ROVAI_CUSTOM_API_FIXTURE_ROOT) : await mkdtemp(join(tmpdir(), 'rovai-custom-api-ui-'))
+  await mkdir(fixture, { recursive: true })
   let child, closed
   try {
     await build({ configFile: false, root: source, base: './', logLevel: 'error', plugins: [react()],

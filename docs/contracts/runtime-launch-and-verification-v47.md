@@ -4,90 +4,90 @@ name: Runtime Launch and Verification
 version: v47
 status: accepted
 source_version: v1.72
-last_updated: 2026-10-03
+last_updated: 2026-10-04
 ---
 
 # Runtime Launch and Verification v47
 
-继承 [v46](runtime-launch-and-verification-v46.md) 的启动、审批、资格和恢复边界；本版扩展
-[v40](runtime-launch-and-verification-v40.md) 的 Runtime Startup Settings，增加当前 Host 按 Runtime Kind 保存的自定义 API。
-本合同只拥有配置交付与切换正确性，不认证中转服务或模型能力。实现与实际版本证据见
-[本期验收](../versions/v1.72/runtime-custom-api-verification.md)。
+继承 [v46](runtime-launch-and-verification-v46.md) 的启动、审批、平台准入、资格和恢复边界。
+本版扩展 [v40](runtime-launch-and-verification-v40.md) 的启动设置，仅为 Claude Code 与 Codex 提供
+原生连接配置的读取、编辑和执行接入，不认证中转或模型能力。证据见[本期验收](../versions/v1.72/runtime-custom-api-verification.md)。
 
-## 配置与密钥输入
+## 配置权威与输入
 
-`RuntimeStartupConfiguration` 增加可选 `customApi`，缺省表示不覆盖。四种 shape 使用现有 Runtime Kind 作为 `kind`：
+原生设置及其实际凭据来源是连接权威。打开页面、重新进入或失败重试只读取，不导入、迁移或复制 Key。
+已存在的原生连接不以点击保存为使用前提；原生可使用的凭据引用不以 Host 能取得明文为前提。
+普通 SQLite 启动记录仍拥有程序路径、非凭据环境和独立 `_connectionMode`，不保存 API 地址、模型或 Key 副本。
+`customApi` 是读取投影；内部冻结连接只保存来源、配置身份和摘要，不含密钥。
 
-| kind | 共同字段之外的字段 |
+| kind | 投影字段 |
 | --- | --- |
-| `claude-code-cli` | `models: {model, reasoningModel, haikuModel, sonnetModel, opusModel}`，五项字符串默认空 |
-| `codex-cli` | `models: Array<{id, displayName}>`、`defaultModel` |
-| `kimi-code-cli` | `apiType: kimi \| anthropic \| openai`、`model` |
-| `grok-build` | `model` |
+| `claude-code-cli` | `mode`、`baseUrl`、`models: {model, reasoningModel, haikuModel, sonnetModel, opusModel}` |
+| `codex-cli` | `mode`、`baseUrl`、`models: Array<{rowId,id,displayName}>`、`defaultRowId`、`defaultModel` |
 
-共同字段为 `enabled: boolean`、`baseUrl: string`。不新增供应商、账户、配置档、成员级连接或模型能力表单。
-普通字段不得含 Key。`runtime.startup.save/inspect/check` 增加独立写入参数 `apiKey`：
+`mode` 为 `official_login | custom_api | null`；已保存的选择优先，首次才依据原生接口及认证状态初始化。
+没有发现 Key 不代表官方已登录。`rowId` 只作编辑身份，不写入原生模型目录；编辑 ID 时不改变当前行或默认选择。
+模型 ID 非空、唯一，启用 API 的 Codex 至少一项且恰有一个默认项。删除默认模型先选另一项；不可用的成员显式模型
+保留原选择，提示“当前接口未配置此模型”，执行不悄悄换模型。
 
-- 缺省或 `{action: "keep"}`：保持已有密钥；空密码框代表 keep。
-- `{action: "replace", value: "…"}`：替换为新凭据版本，拒绝空值、控制字符、空白和掩码。
-- `{action: "clear"}`：明确清除；启用时拒绝 clear，先关闭或同次关闭后清除。
+`runtime.startup.get/save` 返回 `credential`（状态、来源标签、版本摘要、可替换／可清除能力和具体限制）、
+`connectionObservation`（首次方式、独立登录状态、冲突）、`nativeRevision`、`connectionReadError`，以及本次保存的
+`nativeWritten/reconnectRequired`。不回传原 Key 或可编辑的私有凭据对象；密码框用状态生成掩码，眼睛只显示本次输入。
 
-`runtime.startup.get/save` 的响应增加 `apiKeyConfigured: boolean`，不回传原值、掩码或可编辑凭据引用。
-SQLite 普通配置只保存内部修订与凭据引用；实际 Key 写入 Host 数据根下受限私有存储，Unix 目录 0700、文件 0600，
-Windows 沿用 private_storage 的 ACL。Key 不进入命令行、普通回执、事件、日志、诊断或导出。
-含密钥的输入反序列化错误只返回通用格式错误，原生 stdout/stderr 与公开检查结果精确清除本次 Key。
-Claude 私有最终配置控制响应独立消费，不进入普通输出流或 Evidence。
+`runtime.startup.save` 接受 `runtimeKind`、`edits: Array<{path,before,after,label}>` 与写入专用 `apiKey`：
 
-默认关闭；关闭只停止覆盖，字段和密钥保留。清除、替换只操作本功能保存的 Key，不导入或清除原生登录。
-地址必须是带 host 的 HTTP/HTTPS URL，拒绝账号密码和 fragment，保留合法路径前缀，不自动补 `/v1`。
-HTTP 在界面明确提示风险。启用需要地址和已有／新 Key；Codex 至少一个非空、唯一 ID，默认引用必须命中列表。
-Claude 五个模型字段可空；Kimi/Grok 默认模型必填。Codex 删除默认项前先指定新默认项，删除成员已选模型不改成员原值。
-成员界面显示“当前接口未配置此模型”，执行拒绝该选择。
+- 缺省或 `{action:"keep"}` 保留当前来源；清空尚未保存的输入恢复 keep。
+- `{action:"replace",value:"…"}` 替换当前连接的原生 Key；拒绝空白、控制字符和掩码。
+- `{action:"clear"}` 为明确清除，不等于退出官方登录；只操作该 API 凭据。不可写的来源说明具体处理办法。
+- 替换／清除须带 `credentialVersion` 字段补丁，以摘要处理并发，不把 Key 放入补丁的 before/after。
 
-保存只验证本地输入，不请求接口、不刷新远端模型、不发送提示词。没有“测试 API”按钮或额外执行前探活。
-原有显式检查、协议初始化、认证和平台准入继续使用；生成合法配置不证明后端支持请求中的能力。
+保留旧的程序路径／普通环境保存形状作为有修订校验的兼容入口；它不能写原生连接或 Key。
+新表单只提交修改字段。保存重读当前来源，比较原值、草稿和最新值：不相关修改合并；相同结果幂等；真正冲突返回
+`{status:"conflict",latest,conflicts}`。界面保留全部草稿和本次 Key 输入，按字段选择我的／外部值，然后再次校验。
+原生读取失败不阻塞独立的程序路径或普通环境保存。写入前再次核对原生字节；原子替换失败不破坏旧文件。
+TOML 保留未知字段和注释，JSON 保留无关字段；不替换整套 Home、不清除 OAuth 或登录状态。
 
-## 原生适配
+地址为有主机的 HTTP/HTTPS URL，拒绝内嵌账号密码和 fragment，保留路径前缀，不自动补 `/v1`。
+HTTP 有传输风险提示。保存只做本地校验、目录构造和解析，不触发探活、模型列表请求或测试提示词。
+既有 Runtime 检查／认证／协议初始化继续沿用，没有新增测试 API、后台轮询或同步面板。
 
-| Runtime | 连接与模型映射 |
-| --- | --- |
-| Claude | `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`；主模型 `ANTHROPIC_MODEL`、推理兼容字段 `ANTHROPIC_REASONING_MODEL`、三个 `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL` |
-| Codex | 内部 `rovai_custom` provider；`base_url`、私有环境 `ROVAI_CUSTOM_API_KEY` 的 `env_key`、`wire_api=responses`、`requires_openai_auth=false`；`model` 和受管 `model_catalog_json` |
-| Kimi | `KIMI_MODEL_PROVIDER_TYPE`、`KIMI_MODEL_BASE_URL`、`KIMI_MODEL_API_KEY`、`KIMI_MODEL_NAME` |
-| Grok | `GROK_XAI_API_BASE_URL`、`XAI_API_KEY`、`GROK_DEFAULT_MODEL`；原生认证明确选择 `xai.api_key` |
+## 原生读写与运行接入
 
-Claude 固定 Bearer／Anthropic Messages。私有 `--settings` 环境覆盖用户 settings 的重复值；初始化后的
-`get_settings/get_status` 核对最终地址、认证来源、已覆盖字段及模型。组织策略或版本不支持最终值检查时明确失败。
-空模型项不注入；家族映射不自动复制主模型。推理模型只透传，不改变 Thinking 或现有强度；进入进程与实际识别分别验收。
+Claude 使用实际 `CLAUDE_CONFIG_DIR`／原生 Home 下的设置、相关环境和凭据引用。新 Key 写入原生
+`env.ANTHROPIC_AUTH_TOKEN`，按 Bearer 发送；已有 `ANTHROPIC_API_KEY`、环境引用或 `apiKeyHelper` 继续按原生方式复用。
+五项模型分别映射 `ANTHROPIC_MODEL`、`ANTHROPIC_REASONING_MODEL`、三个
+`ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`；清空字段消除对应值，不把所有家族填成主模型。
+Thinking 只作兼容字段透传，不改推理强度，不把变量进入进程当成运行时实际识别。
+子进程环境和原生 `--settings` 控制连接选择；Key 不进入 argv 或派生 settings 文件。
+既有初始化中的 `get_settings/get_status` 核对有效地址、认证来源、值和模型；冲突明确失败，不尝试其他认证。
 
-Codex adapter 从实际选中的可执行文件读取经版本核对的完整原生资源，不把 `model/list` 写回目录。
-精确 ID 使用原生条目；未知 ID 使用该版本原生 fallback 的默认声明，不按名字套用其他模型能力。
-内部条目保留且不作为本连接的用户可选项展示；目录替换内置目录，生成失败不得回用旧文件冒充成功。
-资源 digest 未适配、包装程序没有可读资源或目录无法构造时明确报告 adapter 不兼容。
-`config/read` 核对最终 provider、地址、凭据引用和协议；新建与恢复显式绑定同一 provider。
-模型列表／能力的来源是原生元数据或原生兼容默认值，不是中转实测。
+Codex 使用实际 `CODEX_HOME`、活动 profile、provider、模型目录及引用凭据；来源不局限于 auth.json。
+普通 env 引用不可写时仍可换 Key：adapter 在当前原生 provider 中使用该版本支持的 inline bearer，并解除该连接的旧 env 引用，
+不改外部环境，不复制旧 Key，不改官方登录文件。原生管理凭据保持由原生运行时消费；受限组合明确报告来源与限制。
+正式子进程使用带连接身份的内部 provider，绑定地址、私有环境引用和 Responses；其标识不进入用户表单。
+`config/read` 与 thread start/resume 的返回核对实际 provider；旧接口或优先认证字段不能静默生效。
 
-Kimi 复用既有临时模型环境注入函数。启用时整套新连接取代旧私有文件来源，不读取该文件拼接 Key，也不修改它。
-启动后核对 `__kimi_env_model__`，显式模型选择只能指向本连接的模型；不能切回另一个 provider。
-Rovai 列表将私有临时别名映射为用户填写的模型 ID。上下文和能力继承目标版本原生默认与合并规则，不另加识别器或白名单。
+修改 Codex 模型列表时，从实际选择的可执行文件读取经版本核对的完整资源。精确匹配用原生元数据，未知 ID 用目标版本
+原生 fallback，不按名称猜能力。保留内部条目，不用 model/list 响应替代完整目录。目录在原生配置目录内按内容修订生成，
+不含 Key；生成失败不修改 config.toml 指针。现有合法原生连接的读取和使用不要求先重新生成目录。
+不支持的资源／包装程序只对目录编辑报具体兼容错误，不据此建立官方模型白名单。
 
-Grok 保留原生 Home、Skills、MCP 和会话。当前执行的主模型及搜索、摘要、图片描述、提示建议模型均纳入路由检查；
-原生模型级地址、字面 Key、env_key、认证 helper、请求头等若不能绑定本连接则报错，绝不切换备用账号。
-可安全处理的当前模型 env_key 仅在目标进程设置为本次 Key；不调用旧 `.env` 注入函数。
-三字段覆盖不注册任意模型／协议，不认识的默认模型报错，防止原生静默回退。
-组织 requirements/MDM 或条件覆盖的路由无法确定时，只阻断这条新入口，不更改策略或原生登录状态。
+## 官方登录与兼容性
 
-## 一致性、运行快照与恢复
+官方登录与登录状态独立。Claude 复用原生 Claude 账号，Codex 复用 ChatGPT 登录；切换不删除账号，不接管 OAuth、额度或刷新。
+执行中的官方路径必须排除自定义地址和凭据，而不是把停止覆盖换个名称。原生配置及 API Key 保留待用。
+原生认证文件仅保存 API Key、而版本无法无损选择 OAuth 时明确限制；不得用可能注销原凭据的
+`forced_login_method` 强行切换。登录提示用“本机”，由用户在相应 CLI 完成操作。
 
-结构化配置与既有启动环境含同义字段时明确报告冲突，不删除用户原值。关闭后回到原有来源；“继承原生”不表示官方账号。
-成员明确选模优先，运行时默认使用本功能默认项；不可用的显式选择报错，不悄悄选择第一行或另一个 provider。
+编辑的是共享原生配置，其他 CLI／应用也可能受影响，页面一次说明作用范围。保存成功不等于热切换成功。
+连接、凭据摘要与模型目录进入既有 Host 和 binding compatibility digest；新执行重新读取，不误用旧认证进程。
+运行中的进程可以继续使用已捕获值；重建／恢复旧快照前核对实际来源，变化时明确要求重新连接，保留 Rovai 历史。
+不通过保留旧 Key 副本重放旧快照，不无条件承诺外部运行会话不受共享文件变化影响。
 
-CAS、并发保存、安装 generation 与资格失效沿用原实现。冻结 Runtime 增加可选内部 `customApi` 快照，含配置、修订、
-凭据版本与私有存储位置，不含 Key。连接身份进入 host/binding compatibility digest 和恢复判断。
-保存后的新执行使用新配置；已冻结执行（包括冻结的“未启用”）在重新绑定时保持原快照。
-换地址、目录、凭据版本不能复用旧认证进程；不兼容恢复沿用既有明确处理并保留 Rovai 历史。
+## 凭据与资格边界
 
-受管目录／settings 按修订身份生成，以原子写入安装。同一身份内容不一致时拒绝覆盖。
-旧 Key 与派生文件在当前设置或非终态冻结 Run 仍引用时保留；终态历史引用不保留可重放凭据。
-草稿检查使用独立临时私存副本，寿命绑定既有检查任务；正式保存／旧 Key 清理不破坏正在检查的草稿。
-不修改全局环境、原生认证文件、权限、沙箱或组织准入，不为新配置建立第二套调度或资格系统。
+Key 只存在原生凭据位置和必要的运行内存／子进程环境中；原生文件写入沿用受限文件权限和原子替换。
+草稿检查只使用内存中的新 Key。写入输入不实现 Debug/Serialize，不进入命令回执；解析错误不嵌入原文。
+原生私有配置响应独立消费，输出边界清除已知当前 Key；未知来源不会被冒充已经验证。
+模型能力声明、目录解析成功、本地假服务实测和真实中转能力必须分别记录。没有新增真实服务验收不阻止保存。
+Kimi/Grok 的既有路径、平台准入、Skills、MCP、协作工具、审批与取消保持原合同。

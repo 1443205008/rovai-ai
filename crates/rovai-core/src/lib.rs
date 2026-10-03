@@ -93,6 +93,7 @@ pub mod runtime;
 pub mod runtime_activity_mapping;
 pub mod runtime_basis;
 pub mod runtime_compaction_display;
+pub mod runtime_custom_api;
 pub mod runtime_diff;
 pub mod runtime_discovery;
 #[cfg(windows)]
@@ -104,7 +105,6 @@ pub mod runtime_probe_process;
 pub mod runtime_resolution;
 pub mod runtime_search_operation;
 pub mod runtime_startup;
-pub mod runtime_custom_api;
 pub mod single_chat;
 pub mod skill;
 pub mod skill_projection;
