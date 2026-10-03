@@ -662,6 +662,36 @@ export interface RuntimeUsageSnapshot {
   }
 }
 
+export interface RuntimeExecutionMetricsSnapshot {
+  schemaVersion: 1
+  runs: Array<{
+    agentRunId: string
+    executionEpoch: number
+    promptInputTotalTokens: number | null
+    outputTokens: number | null
+    cacheReadTokens: number | null
+    cacheWriteTokens: number | null
+    finalizedAt: string | null
+    lastObservedAt: string | null
+    /** Coverage of received Input/Output contributions; missing/legacy evidence is not complete. */
+    inputOutputComplete?: boolean
+  }>
+  sessions: Array<{
+    conversationId: string
+    agentId: string
+    sessionGeneration: number
+    runtimeKind: AdapterKind
+    modelKey: string | null
+    usedTokens: number | null
+    windowTokens: number | null
+    /** Independently observed native fraction; never used to infer token quantities. */
+    nativeRatio?: number | null
+    source: string
+    dialectId: string
+    observedAt: string
+  }>
+}
+
 export type StartPreflightBlockerCode =
   | 'runtime_not_configured'
   | 'runtime_probe_required'
@@ -2379,8 +2409,10 @@ export interface AgentRunImageContent {
   data: string
 }
 
+export const THREAD_SNAPSHOT_SCHEMA_VERSION = 35
+
 export interface ThreadSnapshot {
-  schemaVersion: 34
+  schemaVersion: typeof THREAD_SNAPSHOT_SCHEMA_VERSION
   throughGlobalSequence: number
   thread: {
     id: string
@@ -3924,6 +3956,7 @@ export type CoreMethod =
   | 'health.check'
   | 'diagnostics.check'
   | 'monitoring.snapshot'
+  | 'monitoring.execution'
   | 'runtime.discovery.rescan'
   | 'runtime.networkRecovery.wake'
   | 'runtime.subsystems.get'
@@ -4113,6 +4146,7 @@ export type CoreMethod =
   | 'navigation.campViewed'
   | 'threads.create'
   | 'threads.discardPending'
+  | 'threads.pendingDraft.setPresence'
   | 'threads.rename'
   | 'threads.members.fast.check'
   | 'threads.members.fast.set'

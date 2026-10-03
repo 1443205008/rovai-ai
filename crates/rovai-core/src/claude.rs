@@ -931,6 +931,7 @@ impl ClaudeCodeCliRuntimeAdapter {
                     "session_id": output.session_id,
                     "usage": output.usage,
                     "total_cost_usd": output.total_cost_usd,
+                    "model_calls_observed": output.model_calls_observed,
                 })
             }),
         })
@@ -1167,6 +1168,8 @@ struct ClaudeCodeJsonResult {
     usage: Value,
     #[serde(default)]
     total_cost_usd: Option<Value>,
+    #[serde(skip)]
+    model_calls_observed: bool,
 }
 
 #[derive(Debug)]
@@ -1182,9 +1185,15 @@ struct ClaudeCodeStreamState {
     model_observation_emitted: bool,
     message_ordinal: u64,
     native_message_id: Option<String>,
+    native_usage_message_id: Option<String>,
+    native_message_model: Option<String>,
+    call_usage: serde_json::Map<String, Value>,
+    model_calls_observed: bool,
+    last_call_usage_observed: bool,
     message_text_completed: bool,
     text_delta_emitted: bool,
     stream_text_items: HashMap<u64, String>,
+    stream_thinking_items: HashMap<u64, String>,
     pending_text_items: VecDeque<String>,
     completed_text_packets: HashMap<String, Vec<String>>,
     tool_names: HashMap<String, String>,
@@ -1368,9 +1377,10 @@ fn process_claude_stream_line(
         // A print-mode process can keep working after an early result (for
         // example while background agents finish). Only the last validated
         // result at EOF determines the terminal outcome and usage.
-        state.final_result = Some(
-            serde_json::from_value(event).context("Claude Code final stream event was invalid")?,
-        );
+        let mut result: ClaudeCodeJsonResult =
+            serde_json::from_value(event).context("Claude Code final stream event was invalid")?;
+        result.model_calls_observed = state.model_calls_observed;
+        state.final_result = Some(result);
     }
     Ok(())
 }
@@ -1400,6 +1410,7 @@ fn claude_text_item_id(state: &ClaudeCodeStreamState, index: u64) -> String {
 impl ClaudeCodeStreamState {
     fn reset_text_items(&mut self) {
         self.stream_text_items.clear();
+        self.stream_thinking_items.clear();
         self.pending_text_items.clear();
         self.message_text_completed = false;
     }
@@ -1453,12 +1464,98 @@ impl ClaudeCodeStreamState {
     }
 }
 
+fn merge_claude_numeric_usage(
+    target: &mut serde_json::Map<String, Value>,
+    usage: &serde_json::Map<String, Value>,
+) {
+    for key in [
+        "input_tokens",
+        "output_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    ] {
+        if let Some(number) = usage
+            .get(key)
+            .and_then(Value::as_i64)
+            .filter(|n| *n >= 0 && *n <= 9_007_199_254_740_991)
+        {
+            target.insert(key.to_string(), serde_json::json!(number));
+        }
+    }
+}
+
 fn normalize_claude_runtime_events(
     event: &Value,
     expected_session_id: &str,
     state: &mut ClaudeCodeStreamState,
 ) -> Result<Vec<ClaudeCodeRuntimeEvent>> {
     let mut normalized = Vec::new();
+    if event.get("type").and_then(Value::as_str) == Some("stream_event")
+        && event.pointer("/event/type").and_then(Value::as_str) == Some("message_delta")
+        && event.get("parent_tool_use_id").is_none_or(Value::is_null)
+    {
+        validate_claude_stream_session(event, expected_session_id)?;
+        if let Some(usage) = event.pointer("/event/usage").and_then(Value::as_object) {
+            merge_claude_numeric_usage(&mut state.call_usage, usage);
+            if let Some(message_id) = &state.native_usage_message_id
+                && [
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_read_input_tokens",
+                    "cache_creation_input_tokens",
+                ]
+                .into_iter()
+                .any(|key| {
+                    usage
+                        .get(key)
+                        .and_then(Value::as_i64)
+                        .is_some_and(|n| n >= 0)
+                })
+            {
+                state.model_calls_observed = true;
+                state.last_call_usage_observed = true;
+                normalized.push(ClaudeCodeRuntimeEvent { event_type: "runtime.usage.observed", payload: serde_json::json!({
+                    "sessionId":expected_session_id, "messageId":message_id, "usage":state.call_usage,
+                }) });
+            }
+        }
+    }
+    if event.get("type").and_then(Value::as_str) == Some("result")
+        && event.get("parent_tool_use_id").is_none_or(Value::is_null)
+        && let (Some(model), Some(message_id)) =
+            (&state.native_message_model, &state.native_usage_message_id)
+    {
+        validate_claude_stream_session(event, expected_session_id)?;
+        let window = event
+            .get("modelUsage")
+            .and_then(|v| v.get(model))
+            .and_then(|v| v.get("contextWindow"))
+            .and_then(Value::as_i64)
+            .filter(|n| *n > 0);
+        // Match Claude's native input-only context percentage, never the
+        // result's aggregate Usage or output from all tool rounds.
+        let used = [
+            "input_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+        ]
+        .into_iter()
+        .try_fold(0i64, |total, key| {
+            total.checked_add(state.call_usage.get(key)?.as_i64()?)
+        });
+        if let (Some(used), Some(window)) = (used, window)
+            && used <= window
+            && state.last_call_usage_observed
+        {
+            normalized.push(ClaudeCodeRuntimeEvent {
+                event_type: "runtime.context.observed",
+                payload: serde_json::json!({
+                    "sessionId":expected_session_id, "messageId":message_id, "modelId":model,
+                    "usedTokens":used, "windowTokens":window,
+                }),
+            });
+        }
+    }
     if (event.get("type").and_then(Value::as_str) == Some("system")
         && event.get("subtype").and_then(Value::as_str) == Some("init"))
         || event.get("type").and_then(Value::as_str) == Some("result")
@@ -1532,6 +1629,33 @@ fn normalize_claude_runtime_events(
                 .pointer("/event/message/id")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
+            if event
+                .get("parent_tool_use_id")
+                .is_some_and(|v| !v.is_null())
+            {
+                state.native_message_id = None;
+            } else {
+                state.native_usage_message_id = state.native_message_id.clone();
+                state.native_message_model = event
+                    .pointer("/event/message/model")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                state.call_usage.clear();
+                state.last_call_usage_observed = false;
+                if let Some(usage) = event
+                    .pointer("/event/message/usage")
+                    .and_then(Value::as_object)
+                {
+                    merge_claude_numeric_usage(&mut state.call_usage, usage);
+                    // Installed Claude emits an all-zero provisional start.
+                    // It cannot fill fields absent from the later real delta.
+                    if state.call_usage.len() == 4
+                        && state.call_usage.values().all(|v| v.as_i64() == Some(0))
+                    {
+                        state.call_usage.clear();
+                    }
+                }
+            }
             state.reset_text_items();
         }
         Some("stream_event")
@@ -1546,6 +1670,30 @@ fn normalize_claude_runtime_events(
                 validate_claude_stream_session(event, expected_session_id)?;
                 if let Some(index) = event.pointer("/event/index").and_then(Value::as_u64) {
                     state.stream_text_item(index);
+                }
+                return Ok(normalized);
+            }
+            if block_type == Some("thinking") {
+                validate_claude_stream_session(event, expected_session_id)?;
+                if event
+                    .get("parent_tool_use_id")
+                    .is_some_and(|value| !value.is_null())
+                {
+                    return Ok(normalized);
+                }
+                // The native message ID must survive reconnect/replay. A local
+                // ordinal cannot establish an item identity for private text.
+                let Some(native) = state
+                    .native_message_id
+                    .as_deref()
+                    .filter(|id| !id.is_empty())
+                else {
+                    return Ok(normalized);
+                };
+                if let Some(index) = event.pointer("/event/index").and_then(Value::as_u64) {
+                    state
+                        .stream_thinking_items
+                        .insert(index, format!("claude-thinking:{native}:{index}"));
                 }
                 return Ok(normalized);
             }
@@ -1587,6 +1735,36 @@ fn normalize_claude_runtime_events(
             let Some(delta) = event.pointer("/event/delta") else {
                 return Ok(normalized);
             };
+            if delta.get("type").and_then(Value::as_str) == Some("thinking_delta") {
+                validate_claude_stream_session(event, expected_session_id)?;
+                if event
+                    .get("parent_tool_use_id")
+                    .is_some_and(|value| !value.is_null())
+                {
+                    return Ok(normalized);
+                }
+                let Some(index) = event.pointer("/event/index").and_then(Value::as_u64) else {
+                    return Ok(normalized);
+                };
+                let Some(text) = delta
+                    .get("thinking")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                else {
+                    return Ok(normalized);
+                };
+                let Some(item_id) = state.stream_thinking_items.get(&index) else {
+                    return Ok(normalized);
+                };
+                normalized.push(ClaudeCodeRuntimeEvent {
+                    event_type: "agent.thought.delta",
+                    payload: serde_json::json!({
+                        "itemId": item_id,
+                        "delta": text,
+                    }),
+                });
+                return Ok(normalized);
+            }
             if delta.get("type").and_then(Value::as_str) != Some("text_delta") {
                 return Ok(normalized);
             }
@@ -2927,6 +3105,7 @@ mod tests {
             session_id: Some(session_id.to_string()),
             usage: Value::Null,
             total_cost_usd: None,
+            model_calls_observed: false,
         };
         let error =
             validate_claude_terminal_result(&terminal_failure, session_id, native_turn_id, &[])
@@ -3447,6 +3626,233 @@ mod tests {
             .unwrap()
             .is_empty()
         );
+    }
+
+    #[test]
+    fn root_call_usage_is_numeric_and_context_pairs_latest_call_with_its_model() {
+        let session_id = "0bdd2166-d420-40c6-94be-70b93eb290c5";
+        let mut state = ClaudeCodeStreamState::default();
+        let emit = |state: &mut ClaudeCodeStreamState, event: Value| {
+            normalize_claude_runtime_events(&event, session_id, state).unwrap()
+        };
+        for (message, model, input) in [("call-1", "model-a", 12), ("call-2", "model-b", 5)] {
+            emit(
+                &mut state,
+                json!({"type":"stream_event","session_id":session_id,
+                "event":{"type":"message_start","message":{"id":message,"model":model,
+                    "usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}}),
+            );
+            let terminal = json!({"type":"result","session_id":session_id,
+                "usage":{"input_tokens":999},"modelUsage":{"model-a":{"contextWindow":100},"model-b":{"contextWindow":200}}});
+            assert!(
+                emit(&mut state, terminal.clone())
+                    .iter()
+                    .all(|v| v.event_type != "runtime.context.observed"),
+                "preliminary zeros are not a context observation"
+            );
+            let events = emit(
+                &mut state,
+                json!({"type":"stream_event","session_id":session_id,
+                "event":{"type":"message_delta","usage":{"input_tokens":input,"output_tokens":9,
+                    "cache_read_input_tokens":20,"cache_creation_input_tokens":2,"private":"PRIVATE_CANARY"}}}),
+            );
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].event_type, "runtime.usage.observed");
+            assert_eq!(events[0].payload["messageId"], message);
+            assert!(!events[0].payload.to_string().contains("PRIVATE_CANARY"));
+            let context = emit(&mut state, terminal)
+                .into_iter()
+                .find(|v| v.event_type == "runtime.context.observed")
+                .unwrap();
+            assert_eq!(
+                context.payload["usedTokens"],
+                input + 22,
+                "latest call input, not aggregate or output"
+            );
+            assert_eq!(
+                context.payload["windowTokens"],
+                if model == "model-a" { 100 } else { 200 }
+            );
+            assert_eq!(context.payload["modelId"], model);
+        }
+        assert!(state.model_calls_observed);
+        emit(
+            &mut state,
+            json!({"type":"stream_event","session_id":session_id,"parent_tool_use_id":"child",
+            "event":{"type":"message_start","message":{"id":"child-call","model":"child-model","usage":{"input_tokens":1000}}}}),
+        );
+        assert_eq!(state.native_usage_message_id.as_deref(), Some("call-2"));
+        assert_eq!(state.native_message_model.as_deref(), Some("model-b"));
+        assert!(
+            emit(
+                &mut state,
+                json!({"type":"stream_event","session_id":session_id,"parent_tool_use_id":"child",
+            "event":{"type":"message_delta","usage":{"input_tokens":1000}}})
+            )
+            .is_empty()
+        );
+        assert_eq!(state.call_usage["input_tokens"], 5);
+        assert!(
+            emit(
+                &mut state,
+                json!({"type":"result","session_id":session_id,"parent_tool_use_id":"child",
+            "modelUsage":{"model-b":{"contextWindow":200}}})
+            )
+            .iter()
+            .all(|v| v.event_type != "runtime.context.observed")
+        );
+        state.call_usage.remove("cache_creation_input_tokens");
+        assert!(
+            emit(
+                &mut state,
+                json!({"type":"result","session_id":session_id,
+            "modelUsage":{"model-b":{"contextWindow":200}}})
+            )
+            .iter()
+            .all(|v| v.event_type != "runtime.context.observed")
+        );
+        emit(
+            &mut state,
+            json!({"type":"stream_event","session_id":session_id,
+            "event":{"type":"message_start","message":{"id":"call-3","model":"model-b","usage":{
+                "input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}}),
+        );
+        let events = emit(
+            &mut state,
+            json!({"type":"stream_event","session_id":session_id,
+            "event":{"type":"message_delta","usage":{"input_tokens":12,"output_tokens":3,"cache_read_input_tokens":0}}}),
+        );
+        assert!(
+            events[0].payload["usage"]
+                .get("cache_creation_input_tokens")
+                .is_none(),
+            "start placeholder cannot fill missing real Usage"
+        );
+        assert!(
+            emit(
+                &mut state,
+                json!({"type":"result","session_id":session_id,
+            "modelUsage":{"model-b":{"contextWindow":200}}})
+            )
+            .iter()
+            .all(|v| v.event_type != "runtime.context.observed")
+        );
+
+        let witness: Value = serde_json::from_str(include_str!(
+            "../../../docs/research/runtime-monitoring/fixtures/round5-native-usage-context.json"
+        ))
+        .unwrap();
+        let entry = witness["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["runtime"] == "claude-code-cli")
+            .unwrap();
+        for run in entry["runs"].as_array().unwrap() {
+            let mut state = ClaudeCodeStreamState::default();
+            for record in run["sourceRecords"].as_array().unwrap() {
+                emit(
+                    &mut state,
+                    json!({"type":"stream_event","session_id":session_id,
+                    "event":{"type":"message_start","message":{"id":record["raw"]["messageId"],"model":entry["providerModel"],
+                        "usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}}),
+                );
+                let events = emit(
+                    &mut state,
+                    json!({"type":"stream_event","session_id":session_id,
+                    "event":{"type":"message_delta","usage":record["raw"]["usage"]}}),
+                );
+                assert_eq!(events[0].payload["usage"], record["raw"]["usage"]);
+            }
+            let frame = &run["contextSourceRecords"][0];
+            let mut result = frame["raw"]["result"].clone();
+            result["session_id"] = json!(session_id);
+            let context = emit(&mut state, result)
+                .into_iter()
+                .find(|v| v.event_type == "runtime.context.observed")
+                .unwrap();
+            assert_eq!(
+                json!({"usedTokens":context.payload["usedTokens"],"windowTokens":context.payload["windowTokens"]}),
+                frame["expectedParsedContext"]
+            );
+        }
+    }
+
+    #[test]
+    fn streamed_root_thinking_rejects_unbound_items_and_completed_blocks() {
+        let session_id = "0bdd2166-d420-40c6-94be-70b93eb290c5";
+        let mut state = ClaudeCodeStreamState::default();
+        let emit = |state: &mut ClaudeCodeStreamState, event: Value| {
+            normalize_claude_runtime_events(&event, session_id, state).unwrap()
+        };
+        assert!(
+            emit(
+                &mut state,
+                json!({"type":"stream_event","session_id":session_id,
+            "event":{"type":"message_start","message":{"id":"native-message"}}})
+            )
+            .is_empty()
+        );
+        assert!(
+            emit(
+                &mut state,
+                json!({"type":"stream_event","session_id":session_id,
+            "event":{"type":"content_block_start","index":0,
+                "content_block":{"type":"thinking","thinking":""}}})
+            )
+            .is_empty()
+        );
+        let first = emit(
+            &mut state,
+            json!({"type":"stream_event","session_id":session_id,
+            "event":{"type":"content_block_delta","index":0,
+                "delta":{"type":"thinking_delta","thinking":"🙂"}}}),
+        );
+        let second = emit(
+            &mut state,
+            json!({"type":"stream_event","session_id":session_id,
+            "event":{"type":"content_block_delta","index":0,
+                "delta":{"type":"thinking_delta","thinking":"继续"}}}),
+        );
+        assert_eq!(first[0].event_type, "agent.thought.delta");
+        assert_eq!(first[0].payload["itemId"], second[0].payload["itemId"]);
+        assert_eq!(
+            second[0].payload["itemId"],
+            "claude-thinking:native-message:0"
+        );
+        let completed = emit(
+            &mut state,
+            json!({"type":"assistant","session_id":session_id,
+            "uuid":"thought-complete", "message":{"id":"native-message",
+            "content":[{"type":"thinking","thinking":"PRIVATE_FINAL"}]}}),
+        );
+        assert!(
+            completed
+                .iter()
+                .all(|event| event.event_type != "agent.thought.delta")
+        );
+        assert!(
+            emit(
+                &mut state,
+                json!({"type":"stream_event","session_id":session_id,
+            "parent_tool_use_id":"child-tool", "event":{"type":"content_block_delta",
+                "index":0,"delta":{"type":"thinking_delta","thinking":"CHILD"}}})
+            )
+            .is_empty()
+        );
+        let mut no_native_id = ClaudeCodeStreamState::default();
+        for frame in [
+            json!({"type":"stream_event","session_id":session_id,
+                "event":{"type":"message_start","message":{}}}),
+            json!({"type":"stream_event","session_id":session_id,
+                "event":{"type":"content_block_start","index":0,
+                    "content_block":{"type":"thinking","thinking":""}}}),
+            json!({"type":"stream_event","session_id":session_id,
+                "event":{"type":"content_block_delta","index":0,
+                    "delta":{"type":"thinking_delta","thinking":"UNBOUND"}}}),
+        ] {
+            assert!(emit(&mut no_native_id, frame).is_empty());
+        }
     }
 
     #[test]

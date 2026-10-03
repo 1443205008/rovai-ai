@@ -1748,11 +1748,11 @@ mod tests {
         {
             use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
-            // macOS can tag new fixture files before the first observation. Model
-            // the untagged baseline explicitly for this namespace comparison;
-            // the observed tagged file and all authority-change cases remain real.
-            let mut untagged = nonempty_wal.clone();
-            untagged
+            // Some macOS hosts tag newly created temporary files automatically.
+            // Keep the untagged observation explicit so this test still owns the
+            // false-to-true provenance transition on both kinds of host.
+            let mut untagged_wal = nonempty_wal.clone();
+            untagged_wal
                 .main
                 .as_mut()
                 .unwrap()
@@ -1778,13 +1778,13 @@ mod tests {
             let tagged = observe_namespace(&lease, AuthorityNamespace::Rovai)
                 .ok()
                 .unwrap();
-            assert!(!nonempty_wal.authority_unchanged(&tagged));
-            assert!(untagged.macos_provenance_only_change(&tagged));
+            assert!(!untagged_wal.authority_unchanged(&tagged));
+            assert!(untagged_wal.macos_provenance_only_change(&tagged));
             std::fs::write(&main, b"changed authority").unwrap();
             let changed = observe_namespace(&lease, AuthorityNamespace::Rovai)
                 .ok()
                 .unwrap();
-            assert!(!untagged.macos_provenance_only_change(&changed));
+            assert!(!untagged_wal.macos_provenance_only_change(&changed));
         }
     }
 

@@ -64,6 +64,7 @@ const FIND_NAVIGATION_CAMP_SQL: &str = r#"
     WHERE camp.id = ?1
       AND camp.deletion_operation_id IS NULL
       AND (camp.activation_state = 'active'
+        OR EXISTS(SELECT 1 FROM pending_camp_draft_presence d WHERE d.camp_id = camp.id AND d.client_id = 'desktop')
         OR length(trim(COALESCE(camp_composer_draft.body, ''))) > 0
         OR EXISTS(SELECT 1 FROM prepared_attachment WHERE camp_id = camp.id))
 "#;

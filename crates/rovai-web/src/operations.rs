@@ -55,6 +55,8 @@ pub enum Operation {
     CampRetryDeletion,
     #[serde(rename = "threads.discardPending", alias = "camps.discardPending")]
     CampDiscardPending,
+    #[serde(rename = "threads.pendingDraft.setPresence")]
+    PendingDraftPresence,
     #[serde(
         rename = "threads.members.fast.check",
         alias = "camps.members.fast.check"
@@ -242,6 +244,8 @@ pub enum Operation {
     Subsystems,
     #[serde(rename = "monitoring.snapshot")]
     Monitoring,
+    #[serde(rename = "monitoring.execution")]
+    ExecutionMetrics,
     #[serde(rename = "skills.list")]
     Skills,
     #[serde(rename = "skills.get")]
@@ -419,6 +423,7 @@ impl Operation {
             Self::CampDeletionIssues => "camps.deletionIssues",
             Self::CampRetryDeletion => "camps.retryDeletion",
             Self::CampDiscardPending => "camps.discardPending",
+            Self::PendingDraftPresence => "camps.pendingDraft.setPresence",
             Self::CampFastCheck => "camps.members.fast.check",
             Self::CampFastSet => "camps.members.fast.set",
             Self::MemberRemovalPreview => "members.removalPreview",
@@ -540,6 +545,7 @@ impl Operation {
             Self::Installations => "runtime.installations.list",
             Self::Subsystems => "runtime.subsystems.get",
             Self::Monitoring => "monitoring.snapshot",
+            Self::ExecutionMetrics => "monitoring.execution",
             Self::Skills => "skills.list",
             Self::Skill => "skills.get",
             Self::ToolboxList => "toolbox.list",

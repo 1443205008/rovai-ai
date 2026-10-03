@@ -64,8 +64,10 @@ _Avoid_: Pending Thread Draft, Conversation, first-message creation
 **Pending Thread Draft**:
 A Core-owned Thread shell with `activationState = pending`, created only by a confirmed one-click new-conversation entry.
 It owns Workspace Binding, Initial Thread Membership, Default Lead and stable Thread ID, but not persisted Composer content.
-Its first accepted user message atomically changes it to Active in the publication transaction. Renderer-local unsent
-content does not make the Thread durable, restorable or Agent-visible.
+Its first accepted user message atomically changes it to Active in the publication transaction. Ordinary one-click
+input is saved per Thread in client-local storage; a Core-owned client presence marker makes meaningful drafts navigable
+and protects them from empty-shell cleanup. Multiple drafts may coexist in one project. Unsent content is not Agent-visible
+and does not qualify as a Main Window Session Restorable Location. AI member-creation drafts remain window-local.
 _Avoid_: persisted Composer Draft, hidden Active Thread, unpublished Pending input, sequential first-message Thread creation
 
 **Thread Creation**:

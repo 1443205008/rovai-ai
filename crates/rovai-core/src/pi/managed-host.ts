@@ -3,7 +3,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const SCHEMA_VERSION = 3;
-const EXTENSION_VERSION = "rovai-pi-host-v7";
+const EXTENSION_VERSION = "rovai-pi-host-v8";
 const REQUIRED_BINDING_KEYS = [
   "agentRunId",
   "bootstrap",
@@ -110,7 +110,31 @@ function publishFailure(ctx: any, binding: any, phase: string, error: unknown): 
   );
 }
 
+function publishContextUsage(ctx: any): void {
+  try {
+    if (typeof ctx.getContextUsage !== "function") return;
+    const current = loadBinding();
+    const usage = ctx.getContextUsage();
+    if (!usage || !Number.isSafeInteger(usage.contextWindow) || usage.contextWindow <= 0
+      || !(usage.tokens === null || (Number.isSafeInteger(usage.tokens) && usage.tokens >= 0))) return;
+    const sessionId = ctx.sessionManager.getSessionId();
+    if (!nonEmpty(sessionId) || !nonEmpty(ctx.model?.provider) || !nonEmpty(ctx.model?.id)) return;
+    ctx.ui.setStatus("rovai-managed-context-usage", JSON.stringify({
+      schemaVersion: 1, extensionVersion: EXTENSION_VERSION,
+      hostInstanceId: current.hostInstanceId, hostBindingGeneration: current.hostBindingGeneration,
+      agentRunId: current.agentRunId, executionEpoch: current.executionEpoch,
+      nativeBindingId: current.nativeBindingId, nativeBindingGeneration: current.nativeBindingGeneration,
+      sessionId, provider: ctx.model.provider, modelId: ctx.model.id,
+      usedTokens: usage.tokens, windowTokens: usage.contextWindow,
+    }));
+  } catch {
+    // Missing metrics cannot abort a native prompt or expose arbitrary payloads.
+  }
+}
+
 export default function (pi: any) {
+  pi.on("turn_end", async (_event: any, ctx: any) => publishContextUsage(ctx));
+  pi.on("session_compact", async (_event: any, ctx: any) => publishContextUsage(ctx));
   pi.on("session_start", async (_event: any, ctx: any) => {
     try {
       publishManagedSessionState(ctx, loadBinding());

@@ -24,7 +24,7 @@ last_updated: 2026-10-01
 
 旧命令名／参数参与幂等摘要的表示保持原样；同一个请求 ID 换一种合法拼写仍重放同一个结果。历史 command result、工具 envelope／receipt、审计事件、附件授权及引用快照先按原字节验摘要，再在各自拥有的字段边界投影；禁止递归改写任意正文或第三方 JSON。
 
-Thread ID 保持 `rvcamp_` + UUIDv7 编码，既有 SQL 表／列、外键、目录、localStorage key 和附件路径不迁移。窗口位置、草稿、浏览历史、首次引导与已配置 trace 范围接受旧字段。Migration 178 仅将 v1.72/schema 127 升至 schema 128，为新 Context 格式扩展闭合准入；不重写 Run、Native Binding、Bootstrap、历史输入或摘要。
+Thread ID 保持 `rvcamp_` + UUIDv7 编码，既有 SQL 表／列、外键、目录、localStorage key 和附件路径不迁移。窗口位置、草稿、浏览历史、首次引导与已配置 trace 范围接受旧字段。原 main 的 Migration 178 / schema 128 已部署 Thread Context 格式。与已安装的指标分支收口后，保留指标 Migration 178/179 的数据和收据，Migration 180 将 schema 129 升至 130，为新 Context 格式扩展闭合准入。原 main schema 128 的精确布局通过 179/180 补建指标投影并收口；两条路径均不重写 Run、Native Binding、Bootstrap、历史输入或摘要。继续合入 User 命名和队员创建后由 181/182 升至 schema 132；原 main schema 129/130 的精确结构按执行指标合同原子收口。
 
 旧 Native Binding 的兼容身份保持：Charter compatibility revision 16，其他 Runtime 启动身份不变；Antigravity 仍使用本次升级前工具兼容 version 32 与原目录 digest。新建 Binding 用 Charter 17；现有 Binding 的恢复／压缩补投读取其冻结 Charter，成员身份仍按既有更新规则处理。工具当前目录升级为 33，不以 live 目录改名强制换 Session。
 

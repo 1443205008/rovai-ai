@@ -2,14 +2,15 @@
 document_type: ui-component-contract
 authority: renderer-camp-workspace
 status: accepted
-last_updated: 2026-10-02
+last_updated: 2026-10-03
 ---
 
 # Camp 会话工作区
 
 ## Public Camp v1.60 当前边界
 
-- 已激活 Camp 的输入内容不进入 Core Draft/Pending；Desktop 按 Camp 保存本机快照，切换、刷新、重建窗口和普通重启后恢复。
+- 已激活及普通一键 Pending Camp 的输入内容按 Camp 保存本机快照，切换、刷新、重建窗口和普通重启后恢复。
+  普通 Pending 输入保存后显示侧栏草稿行；同一项目可以保留多份，清空后隐藏。AI 创建队员仍按其窗口内草稿合同运行。
   发送失败或结果未知保留当前内容，确认发送成功才清空已发送快照。
 - 等待阶段在执行台展示由 Delivery 支撑的“排队消息”卡，但不伪装尚不存在的 AgentRun，也不提供 Run 停止入口。
   Scheduler claim 后才出现真实 Run，并由真实 Run 接管后续状态与停止语义。
@@ -24,7 +25,7 @@ last_updated: 2026-10-02
   Agent 发言不增加前缀。
 
 字段与状态见 [Message Delivery v10](../../contracts/message-delivery-v10.md)、
-[Camp Composer Draft v15](../../contracts/camp-composer-draft-v15.md)和
+[Camp Composer Draft v16](../../contracts/camp-composer-draft-v16.md)和
 [Camp History v10](../../contracts/camp-history-v10.md)。本文件后续仍描述的 Core-owned public Draft/Pending、
 CampTurn Stop、Gather 或业务重试均为历史交互，不再适用于当前 public Camp；本机草稿与 recipient
 continuation 是当前 Desktop 行为。
@@ -137,7 +138,8 @@ Escape 收起预览。定位只滚动公共时间线并聚焦目标消息，保�
 不足 400ms 不显示加载提示，超时后由共享的不透明整窗品牌画布遮住框架，直到真实目标内容可用再淡出。Camp shell 不得
 用标题区、骨架或结构占位伪装 meaningful content，也不得在 `camps.enter` 成功前提交权威 Camp。成功 enter 的 Active Camp 保持 Active；meaningful
 未激活的 Pending Camp 外壳保持 Pending。若该 Camp 已有有效 Desktop-local Composer snapshot，则在 Camp
-权威进入后恢复，但本机草稿本身不会激活 Camp 或使其进入导航。Members 与 Memory 同样由自己的读取 owner 取得数据，
+权威进入后恢复；普通一键 Pending 的客户端 presence 允许其进入侧栏，但不会激活 Camp，
+也不使它成为 Main Window Session 的自动恢复目标。Members 与 Memory 同样由自己的读取 owner 取得数据，
 但冷启动可见等待共用品牌画布；失败切换到独立恢复面，应用已就绪后的普通切换仍留在局部 surface 重试。仅明确
 `camps.exists === false` 的已删除 Camp 可以回到 Quick Chat。Notification navigation、恢复位置写入和已读确认要等权威 route commit。
 
@@ -158,7 +160,7 @@ Escape 收起预览。定位只滚动公共时间线并聚焦目标消息，保�
 消息头用“模型 · 强度”提供可点击摘要；浮层仅显示队员、智能体、模型和已记录的强度，不加“本次执行”“当前配置”或策略说明。
 历史消息使用 [Camp Open Projection v25](../../contracts/camp-open-projection-v25.md) 的 `runtimeModel`，不能由现有队员配置推断；
 缺失记录显示“模型未记录”，Agent 默认且没有原生模型观测时显示“智能体默认”。模型或强度变化会打断连续消息的身份折叠。
-输入框默认队长／继续发送的接收者旁显示该队员配置的模型摘要；显式 Mention 或接收者不可用时不展示另一人的配置。
+输入框默认队长／继续发送的接收者提示只保留路由与姓名，不附加模型或推理强度。模型仍可从消息头、队员区与资料浮层查看。
 队员资料浮层直接列出模型与强度。弹层支持 Esc、外部点击关闭及焦点返回，复用既有主题；中文、英文与手机共享同一展示组件。
 
 Camp 只有一位 active member 时，“移出当前会话”仍可见但禁用，并直接解释“Camp 至少需要一位队员”。
@@ -363,7 +365,7 @@ Web 与 Desktop 共用上述结构和样式；Mobile 横竖屏均取消额外左
 一层紧凑父引用，作者与摘要同样只占一个可视行，超出显示省略号；点击通过 same-Camp anchor load 定位并
 聚焦原消息。父消息不可用时显示“引用的消息当前不可用”，不落到最近消息。不递归展开祖先、不缩进
 时间线，也不创建私密 thread。失效作者错误和替代成员选择独立展开，不受单行引用规则裁切。领域与字段边界见
-[Camp Composer Draft v15](../../contracts/camp-composer-draft-v15.md)，评审方向见
+[Camp Composer Draft v16](../../contracts/camp-composer-draft-v16.md)，评审方向见
 [HTML 交互稿](https://github.com/murray17/rovai-ai/blob/0de773a75231038e384c03cd761fea56344a6e4f/docs/prototypes/message-reply-chain/README.md)。
 
 渠道 `external_quote` 复用相同的回复图标、作者与单行摘要，无独立底色或边框；附件名称并入摘要，长内容省略。
@@ -401,7 +403,7 @@ reply、显式 Member Mention、多人 Mention 和 `@所有队员` 都比 contin
 标签出现后对象在空白 Draft 失效时，标签消失并持久抑制该来源；正文或附件已经存在时，保留全部 Draft，
 展开“原接收者当前不可接收，请选择其他成员”，禁用发送并把焦点交给第一个有效替代选择。不得隐藏错误、
 自动插入失效 Mention 或改投 Lead。字段和竞态边界见
-[Camp Composer Draft v15](../../contracts/camp-composer-draft-v15.md)，交互探索见
+[Camp Composer Draft v16](../../contracts/camp-composer-draft-v16.md)，交互探索见
 [延续路由原型](https://github.com/murray17/rovai-ai/blob/0de773a75231038e384c03cd761fea56344a6e4f/docs/prototypes/composer-continuation-routing/index.html)。
 
 ## Camp 内单聊
@@ -550,8 +552,8 @@ waiting Delivery，队员入口优先显示“排队中”；已有 non-terminal
 展开时标题和原有操作只在本卡范围内吸顶，滚过本卡后退出，不复制全局标题或脱离所属 Run 的停止按钮。
 Desktop 与宽屏 Web 的展开正文首尾、主要过程项间距及相邻 Run 间距统一使用 8px，运行中切到终态时不得改变
 这组密度；Mobile 继续由独立 mobile stylesheet 拥有其触控行高与紧凑过程间距，不继承该桌面调整。
-运行中卡片默认显示 live 耗时，窄详情同样保留；仅标题行 hover 或标题内 `:focus-visible` 时，
-在固定尾部槽内切换为折叠／展开与红色终止按钮。正文 hover 不触发，鼠标移出标题恢复耗时，不挤动标题。
+运行中卡片默认在右侧显示 live 耗时；仅卡片标题行 hover 或标题内 `:focus-visible` 时，
+在固定尾部槽内将耗时切换为折叠／展开与红色终止按钮。正文 hover 不触发，鼠标移出标题恢复耗时，不挤动标题。
 折叠／展开保留 1px 边框、抬升面底色和 5px 圆角；终止始终使用 danger/danger-soft，禁用时仍保留危险色。
 粗指针或无 hover 环境同时展示耗时与操作。非运行状态保留原有静态操作，不套用 hover 切换。
 滚动容器为键盘焦点留出标题安全区，不改变跟随最新、折叠、输入清单或 exact Run 停止语义。
@@ -603,6 +605,7 @@ Renderer 以公开消息和 Delivery ID 跟踪刚提交输入；Scheduler claim 
 Runtime 的 private thought/reasoning 文本不进入 Renderer state、搜索、缓存或 disclosure；仅消费不含正文的
 `thinking | executing` phase 来切换上述等待反馈，并把 phase edge 作为匿名公开正文的分段边界。
 Camp 执行卡片的普通等待提示与正文共用字号、行高和文字起点，加载图标放在提示文字后；底部、桌面浮层和手机端切入首行正文时不改变卡片位置或单行高度。
+运行中 Run 卡片保留原有耗时；终态卡片有用量字段时仅显示 `xxk` 入口，点击的气泡显示 Input Token、Output Token、Cache Read、Cache Write 四项及分隔后的执行耗时。缺失字段显示未知，不加用量合计行、Run 编号或摘要。仅成功且 Input/Output 完整结算时计算入口值 `Input + Output`，Cache 不再叠加。完全没有用量字段的终态卡片使用时钟入口单独查看耗时；迟到用量到达后切换成 token 入口。执行台标题右侧的弱化圆环默认并排显示一位小数百分比，与气泡保持一致（未知为 `—`），读取当前队员 Camp Conversation 的原生 Session 上下文；切换同一会话的 Run 卡片不改变圆环归属。气泡只显示 `used / window` 和比例，单有窗口不显示 `0%`；只有可信原生比例时显示该比例，数量仍为 `— / —`，不反推 used 或窗口。来源、栅栏和字段语义见 [Runtime Execution Metrics v5](../../contracts/runtime-execution-metrics-v5.md)。
 需要审批、网络恢复、重试或停止时继续显示明确状态。非终态过程不显示耗时总结，非聚焦执行摘要在已有输出时显示“执行中”。成功后才显示“工作了 {时长}”
 并自动折叠过程；失败保留明确失败摘要及可操作错误，取消保持停止语义。正文或工具首次到达、单条工具返回、步骤组
 收口都不能触发整轮耗时总结。关闭 Run 后卸载详情；再次打开读取最新窗口。组跨页按稳定操作身份保留展开意图。
@@ -776,10 +779,25 @@ Run 已成功、失败或取消但没有公开消息时，图片、入队卡片�
 不同 Run 保持各自作者和归属。头像、姓名沿用公开消息的人物信息卡资格与缺失头像回退，离队或移除队员保持静态。
 该区域不创建 CampMessage、不合成正文，也不提供消息复制或回复；来源 Run 未加载时保留文件卡，不猜测作者。
 
+仅当 Run 为 `cancelled` 且 `cancelReasonCode = user_requested_agent_run_stop` 时，在该 Run 最后一条公开
+回复及全部产物之后显示一次“你已中断”。既无公开回复、也无实际产物时，不新增产物区、队员头像或中断行；
+中断状态仍可在执行台查看。标记只补充既有内容，不为取消事件合成空的输出区域。
+标记采用居中的 4px 实心方点与 11.5px 中性文字，距上方内容 8px，点击高度至少 24px；不加横线、边框、时间或箭头。
+它与结果列共用 620px 上限、42px 缩进及窄容器回流规则。点击或键盘激活打开精确来源 Run 的执行详情，并沿用
+执行台承载位置与关闭行为；后续 Run、其他队员、多个 epoch 不改变来源或重复标记。请求尚未终态、
+异常失败、整轮取消及其他取消原因不使用“你已中断”。
+
 入队卡片仅在其明确来源 Run 终态后出现，同 Run 的多张入队卡片按创建时间、创建 ID 排序，并始终排在
 Files Changed 之前。两类卡片共用宽度不超过 620px、左缩进 42px 的结果列，距回复 14px、卡片间距 12px；
 会话容器不超过 480px 时取消缩进，占满内容列，保留现有 MobileUI 外侧留白。
 静态回执、旧记录兼容及缺失 Run 的回退由 [Member Creation Flow v1](../../contracts/member-creation-flow-v1.md) 拥有。
+
+入队卡片在左侧内容区显示“新队员已入队”、姓名、角色、职责和填色性格标签，肖像位于右侧。
+姓名为 24px / 600，职责使用正文色，角色与创建信息使用次级文字色。主体使用 `--surface`，
+独立页脚使用 `--home-surface`，边框与页脚分隔线使用 `--line`；MobileUI 沿用这些 Token 的既有映射。
+桌面肖像为 132×165px；会话容器不超过 480px 时改为 90×112.5px、姓名 22px，文字允许换行。
+页脚仅保留创建者、时间和“配置智能体”入口，右侧使用 14px SVG 折线箭头，窄栏触控高度至少 44px。
+配置入口仍打开现有队员运行配置，不在卡片内读取或展示队员的当前配置状态。
 
 文件行按“目录/文件名”连续展示，目录与分隔符保持次级灰色，文件名保持主文字色。display root 根目录文件只显示文件名，
 不补“当前目录”。宽度不足时优先从目录右侧按完整目录段省略，例如 `/xxx/.../CONTEXT.md`，文件名优先保留；
@@ -1052,7 +1070,7 @@ Message Mention 通知导航必须以 `campId + sourceMessageId` 加载和定位
 长名称必须省略且可取得完整名称。拖放命中、反馈和卡片合同见
 [会话区文件与文件夹拖放](conversation-drop-zone.md)，领域边界见
 [Camp Attachment v9](../../contracts/camp-attachment-v9.md)，发送边界见
-[Camp Composer Draft v15](../../contracts/camp-composer-draft-v15.md)。
+[Camp Composer Draft v16](../../contracts/camp-composer-draft-v16.md)。
 
 准备区固定使用 D 档：普通文件项高 48px、约 11px 圆角并始终显示浅边框，采用用户侧中性图形、文件名和
 独立格式标签，不显示大小；图片是 48×48px 圆角缩略块，不显示文件名。两者共处一条不换行的附件带，删除

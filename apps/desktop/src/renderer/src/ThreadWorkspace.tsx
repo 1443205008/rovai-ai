@@ -1,4 +1,5 @@
-import { ConfiguredModelSummary, MessageModelSummary, ModelSummaryText, ProfileModelFields } from './ThreadModelInformation'
+import { PendingThreadDraftPersistence } from './pending-thread-draft'
+import { MessageModelSummary, ModelSummaryText, ProfileModelFields } from './ThreadModelInformation'
 import { memberRuntimeConfigurationPresentation, modelSummary, runtimeAdapterLabel } from './runtime-model-presentation'
 export { memberRuntimeConfigurationPresentation, type MemberRuntimeConfigurationPresentation } from './runtime-model-presentation'
 import { memberCreationStarters } from './member-creation-flow'
@@ -9,6 +10,8 @@ import { newCommandId } from '../../shared/command-id'
 import { useMobileLayout } from './MobileLayout'
 import { useThreadClient, useEditingRecovery, type ThreadClient } from './camp-client'
 import { useExecutionDisclosureAnchor } from './useExecutionDisclosureAnchor'
+import { useExecutionMetrics, useExecutionMetricsVisibility } from './useExecutionMetrics'
+import { executionUsageTotal } from './execution-metrics-reader'
 import { RunningText } from './RunningText'
 import { ExecutionContentContext, ExecutionVirtualList } from './ExecutionVirtualList'
 import { ExecutionNarration } from './ExecutionNarration'
@@ -53,6 +56,7 @@ import type {
   AgentRunExecutionEvidencePage,
   AgentRunExecutionEvidenceView,
   AgentRunView,
+  RuntimeExecutionMetricsSnapshot,
   BuiltinMemberAvatarRole,
   ThreadComposerDraftView,
   ComposerDocument,
@@ -1190,6 +1194,7 @@ export type ThreadConversationTimelineItem =
       createdAt: string
       message: ThreadMessageView
       runtimeImageGroups: AgentRunImagesView[]
+      interruptedRun?: AgentRunView
     }
   | {
       kind: 'run_file_changes'
@@ -1238,6 +1243,10 @@ function compareTimelinePresentationOrder(
   return left.createdAt.localeCompare(right.createdAt)
     || TIMELINE_KIND_RANK[left.kind] - TIMELINE_KIND_RANK[right.kind]
     || left.id.localeCompare(right.id)
+}
+
+function isUserInterruptedRun(run: AgentRunView): boolean {
+  return run.status === 'cancelled' && run.cancelReasonCode === 'user_requested_agent_run_stop'
 }
 
 export function campConversationTimeline(
@@ -1341,13 +1350,17 @@ export function campConversationTimeline(
     }
   }
   sortedItems.push(...sortedMessages.slice(messageIndex), ...sortedCards.slice(cardIndex))
-  const lastPublicMessageByRunId = new Map<string, ThreadConversationTimelineItem>()
+  const lastPublicMessageByRunId = new Map<string, Extract<ThreadConversationTimelineItem, { kind: 'camp_message' }>>()
   for (const item of sortedMessages) {
     if (item.kind === 'camp_message'
       && item.message.authorType === 'agent'
       && item.message.sourceAgentRunId) {
       lastPublicMessageByRunId.set(item.message.sourceAgentRunId, item)
     }
+  }
+  for (const run of agentRuns) {
+    const message = lastPublicMessageByRunId.get(run.id)
+    if (message && isUserInterruptedRun(run)) message.interruptedRun = run
   }
   const anchoredCardIds = new Set<string>()
   const cardsByAnchorMessageId = new Map<string, ThreadConversationTimelineItem[]>()
@@ -1808,7 +1821,12 @@ export function ThreadWorkspace({
   const activeThreadIdRef = useRef(snapshot.thread.id)
   const activeSnapshotRef = useRef(snapshot)
   const initialComposerDraftRef = useRef(initialComposerDraft)
+  const focusedMemberCreationDraftRef = useRef<string | null>(null)
   const activationStateRef = useRef(snapshot.thread.activationState)
+  const memberCreationRef = useRef(memberCreation)
+  memberCreationRef.current = memberCreation
+  const pendingDraftPersistence = useRef<PendingThreadDraftPersistence | null>(null)
+  if (!pendingDraftPersistence.current) pendingDraftPersistence.current = new PendingThreadDraftPersistence(client)
   const pendingThreadLeaveRef = useRef(onPendingThreadLeave)
   const pendingDraftChangeRef = useRef(onPendingDraftChange)
   pendingDraftChangeRef.current = onPendingDraftChange
@@ -1824,7 +1842,7 @@ export function ThreadWorkspace({
         const initial = initialComposerDraftRef.current?.threadId === threadId
           ? initialComposerDraftRef.current
           : null
-        let draft = (activationStateRef.current === 'active'
+        let draft = (activationStateRef.current === 'active' || !memberCreationRef.current
           ? loadLocalThreadComposerDraft(threadId)
           : null) ?? initial ?? emptyLocalComposerDraft(threadId)
         if (draft.attachments.length > 0 && client.composerAttachments.restore) {
@@ -1873,13 +1891,18 @@ export function ThreadWorkspace({
             }
           }
         }
-        return {
-          ...draft,
-          body: composerBodyForContent(draft.content, activeSnapshotRef.current.members)
+        draft = { ...draft, body: composerBodyForContent(draft.content, activeSnapshotRef.current.members) }
+        if (activationStateRef.current === 'pending' && !memberCreationRef.current) {
+          await pendingDraftPersistence.current!.persist(draft)
         }
+        return draft
       },
       mutate: async (draft, mutation) => {
-        return mutateComposerDraft(client, draft, mutation, activeSnapshotRef.current)
+        const next = await mutateComposerDraft(client, draft, mutation, activeSnapshotRef.current)
+        if (activationStateRef.current === 'pending' && !memberCreationRef.current) {
+          await pendingDraftPersistence.current!.persist(next)
+        }
+        return next
       },
       onChange: (draft, _epoch, kind) => {
         if (draft && activationStateRef.current === 'pending') pendingDraftChangeRef.current?.(draft)
@@ -3435,6 +3458,18 @@ export function ThreadWorkspace({
   ])
 
   useEffect(() => {
+    const threadId = snapshot.thread.id
+    if (!memberCreation || snapshot.thread.activationState !== 'pending' || busy
+      || draftLoadState.state !== 'ready' || focusedMemberCreationDraftRef.current === threadId) return
+    const frame = window.requestAnimationFrame(() => {
+      if (!composerHandleRef.current) return
+      composerHandleRef.current.focus('end')
+      focusedMemberCreationDraftRef.current = threadId
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [memberCreation, snapshot.thread.id, snapshot.thread.activationState, busy, draftLoadState.state])
+
+  useEffect(() => {
     if (!notificationFocus?.active || ['approval', 'single_chat'].includes(notificationFocus.kind)) return
     setConversationView('conversation')
     if (notificationFocus.kind === 'task' && notificationFocus.subjectId) {
@@ -4029,6 +4064,9 @@ export function ThreadWorkspace({
           addressedAgentIds: sendReceipt.addressedAgentIds,
           members: activeSnapshotRef.current.members
         })
+        // The accepted response can arrive before the Active projection. Clear the
+        // persisted first input immediately so reopening cannot resurrect a sent draft.
+        saveLocalThreadComposerDraft(nextDraft)
         if (draftThreadId.current === threadId) {
           draftCoordinator.acceptAuthoritativeDraft(nextDraft)
           initializedComposerRoute.current = {
@@ -4041,8 +4079,6 @@ export function ThreadWorkspace({
           composerHandle.replaceDocument(nextDraft.content, 'end')
           setComposerPersistenceError(null)
           setDraftLoadState({ state: 'ready' })
-        } else {
-          saveLocalThreadComposerDraft(nextDraft)
         }
       } catch (error) {
         if (draftThreadId.current === threadId) {
@@ -4656,6 +4692,7 @@ export function ThreadWorkspace({
       progressByRunId={executionProgressByRunId}
       windowedEvidence={openCoverage !== null}
       executionEventsByRunId={executionEventsByRunId}
+      liveRuntimeEvents={liveRuntimeEvents}
       threadId={snapshot.thread.id}
       truncatedEvidenceByRunId={truncatedEvidenceByRunId}
       loadedEvidenceCountByRunId={loadedEvidenceCountByRunId}
@@ -4987,6 +5024,9 @@ export function ThreadWorkspace({
                                 }} onOpenCurrent={(evidenceFileId) => openCurrentAgentRunFile(changes, evidenceFileId)} />
                             ))}
                           </div>
+                        )}
+                        {isUserInterruptedRun(run) && (
+                          <RunInterruptionMarker run={run} author={author} onOpen={openExecutionProcess} />
                         )}
                       </section>
                     )
@@ -5357,7 +5397,7 @@ export function ThreadWorkspace({
                                 />
                               )}
                               {campMessage.authorType === 'agent'
-                                && trailingResultItems.length === 0
+                                && trailingResultItems.length === 0 && !timelineItem.interruptedRun
                                 && (
                                   <MessageActions
                                     copied={copied}
@@ -5385,7 +5425,7 @@ export function ThreadWorkspace({
                           )}
                     </article>
                   )
-                  if (trailingResultItems.length > 0) {
+                  if (trailingResultItems.length > 0 || timelineItem.interruptedRun) {
                     items.push(
                       <div
                         className={`agent-message-output public-message-output${followsSameAuthor ? ' same-author' : ''}${isGroupContinuation ? ' is-group-continuation' : ''}`}
@@ -5393,7 +5433,7 @@ export function ThreadWorkspace({
                         key={`agent-message-output:${campMessage.id}`}
                       >
                         {messageElement}
-                        <div className="run-result-stack">
+                        {trailingResultItems.length > 0 && <div className="run-result-stack">
                           {trailingResultItems.map((resultItem) => resultItem.kind === 'member_joined' ? (
                             <MemberJoinedCard key={resultItem.id} receipt={resultItem.receipt} onConfigure={onConfigureRuntime} />
                           ) : (
@@ -5413,7 +5453,10 @@ export function ThreadWorkspace({
                               )}
                             />
                           ))}
-                        </div>
+                        </div>}
+                        {timelineItem.interruptedRun && (
+                          <RunInterruptionMarker run={timelineItem.interruptedRun} author={author} onOpen={openExecutionProcess} />
+                        )}
                         <MessageActions
                           copied={copied}
                           className={`agent-message-output-actions${campMessage.id === latestAgentMessageId ? ' is-persistent' : ''}`}
@@ -5723,10 +5766,6 @@ export function ThreadWorkspace({
                           : recipientSummary}</span>
                       </span>
                     )}
-                <ConfiguredModelSummary installations={installations}
-                  profile={profileById.get(continuationVisible && continuationIntent
-                    ? continuationIntent.recipient.agentId
-                    : defaultLead && campMemberIsLeadEligible(defaultLead) ? defaultLead.agentId : '') ?? null} />
               </div>
             )
           : null}
@@ -6577,16 +6616,109 @@ function executionRunDurationLabel(run: AgentRunView, now: number): string {
   return uiAttribute("{0}分 {1}秒", String(minutes), String(String(seconds).padStart(2, '0')))
 }
 
-function ExecutionRunMetric({ run }: { run: AgentRunView }): JSX.Element {
+function metricK(value: number | null): string {
+  if (value === null || !Number.isSafeInteger(value) || value < 0) return '—'
+  return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`
+}
+
+type RunUsage = RuntimeExecutionMetricsSnapshot['runs'][number]
+type SessionContext = RuntimeExecutionMetricsSnapshot['sessions'][number]
+
+function ExecutionUsagePopover({ run, usage }: { run: AgentRunView; usage: RunUsage | null }): JSX.Element {
+  const total = executionUsageTotal(run, usage)
+  const complete = total !== null
+  const rows = [
+    ['Input Token', usage?.promptInputTotalTokens ?? null],
+    ['Output Token', usage?.outputTokens ?? null],
+    ['Cache Read', usage?.cacheReadTokens ?? null],
+    ['Cache Write', usage?.cacheWriteTokens ?? null]
+  ] as const
+  return <Popover.Root>
+    <Popover.Trigger asChild>
+      <button className="execution-usage-trigger" type="button"
+        aria-label={uiAttribute('查看本次执行用量与耗时；{0}', complete ? metricK(total) : uiAttribute('部分或未知'))}
+        title={uiAttribute('查看本次执行用量与耗时')}>
+        {metricK(total)}
+      </button>
+    </Popover.Trigger>
+    <Popover.Portal>
+      <Popover.Content className="execution-metric-popover" sideOffset={6} align="end">
+        <dl>
+          {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{metricK(value)}</dd></div>)}
+          <div className="execution-usage-duration"><dt>{uiAttribute('执行耗时')}</dt><dd>{executionRunDurationLabel(run, Date.now())}</dd></div>
+        </dl>
+      </Popover.Content>
+    </Popover.Portal>
+  </Popover.Root>
+}
+
+function ExecutionDurationPopover({ run }: { run: AgentRunView }): JSX.Element {
+  return <Popover.Root>
+    <Popover.Trigger asChild>
+      <button className="execution-duration-trigger" type="button"
+        aria-label={uiAttribute('查看本次执行耗时')} title={uiAttribute('查看本次执行耗时')}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" /><path d="M8 4.75V8l2.25 1.5" /></svg>
+      </button>
+    </Popover.Trigger>
+    <Popover.Portal>
+      <Popover.Content className="execution-metric-popover execution-duration-popover" sideOffset={6} align="end">
+        <div className="execution-duration-reading">{executionRunDurationLabel(run, Date.now())}</div>
+      </Popover.Content>
+    </Popover.Portal>
+  </Popover.Root>
+}
+
+function ExecutionContextPopover({ context }: { context: SessionContext | null }): JSX.Element {
+  const used = context?.usedTokens ?? null
+  const windowTokens = context?.windowTokens ?? null
+  const nativeRatio = context?.nativeRatio ?? null
+  const percent = used !== null && windowTokens !== null && windowTokens > 0
+    ? Math.min(100, Math.max(0, used / windowTokens * 100))
+    : nativeRatio !== null && Number.isFinite(nativeRatio) && nativeRatio >= 0 && nativeRatio <= 1
+      ? nativeRatio * 100
+      : null
+  return <Popover.Root>
+    <Popover.Trigger asChild>
+      <button className="execution-context-trigger" type="button"
+        aria-label={uiAttribute('当前原生会话上下文：{0} / {1}，{2}', metricK(used), metricK(windowTokens), percent === null ? uiAttribute('比例未知') : `${percent.toFixed(1)}%`)}
+        title={uiAttribute('当前原生会话上下文')}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle className="execution-context-track" cx="12" cy="12" r="8" />
+          {percent !== null && <circle className="execution-context-fill" cx="12" cy="12" r="8"
+            strokeDasharray={`${percent * 0.50265} 50.265`} />}
+        </svg>
+        <span className="execution-context-value" aria-hidden="true">{percent === null ? '—' : `${percent.toFixed(1)}%`}</span>
+      </button>
+    </Popover.Trigger>
+    <Popover.Portal>
+      <Popover.Content className="execution-metric-popover execution-context-popover" sideOffset={6} align="end">
+        <span>{metricK(used)} / {metricK(windowTokens)}</span>
+        <span>{percent === null ? '—' : `${percent.toFixed(1)}%`}</span>
+      </Popover.Content>
+    </Popover.Portal>
+  </Popover.Root>
+}
+
+function ExecutionRunMetric({ run, usage }: {
+  run: AgentRunView
+  usage: RunUsage | null
+}): JSX.Element {
   const live = NON_TERMINAL_RUNS.has(run.status) && run.status !== 'queued'
-  const [now, setNow] = useState(() => Date.now())
+  const [duration, setDuration] = useState(() => executionRunDurationLabel(run, Date.now()))
   useEffect(() => {
     if (!live) return undefined
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    const timer = window.setInterval(() => {
+      const next = executionRunDurationLabel(run, Date.now())
+      setDuration(previous => previous === next ? previous : next)
+    }, 1_000)
     return () => window.clearInterval(timer)
-  }, [live])
-  return <span className={`execution-run-metric${live ? ' is-live' : ''}${run.status === 'queued' ? ' is-queued' : ''}`}>
-    {run.status === 'queued' ? uiAttribute("排队中") : executionRunDurationLabel(run, now)}
+  }, [live, run.id, run.executionEpoch, run.startedAt, run.createdAt])
+  if (run.status === 'queued') return <span className="execution-run-metric is-queued">{uiAttribute('排队中')}</span>
+  if (live) return <span className="execution-run-metric">{duration}</span>
+  const hasUsage = usage !== null && [usage.promptInputTotalTokens, usage.outputTokens,
+    usage.cacheReadTokens, usage.cacheWriteTokens].some(value => value !== null)
+  return <span className="execution-run-metric-group">
+    {hasUsage ? <ExecutionUsagePopover run={run} usage={usage} /> : <ExecutionDurationPopover run={run} />}
   </span>
 }
 
@@ -6715,6 +6847,7 @@ function ExecutionDrawer({
   progressByRunId,
   windowedEvidence,
   executionEventsByRunId,
+  liveRuntimeEvents,
   threadId,
   truncatedEvidenceByRunId,
   loadedEvidenceCountByRunId,
@@ -6743,6 +6876,7 @@ function ExecutionDrawer({
   progressByRunId: Map<string, LiveExecutionProgress>
   windowedEvidence: boolean
   executionEventsByRunId: Map<string, LiveRuntimeEvent[]>
+  liveRuntimeEvents: readonly LiveRuntimeEvent[]
   threadId: string
   truncatedEvidenceByRunId: Map<string, AgentRunExecutionEvidenceView[]>
   loadedEvidenceCountByRunId: Map<string, number>
@@ -6758,6 +6892,7 @@ function ExecutionDrawer({
   onRevealMessage(messageId: string): void
   onFileOpenError(message: string): void
 }): JSX.Element {
+  const client = useThreadClient()
   const mobile = useMobileLayout()
   const recovery = useEditingRecovery()
   const groupKey = `mobile-execution-groups:${threadId}:${process.agentId}`
@@ -6815,6 +6950,15 @@ function ExecutionDrawer({
   const newestFirstRuns = useMemo(() => process.runs.slice().sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id)
   ), [process.runs])
+  const metricsVisibility = useExecutionMetricsVisibility(drawerRef)
+  const metrics = useExecutionMetrics(client, threadId, process.agentId, {
+    ...metricsVisibility, runs: newestFirstRuns, expandedRunIds
+  })
+  const usageByRunId = useMemo(() => new Map(metrics?.runs.map((run) => [run.agentRunId, run]) ?? []), [metrics])
+  const currentConversationId = newestFirstRuns[0]?.conversationId ?? null
+  const sessionContext = overview || !currentConversationId ? null
+    : metrics?.sessions.find((session) => session.conversationId === currentConversationId
+        && session.agentId === process.agentId) ?? null
   const currentRuns = newestFirstRuns.filter((run) =>
     NON_TERMINAL_RUNS.has(run.status) && run.status !== 'queued'
   )
@@ -7198,7 +7342,8 @@ function ExecutionDrawer({
               subject={uiAttribute("本次执行")}
             />
             <span className="execution-run-trailing">
-              <ExecutionRunMetric run={run} />
+              <ExecutionRunMetric run={run} usage={usageByRunId.get(run.id)?.executionEpoch === run.executionEpoch
+                ? usageByRunId.get(run.id)! : null} />
               <span className="execution-run-operations">
                 <button type="button" aria-label={expanded ? uiAttribute("收起卡片") : uiAttribute("展开卡片")} aria-expanded={expanded}
                   aria-controls={contentId} onClick={() => toggleRun(run.id)}>
@@ -7448,6 +7593,9 @@ function ExecutionDrawer({
               </div>
             </div>
           </div>
+          {!overview && <span className="execution-header-metrics">
+            <ExecutionContextPopover context={sessionContext} />
+          </span>}
         </header>
         <div
           ref={drawerBodyRef}
@@ -9163,6 +9311,24 @@ export function AgentRunFileChangesTimelineCard({
   )
 }
 
+
+function RunInterruptionMarker({ run, author, onOpen }: {
+  run: AgentRunView
+  author: string
+  onOpen: (agentId: string, trigger: HTMLButtonElement, options: { runId: string }) => void
+}): JSX.Element {
+  return (
+    <div className="run-interruption-marker" data-interrupted-run-id={run.id}>
+      <button type="button" className="run-interruption-trigger"
+        aria-label={uiAttribute("你已中断，查看{0}的本次执行", author)}
+        title={uiAttribute("查看本次执行")}
+        onClick={(event) => onOpen(run.agentId, event.currentTarget, { runId: run.id })}>
+        <svg viewBox="0 0 6 6" aria-hidden="true"><rect x="1" y="1" width="4" height="4" rx="0.7" /></svg>
+        <UiText zh={"你已中断"} />
+      </button>
+    </div>
+  )
+}
 
 function StopOutcomeEvent({
   item,

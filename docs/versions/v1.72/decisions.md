@@ -3,7 +3,7 @@ document_type: version-decisions
 version: v1.72
 authority: decision-rationale
 lifecycle: current
-last_updated: 2026-10-02
+last_updated: 2026-10-03
 ---
 
 # v1.72 版本决定
@@ -247,23 +247,22 @@ Principal 要求 AI 成为默认入口，同时保持标准会话和已有队员
 分类及历史回填。读取时薄索引保留全 Run 元数据扫描和有序候选索引，换取无需迁移和有界传输。组身份沿稳定首 sequence，
 旧子项变化用独立 changeSequence 更新，避免把 UI 分组变成新的执行事实或嵌套滚动层。
 
-
 <a id="v1-72-d11"></a>
-## V1.72-D11：自定义 API 沿用启动设置，以私有凭据版本冻结连接
+## V1.72-D11：一键草稿的内容本机保存，Core 只保留客户端存在标记
 
 - 状态：accepted
 - 日期：2026-10-03
-- 当前权威：[Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md)、[Runtime Catalog Boundaries](../../architecture/runtime-catalog-boundaries.md#当前-host-的自定义-api)
+- 当前权威：[Pending Camp Activation v4](../../contracts/pending-camp-activation-v4.md)、[Composer Draft v16](../../contracts/camp-composer-draft-v16.md)、[Camp Activation](../../architecture/camp-activation-lifecycle.md)
 
 ### 背景与选择
 
-User 明确要求四张简单表单，只负责将地址、Key、模型正确交给原生智能体。既有通用环境数组会保存和回读原值，
-不能承载新 Key；只递增设置版本也不能阻止复用旧认证进程。因此复用 Startup Settings/CAS、private_storage、
-原生 adapter 与现有兼容性判断，新增最小私有凭据版本和冻结引用。成员模型与权限入口保持原职责。
+User 要求恢复一键新对话在消息模型重构前的草稿行为，并明确撤回“每项目一份”的限制。现有 Active Composer
+已经按 Thread 本机保存；单独恢复 Pending 本机内容仍会被 Core 启动清理删掉身份，也无法列入导航。因此沿用本机
+内容权威，只新增经 Host 认证的客户端 presence，让 Core 拥有导航和保留判断；每次新建保持独立身份。
 
 ### 后果与替代方案
 
-不建设供应商／账户系统、通用路由、额外 HTTP 探活或能力认证。Codex 按实际版本原生目录与 fallback 生成，
-合法目录不表示接口能力已实测；Kimi/Grok 原生优先级不能确定时明确阻断该条新路径。
-未采用掩码环境变量方案，因为普通回读和持久回执仍会泄密；未采用更换 HOME 隔离方案，因为会破坏用户原生
-Skills、MCP、登录与会话边界。旧任务保留旧凭据版本，新任务按兼容性摘要换进程，代价是短期保留仍被引用的私有文件。
+新增小型表和事务内激活清理，需要一次加性迁移。保存要先写本机再确认 presence，失败保留编辑并阻止离开；
+跨客户端只能隔离导航，不提供内容同步或冲突合并。拒绝重建旧 Core Draft、revision 和编辑租约体系：它会逆转
+已完成的公开消息边界重构并引入不必要的多客户端协调。仅保留 Renderer map 也无法满足刷新和重启恢复。
+AI 创建队员的专项窗口内生命周期继续由 D09 对应合同约束。

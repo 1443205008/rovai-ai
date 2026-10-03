@@ -2235,7 +2235,7 @@ fn acp_capability_snapshot(
     let session_result = observation.session_result.as_ref();
     let mut models = if ready {
         let session = session_result.context("ready ACP probe did not create a session")?;
-        match acp_model_catalog_from_session(session) {
+        match acp_model_catalog_for_adapter(adapter_kind, session) {
             Ok(models) => models,
             Err(_)
                 if matches!(
@@ -2553,6 +2553,37 @@ pub fn acp_model_catalog_from_session(session_result: &Value) -> Result<Vec<Mode
             .cmp(&left.is_default)
             .then_with(|| left.display_name.cmp(&right.display_name))
     });
+    Ok(models)
+}
+
+pub fn acp_model_catalog_for_adapter(
+    adapter_kind: AdapterKind,
+    session_result: &Value,
+) -> Result<Vec<ModelDescriptor>> {
+    let mut models = acp_model_catalog_from_session(session_result)?;
+    if adapter_kind == AdapterKind::CodebuddyCli
+        && let Some(current) = acp_runtime_model_id_from_session(session_result)
+        && !models.iter().any(|model| model.id == current)
+    {
+        // CodeBuddy's selected custom-local or API-environment model can be
+        // absent from an ACP options list containing only built-in IDs.
+        models.push(ModelDescriptor {
+            description: None,
+            runtime_metadata: None,
+            id: current.clone(),
+            display_name: current,
+            is_default: true,
+            hidden: false,
+            deprecated: false,
+            options: Vec::new(),
+        });
+        models.sort_by(|left, right| {
+            right
+                .is_default
+                .cmp(&left.is_default)
+                .then_with(|| left.display_name.cmp(&right.display_name))
+        });
+    }
     Ok(models)
 }
 
@@ -3022,7 +3053,7 @@ fn resolve_pi_runtime(
         "runtimeEntrypoint": runtime_entrypoint_compatibility(&input)?,
         "authScope": input.auth_scope,
         "protocolVersion": protocol_version,
-        "managedExtension": "rovai-pi-host-v7",
+        "managedExtension": "rovai-pi-host-v8",
     }))?;
     Ok(AdapterRuntimeProjection {
         protocol_version,
@@ -3432,6 +3463,30 @@ mod tests {
         assert!(acp_model_catalog_from_session(&malformed).is_err());
         malformed["configOptions"][0]["options"][0]["options"] = Value::Null;
         assert!(acp_model_catalog_from_session(&malformed).is_err());
+
+        let codebuddy = json!({"configOptions":[{"id":"model","currentValue":"custom-local:gpt-6-sol","options":[{"value":"glm-5.2","name":"GLM"}]}]});
+        assert!(
+            !acp_model_catalog_from_session(&codebuddy)
+                .unwrap()
+                .iter()
+                .any(|model| model.is_default)
+        );
+        let configured =
+            acp_model_catalog_for_adapter(AdapterKind::CodebuddyCli, &codebuddy).unwrap();
+        assert_eq!(configured[0].id, "custom-local:gpt-6-sol");
+        assert!(configured[0].is_default);
+        let mut api_environment = codebuddy.clone();
+        api_environment["configOptions"][0]["currentValue"] = json!("gpt-6.1-sol");
+        let configured =
+            acp_model_catalog_for_adapter(AdapterKind::CodebuddyCli, &api_environment).unwrap();
+        assert_eq!(configured[0].id, "gpt-6.1-sol");
+        assert!(configured[0].is_default);
+        assert!(
+            !acp_model_catalog_for_adapter(AdapterKind::QoderCli, &codebuddy)
+                .unwrap()
+                .iter()
+                .any(|model| model.is_default)
+        );
     }
 
     #[cfg(unix)]

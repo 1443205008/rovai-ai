@@ -65,6 +65,8 @@ for the selected member and candidates. More than eight selected members enables
 bounded and follows available viewport space. Invalid members stay recognizable and cannot become a new Lead.
 Keep existing invalid-default validation. The local draft/error/save row uses the shared save icon and “保存”;
 there is no duplicate saved-state message in the page header.
+The one-click creation summary shows only the saved teammate count and Lead, such as “4 位默认队员 · 队长 爱丽丝”.
+Omit “当前生效” and the currently selected project: the project follows the creation entry, independently of these saved defaults.
 
 World-map availability appears in a 会话 section immediately after 新对话 and before 窗口. A new profile
 with no preferences source starts disabled. Exact schema-v4 saved values remain authoritative, while

@@ -36,6 +36,49 @@ use crate::{
     runtime_failure::RuntimeFailureView,
 };
 
+/// Reject explicit child ownership, replay and complete snapshots before an
+/// adapter strips private payload fields. Native Session/turn fencing still
+/// belongs to the transport; this helper cannot establish ownership by itself.
+pub fn is_root_output(payload: &Value) -> bool {
+    [
+        payload,
+        &payload["_meta"],
+        &payload["content"],
+        &payload["content"]["_meta"],
+        &payload["message"],
+        &payload["assistantMessageEvent"],
+        &payload["assistantMessageEvent"]["partial"],
+        &payload["payload"],
+        &payload["payload"]["_meta"],
+    ]
+    .iter()
+    .all(|value| {
+        ![
+            "agentId",
+            "sourceAgentId",
+            "subagentId",
+            "parentAgentId",
+            "parentSessionId",
+            "parent_tool_use_id",
+            "parentToolCallId",
+            "parent_tool_call_id",
+            "subAgentId",
+            "source_agent_id",
+            "replay",
+            "isReplay",
+            "historical",
+            "snapshot",
+            "isSnapshot",
+        ]
+        .iter()
+        .any(|field| {
+            value
+                .get(*field)
+                .is_some_and(|value| !value.is_null() && value != false)
+        })
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionSemantics {

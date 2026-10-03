@@ -32,9 +32,6 @@
 .camp-member-model-summary[aria-expanded="true"] svg { transform: rotate(90deg); }
 .conversation-bubble.agent .bubble-meta { width: 100%; max-width: 100%; align-items: center; flex-wrap: wrap; row-gap: 0; }
 .message-model-summary { max-width: min(340px, calc(100% - 96px)); }
-.composer-route-rail:has(.composer-model-summary) { flex-wrap: wrap; row-gap: 0; }
-.composer-route-rail:has(.composer-model-summary) .composer-continuation { width: auto; }
-.composer-model-summary { min-height: 28px; }
 .camp-member-model-summary { justify-self: start; }
 .thread-model-popover { z-index: 230; width: 310px; max-width: calc(100vw - 24px); max-height: var(--radix-popover-content-available-height); overflow-y: auto; padding: 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: var(--surface); box-shadow: var(--shadow-float); }
 .thread-model-popover > header { display: flex; min-width: 0; align-items: center; gap: 8px; margin-bottom: 12px; }

@@ -65,7 +65,7 @@ function Fixture() {
   showSettings = setSettings
   if (settings) return <main className="settings-panel settings-panel-notifications" style={{ padding: 28, height: '100vh', overflow: 'auto' }}><NotificationSettings /></main>
   return <main style={{ padding: 40 }}><h1>通知交互验证</h1><input id="draft" aria-label="消息草稿" defaultValue="继续阅读" />
-    <NotificationAttentionController enabled activeThreadId={sources?.threadId ?? 'camp-other'} activeCampVisible navigationActive={false}
+    <NotificationAttentionController enabled activeThreadId={sources?.threadId ?? 'camp-other'} activeThreadVisible navigationActive={false}
       visibleSources={sources?.conversationId ? null : sources} singleChatSources={sources?.conversationId ? sources : null}
       onNavigate={async (_episode, action) => { navigations.push(action); return { status: 'navigated' } }}
       onPresentNavigation={async () => true} onCancelNavigation={() => undefined}

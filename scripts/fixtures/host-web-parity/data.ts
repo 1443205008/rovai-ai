@@ -55,7 +55,7 @@ export const initialDraft: ThreadComposerDraftView = {
   attachments: [], quotes: [], replyIntent: null, continuationIntent: null, updatedAt: now, expiresAt: null
 }
 export const initial: ThreadSnapshot = {
-  schemaVersion: 34, throughGlobalSequence: 3,
+  schemaVersion: 35, throughGlobalSequence: 3,
   thread: { id: threadId, title: 'Camp 页面与审批流程核对', activationState: 'active', projectBindingKind: 'directory',
     projectPath: workspacePath, defaultLeadAgentId: agents[0].agentId, membershipGeneration: 1, version: 1, createdAt: now, updatedAt: now },
   members: agents.map((agent, index) => ({ agentId: agent.agentId, displayName: agent.displayName, avatarRef: agent.avatarRef,

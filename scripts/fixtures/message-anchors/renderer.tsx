@@ -31,7 +31,7 @@ function messages(count: number, start = 1): ThreadMessageView[] {
       ...(n === 1 ? [message('second-reply', 5, 'agent', '第二条回复不应进入预览。', user.id)] : [])]
   }).flat()
 }
-const initial: ThreadSnapshot = { schemaVersion: 34, throughGlobalSequence: 1,
+const initial: ThreadSnapshot = { schemaVersion: 35, throughGlobalSequence: 1,
   thread: { id: threadId, title: '会话内消息锚点', activationState: 'active', projectBindingKind: 'directory',
     projectPath: '/fixture/workspace', defaultLeadAgentId: agent.agentId, membershipGeneration: 1,
     version: 1, createdAt: now, updatedAt: now },

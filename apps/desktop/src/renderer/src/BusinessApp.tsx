@@ -1,4 +1,5 @@
-import { memberCreationHelper, navigationWithMemberCreationDrafts, type MemberCreationDraft } from './member-creation-flow'
+import { hasPendingThreadDraftInput } from './pending-thread-draft'
+import { memberCreationHelper, memberCreationInitialDraft, navigationWithMemberCreationDrafts, type MemberCreationDraft } from './member-creation-flow'
 import { navigationThreadReadState } from './navigation-unread'
 import { newCommandId } from '../../shared/command-id'
 import type { BusinessEnvironment } from './business-environment'
@@ -11,6 +12,7 @@ import { readErrorMessage } from './error-message'
 import { CoreSubsystemNotice } from './CoreSubsystemNotice'
 import { Activity, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
+import { THREAD_SNAPSHOT_SCHEMA_VERSION } from '@contracts'
 import type {
   AdapterInstallation,
   AdapterKind,
@@ -458,7 +460,7 @@ export function campOpenProjectionAsSnapshot(
   const totalCount = Math.max(projection.coverage.messages.totalCount, loadedCount)
   const omittedCount = Math.max(0, totalCount - loadedCount)
   return {
-    schemaVersion: 34,
+    schemaVersion: THREAD_SNAPSHOT_SCHEMA_VERSION,
     throughGlobalSequence: projection.throughGlobalSequence,
     thread: projection.thread,
     members: projection.members,
@@ -3169,16 +3171,7 @@ export function BusinessApp({
           const availableSnapshot = campSnapshotRef.current?.thread.id === action.threadId
             ? campSnapshotRef.current
             : campSnapshotCache.current.get(action.threadId) ?? null
-          let run = availableSnapshot?.agentRuns.find(({ id }) => id === action.agentRunId) ?? null
-          if (!run) {
-            const fullSnapshot = await client.request<ThreadSnapshot>('threads.snapshot', {
-              threadId: action.threadId
-            })
-            if (fullSnapshot.schemaVersion !== 34 || fullSnapshot.thread.id !== action.threadId) {
-              throw new Error(uiAttribute('执行定位合同不兼容。'))
-            }
-            run = fullSnapshot.agentRuns.find(({ id }) => id === action.agentRunId) ?? null
-          }
+          const run = await resolveNotificationAgentRun(client, action.threadId, action.agentRunId, availableSnapshot)
           if (!run) {
             result = {
               status: 'failed',
@@ -3693,7 +3686,7 @@ export function BusinessApp({
       const threadId = stringField(result.payload, 'threadId')
       if (!threadId) throw new Error(uiAttribute('会话已创建，但暂时无法打开。请刷新会话列表后重试。'))
       if (memberCreation) setMemberCreationDrafts((current) => new Map(current).set(threadId, {
-        draft: null,
+        draft: memberCreationInitialDraft(threadId),
         navigation: { id: threadId, title: uiAttribute('新建队员'), activationState: 'pending',
           projectBindingKind: 'quick_chat', projectPath: '', defaultLead: null, marker: 'none',
           lastActivityAt: new Date().toISOString(), lastActivityGlobalSequence: 0,
@@ -3803,7 +3796,7 @@ export function BusinessApp({
   }
 
   const settlePendingThreadOnLeave = async (draft: ThreadComposerDraftView): Promise<void> => {
-    if (draft.body.trim() || draft.attachments.length > 0 || draft.replyIntent) {
+    if (hasPendingThreadDraftInput(draft)) {
       await navigationRefreshCoordinator.invalidate({ scope: 'group', threadId: draft.threadId })
       return
     }
@@ -3814,7 +3807,11 @@ export function BusinessApp({
     if (result.status === 'rejected' && result.code !== 'camp.pending_not_empty') {
       throw new Error(commandFailureMessage(result))
     }
-    if (result.status !== 'rejected') { campSnapshotCache.current.delete(draft.threadId); forgetMemberCreationDraft(draft.threadId) }
+    if (result.status !== 'rejected') {
+      clearLocalThreadComposerDraft(draft.threadId)
+      campSnapshotCache.current.delete(draft.threadId)
+      forgetMemberCreationDraft(draft.threadId)
+    }
     if (result.status !== 'rejected') forgetRemovedThreadSurface(draft.threadId)
     await navigationRefreshCoordinator.invalidate({ scope: 'group', threadId: draft.threadId })
   }
@@ -4520,7 +4517,6 @@ export function BusinessApp({
             health={health}
             agents={agents}
             generalPreferences={generalPreferences}
-            currentProjectLabel={currentProjectLabel}
             onGeneralPreferencesChange={setGeneralPreferences}
             installations={installations}
             busy={busy}
@@ -4802,7 +4798,6 @@ export function SettingsView({
   health,
   agents,
   generalPreferences,
-  currentProjectLabel,
   onGeneralPreferencesChange,
   installations,
   busy,
@@ -4822,7 +4817,6 @@ export function SettingsView({
   health: HealthStatus | null
   agents: AgentProfile[]
   generalPreferences?: GeneralPreferencesSnapshot | null
-  currentProjectLabel?: string
   onGeneralPreferencesChange?(preferences: GeneralPreferencesSnapshot): void
   installations: AdapterInstallation[]
   busy: string | null
@@ -4845,7 +4839,6 @@ export function SettingsView({
             browserAccess={nativeSettings?.browserAccess}
             agents={agents}
             initialPreferences={generalPreferences}
-            currentProjectLabel={currentProjectLabel}
             onPreferencesChange={onGeneralPreferencesChange}
           />
         )}
@@ -4954,6 +4947,23 @@ export function notificationMessageIsVisible(messageId: string): boolean {
   const viewport = target?.closest<HTMLElement>('.timeline-scroll') ?? null
   if (!target || !viewport) return false
   return rectanglesIntersect(target.getBoundingClientRect(), viewport.getBoundingClientRect())
+}
+
+export async function resolveNotificationAgentRun(
+  client: Pick<RovaiApi, 'request'>,
+  threadId: string,
+  agentRunId: string,
+  availableSnapshot: ThreadSnapshot | null
+): Promise<AgentRunView | null> {
+  const cachedRun = availableSnapshot?.thread.id === threadId
+    ? availableSnapshot.agentRuns.find(({ id }) => id === agentRunId)
+    : null
+  if (cachedRun) return cachedRun
+  const snapshot = await client.request<ThreadSnapshot>('threads.snapshot', { threadId })
+  if (snapshot.schemaVersion !== THREAD_SNAPSHOT_SCHEMA_VERSION || snapshot.thread.id !== threadId) {
+    throw new Error(uiAttribute('执行定位合同不兼容。'))
+  }
+  return snapshot.agentRuns.find(({ id }) => id === agentRunId) ?? null
 }
 
 export function notificationFocusMatchesAction(

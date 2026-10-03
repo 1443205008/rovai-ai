@@ -25,7 +25,7 @@ function run(overrides: Partial<AgentRunView> = {}): AgentRunView {
 
 function snapshot(runs: AgentRunView[] = [run()], images = true, files = true): ThreadSnapshot {
   return {
-    schemaVersion: 34, throughGlobalSequence: 1,
+    schemaVersion: 35, throughGlobalSequence: 1,
     thread: { id: 'camp-artifacts', title: '运行产物', activationState: 'active',
       projectBindingKind: 'quick_chat', projectPath: '/quick-chat', defaultLeadAgentId: 'agent_1',
       membershipGeneration: 1, version: 1, createdAt, updatedAt: endedAt },
@@ -159,6 +159,65 @@ describe('Run artifacts retain their execution author', () => {
     candidate.agentRuns = [run({ status: 'running', endedAt: null })]
     candidate.agentRunFileChanges = []
     expect(campConversationTimeline([], [], candidate.agentRuns, [], [], candidate.agentRunImages)).toEqual([])
+  })
+})
+
+describe('Manual Run interruption in the conversation', () => {
+  const stopped = (overrides: Partial<AgentRunView> = {}) => run({ status: 'cancelled', threadTurnId: null,
+    cancelReasonCode: 'user_requested_agent_run_stop', cancelRequestedAt: endedAt, ...overrides })
+  const markers = (markup: string) => [...markup.matchAll(/data-interrupted-run-id="([^"]+)"/g)].map(match => match[1])
+
+  it('keeps one marker after every artifact epoch of the exact Run, before another member or successor', () => {
+    const candidate = snapshot([stopped(), run({ id: 'other', agentId: 'agent_2' }),
+      run({ id: 'successor', status: 'running', createdAt: '2026-09-06T06:02:00Z', endedAt: null })])
+    candidate.agentRunFileChanges = candidate.agentRunFileChanges.filter(item => item.agentRunId !== 'successor')
+    candidate.agentRunFileChanges.push({ ...candidate.agentRunFileChanges[0], executionEpoch: 2,
+      files: [{ ...candidate.agentRunFileChanges[0].files[0], path: 'second-epoch.ts' }] })
+    candidate.memberCreations = [receipt()]
+    const markup = renderTimeline(candidate)
+    expect(markers(markup)).toEqual(['run-1'])
+    expect(markup.indexOf('second-epoch.ts')).toBeLessThan(markup.indexOf('data-interrupted-run-id'))
+    expect(markup.indexOf('data-interrupted-run-id')).toBeLessThan(markup.indexOf('other/result.ts'))
+    expect(markup).toContain('你已中断，查看奥黛丽的本次执行')
+    expect(markup).not.toContain('data-message-id=')
+  })
+
+  it.each([true, false])('attaches only to the last public reply, with artifacts = %s', artifacts => {
+    const source = stopped()
+    const candidate = snapshot([source], artifacts, artifacts)
+    candidate.messages = [{ ...publicMessage(source), id: 'first', sequence: 1 },
+      // Message sequence remains authoritative when the wall clock moves backwards.
+      { ...publicMessage(source), id: 'last', sequence: 2, createdAt: '2026-09-06T05:59:00Z' }]
+    const items = timeline(candidate)
+    expect(items.filter(item => item.kind === 'camp_message' && item.interruptedRun).map(item => item.id)).toEqual(['last'])
+    const markup = renderTimeline(candidate)
+    expect(markers(markup)).toEqual(['run-1'])
+    expect(markup).not.toContain('run-artifact-output')
+    expect(markup.indexOf(artifacts ? 'run-file-changes-card-files' : 'data-message-id="last"'))
+      .toBeLessThan(markup.indexOf('data-interrupted-run-id'))
+  })
+
+  it.each([false, true])('does not create an output row when stopping without a reply or artifacts, with history = %s', hasHistory => {
+    const candidate = snapshot([stopped()], false, false)
+    if (hasHistory) candidate.messages = [{ ...publicMessage(candidate.agentRuns[0]), id: 'later-user', sequence: 1,
+      authorType: 'user', authorId: 'local-user', sourceAgentRunId: null, createdAt: '2026-09-06T06:02:00Z' }]
+    expect(timeline(candidate).map(item => item.id)).toEqual(hasHistory ? ['later-user'] : [])
+    const markup = renderTimeline(candidate)
+    expect(markers(markup)).toEqual([])
+    expect(avatars(markup)).toBe(0)
+    expect(markup).not.toContain('run-artifact-output')
+    expect(markup).not.toContain('run-file-changes-card')
+    expect(markup).not.toContain('agent-message-output-actions')
+  })
+
+  it.each([
+    ['failed', null], ['cancelled', 'camp_turn_cancelled'], ['cancelled', 'single_chat_ended'],
+    ['cancelled', 'execution_budget_exhausted'], ['cancelled', null], ['running', 'user_requested_agent_run_stop'],
+    ['waiting', 'user_requested_agent_run_stop'], ['succeeded', 'user_requested_agent_run_stop']
+  ] as const)('does not call %s / %s a user interruption', (status, cancelReasonCode) => {
+    const candidate = snapshot([run({ status, cancelReasonCode, cancelRequestedAt: endedAt })])
+    expect(markers(renderTimeline(candidate))).toEqual([])
+    expect(timeline({ ...candidate, agentRunFileChanges: [], agentRunImages: [] })).toEqual([])
   })
 })
 

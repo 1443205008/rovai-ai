@@ -6,6 +6,8 @@ import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { createServer } from 'node:net'
 import { seedCompletedOnboardingForAcceptance } from './lib/dev-desktop.mjs'
+import { configureProductRuntime } from './configure-product-runtime.mjs'
+import { composerDocumentForAddress, createConfiguredCampAndSend } from './lib/create-configured-camp.mjs'
 import {
   coreDataDirectoryArguments,
   runtimeCampFilesRootForDataDirectory
@@ -34,6 +36,10 @@ const webSearchAfterResponsiveOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_W
 const toolDetailsOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_TOOL_DETAILS_ONLY === '1'
 const completeToolOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_COMPLETE_TOOL_ONLY === '1'
 const executionAutoFollowOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_AUTO_FOLLOW_ONLY === '1'
+const executionMetricsOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_ONLY === '1'
+const metricsRealRuntime = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_REAL === '1'
+const executionMetricsStreamOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_METRICS_STREAM_ONLY === '1'
+  || metricsRealRuntime
 const placementRestartOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_PLACEMENT_RESTART_ONLY === '1'
 const withdrawalOnly = process.env.ROVAI_RUNTIME_ACTIVITY_ACCEPT_WITHDRAWAL_ONLY === '1'
 const databasePath = join(dataDir, 'rovai.sqlite')
@@ -76,9 +82,9 @@ const fixtureExecutionRoot = join(fixtureRoot, 'workspace')
 const codexExpectedCommand = 'rovai camp read --limit 20'
 const claudeExpectedCommand = "printf '%s\\n' 'ROVAI_CLAUDE_EMPTY_OUTPUT_OK'"
 const webSearchQueries = ['password=公开验收词 token=保持原样', '第二项公开查询']
-const fixtureContextManifestVersion = 29
+const fixtureContextManifestVersion = 31
 const fixtureContextDeliveryProfile = {
-  profileVersion: 9,
+  profileVersion: 10,
   maxSelfActiveTasks: 8
 }
 
@@ -152,6 +158,11 @@ const runtimes = [
 ]
 
 await mkdir(dataDir, { recursive: true })
+if (executionMetricsStreamOnly) {
+  const runtime = join(root, 'scripts', 'fixtures', 'streaming-acp-runtime.mjs')
+  await chmod(runtime, 0o755)
+  process.env[process.env.ROVAI_STREAMING_ACP_KIND === 'copilot-cli' ? 'ROVAI_COPILOT_BIN' : 'ROVAI_QWEN_BIN'] = runtime
+}
 seedCompletedOnboardingForAcceptance(dataDir)
 await writeFile(join(dataDir, 'general-preferences.json'), `${JSON.stringify({
   schemaVersion: 4,
@@ -216,7 +227,28 @@ try {
     await waitForExpression(app.cdp,
       `document.querySelector('.run-pulse-chip.is-selected')?.dataset.agentId === ${JSON.stringify(activeAgentId)}`)
   }
-  if (placementRestartOnly) {
+  if (executionMetricsStreamOnly) {
+    const report = await verifyStreamingExecutionMetricsRenderer(app, outputDir)
+    console.log(JSON.stringify({
+      ok: true,
+      mode: 'controlled-execution-metrics-live-renderer',
+      fixtureRoot,
+      outputDir,
+      verified: report.verified,
+      captures: report.captures
+    }, null, 2))
+  } else if (executionMetricsOnly) {
+    const report = await verifyExecutionMetricsRenderer(app, outputDir, (restarted) => { app = restarted })
+    app = report.app
+    console.log(JSON.stringify({
+      ok: true,
+      mode: 'controlled-execution-metrics-renderer-fixture',
+      fixtureRoot,
+      outputDir,
+      verified: report.verified,
+      captures: report.captures
+    }, null, 2))
+  } else if (placementRestartOnly) {
     const restart = await verifyExecutionPlacementAcrossRestart(app)
     app = restart.app
     console.log(JSON.stringify({
@@ -1135,11 +1167,14 @@ async function initializeDatabase() {
 }
 
 async function activateControlledRun() {
+  const startedAt = executionMetricsOnly
+    ? new Date(Date.now() - 84_000).toISOString()
+    : '2026-08-05T12:00:01Z'
   const status = await runSql(databasePath, `
     PRAGMA busy_timeout = 5000;
     UPDATE agent_run
     SET status = 'running',
-        started_at = '2026-08-05T12:00:01Z',
+        started_at = ${sqlLiteral(startedAt)},
         ended_at = NULL,
         updated_at = '2026-08-05T12:00:01Z',
         version = version + 1
@@ -1148,6 +1183,435 @@ async function activateControlledRun() {
   `)
   assert(status.trim().split(/\s+/).at(-1) === 'running',
     `Controlled AgentRun did not enter running state: ${status}`)
+}
+
+async function verifyExecutionMetricsRenderer(app, capturesRoot, onRestart) {
+  await waitForExpression(app.cdp, `Boolean(document.querySelector(
+    '.execution-process-stage.is-focused .execution-run-metric'
+  ))`)
+  const running = await evaluate(app.cdp, `(() => {
+    const stage = document.querySelector('.execution-process-stage.is-focused')
+    const duration = stage?.querySelector('.execution-run-metric')
+    const slot = stage?.querySelector('.execution-run-trailing')
+    return {
+      runId: stage?.dataset.agentRunId ?? null,
+      duration: duration?.textContent?.trim() ?? null,
+      fitsSlot: duration.getBoundingClientRect().right <= slot.getBoundingClientRect().right + 1,
+      slotWidth: slot?.getBoundingClientRect().width ?? null
+    }
+  })()`)
+  assert(running.runId === activeRunId
+    && /^1分 \d{2}秒$/.test(running.duration)
+    && running.fitsSlot && running.slotWidth >= 76,
+  `Running card did not keep duration: ${JSON.stringify(running)}`)
+  const runningCapture = join(capturesRoot, 'execution-metrics-running.png')
+  await capture(app.cdp, runningCapture)
+
+  await closeApp(app)
+  const endedAt = new Date().toISOString()
+  await runSql(databasePath, `
+    UPDATE agent_run SET status = 'succeeded', ended_at = ${sqlLiteral(endedAt)},
+      updated_at = ${sqlLiteral(endedAt)}, version = version + 1,
+      terminal_reason_code = NULL, terminal_resolution_source = NULL,
+      cancel_requested_at = NULL, cancel_reason_code = NULL
+    WHERE id = ${sqlLiteral(activeRunId)} AND status IN ('running', 'cancelled');
+    INSERT INTO runtime_usage_run_summary(
+      collection_epoch, agent_run_id, runtime_kind, parser_version,
+      eligible_mask, input_semantics, enrolled_at, finalized_at, last_observed_at,
+      prompt_input_total_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+    ) SELECT collection_epoch, ${sqlLiteral(activeRunId)}, 'codex-cli', 4,
+      127, 'cache_inclusive_total', ${sqlLiteral(endedAt)}, ${sqlLiteral(endedAt)},
+      ${sqlLiteral(endedAt)}, 1500, 500, 250, 0
+    FROM runtime_usage_collection_state WHERE singleton_id = 1;
+  `)
+
+  const restarted = await launchApp(app.port, 1440, 920)
+  onRestart(restarted)
+  await setTheme(restarted.cdp, 'day')
+  await openCamp(restarted.cdp, campId)
+  await evaluate(restarted.cdp, `document.querySelector(
+    ${JSON.stringify(`.run-pulse-chip[data-agent-id="${activeAgentId}"]`)}
+  )?.click()`)
+  await waitForExpression(restarted.cdp, `document.querySelector(
+    '.execution-process-stage.is-focused .execution-usage-trigger'
+  )?.textContent?.trim() === '2k'`, 20_000)
+  const terminal = await evaluate(restarted.cdp, `(() => {
+    const stage = document.querySelector('.execution-process-stage.is-focused')
+    const group = stage?.querySelector('.execution-run-metric-group')
+    return {
+      runId: stage?.dataset.agentRunId ?? null,
+      durationInCard: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
+      usage: group?.querySelector('.execution-usage-trigger')?.textContent?.trim() ?? null,
+    }
+  })()`)
+  assert(terminal.runId === activeRunId && terminal.usage === '2k'
+    && terminal.durationInCard === null,
+  `Terminal card did not show only the Usage entry: ${JSON.stringify(terminal)}`)
+  await evaluate(restarted.cdp, `document.querySelector(
+    '.execution-process-stage.is-focused .execution-usage-trigger'
+  )?.click()`)
+  await waitForExpression(restarted.cdp, `document.querySelectorAll('.execution-metric-popover dl > div').length === 5`)
+  const usageRows = await evaluate(restarted.cdp, `[...document.querySelectorAll(
+    '.execution-metric-popover dl > div'
+  )].map(row => [row.querySelector('dt')?.textContent, row.querySelector('dd')?.textContent])`)
+  assert(JSON.stringify(usageRows.slice(0, 4)) === JSON.stringify([
+    ['Input Token', '1.5k'], ['Output Token', '0.5k'],
+    ['Cache Read', '0.3k'], ['Cache Write', '0k']
+  ]) && usageRows[4]?.[0] === '执行耗时' && /^1分 \d{2}秒$/.test(usageRows[4]?.[1]),
+  `Terminal Usage popover did not show four buckets and duration: ${JSON.stringify(usageRows)}`)
+  const terminalCapture = join(capturesRoot, 'execution-metrics-terminal.png')
+  await capture(restarted.cdp, terminalCapture)
+  return {
+    app: restarted,
+    verified: { running, terminal, usageRows },
+    captures: { running: runningCapture, terminal: terminalCapture }
+  }
+}
+
+async function verifyStreamingExecutionMetricsRenderer(app, capturesRoot) {
+  if (metricsRealRuntime) return verifyRealRuntimeExecutionMetrics(app, capturesRoot)
+  const request = (method, params = {}) => evaluate(app.cdp,
+    `window.rovai.request(${JSON.stringify(method)}, ${JSON.stringify(params)})`, true)
+  const controlledCopilot = process.env.ROVAI_STREAMING_ACP_KIND === 'copilot-cli'
+  const agentId = runtimes.find((entry) => entry.key === (controlledCopilot ? 'copilot' : 'qwen'))?.agentId
+  assert(agentId, 'The streaming fixture has no selected member')
+  await configureProductRuntime(request, controlledCopilot ? 'copilot-cli' : 'qwen-code', [agentId])
+  const workspace = await request('workspaces.inspect', { path: fixtureExecutionRoot })
+  const setup = await createConfiguredCampAndSend(request, {
+    commandId: crypto.randomUUID(),
+    name: '执行指标固定流验收',
+    workspace,
+    memberAgentIds: [agentId],
+    defaultLeadAgentId: agentId,
+    address: { mode: 'explicit', agentIds: [agentId] },
+    body: 'ROVAI_STREAM_FAST_SETUP',
+    purpose: 'Seed one completed Run for switching cards'
+  })
+  assert(setup.status === 'accepted' && setup.payload?.threadId && setup.payload?.threadMessageId,
+    `Could not create the controlled streaming Camp: ${JSON.stringify(setup)}`)
+  const streamCampId = setup.payload.threadId
+  const setupRunId = await waitForControlledMessageRun(request, streamCampId, setup.payload.threadMessageId)
+  await waitForControlledRunStatus(request, streamCampId, setupRunId, 'succeeded')
+  await openCamp(app.cdp, campId)
+  await openCamp(app.cdp, streamCampId)
+  await selectCampConversationView(app.cdp, 'conversation')
+  await waitForExpression(app.cdp,
+    `document.body.innerText.includes('ROVAI_STREAM_FAST_READY')`, 20_000)
+  await evaluate(app.cdp, `(() => {
+    window.__privateThoughtIpcLeaks = 0
+    window.__privateThoughtIpcUnsubscribe = window.rovai.onEvent(event => {
+      if (JSON.stringify(event).includes('V3_PRIVATE_REASONING_FIXTURE')) window.__privateThoughtIpcLeaks++
+    })
+  })()`)
+
+  const sent = await request('camp.messages.send', {
+    commandId: crypto.randomUUID(),
+    campId: streamCampId,
+    content: composerDocumentForAddress({ mode: 'explicit', agentIds: [agentId] },
+      'Emit the controlled streaming fixture.'),
+    sourceAttachments: [], quotes: [], replyToCampMessageId: null,
+    execution: { taskId: null, purpose: 'Verify live Renderer metrics', completionRole: 'required' }
+  })
+  const accepted = sent.commandResult ?? sent
+  assert(accepted.status === 'accepted' && accepted.payload?.threadMessageId,
+    `The controlled streaming Run was not accepted: ${JSON.stringify(sent)}`)
+  const runId = await waitForControlledMessageRun(request, streamCampId, accepted.payload.threadMessageId)
+  const stageSelector = `.execution-process-stage[data-agent-run-id="${runId}"]`
+  await evaluate(app.cdp,
+    `document.querySelector('.camp-detail-entry[data-detail="execution"]')?.click()`)
+  await waitForExpression(app.cdp,
+    `Boolean(document.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)}))`, 10_000)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})?.click()`)
+  await waitForExpression(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.classList.contains('status-running')`, 20_000)
+  const leakedEvidence = await runSql(databasePath, `SELECT COUNT(*) FROM agent_run_execution_evidence
+    WHERE agent_run_id = ${sqlLiteral(runId)}
+      AND payload_preview_json LIKE '%V3_PRIVATE_REASONING_FIXTURE%';`)
+  const leakedRenderer = await evaluate(app.cdp,
+    `document.body.textContent.includes('V3_PRIVATE_REASONING_FIXTURE')`)
+  assert(leakedEvidence.trim() === '0' && !leakedRenderer,
+    'The controlled private thought marker escaped into Evidence or Renderer')
+  const steadyCapture = join(capturesRoot, 'execution-metrics-stream-steady.png')
+  await capture(app.cdp, steadyCapture)
+
+  // Leave and re-enter during the same stream; the running duration stays available.
+  await openCamp(app.cdp, campId)
+  await openCamp(app.cdp, streamCampId)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})?.click()`)
+  await waitForExpression(app.cdp,
+    `Boolean(document.querySelector('.execution-drawer-header:not(.is-overview)')
+      && document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric'))`, 10_000)
+  const reopened = await evaluate(app.cdp, `(() => {
+    const stage = document.querySelector(${JSON.stringify(stageSelector)})
+    return { duration: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null }
+  })()`)
+  assert(reopened.duration,
+    `Midstream entry lost the running duration: ${JSON.stringify(reopened)}`)
+  await evaluate(app.cdp, `document.querySelector('.execution-history-toggle')?.click()`)
+  const historySelector = `.execution-process-stage[data-agent-run-id="${setupRunId}"]`
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(historySelector)})?.querySelector('.execution-run-toggle')?.click()`)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-toggle')?.click()`)
+  const switched = await evaluate(app.cdp, `(() => {
+    const active = document.querySelector(${JSON.stringify(stageSelector)})
+    const history = document.querySelector(${JSON.stringify(historySelector)})
+    return { activeDuration: active?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null,
+      activeExpanded: active?.querySelector('.execution-run-toggle')?.getAttribute('aria-expanded') === 'true',
+      historyExpanded: history?.querySelector('.execution-run-toggle')?.getAttribute('aria-expanded') === 'true',
+      historyVisible: Boolean(history?.getClientRects().length) }
+  })()`)
+  assert(switched.historyVisible && switched.historyExpanded && !switched.activeExpanded
+    && switched.activeDuration,
+  `Switching current and historical Run cards mixed metrics: ${JSON.stringify(switched)}`)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-toggle')?.click()`)
+
+  await waitForExpression(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.classList.contains('status-succeeded')`, 30_000)
+  const terminalBeforeUsage = await evaluate(app.cdp,
+    `({ usage: document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-usage-trigger')?.textContent?.trim() ?? null,
+      clock: Boolean(document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-duration-trigger')),
+      durationInCard: document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null })`)
+  assert(terminalBeforeUsage.usage === null && terminalBeforeUsage.clock
+    && terminalBeforeUsage.durationInCard === null,
+    `The terminal card did not fall back to a duration clock before Usage: ${JSON.stringify(terminalBeforeUsage)}`)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-duration-trigger')?.click()`)
+  await waitForExpression(app.cdp,
+    `/分 \\d{2}秒$/.test(document.querySelector('.execution-duration-reading')?.textContent?.trim() ?? '')`)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-duration-trigger')?.click()`)
+  const observedAt = new Date().toISOString()
+  await runSql(databasePath, `
+    PRAGMA busy_timeout = 5000;
+    UPDATE runtime_usage_run_summary SET
+      parser_version = 4, eligible_mask = 127,
+      input_semantics = 'cache_inclusive_total',
+      finalized_at = ${sqlLiteral(observedAt)}, last_observed_at = ${sqlLiteral(observedAt)},
+      prompt_input_total_tokens = 1500, output_tokens = 500,
+      cache_read_tokens = 250, cache_write_tokens = 0
+    WHERE agent_run_id = ${sqlLiteral(runId)};
+  `)
+  await waitForExpression(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-usage-trigger')?.textContent?.trim() === '2k'`, 16_000)
+  await evaluate(app.cdp,
+    `document.querySelector(${JSON.stringify(stageSelector)})?.querySelector('.execution-usage-trigger')?.click()`)
+  await waitForExpression(app.cdp, `document.querySelectorAll('.execution-metric-popover dl > div').length === 5`)
+  const usageRows = await evaluate(app.cdp, `[...document.querySelectorAll(
+    '.execution-metric-popover dl > div'
+  )].map(row => [row.querySelector('dt')?.textContent, row.querySelector('dd')?.textContent])`)
+  assert(JSON.stringify(usageRows.slice(0, 4)) === JSON.stringify([
+    ['Input Token', '1.5k'], ['Output Token', '0.5k'],
+    ['Cache Read', '0.3k'], ['Cache Write', '0k']
+  ]) && usageRows[4]?.[0] === '执行耗时' && /分 \d{2}秒$/.test(usageRows[4]?.[1]),
+  `Late terminal Usage did not reach the four buckets and duration: ${JSON.stringify(usageRows)}`)
+  const terminalCapture = join(capturesRoot, 'execution-metrics-stream-late-usage.png')
+  await capture(app.cdp, terminalCapture)
+  const leakedFiles = await filesContainingMarker(dataDir, 'V3_PRIVATE_REASONING_FIXTURE')
+  const leakedIpc = await evaluate(app.cdp, `(() => {
+    window.__privateThoughtIpcUnsubscribe?.()
+    return window.__privateThoughtIpcLeaks
+  })()`)
+  assert(leakedFiles.length === 0,
+    `The controlled private thought marker escaped into isolated Core files: ${JSON.stringify(leakedFiles)}`)
+  assert(leakedIpc === 0, 'The controlled private thought marker escaped through public IPC')
+  return {
+    verified: { streamCampId, runId, setupRunId,
+      leakedEvidence: Number(leakedEvidence.trim()), leakedRenderer, leakedFiles, leakedIpc,
+      reopened, switched, usageRows },
+    captures: { steady: steadyCapture, terminal: terminalCapture }
+  }
+}
+
+async function verifyRealRuntimeExecutionMetrics(app, capturesRoot) {
+  const request = (method, params = {}) => evaluate(app.cdp,
+    `window.rovai.request(${JSON.stringify(method)}, ${JSON.stringify(params)})`, true)
+  const runtimeKind = process.env.ROVAI_METRICS_RUNTIME ?? 'codex-cli'
+  const agentId = runtimes.find((entry) => entry.key === 'codex').agentId
+  const installation = await configureProductRuntime(request, runtimeKind, [agentId])
+  const modelId = process.env.ROVAI_METRICS_MODEL ?? (runtimeKind === 'codex-cli' ? 'gpt-6.1-sol' : null)
+  if (modelId) {
+    const profile = await request('members.get', { agentId })
+    const selection = await request('members.runtime.set', { commandId: crypto.randomUUID(), command: {
+      agentId, expectedVersion: profile.version, adapterKind: runtimeKind,
+      permissions: profile.runtimeConfiguration.permissions,
+      model: { mode: 'explicit', modelId,
+        options: process.env.ROVAI_METRICS_MODEL_OPTIONS ? JSON.parse(process.env.ROVAI_METRICS_MODEL_OPTIONS)
+          : runtimeKind === 'codex-cli' ? { reasoning_effort: 'high' } : {} }
+    } })
+    assert(selection.status === 'applied', 'Real Runtime acceptance model was not applied')
+  }
+  const workspace = await request('workspaces.inspect', { path: fixtureExecutionRoot })
+  const setup = await createConfiguredCampAndSend(request, {
+    commandId: crypto.randomUUID(), name: `原生执行指标 ${runtimeKind} 验收`, workspace,
+    memberAgentIds: [agentId], defaultLeadAgentId: agentId,
+    body: await readFile(process.env.ROVAI_METRICS_PROMPT_FILE
+      ?? join(root, 'scripts', 'fixtures', 'native-execution-metrics-task.txt'), 'utf8'),
+    purpose: 'Native Usage and Context through packaged Renderer'
+  })
+  assert(setup.status === 'accepted', 'Real Runtime acceptance was not accepted')
+  const liveCampId = setup.payload.threadId
+  const runId = await waitForControlledMessageRun(request, liveCampId, setup.payload.threadMessageId)
+  await openCamp(app.cdp, liveCampId)
+  await selectCampConversationView(app.cdp, 'conversation')
+  await evaluate(app.cdp, `(() => {
+    const entry = document.querySelector('.camp-detail-entry[data-detail="execution"]')
+    if (entry?.getAttribute('aria-expanded') !== 'true') entry?.click()
+  })()`)
+  await waitForExpression(app.cdp,
+    `Boolean([...document.querySelectorAll(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})]
+      .find(chip => chip.getClientRects().length))`, 15_000)
+  await evaluate(app.cdp, `(() => {
+    const chip = [...document.querySelectorAll(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})]
+      .find(candidate => candidate.getClientRects().length)
+    if (chip?.getAttribute('aria-pressed') !== 'true') chip?.click()
+  })()`)
+  await waitForExpression(app.cdp, `Boolean(
+    [...document.querySelectorAll(${JSON.stringify(`.run-pulse-chip.is-selected[data-agent-id="${agentId}"]`)})]
+      .some(chip => chip.getClientRects().length)
+    && [...document.querySelectorAll('.execution-drawer-header:not(.is-overview)')]
+      .some(header => header.getClientRects().length))`, 15_000)
+  const stageSelector = `.execution-process-stage[data-agent-run-id="${runId}"]`
+  await waitForExpression(app.cdp, `Boolean(document.querySelector(${JSON.stringify(stageSelector)}))`, 15_000)
+  await evaluate(app.cdp, `(() => {
+    const stage = document.querySelector(${JSON.stringify(stageSelector)})
+    const dock = stage?.closest('.execution-sidecar-panel') ?? stage?.closest('.camp-workspace')
+    const chip = dock?.querySelector(${JSON.stringify(`.run-pulse-chip[data-agent-id="${agentId}"]`)})
+    if (!chip) throw new Error('Native Run panel has no member selector')
+    if (chip.getAttribute('aria-pressed') !== 'true') chip.click()
+  })()`)
+  await waitForExpression(app.cdp, `document.querySelector(${JSON.stringify(stageSelector)})?.closest('.execution-drawer')?.querySelector('.execution-drawer-header')?.classList.contains('is-overview') === false`, 15_000)
+  const drawerExpression = `document.querySelector(${JSON.stringify(stageSelector)})?.closest('.execution-drawer')`
+  const samples = [], started = Date.now()
+  let status = null, nextProgress = started + 30_000
+  while (Date.now() - started < 480_000) {
+    const state = await request('camps.snapshot', { campId: liveCampId })
+    status = state.agentRuns.find((candidate) => candidate.id === runId)?.status
+    const ui = await evaluate(app.cdp, `(() => {
+      const drawer = ${drawerExpression}
+      const stage = document.querySelector(${JSON.stringify(stageSelector)})
+      return {
+        overview: drawer?.querySelector('.execution-drawer-header')?.classList.contains('is-overview') ?? null,
+        duration: stage?.querySelector('.execution-run-metric')?.textContent?.trim() ?? null
+      }
+    })()`)
+    samples.push({ atMs: Date.now() - started, status, ui })
+    if (['succeeded', 'failed', 'cancelled'].includes(status)) break
+    if (Date.now() >= nextProgress) {
+      console.log(JSON.stringify({ stage: 'native-metrics-live', runtimeKind, status }))
+      nextProgress = Date.now() + 30_000
+    }
+    await wait(1000)
+  }
+  const projection = await request('monitoring.execution', { campId: liveCampId, agentRunIds: [runId] })
+  const usage = projection.runs.find(run => run.agentRunId === runId)
+  const context = projection.sessions[0]
+  const isCount = value => Number.isSafeInteger(value) && value >= 0
+  // Matching a null projection proves honest display, not field availability.
+  // Keep these facts separate even when optional verification gates are off.
+  const availability = {
+    usageFields: Object.fromEntries(['promptInputTotalTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens']
+      .map(field => [field, isCount(usage?.[field])])),
+    runTotal: status === 'succeeded' && Boolean(usage?.finalizedAt)
+      && isCount(usage?.promptInputTotalTokens) && isCount(usage?.outputTokens),
+    contextRatio: Boolean(context && (
+      (isCount(context.usedTokens) && isCount(context.windowTokens) && context.windowTokens > 0
+        && context.usedTokens <= context.windowTokens)
+      || (typeof context.nativeRatio === 'number' && Number.isFinite(context.nativeRatio)
+        && context.nativeRatio >= 0 && context.nativeRatio <= 1)))
+  }
+  await writeFile(join(capturesRoot, `native-metrics-diagnostic-${runtimeKind}.json`),
+    JSON.stringify({ runtimeKind, status, samples, projection, availability }, null, 2))
+  assert(['succeeded', 'failed', 'cancelled'].includes(status),
+    `Real Runtime did not reach a terminal within the 480s acceptance window; partial observations are retained`)
+  if (process.env.ROVAI_METRICS_VERIFY_USAGE === '1') {
+    assert(availability.runTotal, 'Real Runtime did not persist a usable native Run total')
+    await evaluate(app.cdp, `(() => {
+      const history = ${drawerExpression}?.querySelector('.execution-history-toggle')
+      if (history?.getAttribute('aria-expanded') === 'false') history.click()
+    })()`)
+    await waitForExpression(app.cdp, `Boolean(document.querySelector(
+      ${JSON.stringify(`.execution-process-stage[data-agent-run-id="${runId}"] .execution-usage-trigger`)}
+    )?.getClientRects().length)`, 15_000)
+    await evaluate(app.cdp, `document.querySelector(
+      ${JSON.stringify(`.execution-process-stage[data-agent-run-id="${runId}"] .execution-usage-trigger`)}).click()`)
+    await waitForExpression(app.cdp, `document.querySelectorAll('.execution-metric-popover dl > div').length === 5`)
+    await waitForExpression(app.cdp, `(() => {
+      const popover = document.querySelector('.execution-metric-popover')?.getBoundingClientRect()
+      const anchor = document.querySelector(${JSON.stringify(`.execution-process-stage[data-agent-run-id="${runId}"] .execution-usage-trigger`)})?.getBoundingClientRect()
+      return popover && anchor && anchor.width > 0 && Math.abs(popover.right - anchor.right) < 300
+    })()`)
+  }
+  const usageRows = await evaluate(app.cdp, `[...document.querySelectorAll('.execution-metric-popover dl > div')]
+    .map(row => [row.querySelector('dt')?.textContent, row.querySelector('dd')?.textContent])`)
+  const metricK = value => value == null ? '—' : `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  if (process.env.ROVAI_METRICS_VERIFY_USAGE === '1') {
+    assert(JSON.stringify(usageRows.slice(0, 4)) === JSON.stringify([
+      ['Input Token', metricK(usage.promptInputTotalTokens)], ['Output Token', metricK(usage.outputTokens)],
+      ['Cache Read', metricK(usage.cacheReadTokens)], ['Cache Write', metricK(usage.cacheWriteTokens)]
+    ]), 'Renderer Usage differs from native projection')
+    await capture(app.cdp, join(capturesRoot, `native-usage-${runtimeKind}.png`))
+    await app.cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape' })
+  }
+  const contextLabel = await evaluate(app.cdp,
+    `${drawerExpression}?.querySelector('.execution-drawer-header .execution-context-trigger')?.getAttribute('aria-label') ?? null`)
+  if (process.env.ROVAI_METRICS_VERIFY_CONTEXT === '1') {
+    assert(availability.contextRatio, 'Real Runtime did not provide a usable Context ratio; used alone is incomplete')
+    assert(context
+      && contextLabel?.includes(metricK(context.usedTokens)) && contextLabel?.includes(metricK(context.windowTokens)),
+    'Renderer Context differs from native projection')
+    const percent = context.usedTokens != null && context.windowTokens > 0
+      ? context.usedTokens / context.windowTokens * 100
+      : context.nativeRatio != null ? context.nativeRatio * 100 : null
+    assert(percent == null ? contextLabel.includes('比例未知') : contextLabel.includes(`${percent.toFixed(1)}%`),
+      'Renderer Context ratio differs from the same native observation')
+    await evaluate(app.cdp, `${drawerExpression}?.querySelector('.execution-drawer-header .execution-context-trigger').click()`)
+    await waitForExpression(app.cdp, `Boolean(document.querySelector('.execution-context-popover'))`)
+    const contextRows = await evaluate(app.cdp, `[...document.querySelectorAll('.execution-context-popover > span')].map(node => node.textContent)`)
+    assert(JSON.stringify(contextRows) === JSON.stringify([
+      `${metricK(context.usedTokens)} / ${metricK(context.windowTokens)}`, percent == null ? '—' : `${percent.toFixed(1)}%`
+    ]), 'Native ratio must not infer missing token quantities in the popover')
+    await capture(app.cdp, join(capturesRoot, `native-context-${runtimeKind}.png`))
+  }
+  const report = { runtimeKind, version: installation.snapshot?.reportedVersion, campId: liveCampId,
+    runId, status, projection, availability, usageRows, contextLabel, samples }
+  const reportPath = join(capturesRoot, `native-metrics-${runtimeKind}.json`)
+  await writeFile(reportPath, JSON.stringify(report, null, 2))
+  assert(status === 'succeeded'
+    && samples.filter(sample => sample.status === 'running').every(sample =>
+      sample.ui.overview === false && sample.ui.duration),
+  `Real Runtime native metrics acceptance failed; evidence is in ${reportPath}`)
+  return { verified: { status, version: report.version, projection, availability, usageRows, contextLabel },
+    captures: { report: reportPath } }
+}
+
+async function waitForControlledMessageRun(request, campId, messageId) {
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    const snapshot = await request('camps.snapshot', { campId })
+    const run = snapshot.agentRuns.find((candidate) =>
+      candidate.inputMessageIds?.includes(messageId) || candidate.anchorMessageId === messageId)
+    if (run) return run.id
+    await wait(250)
+  }
+  throw new Error(`Controlled Camp message ${messageId} did not dispatch an AgentRun`)
+}
+
+async function waitForControlledRunStatus(request, campId, runId, status) {
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    const snapshot = await request('camps.snapshot', { campId })
+    const run = snapshot.agentRuns.find((candidate) => candidate.id === runId)
+    if (run?.status === status) return
+    if (run?.status === 'failed' || run?.status === 'cancelled') {
+      throw new Error(`Controlled Run ${runId} entered ${run.status}`)
+    }
+    await wait(250)
+  }
+  throw new Error(`Controlled Run ${runId} did not enter ${status}`)
 }
 
 async function seedFixture() {
@@ -1455,7 +1919,9 @@ async function seedFixture() {
     ) VALUES ${runRows};
     UPDATE agent_run
     SET status = 'waiting', wait_reason = 'recovery_blocked', runtime_recovery_required = 0,
-        last_error_code = 'accepted_input_outcome_unknown'
+        last_error_code = 'accepted_input_outcome_unknown',
+        claim_previous_public_boundary_sequence = 0,
+        claim_has_additional_public_messages = 1
     WHERE id = ${sqlLiteral(recoveryBlockedRunId)};
     INSERT INTO camp_message(
       id, camp_id, sequence, author_type, author_id, source_agent_run_id,
@@ -1491,7 +1957,7 @@ async function seedFixture() {
       delivery_mode, created_at
     ) VALUES (
       'fixture-copilot-bootstrap', 'conversation-copilot', 'fixture-copilot-binding', 1,
-      'native_session_bootstrap_v4', 4,
+      'native_session_bootstrap_v5', 5,
       ${sqlLiteral(recoveryBlob.id)}, ${sqlLiteral(recoveryBlob.digest)},
       ${sqlLiteral(recoveryBlob.id)}, ${sqlLiteral(recoveryBlob.digest)},
       '[]', 'fixture-authorization-basis', 'native_append', ${sqlLiteral(now)}
@@ -1544,7 +2010,7 @@ async function seedFixture() {
       '[]', '[]', '[]', 'fixture-shared-message-evidence', ${sqlLiteral(JSON.stringify(fixtureRunFacts))},
       'agent_v1', '{"schemaVersion":1,"included":false}',
       '8f0abde6b1c7b1bf405e1efa2a2cfe82a1bd329a64003a93c3e20c84a8c26d92',
-      ${fixtureContextManifestVersion}, 7, 2,
+      ${fixtureContextManifestVersion}, 8, 2,
       ${sqlLiteral(JSON.stringify(campAttachmentViewReceipt))},
       ${sqlLiteral(campAttachmentViewReceiptDigest)}
     );
@@ -5187,11 +5653,13 @@ async function connectCdp(url) {
     const pendingRequest = pending.get(message.id)
     if (!pendingRequest) return
     pending.delete(message.id)
+    clearTimeout(pendingRequest.timer)
     if (message.error) pendingRequest.reject(new Error(message.error.message))
     else pendingRequest.resolve(message)
   })
   socket.addEventListener('close', () => {
     for (const pendingRequest of pending.values()) {
+      clearTimeout(pendingRequest.timer)
       pendingRequest.reject(new Error('CDP connection closed'))
     }
     pending.clear()
@@ -5200,7 +5668,11 @@ async function connectCdp(url) {
     send(method, params = {}) {
       return new Promise((resolveSend, rejectSend) => {
         const id = nextId++
-        pending.set(id, { resolve: resolveSend, reject: rejectSend })
+        const timer = setTimeout(() => {
+          pending.delete(id)
+          rejectSend(new Error(`CDP ${method} timed out`))
+        }, 30_000)
+        pending.set(id, { resolve: resolveSend, reject: rejectSend, timer })
         socket.send(JSON.stringify({ id, method, params }))
       })
     },
@@ -5352,6 +5824,19 @@ function normalizeClipboardArchive(archive) {
 
 function runSql(path, sql) {
   return runProcess('/usr/bin/sqlite3', [path, sql])
+}
+
+async function filesContainingMarker(rootPath, marker) {
+  const matches = []
+  const visit = async (directory) => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) await visit(path)
+      else if (entry.isFile() && (await readFile(path)).includes(marker)) matches.push(path)
+    }
+  }
+  await visit(rootPath)
+  return matches
 }
 
 function runProcess(command, args, { input } = {}) {

@@ -283,11 +283,18 @@ where
         });
         workers.spawn(async move {
             while let Some((session_id,terminal)) = finished_rx.recv().await {
-                let jobs = finish_bridge.settle_foreground(&session_id, terminal.is_err()).await?;
+                let snapshot = finish_bridge.settle_foreground(&session_id, terminal.is_err()).await?;
+                let jobs = snapshot.pointer("/projection/backgroundJobs").and_then(Value::as_array)
+                    .context("ZCode background state unavailable")?;
                 let (messages,reply,cancel_tasks) = {
                     let mut sessions = finish_bridge.sessions.lock().await;
                     let session = sessions.get_mut(&session_id).context("ZCode finishing Session missing")?;
-                    let messages = session.events.finish(&session_id,&jobs)?;
+                    let mut messages = Vec::new();
+                    if session.events.input_id().is_some()
+                        && let Some(context) = native_context_update(&session_id, &snapshot) {
+                        messages.push(context);
+                    }
+                    messages.extend(session.events.finish(&session_id,jobs)?);
                     let cancel_tasks = if session.cancelled {
                         session.events.background_tasks_for_input(session.cancel_input.as_deref())
                     } else { Vec::new() };
@@ -782,19 +789,19 @@ impl Bridge {
         Ok(())
     }
 
-    async fn settle_foreground(&self, session_id: &str, allow_failed: bool) -> Result<Vec<Value>> {
+    async fn settle_foreground(&self, session_id: &str, allow_failed: bool) -> Result<Value> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         loop {
             let snapshot = self
                 .call("session/read", json!({"sessionId":session_id}))
                 .await?;
-            let jobs = snapshot
+            snapshot
                 .pointer("/projection/backgroundJobs")
                 .and_then(Value::as_array)
                 .context("ZCode background state unavailable")?;
             let quiescent = foreground_quiescent(&snapshot, allow_failed);
             if quiescent {
-                return Ok(jobs.clone());
+                return Ok(snapshot);
             }
             if tokio::time::Instant::now() >= deadline {
                 bail!("ZCode foreground Tool or permission did not settle");
@@ -948,6 +955,31 @@ impl Bridge {
     }
 }
 
+// Read the native root Session's own observation from the existing terminal
+// snapshot. Its runtime contextUsage owns occupancy/window pairing, including
+// native compaction; turn Usage and projection.totalTokenCount are not Context.
+// Keep only numeric fields and native revision identities on the Core channel.
+fn native_context_update(session_id: &str, snapshot: &Value) -> Option<Value> {
+    if snapshot.pointer("/session/sessionId")?.as_str()? != session_id {
+        return None;
+    }
+    let runtime = snapshot.get("runtime")?;
+    let seq = runtime.get("eventSeq")?.as_u64()?;
+    let revision = runtime.get("stateRevision")?.as_u64()?;
+    let context = runtime.get("contextUsage")?;
+    let used = context.get("used")?.as_i64()?;
+    let size = context.get("size")?.as_i64()?;
+    if used < 0 || size <= 0 || used > 9_007_199_254_740_991 || size > 9_007_199_254_740_991 {
+        return None;
+    }
+    Some(
+        json!({"method":"session/update","params":{"sessionId":session_id,"update":{
+            "sessionUpdate":"usage_update","used":used,"size":size,
+            "_meta":{"zcodeContext":{"eventSeq":seq,"stateRevision":revision}}
+        }}}),
+    )
+}
+
 // A provider failure leaves the native projection in error, not idle. It can
 // settle only a failed/cancelled path; successful Final retains the idle gate.
 fn foreground_quiescent(snapshot: &Value, allow_failed: bool) -> bool {
@@ -1072,6 +1104,42 @@ mod tests {
     // facade before Core receives the provider failure. No process, disk or DB.
     #[tokio::test]
     async fn provider_failure_reaches_core_without_poisoning_the_host() {
+        let context_snapshot = json!({"session":{"sessionId":"s1"},"runtime":{
+            "eventSeq":9,"stateRevision":4,"contextUsage":{"used":450,"size":1000,"breakdown":"PRIVATE_TEST_KEY"}},
+            "projection":{"totalTokenCount":99999}});
+        let context = native_context_update("s1", &context_snapshot).unwrap();
+        assert!(!context.to_string().contains("PRIVATE_TEST_KEY"));
+        let parsed = crate::monitoring::parse_acp_usage_message(
+            crate::agent_profile::AdapterKind::ZcodeApp,
+            None,
+            "session/update",
+            &context["params"],
+        );
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].fields.context_used_tokens, Some(450));
+        assert_eq!(parsed[0].fields.context_size_tokens, Some(1000));
+        assert_eq!(parsed[0].fields.input_tokens, None);
+        assert!(native_context_update("old-session", &context_snapshot).is_none());
+        for (path, value) in [
+            ("/runtime/contextUsage/used", json!(-1)),
+            ("/runtime/contextUsage/used", json!("450")),
+            ("/runtime/contextUsage/size", json!(0)),
+            ("/runtime/contextUsage/size", json!(null)),
+            ("/runtime/eventSeq", json!(-1)),
+        ] {
+            let mut invalid = context_snapshot.clone();
+            *invalid.pointer_mut(path).unwrap() = value;
+            assert!(native_context_update("s1", &invalid).is_none());
+        }
+        let mut compacted = context_snapshot.clone();
+        compacted["runtime"]["stateRevision"] = json!(5);
+        compacted["runtime"]["contextUsage"]["used"] = json!(100);
+        let decreased = native_context_update("s1", &compacted).unwrap();
+        assert_eq!(decreased["params"]["update"]["used"], 100);
+        assert_ne!(
+            decreased["params"]["update"]["_meta"],
+            context["params"]["update"]["_meta"]
+        );
         let snapshot = json!({"projection":{"status":"error","activeToolCalls":[],"pendingPermissions":[]},
             "runtime":{"pendingRequestIds":[]}});
         assert!(foreground_quiescent(&snapshot, true));
@@ -1134,8 +1202,11 @@ mod tests {
                         }})).await.unwrap();
                         json!({"status":"accepted","result":{"inputId":input}})
                     }
-                    "session/read" => json!({"projection":{"status":"error","backgroundJobs":[],
-                        "activeToolCalls":[],"pendingPermissions":[]},"runtime":{"pendingRequestIds":[]}}),
+                    "session/read" => {
+                        json!({"session":{"sessionId":"s1"},"projection":{"status":"error","backgroundJobs":[],
+                        "activeToolCalls":[],"pendingPermissions":[]},"runtime":{"pendingRequestIds":[],
+                        "eventSeq":2,"stateRevision":4,"contextUsage":{"used":450,"size":1000,"breakdown":"PRIVATE_TEST_KEY"}}})
+                    }
                     "workspace/readState" | "session/setMode" => json!({}),
                     method => panic!("unexpected native method {method}"),
                 };
@@ -1155,6 +1226,7 @@ mod tests {
         let mut reader = BufReader::new(read);
         let writer: Mutex<Writer> = Mutex::new(Box::new(write));
         let mut frame = Vec::new();
+        let mut observed_context = false;
         for (id, method, params) in [
             (1, "session/new", json!({"cwd":"/fixture"})),
             (
@@ -1174,6 +1246,12 @@ mod tests {
                         .unwrap()
                         .expect("provider failure must reach Core before any transport close");
                     assert!(!message.to_string().contains("PRIVATE_TEST_KEY"));
+                    if message["params"]["update"]["_meta"]
+                        .get("zcodeContext")
+                        .is_some()
+                    {
+                        observed_context = true;
+                    }
                     if message["id"] == id {
                         break message;
                     }
@@ -1182,6 +1260,10 @@ mod tests {
             .await
             .unwrap();
             if id == 2 {
+                assert!(
+                    observed_context,
+                    "native Context must precede the prompt terminal"
+                );
                 assert!(
                     response["error"]["message"]
                         .as_str()

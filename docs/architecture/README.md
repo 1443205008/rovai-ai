@@ -1,7 +1,7 @@
 ---
 document_type: architecture-index
 authority: long-lived-architecture-routing
-last_updated: 2026-09-24
+last_updated: 2026-10-03
 ---
 
 # 长期系统架构
@@ -35,14 +35,14 @@ last_updated: 2026-09-24
 | [钉钉渠道](dingtalk-channel.md) | Renderer 可管理 Provider、Main 接口扫码/SSO/Web Session/Console API/Stream、独立队员应用机器人、Owner-only 私聊/群聊、多 App durable inbound aggregate、provider-neutral admission、群 roster、Quick Chat、三入口状态卡、更新/撤回双身份、排队卡与 Robot recall、共享 LAN 执行台、永久 Markdown 摘要、安全诊断、能力 gate、共享 credential/Session 持久化与 Main secret/Core Outbox 边界 |
 | [持久 Gather Barrier（已退役）](durable-gather-barrier.md) | 冻结历史 Gather 的只读解释；当前多人协作使用普通多目标消息，不存在 Barrier/completion |
 | [Runtime Catalog Boundaries](runtime-catalog-boundaries.md) | 可执行 Product Runtime Catalog、机器 Availability 与 Renderer-only Settings Preview 的权威分层、准入和晋升边界 |
-| [Runtime Monitoring](runtime-monitoring.md) | 五表 clean-break Usage metering、内存 parser/buffer、短 Flush、稀疏 Rollup、单 Snapshot 与 Renderer 边界 |
+| [Runtime Monitoring](runtime-monitoring.md) | 五表 clean-break Usage metering、执行台独立 Session 上下文、内存 parser/buffer、短 Flush、稀疏 Rollup 与 Renderer 边界 |
 | [Native Session Bootstrap Redelivery](native-session-bootstrap-redelivery.md) | compaction detector、Session Observer、Bootstrap/Member Identity 重投递、Redelivery v2、Dynamic Context 与 accepted-input 水位 |
 | [Notification Episode](notification-episodes.md) | 消息关联的整轮完成、Mission/Task 状态来源、Occurrence/Disposition/Episode/Journal 原子投影与精确确认 |
 | [Online Memory Capture](online-memory-capture.md) | best-effort Skill discovery、complete exact-Scope View、copyable target、active body aggregate quota、durable rejection、Agent Memory Facade、原子 Supersession、隔离 Hearth Review、formal publication、clean break 与 Forget 闭包 |
 | [Planned Shutdown](planned-shutdown.md) | Core execution/terminal 双准入、durable shutdown cycle、退出时 AgentRun 全量取消、Scheduler/maintenance 共同监督、分层 deadline、route reap 与 Desktop-local Composer/child-exit 边界 |
 | [Public Camp Message、Delivery 与 AgentRun](public-a2a-message-delivery.md) | 公共消息、per-target waiting Delivery、claim 时创建多输入 Run、实时可见性、精确 Stop、隔离与 Channel/Automation 复用 |
-| [Camp Activation Lifecycle](camp-activation-lifecycle.md) | 一键 Pending 瞬态表面、Renderer-local 首条输入、首消息原子激活与空 Pending 清理的组件权威 |
-| [Public Camp Composer](camp-composer-draft.md) | Desktop-local Active Camp snapshot、一次发送快照、失败保留、continuation、附件 authority 和无 Core Draft/Pending 的当前边界 |
+| [Camp Activation Lifecycle](camp-activation-lifecycle.md) | 一键 Pending 本机草稿、客户端 presence 导航与清理保护、首消息原子激活的组件权威 |
+| [Public Camp Composer](camp-composer-draft.md) | 按 Thread 本机保存的 Active/普通 Pending snapshot、一次发送快照、失败保留、continuation 与附件 authority |
 | [Camp Open Read Path](camp-open-read-path.md) | Desktop 两阶段冷启动壳层、enter/reconcile、不读 event_log 的业务 open projection、渐进消息、当前会话精确查找/anchored 定位、Run detail、high-water/cache 与 meaningful-paint 后台维护边界 |
 | [Camp Attachments：原路径引用、默认输出与旧记录兼容](camp-published-attachment-view.md) | 用户与 Agent Source Refs、默认输出位置、实际路径呈现、Camp 自有目录删除及历史 Managed/Authority/View 兼容边界 |
 | [Camp 永久删除](camp-deletion.md) | 全 Runtime 状态异步受理、Camp Deletion Intent、准入 fence、Camp→cleanup journal 阶段交接、崩溃恢复与最小外部状态 |
