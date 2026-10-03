@@ -14,7 +14,7 @@ TRAE used/window 五项。沿用同一隔离开发包与 15 成员 Thread，Curs
 
 | Runtime | 找到的来源 | 处理及限制 |
 | --- | --- | --- |
-| Antigravity 1.2.14 / Google Gemini 3.7 Flash Medium | 原生 conversations SQLite 中的 `CortexStepMetadata.model_usage` 与同调用 generator 的 `context_window_metadata` | 已补接四项及 Context；只读当前根 step，逐调用交叉核对 stream 计数和 Session/trajectory/execution/model，不加 Session 累计 result |
+| Antigravity 1.2.16 / Google Gemini 3.7 Flash Medium | 原生 conversations SQLite 中的 `CortexStepMetadata.model_usage` 与同调用 generator 的 `context_window_metadata` | 已补接四项及 Context；只读当前根 step，逐调用交叉核对 stream 计数和 Session/trajectory/execution/model，不加 Session 累计 result |
 | Qoder / custom sub2api gpt-6.1-sol | 根 journal `message.usage.input_tokens/context_usage_ratio`，有效 settings 的精确 provider/model `contextWindow=1050000` | used 与窗口均来自独立原生数值，比例仅校验配对；不从比例反推数量。仅有比例或配置不一致仍是合法未知状态 |
 | Kiro 2.21.1 / minimax-m2.5 | `_kiro.dev/metadata.contextUsagePercentage`，准确绑定 Session JSON 的 `rts_model_state.model_info.context_window_tokens=196000` | 已补接窗口，保留原生比例；独立 used 与 Run token 计数仍未找到，不能用比例乘窗口填数 |
 | TRAE CLI CN 0.120.52 / GLM-5.3 | 原生 `/context` calibrated used；最近根调用 prompt_tokens；原生 `models --json` 的 context_window=168000 | 原生界面对照证明 used 是最近 prompt，不含 response；已补接。窗口按当前精确模型只读，不硬编码 |
@@ -49,9 +49,15 @@ TRAE 原生长回答对照：
 查询失败仍执行用户任务，窗口保持未知。
 
 Kiro 补做健康原生调用后查询 `/stats`、`/context` 和 verbose context：stats 中 token 字段为 null，
-Context 只有比例和模型；原生 Session 文件可提供窗口但没有独立 used。
-官方 [ACP 说明](https://kiro.dev/docs/cli/acp/)不能替代本次实际字段证据；
+原生 Session 文件可提供窗口。**同日复核勘误：**此前据脱敏结果判断「Context 只有比例和模型」
+有误，旧探针漏掉了 `breakdown` 的分类数值；新健康样本确认分类 token 合计与原生总体比例不同，
+尚不能作为 used。旧 fixture 的 `usedAndTokensStatus: raw_absent` 不能再用于判断所有 Context
+数量候选均不存在，见[原始数值与勘误](kiro-and-field-audit-2026-10-03.md)。
+官方 [ACP 说明](https://kiro.dev/docs/cli/acp/)不能替代实际字段证据；
 本结论也不扩展成 Kiro 所有 Provider 永远没有计数。
+
+同日来源标注勘误：上表 Antigravity 版本由早期探针的 1.2.14 更正为该次实际 App Run 的 1.2.16；
+原 fixture 与数据库的版本字段已经是 1.2.16，数值不变。
 
 ## 实际 App 对照
 

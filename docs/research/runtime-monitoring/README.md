@@ -14,7 +14,9 @@ baseline_ref: "4b4fe088b15ef785cd76f54f221e5d87c9d639a4"
 
 当前执行台的取数范围、隐藏暂停、引用复用与迟到刷新收口见[执行指标读取验收](execution-metrics-refresh-verification-2026-10-01.md)。
 
-2026-10-03 追加[五类原生来源补查](native-source-completion-2026-10-03.md)：Antigravity 四项与 Context、Qoder 数量、TRAE Context、Kiro 窗口补接；CodeBuddy 当前模型窗口及 Kiro 精确 used/Token 仍未取得。
+2026-10-03 最新[空值与 Kiro used 复核](kiro-and-field-audit-2026-10-03.md)：更正旧探针遗漏 `breakdown` 的结论；Kiro 分类 token 估算与总体比例不一致，不能作为 used。复核 15 类实际 Renderer 与 26 次根调用，列出剩余字段及模型/版本标注勘误。
+
+同日[五类原生来源补查](native-source-completion-2026-10-03.md)：Antigravity 四项与 Context、Qoder 数量、TRAE Context、Kiro 窗口补接；CodeBuddy 当前模型窗口及 Kiro 精确 used/Token 仍未取得。
 
 此前[遗漏字段修复核验](missing-fields-verification-2026-10-03.md)：DSH 总量、ZCode Context 补接；
 Run 总量 13/15、上下文比例 12/15，全矩阵未完整通过。[同会话验收](all-runtime-app-verification-2026-10-03.md)
