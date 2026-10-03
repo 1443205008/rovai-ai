@@ -1331,22 +1331,7 @@ export function campConversationTimeline(
       createdAt: (receipt.sourceAgentRunId ? runById.get(receipt.sourceAgentRunId)?.endedAt : null) ?? receipt.createdAt,
       receipt
     }))
-  const runsWithArtifacts = new Set([
-    ...agentRunFileChanges.map((changes) => changes.agentRunId),
-    ...runImageCards.flatMap((item) => item.kind === 'run_images' ? [item.images.agentRunId] : []),
-    ...joinedCards.flatMap((item) => item.kind === 'member_joined' && item.receipt.sourceAgentRunId
-      ? [item.receipt.sourceAgentRunId] : [])
-  ])
-  // A stopped Run remains identifiable even if it produced no public reply or artifacts.
-  const emptyInterruptedOutputs: ThreadConversationTimelineItem[] = agentRuns
-    .filter((run) => isUserInterruptedRun(run)
-      && !publicAgentMessageRunIds.has(run.id) && !runsWithArtifacts.has(run.id))
-    .map((run) => ({
-      kind: 'run_artifacts', id: `run-artifacts:${run.id}`,
-      createdAt: run.endedAt ?? run.cancelRequestedAt ?? run.createdAt,
-      run, imageGroups: [], memberCreations: [], fileChanges: []
-    }))
-  const sortedCards = [...taskCards, ...stopEvents, ...runImageCards, ...runFileChangeCards, ...joinedCards, ...emptyInterruptedOutputs]
+  const sortedCards = [...taskCards, ...stopEvents, ...runImageCards, ...runFileChangeCards, ...joinedCards]
     .sort(compareTimelinePresentationOrder)
   const sortedItems: ThreadConversationTimelineItem[] = []
   let messageIndex = 0

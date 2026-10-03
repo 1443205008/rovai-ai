@@ -197,14 +197,15 @@ describe('Manual Run interruption in the conversation', () => {
       .toBeLessThan(markup.indexOf('data-interrupted-run-id'))
   })
 
-  it('retains identity and chronological position when stopping before any public output', () => {
+  it.each([false, true])('does not create an output row when stopping without a reply or artifacts, with history = %s', hasHistory => {
     const candidate = snapshot([stopped()], false, false)
-    candidate.messages = [{ ...publicMessage(candidate.agentRuns[0]), id: 'later-user', sequence: 1,
+    if (hasHistory) candidate.messages = [{ ...publicMessage(candidate.agentRuns[0]), id: 'later-user', sequence: 1,
       authorType: 'user', authorId: 'local-user', sourceAgentRunId: null, createdAt: '2026-09-06T06:02:00Z' }]
+    expect(timeline(candidate).map(item => item.id)).toEqual(hasHistory ? ['later-user'] : [])
     const markup = renderTimeline(candidate)
-    expect(markers(markup)).toEqual(['run-1'])
-    expect(markup).toContain('<strong>奥黛丽</strong>')
-    expect(markup.indexOf('data-interrupted-run-id')).toBeLessThan(markup.indexOf('data-message-id="later-user"'))
+    expect(markers(markup)).toEqual([])
+    expect(avatars(markup)).toBe(0)
+    expect(markup).not.toContain('run-artifact-output')
     expect(markup).not.toContain('run-file-changes-card')
     expect(markup).not.toContain('agent-message-output-actions')
   })
