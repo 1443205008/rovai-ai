@@ -1,7 +1,7 @@
 ---
 document_type: architecture-index
 authority: long-lived-architecture-routing
-last_updated: 2026-09-24
+last_updated: 2026-10-03
 ---
 
 # 长期系统架构
@@ -41,8 +41,8 @@ last_updated: 2026-09-24
 | [Online Memory Capture](online-memory-capture.md) | best-effort Skill discovery、complete exact-Scope View、copyable target、active body aggregate quota、durable rejection、Agent Memory Facade、原子 Supersession、隔离 Hearth Review、formal publication、clean break 与 Forget 闭包 |
 | [Planned Shutdown](planned-shutdown.md) | Core execution/terminal 双准入、durable shutdown cycle、退出时 AgentRun 全量取消、Scheduler/maintenance 共同监督、分层 deadline、route reap 与 Desktop-local Composer/child-exit 边界 |
 | [Public Camp Message、Delivery 与 AgentRun](public-a2a-message-delivery.md) | 公共消息、per-target waiting Delivery、claim 时创建多输入 Run、实时可见性、精确 Stop、隔离与 Channel/Automation 复用 |
-| [Camp Activation Lifecycle](camp-activation-lifecycle.md) | 一键 Pending 瞬态表面、Renderer-local 首条输入、首消息原子激活与空 Pending 清理的组件权威 |
-| [Public Camp Composer](camp-composer-draft.md) | Desktop-local Active Camp snapshot、一次发送快照、失败保留、continuation、附件 authority 和无 Core Draft/Pending 的当前边界 |
+| [Camp Activation Lifecycle](camp-activation-lifecycle.md) | 一键 Pending 本机草稿、客户端 presence 导航与清理保护、首消息原子激活的组件权威 |
+| [Public Camp Composer](camp-composer-draft.md) | 按 Thread 本机保存的 Active/普通 Pending snapshot、一次发送快照、失败保留、continuation 与附件 authority |
 | [Camp Open Read Path](camp-open-read-path.md) | Desktop 两阶段冷启动壳层、enter/reconcile、不读 event_log 的业务 open projection、渐进消息、当前会话精确查找/anchored 定位、Run detail、high-water/cache 与 meaningful-paint 后台维护边界 |
 | [Camp Attachments：原路径引用、默认输出与旧记录兼容](camp-published-attachment-view.md) | 用户与 Agent Source Refs、默认输出位置、实际路径呈现、Camp 自有目录删除及历史 Managed/Authority/View 兼容边界 |
 | [Camp 永久删除](camp-deletion.md) | 全 Runtime 状态异步受理、Camp Deletion Intent、准入 fence、Camp→cleanup journal 阶段交接、崩溃恢复与最小外部状态 |

@@ -288,6 +288,7 @@ const allowedMethods = new Set<CoreMethod>([
   'missions.linkPr',
   'threads.create',
   'threads.discardPending',
+  'threads.pendingDraft.setPresence',
   'threads.rename',
   'threads.members.fast.check',
   'threads.members.fast.set',

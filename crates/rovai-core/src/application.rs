@@ -9900,6 +9900,27 @@ impl Core {
                 }
                 Ok(serde_json::to_value(execution.result)?)
             }
+            "camps.pendingDraft.setPresence" => {
+                let params: rovai_core::pending_thread_draft::SetPendingDraftPresence =
+                    serde_json::from_value(request.params.clone())?;
+                let mut database = self.database.lock().await;
+                let changed = rovai_core::pending_thread_draft::set_presence(
+                    &mut database,
+                    &request.client,
+                    &params,
+                )?;
+                let group_key = navigation_group_key(&database, params.thread_id.as_str())?;
+                drop(database);
+                if changed {
+                    emit_navigation_group_invalidated(
+                        &self.output,
+                        "camps.pendingDraft.setPresence",
+                        Some(params.thread_id.as_str()),
+                        group_key.as_deref(),
+                    );
+                }
+                Ok(json!({ "changed": changed }))
+            }
             "camps.discardPending" => {
                 let params: UserCommandParams<DiscardPendingThreadCommand> =
                     serde_json::from_value(request.params.clone())?;
