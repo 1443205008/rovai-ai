@@ -702,3 +702,11 @@ User 于 2026-10-03 明确豁免本次真实任务 Gate；其余本地检查、�
 `pnpm build:desktop`、`pnpm test:member-creation`（2 个隔离 Electron 场景）及三项通用文档门禁。
 全量第二轮曾遇到既有 Lark 附件流用例等待超时；该文件独立 81 项及随后完整套件均通过，未改该用例或渠道代码。
 界面夹具使用内存服务替身，Core 持久化/清理由 SQLite 测试独立验证；未安装或重启日常 App，未运行真实模型。
+
+### 2026-10-04 Context 运行中可用性
+
+按用户确认的 [Execution Metrics v7](../../contracts/runtime-execution-metrics-v7.md) 移除输入 accepted
+等待与延后 Context 缓冲；有效实际模型/配置下复用窗口，三个字段独立可用，原生 Run 用量结算不变。
+ZCode 根调用结束/压缩触发合并读取，Pi/Antigravity 保留独立字段；界面仅时间刷新复用旧对象。
+实现与 App 证据由[本轮验收](../../research/runtime-monitoring/live-context-usability-2026-10-04.md)拥有。
+继续 PR Review，本轮不自动合并或替换日常 App/数据库。

@@ -1484,8 +1484,8 @@ fn claude_context_observation(
     if message_id.is_empty() || model.is_empty() {
         return None;
     }
-    // Each root call owns its input buckets. A missing window must not hide
-    // valid occupancy, and an earlier call/result must not supply its window.
+    // Each root call owns its input buckets. The latest Session projection
+    // independently resolves capacity against this actual model identity.
     let used = [
         "input_tokens",
         "cache_read_input_tokens",
@@ -1495,7 +1495,7 @@ fn claude_context_observation(
     .try_fold(0i64, |total, key| {
         total.checked_add(state.call_usage.get(key)?.as_i64()?)
     })?;
-    if used > 9_007_199_254_740_991 || window.is_some_and(|window| used > window) {
+    if used > 9_007_199_254_740_991 {
         return None;
     }
     Some(ClaudeCodeRuntimeEvent {
@@ -1552,12 +1552,18 @@ fn normalize_claude_runtime_events(
         && let Some(model) = &state.native_message_model
     {
         validate_claude_stream_session(event, expected_session_id)?;
+        crate::monitoring::context_acceptance_trace(|| {
+            serde_json::json!({
+                "kind":"claude_native_final", "sessionId":expected_session_id,
+                "receivedAt":chrono::Utc::now().to_rfc3339()
+            })
+        });
         let window = event
             .get("modelUsage")
             .and_then(|v| v.get(model))
             .and_then(|v| v.get("contextWindow"))
             .and_then(Value::as_i64)
-            .filter(|n| *n > 0 && *n <= 9_007_199_254_740_991);
+            .filter(|n| *n >= 0 && *n <= 9_007_199_254_740_991);
         // Match Claude's native input-only context percentage, never the
         // result's aggregate Usage or output from all tool rounds.
         if let Some(context) = claude_context_observation(state, expected_session_id, window) {
