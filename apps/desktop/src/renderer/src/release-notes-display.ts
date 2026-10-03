@@ -1,5 +1,5 @@
 import type { AppUpdateRelease, InterfaceLanguage } from '@contracts'
-import { selectReleaseNotesLanguage } from '../../shared/release-notes-localization'
+import { hasReleaseNotesContent, selectReleaseNotesLanguage } from '../../shared/release-notes-localization'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
@@ -8,10 +8,7 @@ function normalizedTitle(value: string): string {
   return value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase()
 }
 
-/** 先选择界面语言，再移除冗余首标题；不改写发布元数据。 */
-export function displayReleaseNotes(release: AppUpdateRelease, language: InterfaceLanguage): string | null {
-  if (!release.releaseNotes) return null
-  const source = selectReleaseNotesLanguage(release.releaseNotes, language)
+function removeReleaseTitle(source: string, release: AppUpdateRelease): string {
   const first = unified().use(remarkParse).use(remarkGfm, { singleTilde: false }).parse(source).children
     .find((node) => node.type !== 'definition' && node.type !== 'footnoteDefinition')
   if (first?.type !== 'heading' || first.depth !== 1 || !first.position) return source
@@ -30,4 +27,13 @@ export function displayReleaseNotes(release: AppUpdateRelease, language: Interfa
 
   return source.slice(0, first.position.start.offset)
     + source.slice(first.position.end.offset).replace(/^(?:\r?\n)+/u, '')
+}
+
+/** 只选择标题清理后仍有正文的语言副本；不改写发布元数据。 */
+export function displayReleaseNotes(release: AppUpdateRelease, language: InterfaceLanguage): string | null {
+  if (!release.releaseNotes) return null
+  const source = selectReleaseNotesLanguage(release.releaseNotes, language,
+    (candidate) => hasReleaseNotesContent(removeReleaseTitle(candidate, release)))
+  const displayed = removeReleaseTitle(source, release)
+  return hasReleaseNotesContent(displayed) ? displayed : null
 }

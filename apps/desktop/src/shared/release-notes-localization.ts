@@ -31,13 +31,23 @@ function collectDefinitions(node: Root | RootContent, definitions: RootContent[]
   }
 }
 
+function hasInlineLanguageMarker(node: RootContent): boolean {
+  // 引用、列表和脚注中的标记仍是示例；代码和普通注释没有需要遍历的子节点。
+  if (node.type === 'blockquote' || node.type === 'list' || node.type === 'footnoteDefinition') return false
+  if (node.type === 'html') return /^<!--\s*lang\b/iu.test(node.value.trim())
+  return 'children' in node && node.children.some(hasInlineLanguageMarker)
+}
+
 /** 只识别顶层独立注释；代码、引用、列表及 HTML 块内的示例不作为分段。 */
 export function parseReleaseNotesLanguages(source: string): LocalizedReleaseNotes | null {
   const markers: Array<{ language: string; start: number; end: number }> = []
   const languages = new Set<string>()
   const tree = parser.parse(source)
   for (const node of tree.children) {
-    if (node.type !== 'html') continue
+    if (node.type !== 'html') {
+      if (hasInlineLanguageMarker(node)) return null
+      continue
+    }
     const marker = LANGUAGE_MARKER.exec(node.value.trim())
     if (!marker) {
       if (/^<!--\s*lang\b/iu.test(node.value.trim())
@@ -82,10 +92,22 @@ export function hasReleaseNotesContent(content: string, definitions = ''): boole
 }
 
 /** 匹配语言优先，其次同语种、英文、首个非空版本；公共前言始终保留。 */
-export function selectReleaseNotesLanguage(source: string, language: string): string {
+export function selectReleaseNotesLanguage(
+  source: string,
+  language: string,
+  hasDisplayContent?: (source: string) => boolean
+): string {
   const parsed = parseReleaseNotesLanguages(source)
   if (!parsed) return source
-  const sections = parsed.sections.filter((section) => hasReleaseNotesContent(section.content, parsed.definitions))
+  const displaySource = (content: string): string => {
+    const displayed = parsed.preamble + content
+    // 文档级定义先于选中段，保留原始 first-wins 语义及完整多段脚注。
+    return parsed.definitions ? `${parsed.definitions}\n${displayed}` : displayed
+  }
+  const sections = parsed.sections.filter((section) =>
+    hasReleaseNotesContent(section.content, parsed.definitions)
+    // 展示层按标题清理后的完整副本判空，跳过空候选并继续既有回退。
+    && (!hasDisplayContent || hasDisplayContent(displaySource(section.content))))
   const normalized = language.toLowerCase()
   const primary = normalized.split('-')[0]
   const selected = sections.find((section) => section.language === normalized)
@@ -95,7 +117,5 @@ export function selectReleaseNotesLanguage(source: string, language: string): st
     ?? sections.find((section) => section.language.startsWith('en-'))
     ?? sections[0]
   if (!selected) return source
-  const displayed = parsed.preamble + selected.content
-  // 文档级定义先于选中段，保留原始 first-wins 语义及完整多段脚注。
-  return parsed.definitions ? `${parsed.definitions}\n${displayed}` : displayed
+  return displaySource(selected.content)
 }

@@ -83,10 +83,24 @@ app.whenReady().then(async () => {
       assert.equal(await run("document.querySelectorAll('[data-markdown-heading^=\"Rovai AI v\"]').length"), 0)
     }
     assert.deepEqual(await run('window.releaseNotesTest.requests'), [])
+    const mixed = '# Rovai AI v0.0.3\n\n<!-- lang:en -->\n\nEnglish notes\n\n说明文字 <!-- lang:fr -->\nContenu français.\n\n<!-- lang:zh-CN -->\n\n中文说明'
+    await run(`window.releaseNotesTest.notes(${JSON.stringify(mixed)})`)
+    await run("window.releaseNotesTest.language('en')"); await settle()
+    const mixedNotes = await visibleNotes()
+    for (const text of ['English notes', 'Contenu français.', '中文说明']) assert.ok(mixedNotes.text.includes(text), JSON.stringify(mixedNotes))
+    const titleOnly = '<!-- lang:en -->\n\nEnglish title-cleanup fallback\n\n<!-- lang:zh-CN -->\n\n# Rovai AI v0.0.3\n'
+    await run(`window.releaseNotesTest.notes(${JSON.stringify(titleOnly)})`)
+    await run("window.releaseNotesTest.language('zh-CN')"); await settle()
+    assert.ok((await visibleNotes()).text.includes('English title-cleanup fallback'))
+    await run(`window.releaseNotesTest.notes(${JSON.stringify('# Rovai AI v0.0.3\n\n[docs]: https://example.com/guide')})`); await settle()
+    assert.equal(await run("document.querySelector('#about-release-panel-available .about-release-notes') === null"), true)
+    assert.ok(await run("document.querySelector('#about-release-panel-available .about-release-empty').textContent.includes('此版本没有提供更新日志')"))
+    assert.equal(await run("document.querySelector('[data-app-update-release-tab=available]').getAttribute('aria-selected')"), 'true')
+    assert.deepEqual(await run('window.releaseNotesTest.requests'), [])
     await run(`window.releaseNotesTest.notes(${JSON.stringify('<!-- lang:en -->\n\n<script>alert(1)</script>\n\n[unsafe](javascript:alert(1)) ![pixel](https://example.com/pixel.png)\n\n<!-- lang:zh-CN -->\n\n安全正文')})`)
     await settle()
     assert.equal(await run("document.querySelectorAll('.about-release-notes script, .about-release-notes img, .about-release-notes a[href^=\"javascript:\"]').length"), 0)
-    process.stdout.write(JSON.stringify({ ok: true, verified: ['即时语言切换', '两个日志版本', 'tab 选择保留', '原始快照保留', '零更新请求', '历史与单语回退', '引用链接保留', '七项 Markdown 边界', '安全 Markdown', '日夜主题及紧凑缩放'] }) + '\n')
+    process.stdout.write(JSON.stringify({ ok: true, verified: ['即时语言切换', '两个日志版本', 'tab 选择保留', '原始快照保留', '零更新请求', '历史与单语回退', '引用链接保留', '七项 Markdown 边界', '行内异常标记全文回退', '标题清理后语言回退', '无可见正文空态', '安全 Markdown', '日夜主题及紧凑缩放'] }) + '\n')
     app.exit(0)
   } catch (error) {
     console.error(error)

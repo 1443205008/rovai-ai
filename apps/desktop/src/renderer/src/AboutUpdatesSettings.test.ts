@@ -284,6 +284,43 @@ describe('AboutUpdatesSettingsView', () => {
   })
 
   it.each([
+    '# Rovai AI v0.0.3',
+    'Rovai AI v0.0.3\n===',
+    '# v0.0.3\n\n<!-- Coming soon -->',
+    '# Rovai AI 0.0.3\n\n> <!-- Coming soon -->'
+  ])('匹配语言去除版本标题后无正文时展示英文回退：%s', (title) => {
+    const source = `<!-- lang:en -->\n\nEnglish fallback\n\n<!-- lang:zh-CN -->\n\n${title}\n`
+    const value = { ...release, releaseNotes: source }
+    expect(displayReleaseNotes(value, 'zh-CN')).toContain('English fallback')
+    const markup = render(snapshot({ status: 'available', availableRelease: value }))
+    expect(markup).toContain('<p>English fallback</p>')
+    expect(markup).not.toContain('class="about-release-empty"')
+    expect(value.releaseNotes).toBe(source)
+  })
+
+  it('跳过多个仅版本标题的语言段，优先同语种且保留跨段引用定义', () => {
+    const source = '<!-- lang:zh-CN -->\n\n# Rovai AI v0.0.3\n\n[docs]: https://example.com/guide\n\n<!-- lang:zh -->\n\n# v0.0.3\n\n<!-- lang:zh-TW -->\n\n閱讀[指南][docs]。\n\n<!-- lang:en -->\n\nEnglish fallback'
+    const value = { ...release, releaseNotes: source }
+    const markup = render(snapshot({ status: 'available', availableRelease: value }))
+    expect(markup).toContain('閱讀')
+    expect(markup).toContain('href="https://example.com/guide"')
+    expect(markup).not.toContain('English fallback')
+  })
+
+  it('英文段去除版本标题后无正文时回退到首个可用语言', () => {
+    const source = '<!-- lang:en -->\n\n# Rovai AI v0.0.3\n\n<!-- lang:zh-CN -->\n\n中文回退'
+    expect(displayReleaseNotes({ ...release, releaseNotes: source }, 'en')).toContain('中文回退')
+  })
+
+  it.each(['# Rovai AI v0.0.3\n', ' \n\t', '# Rovai AI v0.0.3\n\n[docs]: https://example.com/guide'])
+  ('最终没有可见正文时显示明确空态：%s', (source) => {
+    const value = { ...release, releaseNotes: source }
+    expect(displayReleaseNotes(value, 'zh-CN')).toBeNull()
+    const markup = render(snapshot({ status: 'available', availableRelease: value }))
+    expect(markup).toContain('此版本没有提供更新日志')
+  })
+
+  it.each([
     '中文\n\n[docs]: https://example.com/guide',
     '中文\n\n> [docs]: https://example.com/guide',
     '中文\n\n- [docs]: https://example.com/guide'

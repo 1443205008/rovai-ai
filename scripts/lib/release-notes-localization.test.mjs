@@ -53,3 +53,16 @@ test('双语门禁仍拒绝版本漂移，并使用原有文档长度上限', ()
   assert.throws(() => validateBilingualReleaseNotesSource(NOTES, '0.0.4'), /must begin/)
   assert.throws(() => validateBilingualReleaseNotesSource(`${NOTES}${'x'.repeat(100_000)}`, VERSION), /exceeds/)
 })
+
+test('新发布拒绝中英文段之间混入的行内语言标记', () => {
+  for (const mixed of [
+    '说明文字 <!-- lang:fr -->\nContenu français.',
+    '说明文字 <!-- lang:zh_CN -->',
+    '# 说明文字 <!-- lang:fr -->',
+    '**说明文字 <!-- lang:fr -->**',
+    '| 内容 |\n| --- |\n| 说明文字 <!-- lang:fr --> |'
+  ]) {
+    const source = NOTES.replace('English\n', `English\n\n${mixed}\n`)
+    assert.throws(() => validateBilingualReleaseNotesSource(source, VERSION), /language markers/)
+  }
+})

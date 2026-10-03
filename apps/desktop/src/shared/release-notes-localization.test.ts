@@ -95,12 +95,29 @@ describe('Release Notes 语言选择', () => {
   })
 
   it.each([
+    '说明文字 <!-- lang:fr -->\nContenu français.',
+    '说明文字 <!-- lang:zh_CN -->',
+    '# 说明文字 <!-- lang:fr -->',
+    '**说明文字 <!-- lang:fr -->**',
+    '| 内容 |\n| --- |\n| 说明文字 <!-- lang:fr --> |'
+  ])('正文内混行语言注释使整份说明回退：%s', (mixed) => {
+    const source = `# Rovai AI v0.0.3\n\n<!-- lang:en -->\n\nEnglish\n\n${mixed}\n\n<!-- lang:zh-CN -->\n\n中文`
+    expect(parseReleaseNotesLanguages(source)).toBeNull()
+    expect(selectReleaseNotesLanguage(source, 'en')).toBe(source)
+    expect(selectReleaseNotesLanguage(source, 'zh-CN')).toBe(source)
+  })
+
+  it.each([
     '```md\n<!-- lang:zh-CN -->\n```',
     '~~~~md\n<!-- lang:zh-CN -->\n~~~~',
     '    <!-- lang:zh-CN -->',
     '> <!-- lang:zh-CN -->\n>\n> 引用示例',
+    '> 引用示例 <!-- lang:zh-CN -->',
     '- 示例\n\n  <!-- lang:zh-CN -->',
+    '- 列表示例 <!-- lang:zh-CN -->',
+    '脚注示例[^example]\n\n[^example]: 说明 <!-- lang:zh-CN -->',
     '这里的 `<!-- lang:zh-CN -->` 只是代码',
+    '普通注释 <!-- 示例：<!-- lang:zh-CN --> -->',
     '<!--\n示例：\n<!-- lang:zh-CN -->\n-->'
   ])('代码、引用、列表或普通注释中的标记不截断语言段：%s', (example) => {
     const source = `<!-- lang:en -->\n\nEnglish\n\n${example}\n\nEnd of English\n\n<!-- lang:zh-CN -->\n\n中文`
