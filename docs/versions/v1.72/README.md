@@ -6,7 +6,7 @@ authority: version-scope-and-status
 design_status: confirmed
 implementation_status: in_progress
 model_context_change: true
-last_updated: 2026-10-02
+last_updated: 2026-10-03
 ---
 
 # Rovai-ai v1.72：Lark 独立渠道
@@ -202,7 +202,7 @@ Desktop/Mobile、中文/英文共用生产组件。
 Run 产物作者头。入队卡与文件卡共用桌面/窄列宽度、缩进和间距；旧回执保持可读，不按队员或时间猜测来源。
 
 [Member Creation Flow v1](../../contracts/member-creation-flow-v1.md)拥有当前行为，
-[V1.72-D09](decisions.md#v1-72-d09)记录取舍；原 main 的 Migration 180 将 schema 129 升为 130；与已安装指标分支整合后，当前 Migration 181/182 分别交付 User 投影与队员创建，最终 schema 为 **132**。两条指标和 main 的已部署 128/129/130 来源只按完整结构与收据组合准入，原子收口且保留业务数据、既有收据时间和冻结证据。
+[V1.72-D09](decisions.md#v1-72-d09)记录取舍；原 main 的 Migration 180 将 schema 129 升为 130；与已安装指标分支整合后，当前 Migration 181/182 分别交付 User 投影与队员创建，该切片收口至 schema **132**；后续普通一键草稿修复由 Migration 183 升至 **133**。两条指标和 main 的已部署 128/129/130 来源只按完整结构与收据组合准入，原子收口且保留业务数据、既有收据时间和冻结证据。
 [实施验收](implementation-plan.md#2026-10-02-ai-优先添加队员)区分自动化与真实模型/实体手机边界。
 本切片不改变模型 Bootstrap、Tool Schema、上下文格式或发布 Skill。
 
@@ -225,3 +225,12 @@ Windows 主窗口默认关闭时询问，可选择最小化到系统托盘或正
 macOS/Web 不增加入口。托盘及第二次启动恢复原窗口，明确退出和更新重启继续现有受控退出。
 [Windows Window Close v1](../../contracts/windows-window-close-v1.md)拥有字段与状态规则；
 [实施验收](implementation-plan.md#2026-10-02-windows-关闭选择与托盘)记录自动化和真实 Windows 的证据边界。
+
+## 并行修复：恢复普通一键新对话草稿
+
+按 User 2026-10-03 的更正恢复问题出现前的交互：每次新建独立保存，同一项目可有多份草稿；非空输入进入侧栏，
+切换、刷新、重建窗口和普通重启可恢复，失败发送保留输入，清空或成功发送后移除草稿状态。
+内容沿用本机 store，Core 仅保留客户端 presence；Migration 183 将 schema 132 加性升级为 **133**。
+[Pending Camp Activation v4](../../contracts/pending-camp-activation-v4.md)、[Composer Draft v16](../../contracts/camp-composer-draft-v16.md)
+及对应 Architecture/UI/术语/导航已同步；理由见 [V1.72-D11](decisions.md#v1-72-d11)，证据见
+[实施记录](implementation-plan.md#2026-10-03-普通一键新对话草稿恢复)。无模型上下文、发布 Skill、Runtime 兼容轴或根 README 变化。

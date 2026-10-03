@@ -1518,7 +1518,12 @@ impl CollaborationService {
                 params![envelope.payload.camp_id, version, last_message_sequence],
                 |row| row.get(0),
             )?;
-            if meaningful_draft || has_domain_facts {
+            let local_draft_present: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pending_camp_draft_presence WHERE camp_id=?1)",
+                [&envelope.payload.camp_id],
+                |row| row.get(0),
+            )?;
+            if meaningful_draft || local_draft_present || has_domain_facts {
                 return Ok(CommandHandlerResult::rejected(
                     "camp.pending_not_empty",
                     json!({ "threadId": envelope.payload.camp_id }),
@@ -1560,6 +1565,7 @@ impl CollaborationService {
                 SELECT camp.id
                 FROM camp
                 WHERE camp.activation_state = 'pending'
+                  AND NOT EXISTS(SELECT 1 FROM pending_camp_draft_presence WHERE camp_id=camp.id)
                   AND camp.id IN (SELECT value FROM json_each(?1))
                   AND camp.version = 1
                   AND camp.last_message_sequence = 0

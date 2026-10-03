@@ -3,7 +3,7 @@ document_type: implementation-plan
 version: v1.72
 authority: version-implementation-and-acceptance
 status: in_progress
-last_updated: 2026-10-02
+last_updated: 2026-10-03
 ---
 
 # v1.72 实施与验收
@@ -668,3 +668,24 @@ NVDA、High Contrast 或安装升级的真人验收，未取得这些证据前�
 验证覆盖公开范围、来源计数、首条输入、状态、Unicode、分页、Single Chat policy 和冻结 Bootstrap/Skill 更新。
 实现与验证结果在[方案验证记录](model-context-change-thread-runs.md#实施验收记录)收口。
 User 于 2026-10-03 明确豁免本次真实任务 Gate；其余本地检查、独立复核与 CI 已通过，交付见 [PR #616](https://github.com/murray17/rovai-ai/pull/616)。
+
+## 2026-10-03 普通一键新对话草稿恢复
+
+- 回归来源：`ba545f799903d9de7a88e9b3ee03c745e3655614` 删除 public Core Draft 后，一键 Pending 首条输入只存 mounted Renderer；`ad47663f767d6dd9ab93e2c16f6f934650863dc0` 仅恢复 Active 本机草稿。两者在 PR #429 合入 main。
+- 实现：普通 Pending 复用按 Thread 的本机 snapshot；已认证客户端 presence 驱动 Core 导航并保护空壳清理。首次发送事务清理标记，接受响应落盘空快照。同项目无数量限制。AI 创建队员保留既有窗口内草稿合同。
+- 数据：Migration 183 / schema 133 从完整 schema 132 来源加性迁移；旧数据保留，DDL/marker/收据失败同事务回滚。不读取日常数据目录，不启动真实 Runtime。
+- 自动化：本机存储与保存失败重试单测；Core 两客户端导航、同项目多草稿、清空、删除、激活回滚与重启清理；隔离 Electron 生产组件验收切换/刷新/窗口重建、拒绝/接受首发、清空及日夜最小窗口，既有 AI 创建流程一并回归。
+
+### Rust 测试准入
+
+新增两个 default owner，各拥有不同的失败边界：`pending_thread_draft` 测试生命周期及客户端隔离，
+`db_pending_draft` 测试 schema 132 升级中途失败、重试和重开保留。旧 Draft 测试向 Core 写正文，既有空壳清理测试
+没有客户端标记，不能证明本次边界；旧迁移测试止于 schema 132。两者都必须用临时 SQLite 验证事务与重开，
+复用 seeded fixture，未启动模型或增加真实 Runtime 测试。准入矩阵在原 owner 增补 schema 133 缺收据的拒绝 case。
+最小命令：`cargo test -p rovai-core pending_draft`。完整门禁结果在提交前记入本节。
+
+提交前门禁通过：`cargo fmt --all --check`、默认 `cargo test --workspace`（452 passed，1 既有 ignored）、
+`pnpm typecheck`、完整 `pnpm test`（236 个 Vitest 文件 / 2527 项，Node 328 passed / 2 平台 skipped）、
+`pnpm build:desktop`、`pnpm test:member-creation`（2 个隔离 Electron 场景）及三项通用文档门禁。
+全量第二轮曾遇到既有 Lark 附件流用例等待超时；该文件独立 81 项及随后完整套件均通过，未改该用例或渠道代码。
+界面夹具使用内存服务替身，Core 持久化/清理由 SQLite 测试独立验证；未安装或重启日常 App，未运行真实模型。

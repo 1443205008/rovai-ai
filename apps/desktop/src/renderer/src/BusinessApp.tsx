@@ -1,3 +1,4 @@
+import { hasPendingThreadDraftInput } from './pending-thread-draft'
 import { memberCreationHelper, memberCreationInitialDraft, navigationWithMemberCreationDrafts, type MemberCreationDraft } from './member-creation-flow'
 import { navigationThreadReadState } from './navigation-unread'
 import { newCommandId } from '../../shared/command-id'
@@ -3795,7 +3796,7 @@ export function BusinessApp({
   }
 
   const settlePendingThreadOnLeave = async (draft: ThreadComposerDraftView): Promise<void> => {
-    if (draft.body.trim() || draft.attachments.length > 0 || draft.replyIntent) {
+    if (hasPendingThreadDraftInput(draft)) {
       await navigationRefreshCoordinator.invalidate({ scope: 'group', threadId: draft.threadId })
       return
     }
@@ -3806,7 +3807,11 @@ export function BusinessApp({
     if (result.status === 'rejected' && result.code !== 'camp.pending_not_empty') {
       throw new Error(commandFailureMessage(result))
     }
-    if (result.status !== 'rejected') { campSnapshotCache.current.delete(draft.threadId); forgetMemberCreationDraft(draft.threadId) }
+    if (result.status !== 'rejected') {
+      clearLocalThreadComposerDraft(draft.threadId)
+      campSnapshotCache.current.delete(draft.threadId)
+      forgetMemberCreationDraft(draft.threadId)
+    }
     if (result.status !== 'rejected') forgetRemovedThreadSurface(draft.threadId)
     await navigationRefreshCoordinator.invalidate({ scope: 'group', threadId: draft.threadId })
   }

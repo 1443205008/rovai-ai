@@ -2,7 +2,7 @@
 document_type: ui-component-contract
 authority: renderer-app-shell-navigation
 status: accepted
-last_updated: 2026-10-02
+last_updated: 2026-10-03
 ---
 
 # App Shell 与统一侧栏
@@ -163,7 +163,7 @@ macOS 在根层读取 mouseup 的 button=3/4；Windows 互斥使用宿主 `app-c
 完整 ID 经短暂防抖调用 Desktop `navigation.findCamp({ campId })`；Core 再通过 `CampId` 校验，按
 `camp.id` 主键等值读取，返回单个 `NavigationCampTarget`（ID、标题、渠道来源、激活状态、项目绑定类型和路径）或
 `null`。该路径覆盖未进入最近五条列表的旧会话，不加载消息或聚合活动历史，不改变已读状态。
-Active Camp 和有正文或附件的 Pending Camp 可被查询；空 Pending Camp 与不存在的 ID 返回无结果。
+Active Camp 和带当前 Desktop 客户端 presence 的 Pending Camp 可被查询；空 Pending Camp 与不存在的 ID 返回无结果。
 
 查询期间显示加载反馈，失败与未命中分别呈现；修改输入或关闭搜索后丢弃旧请求结果。方向键选择和回车
 打开沿用现有会话激活入口。普通文字输入不会调用 ID 查询，标题过滤与 ID 查找互斥。
@@ -177,6 +177,11 @@ Project 领域实体。它没有 Project 菜单；其 Camp 行与目录 Project 
 Quick Chat 首页不提供 Composer。普通“新对话”先原子创建 Active Camp；一键入口先取得
 Core-owned Pending Camp 并进入同一 Composer，第一条消息成功后再原子激活。界面不得用静态
 演示数据伪造日期、阶段或创建结果。
+
+普通一键 Pending 的非空正文、附件、引用或 reply 保存后显示“草稿”行；同一项目可保留多份。切换、刷新和
+普通重启后可从侧栏分别恢复。清空输入后隐藏，发送成功后转为普通对话；保存失败时沿用输入框错误反馈与离开保护。
+行高、名称和 draft badge 使用已有 Pending 行，不增加常驻说明。规则见
+[Pending Camp Activation v4](../../contracts/pending-camp-activation-v4.md)。
 
 无对话首页以“开始一段协作”和“选好队员，写下你想完成的事。”引导，使用浅色底“新对话”入口。
 有最近对话时直接显示“最近对话”列表，并将轻量“新对话”动作放在列表标题右侧；不把所有最近对话称为未完成。
