@@ -113,7 +113,7 @@ let draft: ThreadComposerDraftView = { threadId, body: '', content: { version: 2
   replyIntent: null, continuationIntent: null, updatedAt: now, expiresAt: null }
 Object.assign(window, { rovai: {
   platform: 'darwin', onEvent: () => () => {},
-  filePreview: { bindCamp: async () => {}, onExternalUpdate: () => () => {} },
+  filePreview: { bindThread: async () => {}, onExternalUpdate: () => () => {} },
   windowControls: { onCloseTabRequested: () => () => {} },
   request: async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
     if (method === 'skills.list' || method === 'skills.deliveryGroups.list') return []
@@ -196,6 +196,9 @@ Object.assign(window, { executionNotificationTest: {
   }
 } })
 
+let configureInterruptionFixture: (() => void) | undefined
+Object.assign(window, { configureRunInterruption: () => configureInterruptionFixture?.() })
+
 function Fixture(): React.JSX.Element {
   const [count, setCount] = useState(12)
   const [recipientCount, setRecipientCount] = useState(0)
@@ -207,6 +210,7 @@ function Fixture(): React.JSX.Element {
   const [theme, setTheme] = useState('day')
   const [longTitleScenario, setLongTitleScenario] = useState(false)
   const [stoppedRuns, setStoppedRuns] = useState<string[]>([])
+  const [interruptionScenario, setInterruptionScenario] = useState(false)
   const [notificationFocus, setNotificationFocus] = useState<NotificationFocusTarget | null>(null)
   configureNotificationFixture = () => {
     notificationFixtureEnabled = true
@@ -225,6 +229,14 @@ function Fixture(): React.JSX.Element {
     active: true
   })
   focusNotificationSubject = (kind, requestId) => setNotificationFocus({ requestId, kind, subjectId: kind === 'task' ? 'task-rail' : 'mission-rail', threadTurnId: null, active: true })
+  configureInterruptionFixture = () => {
+    setInterruptionScenario(true)
+    setLongTitleScenario(false)
+    setEntryRunningCount(null)
+    setCount(1)
+    setRecipientCount(0)
+    setOpen(false)
+  }
   const snapshot = snapshotFor(count, revision, recipientCount)
   if (notificationFixtureEnabled && snapshot.agentRuns[0]) {
     snapshot.agentRuns.push({ ...snapshot.agentRuns[0], id: 'run-agent-1-history',
@@ -263,6 +275,19 @@ function Fixture(): React.JSX.Element {
       membershipStatus: 'active', leaveRequestedAt: null, profilePresence: 'present',
       memberOrder: snapshot.members.length, isDefaultLead: false, version: 1
     })
+  }
+  if (interruptionScenario) {
+    const stopped = { ...snapshot.agentRuns[0], threadTurnId: null, status: 'cancelled' as const,
+      cancelReasonCode: 'user_requested_agent_run_stop', cancelRequestedAt: now, endedAt: now }
+    snapshot.agentRuns = [stopped, { ...stopped, id: 'run-agent-1-successor', status: 'running',
+      cancelRequestedAt: null, cancelReasonCode: null, endedAt: null, createdAt: '2026-08-31T04:02:00Z' }]
+    snapshot.messages = snapshot.messages.slice(0, 1)
+    snapshot.tasks = []
+    snapshot.turns = []
+    snapshot.agentRunFileChanges = [{ schemaVersion: 2, agentRunId: stopped.id, executionEpoch: 1,
+      files: [{ evidenceFileId: 'interrupted-file', path: 'docs/proposals/thread-runs.md', changeKind: 'add',
+        presentationKind: 'operation_history', operationCount: 1 }],
+      fileCount: 1, operationCount: 1, completedAt: now }]
   }
   return <FilePreviewProvider threadId={threadId} resolvedTheme={theme === 'night' ? 'night' : 'day'}>
     <NotificationFixtureBridge />
