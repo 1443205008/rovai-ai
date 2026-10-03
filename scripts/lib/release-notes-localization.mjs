@@ -11,7 +11,7 @@ export function validateBilingualReleaseNotesSource(releaseNotes, version) {
   if (!parsed) throw new Error('release notes must contain unambiguous standalone language markers')
   for (const language of ['en', 'zh-cn']) {
     const section = parsed.sections.find((section) => section.language === language)
-    if (!section || !hasReleaseNotesContent(section.content)) {
+    if (!section || !hasReleaseNotesContent(section.content, parsed.definitions)) {
       throw new Error(`release notes must include non-empty ${language} content`)
     }
   }

@@ -5,6 +5,7 @@ import type { AppUpdateRelease, AppUpdateSnapshot, GeneralPreferencesApi } from 
 import { changeInterfaceLanguage } from './interface-language'
 import { AboutUpdatesSettingsView } from './AboutUpdatesSettings'
 import { displayReleaseNotes } from './release-notes-display'
+import { SafeMarkdown } from './SafeMarkdown'
 import type { AppUpdateActionError } from './useAppUpdates'
 
 const release: AppUpdateRelease = {
@@ -280,6 +281,63 @@ describe('AboutUpdatesSettingsView', () => {
     expect(displayReleaseNotes(value, 'zh-CN')).toContain('# 更新重点')
     const english = displayReleaseNotes(value, 'en')
     expect(english).toContain('[docs]: https://example.com/guide')
+  })
+
+  it.each([
+    '中文\n\n[docs]: https://example.com/guide',
+    '中文\n\n> [docs]: https://example.com/guide',
+    '中文\n\n- [docs]: https://example.com/guide'
+  ])('跨语言定义不被代码中的同文示例遮蔽，且保留嵌套定义：%s', (chinese) => {
+    const source = '# Rovai AI v0.0.3\n\n<!-- lang:en -->\n\nRead [guide][docs].\n\n```md\n[docs]: https://example.com/guide\n```\n\n<!-- lang:zh-CN -->\n\n' + chinese
+    const notes = displayReleaseNotes({ ...release, releaseNotes: source }, 'en')!
+    const markup = renderToStaticMarkup(createElement(SafeMarkdown, { children: notes, mode: 'document' }))
+    expect(markup).toContain('href="https://example.com/guide"')
+    expect(markup).not.toContain('Read [guide][docs]')
+    expect(markup).not.toContain('中文')
+    expect(markup).not.toContain('data-markdown-heading="Rovai AI v0.0.3"')
+  })
+
+  it('重复引用定义保持原文的大小写与空白归一化 first-wins 目标', () => {
+    const source = '# Rovai AI v0.0.3\n\n<!-- lang:en -->\n\nEnglish\n\n[Guide Docs]: https://example.com/first\n\n<!-- lang:zh-CN -->\n\n阅读[指南][guide docs]。\n\n[GUIDE  DOCS]: https://example.com/second'
+    const renderNotes = (notes: string) => renderToStaticMarkup(createElement(SafeMarkdown, { children: notes, mode: 'document' }))
+    const original = renderNotes(source)
+    const localized = renderNotes(displayReleaseNotes({ ...release, releaseNotes: source }, 'zh-CN')!)
+    expect(original).toContain('href="https://example.com/first"')
+    expect(localized).toContain('href="https://example.com/first"')
+    expect(localized).not.toContain('href="https://example.com/second"')
+    expect(localized).not.toContain('English')
+    expect(localized).not.toContain('data-markdown-heading="Rovai AI v0.0.3"')
+  })
+
+  it('跨语言 GFM 脚注保留所有段落，并继续去除冗余首标题', () => {
+    const source = '# Rovai AI v0.0.3\n\n<!-- lang:en -->\n\nRead[^details].\n\n<!-- lang:zh-CN -->\n\n中文\n\n[^details]: First paragraph\n\n    Second paragraph\n'
+    const notes = displayReleaseNotes({ ...release, releaseNotes: source }, 'en')!
+    const markup = renderToStaticMarkup(createElement(SafeMarkdown, { children: notes, mode: 'document' }))
+    expect(markup).toContain('data-footnotes="true"')
+    expect(markup).toContain('<p>First paragraph</p>')
+    expect(markup).toContain('<p>Second paragraph')
+    expect(markup).not.toContain('中文')
+    expect(markup).not.toContain('data-markdown-heading="Rovai AI v0.0.3"')
+  })
+
+  it('重复脚注中的全局链接定义不会随被覆盖脚注丢失', () => {
+    const source = '# Rovai AI v0.0.3\n\n<!-- lang:en -->\n\nRead [guide][docs].[^outer]\n\n[^outer]: First footnote\n\n<!-- lang:zh-CN -->\n\n中文\n\n[^outer]: Duplicate footnote\n\n    [docs]: https://example.com/guide\n'
+    const renderNotes = (notes: string) => renderToStaticMarkup(createElement(SafeMarkdown, { children: notes, mode: 'document' }))
+    const original = renderNotes(source)
+    const localized = renderNotes(displayReleaseNotes({ ...release, releaseNotes: source }, 'en')!)
+    expect(original).toContain('href="https://example.com/guide"')
+    expect(localized).toContain('href="https://example.com/guide"')
+    expect(localized).toContain('First footnote')
+    expect(localized).not.toContain('Duplicate footnote')
+    expect(localized).not.toContain('中文')
+    expect(localized).not.toContain('data-markdown-heading="Rovai AI v0.0.3"')
+  })
+
+  it('匹配段只有隐藏引用内容时，展示英文回退而不是空白', () => {
+    const source = '# Rovai AI v0.0.3\n\n<!-- lang:en -->\n\nEnglish fallback\n\n<!-- lang:zh-CN -->\n\n> <!-- Coming soon -->'
+    const markup = render(snapshot({ status: 'available', availableRelease: { ...release, releaseNotes: source } }))
+    expect(markup).toContain('English fallback')
+    expect(markup).not.toContain('Coming soon')
   })
 
   it('keeps renderer action failures recoverable without discarding the snapshot', () => {

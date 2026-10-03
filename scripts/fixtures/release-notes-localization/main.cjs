@@ -64,10 +64,29 @@ app.whenReady().then(async () => {
     assert.ok((await visibleNotes()).text.includes('最后一条'))
     await run("window.releaseNotesTest.language('en')"); await settle()
     assert.ok((await visibleNotes()).text.includes('最后一条'))
+    const boundaryCases = [
+      { language: 'zh-CN', source: '<!-- lang:en -->\n\nEnglish fallback\n\n<!-- lang:zh-CN -->\n\n> <!-- Coming soon -->', expected: 'English fallback', excluded: 'Coming soon' },
+      { language: 'en', source: '<!-- lang:en -->\n\nRead [guide][docs].\n\n```md\n[docs]: https://example.com/guide\n```\n\n<!-- lang:zh-CN -->\n\n中文\n\n[docs]: https://example.com/guide', expected: 'Read guide.', excluded: '中文', href: 'https://example.com/guide' },
+      { language: 'en', source: '<!-- lang:en -->\n\nRead [guide][docs].\n\n<!-- lang:zh-CN -->\n\n中文\n\n> [docs]: https://example.com/guide', expected: 'Read guide.', excluded: '中文', href: 'https://example.com/guide' },
+      { language: 'zh-CN', source: '<!-- lang:en -->\n\nEnglish\n\n[docs]: https://example.com/first\n\n<!-- lang:zh-CN -->\n\n阅读[指南][docs]。\n\n[docs]: https://example.com/second', expected: '阅读指南。', excluded: 'English', href: 'https://example.com/first' },
+      { language: 'en', source: '<!-- lang:en -->\n\nRead[^details].\n\n<!-- lang:zh-CN -->\n\n中文\n\n[^details]: First paragraph\n\n    Second paragraph', expected: 'Second paragraph', excluded: '中文' },
+      { language: 'en', source: '<!-- lang:en -->\n\nRead [guide][docs].[^outer]\n\n[^outer]: First footnote\n\n<!-- lang:zh-CN -->\n\n中文\n\n[^outer]: Duplicate footnote\n\n    [docs]: https://example.com/guide', expected: 'First footnote', excluded: 'Duplicate footnote', href: 'https://example.com/guide' },
+      { language: 'zh-CN', source: '<!-- lang:en -->\n\nEnglish fallback\n\n[img]: https://example.com/image.png\n\n<!-- lang:zh-CN -->\n\n![Hidden image][img]', expected: 'English fallback', excluded: 'Hidden image' }
+    ]
+    for (const boundary of boundaryCases) {
+      await run(`window.releaseNotesTest.notes(${JSON.stringify('# Rovai AI v0.0.3\n\n' + boundary.source)})`)
+      await run(`window.releaseNotesTest.language(${JSON.stringify(boundary.language)})`); await settle()
+      const result = await visibleNotes()
+      assert.ok(result.text.includes(boundary.expected), JSON.stringify(result))
+      assert.ok(!result.text.includes(boundary.excluded), JSON.stringify(result))
+      if (boundary.href) assert.equal(result.guide, boundary.href)
+      assert.equal(await run("document.querySelectorAll('[data-markdown-heading^=\"Rovai AI v\"]').length"), 0)
+    }
+    assert.deepEqual(await run('window.releaseNotesTest.requests'), [])
     await run(`window.releaseNotesTest.notes(${JSON.stringify('<!-- lang:en -->\n\n<script>alert(1)</script>\n\n[unsafe](javascript:alert(1)) ![pixel](https://example.com/pixel.png)\n\n<!-- lang:zh-CN -->\n\n安全正文')})`)
     await settle()
     assert.equal(await run("document.querySelectorAll('.about-release-notes script, .about-release-notes img, .about-release-notes a[href^=\"javascript:\"]').length"), 0)
-    process.stdout.write(JSON.stringify({ ok: true, verified: ['即时语言切换', '两个日志版本', 'tab 选择保留', '原始快照保留', '零更新请求', '历史与单语回退', '引用链接保留', '安全 Markdown', '日夜主题及紧凑缩放'] }) + '\n')
+    process.stdout.write(JSON.stringify({ ok: true, verified: ['即时语言切换', '两个日志版本', 'tab 选择保留', '原始快照保留', '零更新请求', '历史与单语回退', '引用链接保留', '七项 Markdown 边界', '安全 Markdown', '日夜主题及紧凑缩放'] }) + '\n')
     app.exit(0)
   } catch (error) {
     console.error(error)

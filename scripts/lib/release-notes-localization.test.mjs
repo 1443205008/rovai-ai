@@ -25,8 +25,20 @@ test('新发布拒绝缺失、空白或仅注释的语言正文', () => {
     '# Rovai AI v0.0.3\n\n<!-- lang:en -->\n\nEnglish',
     NOTES.replace('## 更新内容\n\n中文\n', '  \n'),
     NOTES.replace('## 更新内容\n\n中文\n', '<!-- Coming soon -->\n'),
-    NOTES.replace('## 更新内容\n\n中文\n', '[docs]: https://example.com\n')
+    NOTES.replace('## 更新内容\n\n中文\n', '[docs]: https://example.com\n'),
+    NOTES.replace('## 更新内容\n\n中文\n', '> <!-- Coming soon -->\n'),
+    NOTES.replace('## 更新内容\n\n中文\n', '> [docs]: https://example.com\n'),
+    NOTES.replace('## 更新内容\n\n中文\n', '- <!-- Coming soon -->\n'),
+    NOTES.replace('## 更新内容\n\n中文\n', '[^details]: Hidden footnote\n'),
+    NOTES.replace('## 更新内容\n\n中文\n', '![Hidden image](https://example.com/image.png)\n')
   ]) assert.throws(() => validateBilingualReleaseNotesSource(source, VERSION), /language markers|non-empty/)
+})
+
+test('新发布拒绝仅含跨语言引用图片的正文，保留可见引用链接', () => {
+  const source = '# Rovai AI v0.0.3\n\n<!-- lang:en -->\n\nEnglish\n\n[img]: https://example.com/image.png\n\n<!-- lang:zh-CN -->\n\n![Hidden image][img]'
+  assert.throws(() => validateBilingualReleaseNotesSource(source, VERSION), /non-empty zh-cn/)
+  const linked = source.replace('![Hidden image][img]', '[中文说明][img]')
+  assert.equal(validateBilingualReleaseNotesSource(linked, VERSION), linked)
 })
 
 test('新发布拒绝重复、畸形及代码示例中的伪语言段', () => {

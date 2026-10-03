@@ -2,6 +2,7 @@ import type { AppUpdateRelease, InterfaceLanguage } from '@contracts'
 import { selectReleaseNotesLanguage } from '../../shared/release-notes-localization'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
+import remarkGfm from 'remark-gfm'
 
 function normalizedTitle(value: string): string {
   return value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase()
@@ -11,7 +12,8 @@ function normalizedTitle(value: string): string {
 export function displayReleaseNotes(release: AppUpdateRelease, language: InterfaceLanguage): string | null {
   if (!release.releaseNotes) return null
   const source = selectReleaseNotesLanguage(release.releaseNotes, language)
-  const first = unified().use(remarkParse).parse(source).children[0]
+  const first = unified().use(remarkParse).use(remarkGfm, { singleTilde: false }).parse(source).children
+    .find((node) => node.type !== 'definition' && node.type !== 'footnoteDefinition')
   if (first?.type !== 'heading' || first.depth !== 1 || !first.position) return source
   if (first.children.some((node) => node.type !== 'text' && node.type !== 'inlineCode')) return source
 
@@ -26,5 +28,6 @@ export function displayReleaseNotes(release: AppUpdateRelease, language: Interfa
   ].filter((value): value is string => Boolean(value)).map(normalizedTitle)
   if (!equivalentTitles.includes(title)) return source
 
-  return source.slice(first.position.end.offset).replace(/^(?:\r?\n)+/u, '')
+  return source.slice(0, first.position.start.offset)
+    + source.slice(first.position.end.offset).replace(/^(?:\r?\n)+/u, '')
 }

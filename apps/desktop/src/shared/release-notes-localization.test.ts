@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseReleaseNotesLanguages, selectReleaseNotesLanguage } from './release-notes-localization'
+import { hasReleaseNotesContent, parseReleaseNotesLanguages, selectReleaseNotesLanguage } from './release-notes-localization'
 
 const bilingual = '# Rovai AI v0.0.3\n\n<!-- lang:en -->\n\n## What’s new\n\n- English notes\n\n<!-- lang:zh-CN -->\n\n## 更新内容\n\n- 中文说明\n'
 
@@ -51,6 +51,36 @@ describe('Release Notes 语言选择', () => {
     }
     const emptySource = '<!-- lang:en -->\n\n<!-- lang:zh-CN -->\n'
     expect(selectReleaseNotesLanguage(emptySource, 'zh-CN')).toBe(emptySource)
+  })
+
+  it.each([
+    '> <!-- Coming soon -->',
+    '> [docs]: https://example.com',
+    '- <!-- Coming soon -->',
+    '- > <!-- Coming soon -->',
+    '[^details]: Hidden footnote',
+    '![Hidden image](https://example.com/image.png)'
+  ])('无可见正文的嵌套容器或定义不会阻挡回退：%s', (empty) => {
+    const source = `<!-- lang:en -->\n\nEnglish\n\n<!-- lang:zh-CN -->\n\n${empty}\n`
+    expect(hasReleaseNotesContent(empty)).toBe(false)
+    expect(selectReleaseNotesLanguage(source, 'zh-CN')).toContain('English')
+  })
+
+  it('跨语言图片引用使用全局定义上下文，不把被禁止图片误判为文字', () => {
+    const source = '<!-- lang:en -->\n\nEnglish\n\n[img]: https://example.com/image.png\n\n<!-- lang:zh-CN -->\n\n![Hidden image][img]'
+    const parsed = parseReleaseNotesLanguages(source)!
+    expect(hasReleaseNotesContent(parsed.sections[1].content, parsed.definitions)).toBe(false)
+    expect(selectReleaseNotesLanguage(source, 'zh-CN')).toContain('English')
+    expect(selectReleaseNotesLanguage(source, 'zh-CN')).not.toContain('Hidden image')
+  })
+
+  it('可见正文位于引用、列表或脚注引用中时保留匹配语言', () => {
+    for (const content of ['> 中文', '- 中文', '中文[^details]\n\n[^details]: 补充说明']) {
+      const source = `<!-- lang:en -->\n\nEnglish\n\n<!-- lang:zh-CN -->\n\n${content}`
+      expect(hasReleaseNotesContent(content)).toBe(true)
+      expect(selectReleaseNotesLanguage(source, 'zh-CN')).toContain('中文')
+      expect(selectReleaseNotesLanguage(source, 'zh-CN')).not.toContain('English')
+    }
   })
 
   it.each([

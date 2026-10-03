@@ -1,5 +1,8 @@
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
+import remarkGfm from 'remark-gfm'
+import remarkStringify from 'remark-stringify'
+import type { Root, RootContent } from 'mdast'
 
 export interface ReleaseNotesLanguageSection {
   language: string
@@ -9,20 +12,31 @@ export interface ReleaseNotesLanguageSection {
 export interface LocalizedReleaseNotes {
   preamble: string
   sections: ReleaseNotesLanguageSection[]
-  definitions: string[]
+  definitions: string
 }
 
 const LANGUAGE_MARKER = /^<!--[\t ]*lang:[\t ]*([a-z]{2,3}(?:-[a-z0-9]{2,8})*)[\t ]*-->$/iu
-const parser = unified().use(remarkParse)
+const parser = unified().use(remarkParse).use(remarkGfm, { singleTilde: false }).use(remarkStringify)
+
+function collectDefinitions(node: Root | RootContent, definitions: RootContent[], seen: Set<string>): void {
+  if (node.type === 'definition' || node.type === 'footnoteDefinition') {
+    const key = `${node.type}:${node.identifier}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      definitions.push(node)
+    }
+  }
+  if ('children' in node) {
+    for (const child of node.children) collectDefinitions(child, definitions, seen)
+  }
+}
 
 /** 只识别顶层独立注释；代码、引用、列表及 HTML 块内的示例不作为分段。 */
 export function parseReleaseNotesLanguages(source: string): LocalizedReleaseNotes | null {
   const markers: Array<{ language: string; start: number; end: number }> = []
   const languages = new Set<string>()
-  const nodes = parser.parse(source).children
-  const definitions = nodes.filter((node) => node.type === 'definition')
-    .map((node) => source.slice(node.position?.start.offset, node.position?.end.offset))
-  for (const node of nodes) {
+  const tree = parser.parse(source)
+  for (const node of tree.children) {
     if (node.type !== 'html') continue
     const marker = LANGUAGE_MARKER.exec(node.value.trim())
     if (!marker) {
@@ -36,34 +50,42 @@ export function parseReleaseNotesLanguages(source: string): LocalizedReleaseNote
     const lineStart = source.lastIndexOf('\n', start - 1) + 1
     const lineEnd = source.indexOf('\n', end)
     if (!/^ {0,3}$/u.test(source.slice(lineStart, start))
-      || !/^[\t \r]*$/u.test(source.slice(end, lineEnd === -1 ? source.length : lineEnd))) {
-      return null
-    }
+      || !/^[\t \r]*$/u.test(source.slice(end, lineEnd === -1 ? source.length : lineEnd))) return null
     const language = marker[1].toLowerCase()
     if (languages.has(language)) return null
     languages.add(language)
     markers.push({ language, start: lineStart, end: lineEnd === -1 ? end : lineEnd + 1 })
   }
   if (markers.length === 0) return null
+  const definitions: RootContent[] = []
+  collectDefinitions(tree, definitions, new Set())
   return {
     preamble: source.slice(0, markers[0].start),
     sections: markers.map((marker, index) => ({
       language: marker.language,
       content: source.slice(marker.end, markers[index + 1]?.start ?? source.length)
     })),
-    definitions
+    definitions: definitions.length ? parser.stringify({ type: 'root', children: definitions }) : ''
   }
 }
 
-export function hasReleaseNotesContent(content: string): boolean {
-  return parser.parse(content).children.some((node) => node.type !== 'html' && node.type !== 'definition')
+function hasVisibleContent(node: Root | RootContent): boolean {
+  if (node.type === 'html' || node.type === 'definition' || node.type === 'footnoteDefinition'
+    || node.type === 'image' || node.type === 'imageReference') return false
+  if ('children' in node) return node.children.some(hasVisibleContent)
+  if (node.type === 'text') return node.value.trim().length > 0
+  return true
+}
+
+export function hasReleaseNotesContent(content: string, definitions = ''): boolean {
+  return hasVisibleContent(parser.parse(definitions ? `${definitions}\n${content}` : content))
 }
 
 /** 匹配语言优先，其次同语种、英文、首个非空版本；公共前言始终保留。 */
 export function selectReleaseNotesLanguage(source: string, language: string): string {
   const parsed = parseReleaseNotesLanguages(source)
   if (!parsed) return source
-  const sections = parsed.sections.filter((section) => hasReleaseNotesContent(section.content))
+  const sections = parsed.sections.filter((section) => hasReleaseNotesContent(section.content, parsed.definitions))
   const normalized = language.toLowerCase()
   const primary = normalized.split('-')[0]
   const selected = sections.find((section) => section.language === normalized)
@@ -74,9 +96,6 @@ export function selectReleaseNotesLanguage(source: string, language: string): st
     ?? sections[0]
   if (!selected) return source
   const displayed = parsed.preamble + selected.content
-  // 引用式链接定义属于整份 Markdown，不能随未选语言段一起丢失。
-  const missingDefinitions = parsed.definitions.filter((definition) => !displayed.includes(definition))
-  return missingDefinitions.length > 0
-    ? `${displayed.trimEnd()}\n\n${missingDefinitions.join('\n')}\n`
-    : displayed
+  // 文档级定义先于选中段，保留原始 first-wins 语义及完整多段脚注。
+  return parsed.definitions ? `${parsed.definitions}\n${displayed}` : displayed
 }
