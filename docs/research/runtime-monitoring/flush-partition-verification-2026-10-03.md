@@ -67,3 +67,18 @@ Core 返回 `inputOutputComplete`；SQL 读 owner 验证新完整、部分和旧
 
 本轮没有重新调用真实 Runtime、重打包或覆盖用户日常 App；定时器分区缺陷由固定回放验证。
 历史账单数字可能已受旧逻辑影响；没有保存原始 observation，无法可靠自动修复旧汇总。
+
+
+## PR #568 合入 main 前补验
+
+与 main `70439069` 汇合时保留主线 v0.4.3、Run 分页和成员创建来源关联，并保留指标分支的 schema 132
+已部署兼容链路。五份文档冲突已按各自当前合同合并；ZCode transport 仅按 rustfmt 整理格式。
+
+合并结果验证：`pnpm typecheck`、`pnpm test`（235 个 Vitest 文件、2525 项；组合 Node suite
+328 通过、2 项平台跳过）、`pnpm test:rust:pr`（450 通过、1 项既有 ignored）、定向 Monitoring
+13 项、`cargo fmt --all --check` 与基于 `70439069` 的文档门禁通过。
+
+生产 Renderer 的既有 `pnpm test:execution-metrics-ui` 隔离 Electron owner 已补验通过：500 Run 可视
+范围读取、隐藏暂停/恢复、稳定终态停止轮询、迟到用量、原生 Session 切换和失效，以及数值不变仅
+完整性变化时从部分入口切到总量入口。fixture 显式提供 inputOutputComplete，百分比期望沿用当前
+合同的一位小数。此次不启动 Core/真实 Runtime，不使用日常 userData，不安装日常 App。

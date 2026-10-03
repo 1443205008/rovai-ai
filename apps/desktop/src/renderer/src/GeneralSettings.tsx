@@ -1,3 +1,4 @@
+import { WindowCloseSettings } from './WindowCloseSettings'
 import { GeneralLeadSelect } from './GeneralLeadSelect'
 import { readErrorMessage } from './error-message'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -41,18 +42,18 @@ const ignorePreferencesChange = (): void => undefined
 export function GeneralSettings({
   api,
   windowControls,
+  windowClose,
   browserAccess,
   agents = [],
   initialPreferences = null,
-  currentProjectLabel = '快速对话',
   onPreferencesChange = ignorePreferencesChange
 }: {
   api: GeneralPreferencesApi
   windowControls?: WindowControlsApi
+  windowClose?: import('@contracts').WindowCloseApi
   browserAccess?: ReactNode
   agents?: AgentProfile[]
   initialPreferences?: GeneralPreferencesSnapshot | null
-  currentProjectLabel?: string
   onPreferencesChange?(preferences: GeneralPreferencesSnapshot): void
 }): React.JSX.Element {
   if (!api) throw new Error(uiAttribute('通用设置缺少客户端偏好适配。'))
@@ -511,7 +512,7 @@ export function GeneralSettings({
                 </div>
                 {oneClickEnabled && (
                   savedDefaults
-                    ? <p className="general-effective-summary">{t('当前生效：{0} · {1} 位默认队员 · 队长 {2}', currentProjectLabel === '快速对话' ? t('快速对话') : currentProjectLabel, savedDefaults.members.length, savedDefaults.lead.displayName)}</p>
+                    ? <p className="general-effective-summary">{t('{0} 位默认队员 · 队长 {1}', savedDefaults.members.length, savedDefaults.lead.displayName)}</p>
                     : <p className="general-effective-summary attention" role="status"><UiText zh={"默认队员配置需要重新确认。一键创建时将改为打开创建弹窗。"} /></p>
                 )}
                 {!preferences?.newConversationDefaults && (
@@ -552,6 +553,7 @@ export function GeneralSettings({
 
         {windowControls && <section className="section-block general-settings-section" aria-labelledby="general-window-heading">
           <div className="section-heading"><div><h2 id="general-window-heading"><UiText zh={"窗口"} /></h2><p><UiText zh={"本机显示位置"} /></p></div></div>
+          {windowClose && <WindowCloseSettings api={windowClose} />}
           <div className="general-section-body general-window-row">
             <p className="general-window-description"><UiText zh={"自动记住窗口大小与位置。需要时可恢复默认。"} /></p>
             <button

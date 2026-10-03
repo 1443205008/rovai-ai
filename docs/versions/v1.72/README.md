@@ -11,6 +11,21 @@ last_updated: 2026-10-02
 
 # Rovai-ai v1.72：Lark 独立渠道
 
+## 并行修复：HTML 内部诊断 CSP 归因
+
+保留作品安全策略，预览器只将当前内部诊断请求的明确 CSP 拒绝转为中性诊断不可用，并停止该文档的无效重试。
+作者脚本、资源和业务策略错误继续可见，页面交互与文档状态不受辅助诊断影响。范围见
+[File Preview v21](../../contracts/file-preview-v21.md)；真实浏览器回归覆盖严格 CSP、混合错误、导航及既有断流恢复。
+本地 `pnpm test:html-preview` 的 5 项浏览器／Electron 测试通过；严格 CSP 只出现一次内部拦截且作品问题数为零，
+混合场景保留 4 项真实错误。TypeScript、完整 `pnpm test`、默认 feature Rust workspace、桌面构建及通用文档门禁通过。
+
+## 并行交付：消息寻址与执行查询
+
+User 于 2026-10-03 确认[方案 r2](model-context-change-thread-runs.md)和[完整提示词对照](thread-runs-prompt-comparison.md)，授权实现、PR 与合入 main。
+本次补齐 thread read 正常条目的 addressing，新增 thread runs 的统一执行/排队查询；范围由
+[Camp History v11](../../contracts/camp-history-v11.md)、[Thread Runs v1](../../contracts/thread-runs-v1.md)和
+[Built-in Transport v35](../../contracts/builtin-tool-transport-v35.md)拥有。旧 Session 保留冻结 Bootstrap，Skill 沿原路径更新；无数据库迁移。
+
 ## 已实现：User 统一称呼
 
 [上下文变更说明 r2](model-context-change-principal-user.md)与[完整前后对照](principal-user-context-comparison.md)
@@ -183,6 +198,9 @@ AI 创建使用一位可用协助者的普通草稿会话；三个起步提示�
 成功 `member.create` 产生静态入队回执，配置链接进入已有队员设置，右侧表单及离队资料行为保持。
 Desktop/Mobile、中文/英文共用生产组件。
 
+入队回执保存经认证的来源 Run，终态后按“最后回复 → 入队卡片 → Files Changed”展示；无公开回复时复用
+Run 产物作者头。入队卡与文件卡共用桌面/窄列宽度、缩进和间距；旧回执保持可读，不按队员或时间猜测来源。
+
 [Member Creation Flow v1](../../contracts/member-creation-flow-v1.md)拥有当前行为，
 [V1.72-D09](decisions.md#v1-72-d09)记录取舍；原 main 的 Migration 180 将 schema 129 升为 130；与已安装指标分支整合后，当前 Migration 181/182 分别交付 User 投影与队员创建，最终 schema 为 **132**。两条指标和 main 的已部署 128/129/130 来源只按完整结构与收据组合准入，原子收口且保留业务数据、既有收据时间和冻结证据。
 [实施验收](implementation-plan.md#2026-10-02-ai-优先添加队员)区分自动化与真实模型/实体手机边界。
@@ -192,3 +210,18 @@ Desktop/Mobile、中文/英文共用生产组件。
 2026-10-03 追加[五类原生来源验收](../../research/runtime-monitoring/native-source-completion-2026-10-03.md)：
 Antigravity 四项与 Context、Qoder 数量、TRAE Context、Kiro 窗口已补接；仍区分原生缺失和未验证，
 不把 null/null 一致当作字段完整。无 schema 迁移或测速恢复，比例数字统一一位小数。
+
+## 并行交付：Run 内容块与 command 组分页
+
+按 User 的 HTML 交互稿确认与 worktree/PR 合入要求，Run 主线按正文或完整折叠组分页；展开组按独立游标读取，
+首次短内容自动补齐，失败保持内容并在原位重试。无新表、迁移、模型上下文或渠道公开数据变化。
+当前合同为 [Run Process Detail Surface v43](../../contracts/run-process-detail-surface-v43.md)，理由见
+[V1.72-D10](decisions.md#v1-72-d10)，实现与验证见[实施记录](implementation-plan.md#2026-10-02-run-内容块与-command-组分页)。
+跨版本影响：Contract、读取架构、UI 和当前导航已同步；版本指针、Runtime 兼容、原始 Evidence、结果预算与根 README 无需变化。
+
+## 并行交付：Windows 关闭选择与托盘
+
+Windows 主窗口默认关闭时询问，可选择最小化到系统托盘或正常退出，并记住选择。通用设置可切换三种行为；
+macOS/Web 不增加入口。托盘及第二次启动恢复原窗口，明确退出和更新重启继续现有受控退出。
+[Windows Window Close v1](../../contracts/windows-window-close-v1.md)拥有字段与状态规则；
+[实施验收](implementation-plan.md#2026-10-02-windows-关闭选择与托盘)记录自动化和真实 Windows 的证据边界。

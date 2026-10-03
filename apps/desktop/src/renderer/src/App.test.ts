@@ -64,6 +64,7 @@ import {
   effectiveCancellingRunIds,
   effectiveCancellingTurnIds,
   notificationFocusMatchesAction,
+  resolveNotificationAgentRun,
   missionDrawerSuppressesExecutionAutoOpen,
   navigationWithoutDeletedThreads,
   optimisticThreadMessage,
@@ -950,6 +951,7 @@ describe('Thread snapshot cache', () => {
 
     const snapshot = campOpenProjectionAsSnapshot(projection, previous)
 
+    expect(snapshot.schemaVersion).toBe(35)
     expect(snapshot.messages.map(({ id }) => id)).toEqual(['older', 'recent'])
     expect(snapshot.timeline).toEqual([])
     expect(snapshot.messages.every((message) => message.timelineGlobalSequence === null)).toBe(true)
@@ -1834,6 +1836,47 @@ describe('task event projections', () => {
       'run-recent',
       'run-notification-source'
     ])
+  })
+
+  it('resolves an uncached notification Run from the current Core snapshot and preserves exact identity checks', async () => {
+    const run = { id: 'run-notification-source' } as AgentRunView
+    const schemaVersion: ThreadSnapshot['schemaVersion'] = 35
+    const snapshot = {
+      schemaVersion,
+      thread: { id: 'thread-source' },
+      agentRuns: [run]
+    } as unknown as ThreadSnapshot
+    const request = vi.fn().mockResolvedValue(snapshot)
+    const client = { request } as Pick<RovaiApi, 'request'>
+
+    await expect(resolveNotificationAgentRun(client, 'thread-source', run.id, null)).resolves.toBe(run)
+    expect(request).toHaveBeenCalledWith('threads.snapshot', { threadId: 'thread-source' })
+
+    request.mockClear()
+    await expect(resolveNotificationAgentRun(client, 'thread-source', run.id, snapshot)).resolves.toBe(run)
+    expect(request).not.toHaveBeenCalled()
+    await expect(resolveNotificationAgentRun(client, 'thread-source', run.id, {
+      ...snapshot, agentRuns: []
+    })).resolves.toBe(run)
+    await expect(resolveNotificationAgentRun(client, 'thread-source', run.id, {
+      ...snapshot, thread: { ...snapshot.thread, id: 'other-thread' }
+    })).resolves.toBe(run)
+    expect(request).toHaveBeenCalledTimes(2)
+
+    request.mockResolvedValue({ ...snapshot, agentRuns: [] })
+    await expect(resolveNotificationAgentRun(client, 'thread-source', run.id, null)).resolves.toBeNull()
+    for (const incompatible of [
+      { ...snapshot, schemaVersion: 34 },
+      { ...snapshot, schemaVersion: 36 },
+      { ...snapshot, thread: { ...snapshot.thread, id: 'other-thread' } }
+    ]) {
+      request.mockResolvedValue(incompatible)
+      await expect(resolveNotificationAgentRun(client, 'thread-source', run.id, null))
+        .rejects.toThrow('执行定位合同不兼容。')
+    }
+    request.mockRejectedValue(new Error('snapshot unavailable'))
+    await expect(resolveNotificationAgentRun(client, 'thread-source', run.id, null))
+      .rejects.toThrow('snapshot unavailable')
   })
 
   it('requires a message rectangle to intersect the timeline viewport before auto-read', () => {
@@ -3516,7 +3559,7 @@ describe('task event projections', () => {
       runtimeReadiness: { status: 'runtime_not_configured', blockers: [] }
     }
     const snapshot: ThreadSnapshot = {
-      schemaVersion: 34,
+      schemaVersion: 35,
       throughGlobalSequence: 1,
       thread: {
         id: 'camp-1', title: 'Lead 调整', activationState: 'active', projectBindingKind: 'quick_chat', projectPath: '/quick-chat',
@@ -3753,7 +3796,7 @@ describe('task event projections', () => {
       presence: 'away'
     }
     const snapshot: ThreadSnapshot = {
-      schemaVersion: 34,
+      schemaVersion: 35,
       throughGlobalSequence: 1,
       thread: {
         id: 'camp-empty', title: '暂无可用队员', activationState: 'active', projectBindingKind: 'quick_chat', projectPath: '/quick-chat',
@@ -3808,7 +3851,7 @@ describe('task event projections', () => {
       runtimeReadiness: { status: 'ready' as const, blockers: [] }
     }
     const snapshot: ThreadSnapshot = {
-      schemaVersion: 34,
+      schemaVersion: 35,
       throughGlobalSequence: 3,
       thread: {
         id: 'camp-live', title: '实现功能', activationState: 'active', projectBindingKind: 'directory', projectPath: '/repo',
@@ -4860,7 +4903,7 @@ describe('task event projections', () => {
       resolvedAt: null
     }))
     const snapshot: ThreadSnapshot = {
-      schemaVersion: 34,
+      schemaVersion: 35,
       throughGlobalSequence: 2,
       thread: {
         id: 'camp-approval', title: '审批停靠区', activationState: 'active', projectBindingKind: 'quick_chat', projectPath: '/quick-chat',
@@ -4990,7 +5033,7 @@ describe('task event projections', () => {
       createdAt: '2026-08-20T00:00:00Z'
     }
     const snapshot: ThreadSnapshot = {
-      schemaVersion: 34,
+      schemaVersion: 35,
       throughGlobalSequence: 1,
       thread: {
         id: 'camp-attachment-only', title: '附件消息', activationState: 'active', projectBindingKind: 'quick_chat', projectPath: '/quick-chat',
@@ -5136,7 +5179,7 @@ describe('task event projections', () => {
     expect(campConversationTimeline([publicMessage]).map((item) => item.id)).toEqual([publicMessage.id])
 
     const snapshot: ThreadSnapshot = {
-      schemaVersion: 34,
+      schemaVersion: 35,
       throughGlobalSequence: 3,
       thread: {
         id: 'camp-a2a', title: 'Agent 协作', activationState: 'active', projectBindingKind: 'quick_chat', projectPath: '/quick-chat',
@@ -5285,7 +5328,7 @@ describe('task event projections', () => {
 
   it('renders durable Task records below a single explicit creation action', () => {
     const snapshot: ThreadSnapshot = {
-      schemaVersion: 34,
+      schemaVersion: 35,
       throughGlobalSequence: 1,
       thread: {
         id: 'camp-task', title: 'Task 管理', activationState: 'active', projectBindingKind: 'quick_chat', projectPath: '/quick-chat',

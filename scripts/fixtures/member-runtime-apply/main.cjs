@@ -60,6 +60,7 @@ app.whenReady().then(async () => {
   }
   await window.loadFile(renderer)
   await wait('window.applyFixture && document.querySelector("[data-apply-entry]")')
+  await capture('desktop-zh-entry')
   await open()
   await check('only unconfigured targets preselected; source excluded', 'document.querySelectorAll(".apply-target").length===3 && document.querySelectorAll(".apply-target input:checked").length===2')
   for (let i = 0; i < 12; i++) { await key('Tab'); await check('keyboard stays in dialog', '!!document.activeElement.closest(".runtime-apply-dialog")') }
@@ -164,6 +165,8 @@ app.whenReady().then(async () => {
     await window.webContents.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: touch })
     window.setContentSize(width, height)
     await pause(100)
+    await run('document.querySelector(' + JSON.stringify(active + '[data-apply-entry]') + ').scrollIntoView({block:"center"})')
+    await capture([width,height,language,theme,'entry'].join('-'))
     await open()
     await capture([width,height,language,theme].join('-'))
   }

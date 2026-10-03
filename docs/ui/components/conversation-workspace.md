@@ -2,7 +2,7 @@
 document_type: ui-component-contract
 authority: renderer-camp-workspace
 status: accepted
-last_updated: 2026-10-01
+last_updated: 2026-10-03
 ---
 
 # Camp 会话工作区
@@ -83,7 +83,7 @@ Files Changed；时钟回拨时消息 sequence 优先，不能用非传递比较
 后保持用户当前阅读锚点，不跳到顶部或最新消息。没有 earlier history 时不显示该控件。
 
 Camp open/refresh 仅返回最多 96 个 Run 摘要与每个返回 Run 的原始 Evidence 计数；它不计算或返回全 Camp Evidence 总数。可见展开的 Run 才读取执行窗口，按详情高度估算首屏项数，
-并预取相邻更早一页。滚到边界或点击后才翻页，只挂载视口附近的内容；完整历史可继续按需访问，关闭的 Drawer、
+主线按正文或完整折叠组计数，并预取相邻更早一页。首次内容不足视口时最多自动补三页；之后滚到边界或点击续接，只挂载视口附近的内容；完整历史可继续按需访问，关闭的 Drawer、
 隐藏 Inspector、收起的 Run 与世界地图不读取历史。活动操作可补充到最新页，原始 Evidence 不被删除。
 普通 event refresh 保留较早消息、Draft、阅读位置、Inspector 选择和地图模式；在途执行刷新不覆盖历史阅读。
 
@@ -158,7 +158,7 @@ Escape 收起预览。定位只滚动公共时间线并聚焦目标消息，保�
 消息头用“模型 · 强度”提供可点击摘要；浮层仅显示队员、智能体、模型和已记录的强度，不加“本次执行”“当前配置”或策略说明。
 历史消息使用 [Camp Open Projection v25](../../contracts/camp-open-projection-v25.md) 的 `runtimeModel`，不能由现有队员配置推断；
 缺失记录显示“模型未记录”，Agent 默认且没有原生模型观测时显示“智能体默认”。模型或强度变化会打断连续消息的身份折叠。
-输入框默认队长／继续发送的接收者旁显示该队员配置的模型摘要；显式 Mention 或接收者不可用时不展示另一人的配置。
+输入框默认队长／继续发送的接收者提示只保留路由与姓名，不附加模型或推理强度。模型仍可从消息头、队员区与资料浮层查看。
 队员资料浮层直接列出模型与强度。弹层支持 Esc、外部点击关闭及焦点返回，复用既有主题；中文、英文与手机共享同一展示组件。
 
 Camp 只有一位 active member 时，“移出当前会话”仍可见但禁用，并直接解释“Camp 至少需要一位队员”。
@@ -557,7 +557,7 @@ Desktop 与宽屏 Web 的展开正文首尾、主要过程项间距及相邻 Run
 滚动容器为键盘焦点留出标题安全区，不改变跟随最新、折叠、输入清单或 exact Run 停止语义。
 总览中的队员头像固定为 20×20px，不随 flex 收缩拉伸。左侧状态节点与卡头首行垂直居中并跟随本卡标题，
 展开与停止操作距卡片右边保留 9px。字段与验收边界见
-[Run Process Detail Surface v42](../../contracts/run-process-detail-surface-v42.md)。
+[Run Process Detail Surface v43](../../contracts/run-process-detail-surface-v43.md)。
 
 执行浮层入口、右侧标签、消息区“处理中”回执和底部标题共用同一 24×24 心跳路径与 1.65 描边；
 queued 回执的时钟及各执行状态图形不变。
@@ -630,7 +630,7 @@ Shell 载体时，标题使用完整命令的单行预览，展开显示 `$ comm
 纯 CLI Shell 的完整成功返回值与其生命周期内唯一 Core 调用精确匹配时，折叠到 Built-in 行；单记录生命周期
 改用同 Run、同 epoch、紧邻序号和精确结果 digest 证明关联。混合命令、帮助、
 提前失败或不确定关联保留。底层 Evidence 和 Canonical 身份不变。完整规则见
-[Run Process Detail Surface v42](../../contracts/run-process-detail-surface-v42.md)。
+[Run Process Detail Surface v43](../../contracts/run-process-detail-surface-v43.md)。
 
 新 operation 的 started/progress/terminal 按稳定 Evidence ID 合并为一行；Renderer 只接受更高
 `revision/changeSequence`，不以记录数量或固定展示 `sequence` 判断内容是否变化。终态后的输入补齐、结果更新和
@@ -642,10 +642,9 @@ Shell 载体时，标题使用完整命令的单行预览，展开显示 `$ comm
 可靠阅读／编辑文件名或多文件数量，Web 搜索使用 typed query，其他操作使用非通用 Runtime title/toolName；
 没有具体值时回退稳定 Tool 行标题，不从 raw input/output 猜测。当前 Tool 已结算但尾组尚未收口时，继续显示
 “<最近一条指令>”。真正收口后只显示 `已完成 x 个步骤`；`x` 统计成功、失败、停止、跳过和结果未知在内的
-全部已结算逻辑操作，各终态不再追加独立数量，具体结果由展开后的 Tool 行表达。分页读取沿用相同的执行结果摘要，不改成“已载入 x 项执行记录”；组摘要只统计
-当前组已读取的逻辑操作，不表示整轮总量。已载入范围只在“加载更早记录”入口呈现。
+全部已结算逻辑操作，各终态不再追加独立数量，具体结果由展开后的 Tool 行表达。分页读取沿用相同的执行结果摘要，不改成“已载入 x 项执行记录”；组摘要统计该组完整的可见逻辑操作，不表示整轮总量；未展开的子项不读取。主线和组内分别维护已载入范围。
 `x` 按去重后的可见逻辑操作计数；同一 Built-in 与已关联 Shell 载体计一步，started/result/delta 和一个 Activity 的多文件行不重复计数。
-精确计数语义见 [Run Process Detail Surface v42](../../contracts/run-process-detail-surface-v42.md)。
+精确计数语义见 [Run Process Detail Surface v43](../../contracts/run-process-detail-surface-v43.md)。
 
 Runtime Compaction 作为根级、非 Tool process item 同样截断前后 Tool 分组，但不进入“已完成 x 个步骤”。
 它复用普通 command 的桌面 28px 行、最右侧状态 icon、文字后展开提示与结果文本框，并保留独立压缩 SVG；同一
@@ -671,7 +670,7 @@ Terminal、File Read、File Write、Web 等图标。运行时最右端只有状�
 高亮只覆盖静止的文字，不移动文字或闪烁背景；展开组或 Compact 后停止该行高亮，子指令及结果正文保持静态。
 完成、失败、等待、停止和结果未知保持静态；减少动态效果或 forced-colors 时关闭文字高亮，状态事实仍保留。
 
-用户展开后保持展开，新 Tool 与组终态只原位更新，不自动收起或抢焦点。展开组只显示全部 Tool summary，
+用户展开后保持展开，新 Tool 与组终态只原位更新，不自动收起或抢焦点。展开组每页读取 24 项 Tool 元数据，近边界自动续接并保留手动入口，与主线共用 Run 滚动容器；
 截断后的结果仍须再展开精确 Tool；结果 region 在首次展开前不进入 DOM，Managed Blob 也不提前读取。普通输出超过
 7.5 KiB 时在结果下显示“结果过长，部分内容已省略。”，并将读取文案改为“结果”，不提供全文恢复
 暗示；结构化 diff、Files Changed、输入与附件仍使用各自入口。收起组时
@@ -766,16 +765,37 @@ Claude Code `Edit` 的 exact mutation 展开只显示 `− oldText / + newText` 
 失败/缺失 result 与 `replace_all=true` 保持普通 Tool Activity。
 
 每个 terminal `agentRunId + executionEpoch` 可以在对应 Run 的会话位置追加一张独立卡片，标题固定为
-`Files Changed`。卡片紧跟来源 Run 的最后一条公开消息；没有公开消息时才以完成时间定位。并行 Run 分别产生卡片，
+`Files Changed`。卡片位于来源 Run 最后一条公开消息后的结果区域；同 Run 有入队卡片时，顺序固定为
+“最后一条公开回复 → 入队卡片 → Files Changed”。没有公开消息时才以完成时间定位。并行 Run 分别产生卡片，
 不共享、不覆盖，也不会因相邻完成而视觉归属到其他队员。移除明确的 `runtime_diff_no_changes` 后，每个文件只要
 仍有一个或多个可靠 Diff，就按既有归约显示逐文件 `+A −D`；同文件的 path-only operation 只保留在时序和
 operation count 中，不阻止可靠 Diff 参与统计。只有所有文件都有可靠统计时，卡片显示
 `N 个文件 · +A −D`；任一文件只有 operation-only 时，整张卡片回退为 `N 个文件 · M 次修改`。
 
-Run 已成功、失败或取消但没有公开消息时，图片与文件变化按精确 `agentRunId` 组成运行产物区域，
+Run 已成功、失败或取消但没有公开消息时，图片、入队卡片与文件变化按精确 `agentRunId` 组成运行产物区域，
 直接使用该 `AgentRun.agentId` 显示队员头像和姓名。同 Run 的多个 epoch 共用一次作者头，图片排在文件卡之前；
 不同 Run 保持各自作者和归属。头像、姓名沿用公开消息的人物信息卡资格与缺失头像回退，离队或移除队员保持静态。
 该区域不创建 CampMessage、不合成正文，也不提供消息复制或回复；来源 Run 未加载时保留文件卡，不猜测作者。
+
+仅当 Run 为 `cancelled` 且 `cancelReasonCode = user_requested_agent_run_stop` 时，在该 Run 最后一条公开
+回复及全部产物之后显示一次“你已中断”。既无公开回复、也无实际产物时，不新增产物区、队员头像或中断行；
+中断状态仍可在执行台查看。标记只补充既有内容，不为取消事件合成空的输出区域。
+标记采用居中的 4px 实心方点与 11.5px 中性文字，距上方内容 8px，点击高度至少 24px；不加横线、边框、时间或箭头。
+它与结果列共用 620px 上限、42px 缩进及窄容器回流规则。点击或键盘激活打开精确来源 Run 的执行详情，并沿用
+执行台承载位置与关闭行为；后续 Run、其他队员、多个 epoch 不改变来源或重复标记。请求尚未终态、
+异常失败、整轮取消及其他取消原因不使用“你已中断”。
+
+入队卡片仅在其明确来源 Run 终态后出现，同 Run 的多张入队卡片按创建时间、创建 ID 排序，并始终排在
+Files Changed 之前。两类卡片共用宽度不超过 620px、左缩进 42px 的结果列，距回复 14px、卡片间距 12px；
+会话容器不超过 480px 时取消缩进，占满内容列，保留现有 MobileUI 外侧留白。
+静态回执、旧记录兼容及缺失 Run 的回退由 [Member Creation Flow v1](../../contracts/member-creation-flow-v1.md) 拥有。
+
+入队卡片在左侧内容区显示“新队员已入队”、姓名、角色、职责和填色性格标签，肖像位于右侧。
+姓名为 24px / 600，职责使用正文色，角色与创建信息使用次级文字色。主体使用 `--surface`，
+独立页脚使用 `--home-surface`，边框与页脚分隔线使用 `--line`；MobileUI 沿用这些 Token 的既有映射。
+桌面肖像为 132×165px；会话容器不超过 480px 时改为 90×112.5px、姓名 22px，文字允许换行。
+页脚仅保留创建者、时间和“配置智能体”入口，右侧使用 14px SVG 折线箭头，窄栏触控高度至少 44px。
+配置入口仍打开现有队员运行配置，不在卡片内读取或展示队员的当前配置状态。
 
 文件行按“目录/文件名”连续展示，目录与分隔符保持次级灰色，文件名保持主文字色。display root 根目录文件只显示文件名，
 不补“当前目录”。宽度不足时优先从目录右侧按完整目录段省略，例如 `/xxx/.../CONTEXT.md`，文件名优先保留；

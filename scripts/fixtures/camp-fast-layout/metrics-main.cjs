@@ -33,7 +33,7 @@ app.whenReady().then(async () => {
     await run('window.fastTest.showMetrics()')
     await run('window.fastTest.settle()')
     await click('.run-pulse-chip[data-agent-id="agent-0"]')
-    await waitFor('document.querySelector(".execution-context-value")?.textContent === "25%"', 'Current Session ratio was not loaded')
+    await waitFor('document.querySelector(".execution-context-value")?.textContent === "25.0%"', 'Current Session ratio was not loaded')
     let reads = (await requests()).filter(request => request.method === 'monitoring.execution')
     assert.ok(reads.every(request => request.params.agentRunIds.length < 20), 'Initial reads queried hidden historical Runs')
 
@@ -80,9 +80,12 @@ app.whenReady().then(async () => {
     await wait(10_500)
     assert.equal((await requests()).length, beforeStable, 'Stable terminal data still polled')
     assert.ok(await run('!!document.querySelector("[data-agent-run-id=run-agent-0] .execution-duration-trigger")'))
+    await run('window.fastTest.metricsCommit(1000, 2, false)')
+    await waitFor('document.querySelector("[data-agent-run-id=run-agent-0] .execution-usage-trigger")?.textContent === "—"', 'Partial Input/Output was shown as a complete total')
+    // Unchanged numbers with new completeness evidence must refresh this row.
     await run('window.fastTest.metricsCommit(1000, 2)')
     await waitFor('document.querySelector("[data-agent-run-id=run-agent-0] .execution-usage-trigger")?.textContent === "1k"', 'Usage landing after terminal/tail did not replace the clock')
-    assert.equal(await run('document.querySelector(".execution-context-value")?.textContent'), '32%')
+    assert.equal(await run('document.querySelector(".execution-context-value")?.textContent'), '32.0%')
     await click('[data-agent-run-id="run-agent-0"] .execution-usage-trigger')
     assert.equal(await run('document.querySelectorAll(".execution-metric-popover dl > div").length'), 5)
     assert.ok(await run('document.querySelector(".execution-metric-popover")?.textContent.includes("执行耗时")'))
@@ -98,7 +101,7 @@ app.whenReady().then(async () => {
     assert.ok((await requests()).every(request => request.method === 'monitoring.execution'), 'Unexpected metrics polling')
     assert.equal(await run('document.querySelectorAll(".execution-header-metrics > *").length'), 1, 'Header must contain only the Context entry')
     const report = { ok: true, cases: ['visible collapsed history', '500 Run scoped reads', 'scroll and expansion',
-      'hidden panel and page', 'immediate visibility refresh', 'stable terminal', 'late post-tail Usage', 'Session replacement/removal'],
+      'hidden panel and page', 'immediate visibility refresh', 'stable terminal', 'late post-tail Usage', 'partial total and completeness-only refresh', 'Session replacement/removal'],
       maximumRequestedRuns: Math.max(...(await requests()).filter(request => request.method === 'monitoring.execution').map(request => request.params.agentRunIds.length)) }
     writeFileSync(join(dirname(userData), 'metrics-report.json'), JSON.stringify(report, null, 2))
     console.log(JSON.stringify(report))

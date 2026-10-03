@@ -1371,7 +1371,7 @@ fn print_root_help() {
 }
 
 fn root_help_text(managed_runtime: bool) -> String {
-    let mut text = "Rovai CLI\n\nAgent operations:\n  rovai send\n  rovai member create\n  rovai task create|get|list|update\n  rovai thread list|search|read\n  rovai history search\n  rovai memory view|search|read|write\n  rovai automation list|get|create|run|close|update|delete\n  rovai mission list|get|update|status\n\nRun an Agent operation's exact `--help` for its closed inputs. Each Agent operation supports direct flags, JSON stdin/heredoc, or --input-file <path>.\n".to_string();
+    let mut text = "Rovai CLI\n\nAgent operations:\n  rovai send\n  rovai member create\n  rovai task create|get|list|update\n  rovai thread list|search|read|runs\n  rovai history search\n  rovai memory view|search|read|write\n  rovai automation list|get|create|run|close|update|delete\n  rovai mission list|get|update|status\n\nRun an Agent operation's exact `--help` for its closed inputs. Each Agent operation supports direct flags, JSON stdin/heredoc, or --input-file <path>.\n".to_string();
     if !managed_runtime {
         text.push_str("\nUser Automation:\n  rovai app --help\n\nAgent operations keep their process-private transport. `rovai app` uses the running Desktop App's separate User Automation transport.\n");
     }
@@ -1552,6 +1552,26 @@ fn render_flat_input_help(output: &mut String, description: &BuiltinToolDescript
             if argument.required { " required" } else { "" },
         )
         .expect("writing help to a String cannot fail");
+        if description.name == "thread.runs" {
+            let teaching = match argument.field.as_str() {
+                "active" => {
+                    "Default: false. Include queued, running and waiting items. Cannot combine with status.\nThese are logical states; they do not prove process liveness or Agent availability."
+                }
+                "agentId" => "Optional. Filter by Agent ID.",
+                "cursor" => "Continue with nextCursor. Keep the same Thread and filters.",
+                "limit" => "Default: 20. Range: 1-100. Limits items, not messageCount.",
+                "status" => {
+                    "One of: queued, running, waiting, succeeded, failed, cancelled. Cannot combine with active.\nqueued includes items with and without a Run ID. Without either filter, include all states."
+                }
+                "threadId" => {
+                    "Optional. Omit for the current Thread; pass any extant public Thread ID."
+                }
+                _ => "",
+            };
+            if !teaching.is_empty() {
+                write_indented_help(output, teaching);
+            }
+        }
         if description.name == "thread.message.send" && argument.field == "body" {
             write_indented_help(output, CAMP_MESSAGE_SEND_BODY_HELP);
         }
@@ -1876,6 +1896,16 @@ fn operation_help_examples(operation: &str) -> &'static [&'static str] {
         "thread.search" => &[
             "rovai thread search --query 'amount'",
             "rovai thread search --thread-id '<thread-id>' --query 'amount'",
+        ],
+        "thread.runs" => &[
+            "rovai thread runs",
+            "rovai thread runs --active",
+            "rovai thread runs --agent-id agent_5 --active",
+            "rovai thread runs --status queued",
+            "rovai thread runs --thread-id '<thread-id>' --active",
+            "rovai thread runs --limit 20",
+            "rovai thread runs --cursor '<nextCursor>'",
+            "rovai thread runs --input-file query.json",
         ],
         "thread.read" => &[
             "rovai thread read",

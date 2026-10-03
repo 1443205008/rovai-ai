@@ -972,10 +972,12 @@ fn native_context_update(session_id: &str, snapshot: &Value) -> Option<Value> {
     if used < 0 || size <= 0 || used > 9_007_199_254_740_991 || size > 9_007_199_254_740_991 {
         return None;
     }
-    Some(json!({"method":"session/update","params":{"sessionId":session_id,"update":{
-        "sessionUpdate":"usage_update","used":used,"size":size,
-        "_meta":{"zcodeContext":{"eventSeq":seq,"stateRevision":revision}}
-    }}}))
+    Some(
+        json!({"method":"session/update","params":{"sessionId":session_id,"update":{
+            "sessionUpdate":"usage_update","used":used,"size":size,
+            "_meta":{"zcodeContext":{"eventSeq":seq,"stateRevision":revision}}
+        }}}),
+    )
 }
 
 // A provider failure leaves the native projection in error, not idle. It can
@@ -1108,7 +1110,11 @@ mod tests {
         let context = native_context_update("s1", &context_snapshot).unwrap();
         assert!(!context.to_string().contains("PRIVATE_TEST_KEY"));
         let parsed = crate::monitoring::parse_acp_usage_message(
-            crate::agent_profile::AdapterKind::ZcodeApp, None, "session/update", &context["params"]);
+            crate::agent_profile::AdapterKind::ZcodeApp,
+            None,
+            "session/update",
+            &context["params"],
+        );
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].fields.context_used_tokens, Some(450));
         assert_eq!(parsed[0].fields.context_size_tokens, Some(1000));
@@ -1130,7 +1136,10 @@ mod tests {
         compacted["runtime"]["contextUsage"]["used"] = json!(100);
         let decreased = native_context_update("s1", &compacted).unwrap();
         assert_eq!(decreased["params"]["update"]["used"], 100);
-        assert_ne!(decreased["params"]["update"]["_meta"], context["params"]["update"]["_meta"]);
+        assert_ne!(
+            decreased["params"]["update"]["_meta"],
+            context["params"]["update"]["_meta"]
+        );
         let snapshot = json!({"projection":{"status":"error","activeToolCalls":[],"pendingPermissions":[]},
             "runtime":{"pendingRequestIds":[]}});
         assert!(foreground_quiescent(&snapshot, true));
@@ -1193,9 +1202,11 @@ mod tests {
                         }})).await.unwrap();
                         json!({"status":"accepted","result":{"inputId":input}})
                     }
-                    "session/read" => json!({"session":{"sessionId":"s1"},"projection":{"status":"error","backgroundJobs":[],
+                    "session/read" => {
+                        json!({"session":{"sessionId":"s1"},"projection":{"status":"error","backgroundJobs":[],
                         "activeToolCalls":[],"pendingPermissions":[]},"runtime":{"pendingRequestIds":[],
-                        "eventSeq":2,"stateRevision":4,"contextUsage":{"used":450,"size":1000,"breakdown":"PRIVATE_TEST_KEY"}}}),
+                        "eventSeq":2,"stateRevision":4,"contextUsage":{"used":450,"size":1000,"breakdown":"PRIVATE_TEST_KEY"}}})
+                    }
                     "workspace/readState" | "session/setMode" => json!({}),
                     method => panic!("unexpected native method {method}"),
                 };
@@ -1235,7 +1246,10 @@ mod tests {
                         .unwrap()
                         .expect("provider failure must reach Core before any transport close");
                     assert!(!message.to_string().contains("PRIVATE_TEST_KEY"));
-                    if message["params"]["update"]["_meta"].get("zcodeContext").is_some() {
+                    if message["params"]["update"]["_meta"]
+                        .get("zcodeContext")
+                        .is_some()
+                    {
                         observed_context = true;
                     }
                     if message["id"] == id {
@@ -1246,7 +1260,10 @@ mod tests {
             .await
             .unwrap();
             if id == 2 {
-                assert!(observed_context, "native Context must precede the prompt terminal");
+                assert!(
+                    observed_context,
+                    "native Context must precede the prompt terminal"
+                );
                 assert!(
                     response["error"]["message"]
                         .as_str()

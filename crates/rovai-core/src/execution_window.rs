@@ -17,6 +17,11 @@ use crate::{
 
 pub const DEFAULT_WINDOW_LIMIT: i64 = 24;
 
+mod associations;
+mod blocks;
+mod carrier;
+pub use blocks::{read_block_changes, read_block_page, read_group_changes, read_group_page};
+
 fn agent_run_belongs_to_camp(
     connection: &Connection,
     camp_id: &str,
@@ -429,6 +434,13 @@ fn supporting_builtin_operation(
     connection: &Connection,
     item: &AgentRunExecutionEvidenceView,
 ) -> Result<Option<String>> {
+    Ok(supporting_builtin_invocation(connection, item)?.map(|(_, operation)| operation))
+}
+
+fn supporting_builtin_invocation(
+    connection: &Connection,
+    item: &AgentRunExecutionEvidenceView,
+) -> Result<Option<(String, String)>> {
     let Some(shell) = item.canonical.as_ref().filter(|canonical| {
         canonical.activity_domain == "shell" && canonical.outcome == "succeeded"
     }) else {
@@ -531,7 +543,7 @@ fn supporting_builtin_operation(
             matched.insert(id, operation.to_string());
         }
     }
-    Ok((matched.len() == 1).then(|| matched.into_values().next().unwrap()))
+    Ok((matched.len() == 1).then(|| matched.into_iter().next().unwrap()))
 }
 
 fn historical_builtin_cli_result(operation: &str, result: &Value) -> Option<Value> {

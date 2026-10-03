@@ -48,7 +48,7 @@ pub const TEAM_CREATE_TASK_TOOL_NAME: &str = "team.create_task";
 pub const TEAM_GET_TASK_TOOL_NAME: &str = "team.get_task";
 pub const TEAM_UPDATE_TASK_TOOL_NAME: &str = "team.update_task";
 pub const TEAM_LIST_TASKS_TOOL_NAME: &str = "team.list_tasks";
-pub const TEAM_TOOL_NAMES: [&str; 26] = [
+pub const TEAM_TOOL_NAMES: [&str; 27] = [
     "mission.list",
     "mission.get",
     "mission.update",
@@ -70,6 +70,7 @@ pub const TEAM_TOOL_NAMES: [&str; 26] = [
     CAMP_SEARCH_TOOL_NAME,
     HISTORY_SEARCH_TOOL_NAME,
     CAMP_READ_TOOL_NAME,
+    crate::thread_runs::THREAD_RUNS_TOOL_NAME,
     SINGLE_CHAT_HISTORY_TOOL_NAME,
     "memory.view",
     "memory.search",
@@ -2517,6 +2518,22 @@ mod tests {
         assert_eq!(receipts.len(), 1);
         assert_eq!(receipts[0].display_name, "Nova Test Member");
         assert_eq!(receipts[0].creator_agent_id, "agent_1");
+        assert_eq!(
+            receipts[0].source_agent_run_id.as_deref(),
+            Some(authenticated_run.agent_run_id.as_str())
+        );
+        // Pre-association snapshots stay readable; never reconstruct a Run from timestamps.
+        let mut legacy_receipt = serde_json::to_value(&receipts[0]).unwrap();
+        legacy_receipt
+            .as_object_mut()
+            .unwrap()
+            .remove("sourceAgentRunId");
+        assert!(
+            serde_json::from_value::<crate::member_studio::MemberCreationView>(legacy_receipt)
+                .unwrap()
+                .source_agent_run_id
+                .is_none()
+        );
         assert_eq!(
             crate::member_studio::last_creation_helper(fixture.database.connection())
                 .unwrap()

@@ -11,7 +11,7 @@ export const largeRoster = [...agents, ...extraNames.map((displayName, i) => ({ 
 export const rosterForScenario = scenario => scenario === 'many' ? largeRoster : agents;
 export const navigation = { schemaVersion: 3, throughGlobalSequence: 1, projects: [], quickChat: { totalCount: 0, recentThreads: [] } };
 export const preferences = () => ({ schemaVersion: 4, startupLocationMode: 'last_location', lastSettingsSection: 'general', executionConsolePlacement: 'bottom', newConversationDefaults: { memberAgentIds: [agents[0].agentId, agents[1].agentId], defaultLeadAgentId: agents[0].agentId }, newConversationDefaultsRequireConfirmation: false, oneClickNewConversationEnabled: false, worldMapEnabled: false });
-export const notifications = () => ({ headsUpEnabled: true, approvalHeadsUpEnabled: true, userMentionHeadsUpEnabled: true, turnCompletedHeadsUpEnabled: true, turnIncompleteHeadsUpEnabled: true, version: 1, updatedAt: now });
+export const notifications = () => ({ headsUpEnabled: true, approvalHeadsUpEnabled: true, userMentionHeadsUpEnabled: true, turnCompletedHeadsUpEnabled: true, turnIncompleteHeadsUpEnabled: true, singleChatHeadsUpEnabled: true, missionNeedsYouHeadsUpEnabled: true, missionStatusHeadsUpEnabled: true, taskStatusHeadsUpEnabled: false, missionStatuses: ['completed'], taskStatuses: ['completed', 'blocked', 'cancelled'], version: 1, updatedAt: now });
 export const appearance = () => ({ ...DEFAULT_APPEARANCE, resolvedTheme: 'day', source: 'saved' });
 const runtimeStatuses = { 'claude-code-cli': 'ready', 'codex-cli': 'ready', 'opencode-cli': 'missing', 'copilot-cli': 'authentication_required', 'pi': 'ready' };
 export function healthSnapshot(allReady = false) {

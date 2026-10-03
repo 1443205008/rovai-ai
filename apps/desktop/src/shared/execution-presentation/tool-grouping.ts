@@ -1,4 +1,4 @@
-import type { AgentRunView } from '@contracts'
+import type { AgentRunView, AgentRunExecutionBlock } from '@contracts'
 import {
   activityStatusForAgentRun,
   executionStepCurrentInstructionTitle,
@@ -14,6 +14,7 @@ export type ToolActivityGroup = {
   key: string
   kind: 'toolGroup'
   items: ToolProgressItem[]
+  block?: AgentRunExecutionBlock
 }
 
 export type GroupedExecutionProgressItem =
@@ -95,7 +96,8 @@ export function toolActivityGroupPresentation(
     translateLabel?: (label: string) => string
     currentTitle?: (step: ToolProgressItem['step']) => string
     activeAccessibleLabel?: (primary: string, currentTitle: string) => string
-  } = {}
+  } = {},
+  aggregate?: Pick<AgentRunExecutionBlock, 'toolCount' | 'counts'>
 ): ToolActivityGroupPresentation {
   const label = copy.translateLabel ?? ((value: string): string => value)
   const title = copy.currentTitle ?? executionStepCurrentInstructionTitle
@@ -110,9 +112,9 @@ export function toolActivityGroupPresentation(
     }
   }
 
-  const completed = statuses.filter((status) => status === 'completed').length
-  const failed = statuses.filter((status) => status === 'failed').length
-  const stopped = statuses.filter((status) => status === 'stopped').length
+  const completed = aggregate?.counts.completed ?? statuses.filter((status) => status === 'completed').length
+  const failed = aggregate?.counts.failed ?? statuses.filter((status) => status === 'failed').length
+  const stopped = aggregate?.counts.stopped ?? statuses.filter((status) => status === 'stopped').length
 
   if (activeIndex >= 0) {
     const status = statuses[activeIndex]
@@ -143,7 +145,7 @@ export function toolActivityGroupPresentation(
     }
   }
 
-  const total = items.length
+  const total = aggregate?.toolCount ?? items.length
   let status: ActivityStatus
   let statusLabel: string
   if (completed > 0) {

@@ -1,5 +1,5 @@
 ---
-version: 16
+version: 17
 slug: "settings-workspace"
 primary_target: "apps/desktop/src/renderer/src/SettingsPageHeader.tsx"
 related_targets:
@@ -41,11 +41,13 @@ scroll and focus.
 
 ## 通用
 
-General owns stable startup location, world-map availability and window reset. Stable choices commit immediately through the
+General owns stable startup location, world-map availability and window reset. Windows Desktop also owns the local
+close-behavior selector (ask every time / system tray / quit); its close dialog and remembered choice share Main authority
+under [Windows Window Close v1](../../../../docs/contracts/windows-window-close-v1.md). macOS and Web expose neither this selector nor a tray. Stable choices commit immediately through the
 narrow Desktop bridge. The App does not expose or enable an OS login-start item on either supported
 platform; packaged macOS startup only makes a best-effort removal of any retired registration, while
 the first Windows release creates no Startup task or Run-key entry. General does not add hidden/background
-launch, default Project, recovery or update policy.
+launch, default Project, recovery or update policy. Hiding an already open Windows window is separate from startup policy.
 
 The shared General page receives its preference API explicitly from either entry. Creation team, Lead and
 one-click flag come from the same Host-owned record; Desktop legacy choices are imported once. Web stores only client
@@ -61,6 +63,8 @@ for the selected member and candidates. More than eight selected members enables
 bounded and follows available viewport space. Invalid members stay recognizable and cannot become a new Lead.
 Keep existing invalid-default validation. The local draft/error/save row uses the shared save icon and “保存”;
 there is no duplicate saved-state message in the page header.
+The one-click creation summary shows only the saved teammate count and Lead, such as “4 位默认队员 · 队长 爱丽丝”.
+Omit “当前生效” and the currently selected project: the project follows the creation entry, independently of these saved defaults.
 
 World-map availability appears in a 会话 section immediately after 新对话 and before 窗口. A new profile
 with no preferences source starts disabled. Exact schema-v4 saved values remain authoritative, while

@@ -6,6 +6,7 @@ import { FilePreviewService } from '../../../apps/desktop/src/main/file-preview/
 import { navigationAcceptance } from './navigation'
 import { feedbackAcceptance } from './feedback'
 import { lifecycleAcceptance } from './lifecycle'
+import { policyAcceptance } from './policy'
 
 const [renderer, userData, root, preload] = process.argv.slice(2)
 app.setPath('userData', userData)
@@ -26,7 +27,7 @@ app.whenReady().then(async () => {
   const navigation = new FilePreviewFrameNavigation(url => service.ownsHtmlPreviewOrigin(window.webContents.id, url))
   window.webContents.on('will-frame-navigate', details => { if (!details.isMainFrame && !navigation.allows(details.url, details.frame, window.webContents.mainFrame, window.webContents.mainFrame.framesInSubtree)) details.preventDefault() })
   window.webContents.on('will-redirect', details => { if (!details.isMainFrame && !navigation.allows(details.url, details.frame, window.webContents.mainFrame, window.webContents.mainFrame.framesInSubtree)) details.preventDefault() })
-  const calls = ['updateRetention', 'bindCamp', 'open', 'restore', 'reopen', 'readText', 'readPage', 'resolveLine', 'readBinary', 'prepareHtml', 'prepareHtmlSite', 'releaseHtmlSite', 'reload', 'release']
+  const calls = ['updateRetention', 'bindThread', 'open', 'restore', 'reopen', 'readText', 'readPage', 'resolveLine', 'readBinary', 'prepareHtml', 'prepareHtmlSite', 'releaseHtmlSite', 'reload', 'release']
   ipcMain.handle('preview-fixture', (event, method: string, args: unknown) => {
     if (event.senderFrame !== window.webContents.mainFrame || !calls.includes(method)) throw new Error('Invalid fixture call')
     return (service as unknown as Record<string, (id: number, args: unknown) => unknown>)[method](event.sender.id, args)
@@ -43,6 +44,11 @@ app.whenReady().then(async () => {
   }
   if (process.env.ROVAI_HTML_PREVIEW_SCENARIO === 'lifecycle') {
     const cases = await lifecycleAcceptance(window, userData)
+    console.log(JSON.stringify({ htmlPreviewAcceptance: true, ok: cases.every(result => result.ok), cases, errors }))
+    await service.closeAll(); window.destroy(); app.exit(cases.every(result => result.ok) ? 0 : 1); return
+  }
+  if (process.env.ROVAI_HTML_PREVIEW_SCENARIO === 'policy') {
+    const cases = await policyAcceptance(window, userData, root)
     console.log(JSON.stringify({ htmlPreviewAcceptance: true, ok: cases.every(result => result.ok), cases, errors }))
     await service.closeAll(); window.destroy(); app.exit(cases.every(result => result.ok) ? 0 : 1); return
   }

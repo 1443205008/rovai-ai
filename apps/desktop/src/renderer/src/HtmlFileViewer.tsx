@@ -36,7 +36,7 @@ function HtmlPageViewer({ tab, pathControl, updateAction, candidate }: {
   const detailsId = useId()
   useHtmlFileFind(iframeRef, sourceMode || candidate ? null : channel)
   const { open, reload, toggleHtmlSource, resolvedTheme, completeHtmlRefresh, saveReading, displayed } = useFilePreview()
-  const [loadState, setLoadState] = useState<HtmlPreviewLoadSnapshot>({ documentId: null, document: 'loading', channel: 'waiting', serverDiagnostics: 'waiting', failure: null, notice: null })
+  const [loadState, setLoadState] = useState<HtmlPreviewLoadSnapshot>({ documentId: null, document: 'loading', channel: 'waiting', serverDiagnostics: 'waiting', serverDiagnosticsReason: null, failure: null, notice: null })
   const { document: documentState, channel: channelState, failure } = loadState
   const load = useRef<HtmlPreviewLoadState | null>(null)
   const [diagnostics, setDiagnostics] = useState<HtmlPreviewDiagnostic[]>([])
@@ -79,7 +79,7 @@ function HtmlPageViewer({ tab, pathControl, updateAction, candidate }: {
         })
       } else if (message.type === 'server-diagnostics' && typeof message.documentId === 'string'
         && (message.state === 'waiting' || message.state === 'connected' || message.state === 'unavailable')) {
-        state.serverDiagnostics(message.documentId, message.state)
+        state.serverDiagnostics(message.documentId, message.state, message.reason)
       } else if (message.type === 'fragment-result' && typeof message.found === 'boolean') setNotice(message.found ? null : uiAttribute('未找到指定的页内位置。'))
       else if (message.type === 'link' && typeof message.href === 'string' && message.href.startsWith('file:') && message.href.length <= 4096 && current.current.file) {
         void open({ kind: 'child_of_handle', parentHandleId: current.current.file.handleId, rawReference: message.href, allowSystemOpen: true })
@@ -134,7 +134,7 @@ function HtmlPageViewer({ tab, pathControl, updateAction, candidate }: {
     {hasDetails && <div id={detailsId} className="file-preview-html-diagnostics" hidden={!expanded}>
       {tab.refreshError && <p role="alert"><UiText zh={"重新加载失败："} />{tab.refreshError}<UiText zh={"。已显示的内容会保留。"} /></p>}
       {loadState.notice && <p className="file-preview-html-notice">{loadState.notice}</p>}
-      {diagnosticsUnavailable && <p className="file-preview-html-notice"><UiText zh={"资源诊断连接中断，部分资源错误信息可能不完整"} /></p>}
+      {diagnosticsUnavailable && <p className="file-preview-html-notice"><UiText zh={loadState.serverDiagnosticsReason === 'policy' ? "资源诊断受此页面策略限制，部分诊断信息不可用。" : "资源诊断连接中断，部分资源错误信息可能不完整"} /></p>}
       <p><UiText zh={"文档："} />{documentState === 'loaded' ? uiAttribute("已加载") : documentState === 'failed' ? uiAttribute("加载失败") : documentState === 'unresponsive' ? uiAttribute("尚未完成加载") : documentState === 'unconfirmed' ? uiAttribute("无法确认") : uiAttribute("加载中")}<UiText zh={" · 脚本："} />{scriptFailed ? uiAttribute("已发现运行错误") : uiAttribute("尚未发现异常")}<UiText zh={" · 资源："} />{resourceFailed ? uiAttribute("部分资源失败") : uiAttribute("尚未发现失败")}<UiText zh={" · 页面通信："} />{channelState === 'connected' ? uiAttribute("已连接") : channelState === 'waiting' ? uiAttribute("尚未响应") : uiAttribute("不可用")}<UiText zh={" · 资源诊断："} />{loadState.serverDiagnostics === 'connected' ? uiAttribute("已连接") : loadState.serverDiagnostics === 'waiting' ? uiAttribute("连接中") : loadState.serverDiagnostics === 'not-applicable' ? uiAttribute("未启用") : uiAttribute("已中断")}</p>
       {currentDiagnostics.length > 0 && <ol>{currentDiagnostics.map((item, index) => <li key={index}>
         <strong>{labels[item.kind]}</strong>：{item.message}

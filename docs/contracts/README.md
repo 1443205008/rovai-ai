@@ -51,6 +51,7 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 
 | 合同 | 权威范围 |
 | --- | --- |
+| [Windows Window Close v1（当前）](windows-window-close-v1.md) | Windows 主窗口关闭选择、记忆、本机设置与托盘生命周期；明确退出复用 Planned Shutdown |
 | [Host Lifecycle v2（当前）](host-lifecycle-v2.md) | 统一 Host 的原生 Server 单一数据根与用户入口；Desktop 旧布局兼容、唯一 owner、配套 WebUI 与受控停止 |
 | [Host Lifecycle v1（兼容入口）](host-lifecycle-v1.md) | 旧预览 Host CLI 的显式内部路径和初始化；由 v2 保留兼容，不自动迁移数据 |
 | [Host Web v4（当前）](host-web-v4.md) | Task v5 当前输入/投影与 Host protocol 4 clean break |
@@ -193,7 +194,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Camp Open Projection v1（历史）](camp-open-projection-v1.md) | Desktop `camps.enter/open/exists`、有界首屏投影、coverage/high-water、earlier message page 与 data-minimized trace；不含 AgentRun 取消请求字段 |
 | [Skill Content Preview v1（历史）](skill-content-preview-v1.md) | 旧 Library Revision 或导入候选的只读内容合同；当前原生 Skill 原址预览见 Skills Rebuild v1 |
 | [Camp Conversation Find v1（当前）](camp-conversation-find-v1.md) | Desktop 当前 Camp 公开 user/agent 正文的 exact count、单命中 traversal、Unicode scalar offset 与有界 around-window 定位 |
-| [File Preview v20（当前）](file-preview-v20.md) | 无 Diff 的终态 Read/Write 文件操作由精确 Run Evidence 授权预览，保留 Diff、根外绝对路径和 Run 工作目录解析 |
+| [File Preview v21（当前）](file-preview-v21.md) | 精确归因内部诊断 CSP 拒绝，中性降级并停止当前文档无效重试；保留作者策略与真实错误 |
+| [File Preview v20（历史）](file-preview-v20.md) | 无 Diff 的终态 Read/Write 文件操作由精确 Run Evidence 授权预览，保留 Diff、根外绝对路径和 Run 工作目录解析 |
 | [File Preview v19（历史）](file-preview-v19.md) | Run Diff 与 Files Changed 的当前文件预览接受精确证据中的根外绝对路径，保留相对路径的 Run 工作目录解析与来源校验 |
 | [File Preview v18（历史）](file-preview-v18.md) | Files Changed projection 原位刷新、旧 detail 响应 fence 与 Tab 阅读状态保留 |
 | [File Preview v17（历史）](file-preview-v17.md) | Execution、Mission Activity 与文件共享标签集合、分栏宿主与已保存宽度 |
@@ -310,7 +312,9 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Accepted Input Recovery v1（历史）](accepted-input-recovery-v1.md) | accepted Runtime input 的启动分类、`recovery_blocked`、Scheduler fence、用户命令与 Stop/预算 outcome-unknown 收敛；不含 Migration 99 |
 | [Collaboration State v3（当前）](collaboration-state-v3.md) | 模型正文删除 schemaVersion，peer、Lead 与 digest 业务语义不变 |
 | [Collaboration State v2（历史）](collaboration-state-v2.md) | peer-only routing identity、稳定 CampMember 选择、Lead ID/Boolean、完整 projection digest、独立 inclusion、accepted ACK 与 v0.50 clean break |
-| [Camp History v10（当前）](camp-history-v10.md) | 显式 read/search 可见 claim 前消息，撤回后 read 返回英文状态项；保留按需实时读取与 1–100 诚实分页 |
+| [Thread Runs v1（当前）](thread-runs-v1.md) | 公开执行和排队查询；统一 items、可空 Run ID、实时预览和动态分页 |
+| [Camp History v11（当前）](camp-history-v11.md) | 正常 timeline/reply-chain/item 统一 addressing，撤回项保持独立形状 |
+| [Camp History v10（历史）](camp-history-v10.md) | 显式 read/search 可见 claim 前消息，撤回后 read 返回英文状态项；保留按需实时读取与 1–100 诚实分页 |
 | [Camp History v9（历史）](camp-history-v9.md) | 按需实时读取；`camp.read` 默认 20、显式整数 1–100、诚实分页 |
 | [Camp History v8（历史）](camp-history-v8.md) | 所有受认证队员可读取全部存续公共 Camp；目标 membership 不是 ACL，旧 Manifest 漏项动态兼容 |
 | [Camp History v7（历史）](camp-history-v7.md) | 调用时实时可见性、recipient suppression、撤回过滤与完整分页结果；其继承的目标 Camp 授权由 v8 替代 |
@@ -322,7 +326,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Memory Capture v3（当前）](memory-capture-v3.md) | v2 边界加 complete exact-Scope View、copyable Revision target、active body aggregate quota、64 KiB production projection limit 与 Memory-domain clean break |
 | [Memory Capture v2 (historical)](memory-capture-v2.md) | v1 捕获/Review/Forget 边界加 flat Agent-relative Scope identity、revise target assertion、durable domain rejection 与 Supersession 原子顺序 |
 | [Memory Capture v1 (historical)](memory-capture-v1.md) | 初版 best-effort 在线捕获、actor-bounded add/revise、隔离 Hearth Review Item、双 CAS、候选清除与 Forget safeguard；不含 Scope-identified revise |
-| [Built-in Tool Transport v34（当前）](builtin-tool-transport-v34.md) | User 主称呼与双别名；新 Agent Output 7，旧 receipt 原字节复用 |
+| [Built-in Tool Transport v35（当前）](builtin-tool-transport-v35.md) | thread.runs、read addressing、Agent Output 8；旧 Session 和 Bootstrap 保持 |
+| [Built-in Tool Transport v34（历史）](builtin-tool-transport-v34.md) | User 主称呼与双别名；新 Agent Output 7，旧 receipt 原字节复用 |
 | [Built-in Tool Transport v33（历史）](builtin-tool-transport-v33.md) | Thread 命名与冻结 Session 身份保持 |
 | [Built-in Tool Transport v32（历史）](builtin-tool-transport-v32.md) | Task 无版本更新，四类 Agent 结果删除 availableActions，CLI/输出版本轮换 |
 | [Built-in Tool Transport v31（历史）](builtin-tool-transport-v31.md) | 继承 v30；Task v4 输入/help/get projection、Agent Output 4、Charter revision 12 与 v31 capability clean break |
@@ -513,7 +518,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [ContextManifest Evidence v9 (historical)](context-manifest-evidence-v9.md) | bounded public omission evidence；不作为 Formatter v13 恢复入口 |
 | [Context Delivery Profile v2 (historical)](context-delivery-profile-v2.md) | 公共引用链与历史 budget 的旧当前合同；不选择 self-active Task |
 | [Context Delivery Profile v1 (historical)](context-delivery-profile-v1.md) | AgentRun 公共消息窗口、Unicode scalar 正文截断、历史字符预算与遗漏提示 |
-| [Run Process Detail Surface v42（当前）](run-process-detail-surface-v42.md) | 继承 v41；新 Tool 持久化输出限 7,680 UTF-8 字节，显式三态归约与可缺省丢失标记 |
+| [Run Process Detail Surface v43（当前）](run-process-detail-surface-v43.md) | 继承 v42；主线按完整内容块分页、Tool 组独立游标与有界自动补齐，不新增表或迁移 |
+| [Run Process Detail Surface v42](run-process-detail-surface-v42.md) | 继承 v41；新 Tool 持久化输出限 7,680 UTF-8 字节，显式三态归约与可缺省丢失标记 |
 | [Run Process Detail Surface v41（历史）](run-process-detail-surface-v41.md) | Operation 单记录生命周期、独立 change cursor、输入/结果分离 Blob 与 content-free thinking phase |
 | [Run Process Detail Surface v40（历史）](run-process-detail-surface-v40.md) | 继承 v39；普通 Camp 与完整 Mission 进入时默认选择总览，同时保留最新 running Run 的精确聚焦与定位 |
 | [Run Process Detail Surface v39（历史）](run-process-detail-surface-v39.md) | 继承 v38；使命板抽屉的底部执行台不因已有或新建 running Run 自动展开，显式入口保持可用 |

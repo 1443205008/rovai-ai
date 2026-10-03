@@ -1399,7 +1399,7 @@ export const MemberRuntimeForm = forwardRef<
             disabled={dirty || conflict || busy !== null || !runtimeMutationAllowed || !agent.runtimeConfiguration}
             title={dirty ? uiAttribute('请先保存当前运行配置') : undefined}
             onClick={() => onApplyToOthers(agent)}>
-            <RuntimeApplyIcon/>{dirty ? uiAttribute('保存后应用到其他队员…') : uiAttribute('应用到其他队员…')}
+            <span><UiText zh="应用到其他队员" /></span><RuntimeApplyIcon/>
           </button>}
           <span
             className={`member-editor-save-status ${dirty ? 'is-dirty' : ''}`}

@@ -1,4 +1,4 @@
-import { ConfiguredModelSummary, MessageModelSummary, ModelSummaryText, ProfileModelFields } from './ThreadModelInformation'
+import { MessageModelSummary, ModelSummaryText, ProfileModelFields } from './ThreadModelInformation'
 import { memberRuntimeConfigurationPresentation, modelSummary, runtimeAdapterLabel } from './runtime-model-presentation'
 export { memberRuntimeConfigurationPresentation, type MemberRuntimeConfigurationPresentation } from './runtime-model-presentation'
 import { memberCreationStarters } from './member-creation-flow'
@@ -149,7 +149,7 @@ import { runtimeReadinessLabel } from './runtime-status'
 import { runtimeEditorInstallation } from './MemberRuntimeParameters'
 import { SafeMarkdown } from './SafeMarkdown'
 import { FilePreviewPane } from './FilePreviewPane'
-import { FilePreviewResizeHandle, FilePreviewWorkspace, useOptionalFilePreviewLayout } from './FilePreviewLayout'
+import { FilePreviewResizeHandle, FilePreviewWorkspace, useInitializeFilePreviewMinimumWidth, useOptionalFilePreviewLayout } from './FilePreviewLayout'
 import { useExecutionPreviewHost, useOptionalFilePreview } from './FilePreviewContext'
 import {
   agentRunFileChangeHasReviewableDiff,
@@ -200,6 +200,7 @@ import {
   executionHasActiveCompaction,
   groupConsecutiveToolItems,
   toolActivityGroupHasActiveTool,
+  type GroupedExecutionProgressItem,
   type ToolProgressItem
 } from './execution-tool-grouping'
 import { UiText, getInterfaceLanguage, uiAttribute, useUiText } from './interface-language'
@@ -625,6 +626,8 @@ type ExecutionDrawerFocusRequest = {
   sequence: number
   moveDomFocus: boolean
 }
+
+type SubmittedExecutionRequest = ThreadMessageSendReceipt & { firstThreadSubmission: boolean }
 
 export function preferredAgentProcessRun(runs: AgentRunView[]): AgentRunView | null {
   const newestFirst = runs.slice().sort((left, right) =>
@@ -1190,6 +1193,7 @@ export type ThreadConversationTimelineItem =
       createdAt: string
       message: ThreadMessageView
       runtimeImageGroups: AgentRunImagesView[]
+      interruptedRun?: AgentRunView
     }
   | {
       kind: 'run_file_changes'
@@ -1209,6 +1213,7 @@ export type ThreadConversationTimelineItem =
       createdAt: string
       run: AgentRunView
       imageGroups: AgentRunImagesView[]
+      memberCreations: MemberCreationView[]
       fileChanges: AgentRunFileChangesView[]
     }
   | {
@@ -1237,6 +1242,10 @@ function compareTimelinePresentationOrder(
   return left.createdAt.localeCompare(right.createdAt)
     || TIMELINE_KIND_RANK[left.kind] - TIMELINE_KIND_RANK[right.kind]
     || left.id.localeCompare(right.id)
+}
+
+function isUserInterruptedRun(run: AgentRunView): boolean {
+  return run.status === 'cancelled' && run.cancelReasonCode === 'user_requested_agent_run_stop'
 }
 
 export function campConversationTimeline(
@@ -1279,12 +1288,12 @@ export function campConversationTimeline(
       ? item.message.sourceAgentRunId ?? []
       : [])
   )
-  const runStatusById = new Map(agentRuns.map((run) => [run.id, run.status]))
+  const runById = new Map(agentRuns.map((run) => [run.id, run]))
   const runImageCards: ThreadConversationTimelineItem[] = agentRunImages
     .filter((images) => {
       if (images.images.length === 0) return false
       if (publicAgentMessageRunIds.has(images.agentRunId)) return true
-      const status = runStatusById.get(images.agentRunId)
+      const status = runById.get(images.agentRunId)?.status
       return status !== undefined && !NON_TERMINAL_RUNS.has(status)
     })
     .map((images) => ({
@@ -1313,9 +1322,18 @@ export function campConversationTimeline(
     return left.message.sequence - right.message.sequence
       || compareTimelinePresentationOrder(left, right)
   })
-  const joinedCards: ThreadConversationTimelineItem[] = memberCreations.map((receipt) => ({
-    kind: 'member_joined', id: receipt.creationId, createdAt: receipt.createdAt, receipt
-  }))
+  const joinedCards: ThreadConversationTimelineItem[] = memberCreations
+    .filter((receipt) => {
+      const run = receipt.sourceAgentRunId ? runById.get(receipt.sourceAgentRunId) : undefined
+      // A successful creation is durable even if its Run later fails or is cancelled.
+      // Old receipts and unavailable Runs remain readable without guessing an origin.
+      return !run || !NON_TERMINAL_RUNS.has(run.status)
+    })
+    .map((receipt) => ({
+      kind: 'member_joined', id: receipt.creationId,
+      createdAt: (receipt.sourceAgentRunId ? runById.get(receipt.sourceAgentRunId)?.endedAt : null) ?? receipt.createdAt,
+      receipt
+    }))
   const sortedCards = [...taskCards, ...stopEvents, ...runImageCards, ...runFileChangeCards, ...joinedCards]
     .sort(compareTimelinePresentationOrder)
   const sortedItems: ThreadConversationTimelineItem[] = []
@@ -1331,7 +1349,7 @@ export function campConversationTimeline(
     }
   }
   sortedItems.push(...sortedMessages.slice(messageIndex), ...sortedCards.slice(cardIndex))
-  const lastPublicMessageByRunId = new Map<string, ThreadConversationTimelineItem>()
+  const lastPublicMessageByRunId = new Map<string, Extract<ThreadConversationTimelineItem, { kind: 'camp_message' }>>()
   for (const item of sortedMessages) {
     if (item.kind === 'camp_message'
       && item.message.authorType === 'agent'
@@ -1339,11 +1357,17 @@ export function campConversationTimeline(
       lastPublicMessageByRunId.set(item.message.sourceAgentRunId, item)
     }
   }
+  for (const run of agentRuns) {
+    const message = lastPublicMessageByRunId.get(run.id)
+    if (message && isUserInterruptedRun(run)) message.interruptedRun = run
+  }
   const anchoredCardIds = new Set<string>()
   const cardsByAnchorMessageId = new Map<string, ThreadConversationTimelineItem[]>()
-  for (const card of [...runImageCards, ...runFileChangeCards]) {
-    if (card.kind !== 'run_file_changes' && card.kind !== 'run_images') continue
-    const runId = card.kind === 'run_images' ? card.images.agentRunId : card.changes.agentRunId
+  for (const card of [...runImageCards, ...joinedCards, ...runFileChangeCards]) {
+    if (card.kind !== 'run_file_changes' && card.kind !== 'run_images' && card.kind !== 'member_joined') continue
+    const runId = card.kind === 'run_images' ? card.images.agentRunId
+      : card.kind === 'run_file_changes' ? card.changes.agentRunId : card.receipt.sourceAgentRunId
+    if (!runId) continue
     // With no public message, place the images immediately before that Run's Files Changed.
     const fileCard = card.kind === 'run_images'
       ? runFileChangeCards.find((candidate) => candidate.kind === 'run_file_changes'
@@ -1362,6 +1386,8 @@ export function campConversationTimeline(
       anchor.id,
       [...(cardsByAnchorMessageId.get(anchor.id) ?? []), card].sort((left, right) =>
         TIMELINE_KIND_RANK[left.kind] - TIMELINE_KIND_RANK[right.kind]
+          || (left.kind === 'member_joined' && right.kind === 'member_joined'
+            ? left.receipt.createdAt.localeCompare(right.receipt.createdAt) : 0)
           || compareTimelinePresentationOrder(left, right)
       )
     )
@@ -1372,22 +1398,27 @@ export function campConversationTimeline(
     const cards = cardsByAnchorMessageId.get(item.id) ?? []
     return item.kind === 'run_file_changes' ? [...cards, item] : [item, ...cards]
   })
-  const runById = new Map(agentRuns.map((run) => [run.id, run]))
   const outputsByRunId = new Map<string, Extract<ThreadConversationTimelineItem, { kind: 'run_artifacts' }>>()
   // Terminal artifacts without a public message still belong to the executing member.
   // Keep their first timeline position and group every epoch under that exact Run once.
   return anchoredItems.flatMap((item): ThreadConversationTimelineItem[] => {
-    if (item.kind !== 'run_images' && item.kind !== 'run_file_changes') return [item]
-    const runId = item.kind === 'run_images' ? item.images.agentRunId : item.changes.agentRunId
+    if (item.kind !== 'run_images' && item.kind !== 'run_file_changes' && item.kind !== 'member_joined') return [item]
+    const runId = item.kind === 'run_images' ? item.images.agentRunId
+      : item.kind === 'run_file_changes' ? item.changes.agentRunId : item.receipt.sourceAgentRunId
+    if (!runId) return [item]
     const run = runById.get(runId)
     if (!run || NON_TERMINAL_RUNS.has(run.status) || publicAgentMessageRunIds.has(runId)) return [item]
     const existing = outputsByRunId.get(runId)
     const output = existing ?? {
       kind: 'run_artifacts', id: `run-artifacts:${runId}`, createdAt: item.createdAt,
-      run, imageGroups: [], fileChanges: []
+      run, imageGroups: [], memberCreations: [], fileChanges: []
     } satisfies Extract<ThreadConversationTimelineItem, { kind: 'run_artifacts' }>
     if (item.kind === 'run_images') output.imageGroups.push(item.images)
-    else output.fileChanges.push(item.changes)
+    else if (item.kind === 'member_joined') {
+      output.memberCreations.push(item.receipt)
+      output.memberCreations.sort((left, right) => left.createdAt.localeCompare(right.createdAt)
+        || left.creationId.localeCompare(right.creationId))
+    } else output.fileChanges.push(item.changes)
     outputsByRunId.set(runId, output)
     return existing ? [] : [output]
   })
@@ -1719,6 +1750,7 @@ export function ThreadWorkspace({
   const { profile: currentUserProfile } = useCurrentUserProfile()
   const currentUserName = currentUserDisplayName(currentUserProfile)
   const filePreview = useOptionalFilePreview()
+  const initializePreviewMinimumWidth = useInitializeFilePreviewMinimumWidth()
   useEffect(() => {
     filePreview?.syncFileChanges(snapshot.thread.id, snapshot.agentRunFileChanges)
   }, [filePreview?.syncFileChanges, snapshot.agentRunFileChanges, snapshot.thread.id])
@@ -1788,6 +1820,7 @@ export function ThreadWorkspace({
   const activeThreadIdRef = useRef(snapshot.thread.id)
   const activeSnapshotRef = useRef(snapshot)
   const initialComposerDraftRef = useRef(initialComposerDraft)
+  const focusedMemberCreationDraftRef = useRef<string | null>(null)
   const activationStateRef = useRef(snapshot.thread.activationState)
   const pendingThreadLeaveRef = useRef(onPendingThreadLeave)
   const pendingDraftChangeRef = useRef(onPendingDraftChange)
@@ -1985,7 +2018,7 @@ export function ThreadWorkspace({
     sequence: workspaceEntryRunningRun ? 1 : 0,
     moveDomFocus: false
   })
-  const [submittedExecutionRequests, setSubmittedExecutionRequests] = useState<ThreadMessageSendReceipt[]>([])
+  const [submittedExecutionRequests, setSubmittedExecutionRequests] = useState<SubmittedExecutionRequest[]>([])
   const publishedMessageSequence = snapshot.messages.reduce((latest, message) => Math.max(latest, message.sequence), 0)
   const executionDrawerTriggerRef = useRef<HTMLButtonElement | null>(null)
   const executionDrawerReturnAgentIdRef = useRef<string | null>(null)
@@ -3415,6 +3448,18 @@ export function ThreadWorkspace({
   ])
 
   useEffect(() => {
+    const threadId = snapshot.thread.id
+    if (!memberCreation || snapshot.thread.activationState !== 'pending' || busy
+      || draftLoadState.state !== 'ready' || focusedMemberCreationDraftRef.current === threadId) return
+    const frame = window.requestAnimationFrame(() => {
+      if (!composerHandleRef.current) return
+      composerHandleRef.current.focus('end')
+      focusedMemberCreationDraftRef.current = threadId
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [memberCreation, snapshot.thread.id, snapshot.thread.activationState, busy, draftLoadState.state])
+
+  useEffect(() => {
     if (!notificationFocus?.active || ['approval', 'single_chat'].includes(notificationFocus.kind)) return
     setConversationView('conversation')
     if (notificationFocus.kind === 'task' && notificationFocus.subjectId) {
@@ -3991,7 +4036,11 @@ export function ThreadWorkspace({
       sendAccepted = true
       if (mountedThreadId.current === threadId
         && (sendReceipt.deliveryIds.length || sendReceipt.agentRunIds.length)) {
-        setSubmittedExecutionRequests((current) => [...current, sendReceipt])
+        setSubmittedExecutionRequests((current) => [...current, {
+          ...sendReceipt,
+          firstThreadSubmission: currentSnapshot.thread.activationState === 'pending'
+            && !currentSnapshot.thread.missionId
+        }])
       }
       try {
         const discardAttachments = client.composerAttachments.discard?.(
@@ -4566,6 +4615,10 @@ export function ThreadWorkspace({
       executionDrawerFocusedRunId,
       snapshot.agentRuns
     )) return
+    if (submittedExecutionRequest.firstThreadSubmission && !mobile && executionPlacement === 'right'
+      && filePreview && !filePreview.paneVisible && filePreview.tabs.length === 0) {
+      initializePreviewMinimumWidth?.()
+    }
     openExecutionProcess(targetRun.agentId, null, {
       runId: targetRun.id,
       moveDomFocus: false,
@@ -4581,6 +4634,7 @@ export function ThreadWorkspace({
     filePreview,
     snapshot.agentRuns,
     submittedExecutionRequests,
+    initializePreviewMinimumWidth,
     mobile,
     taskCreationActive,
     suppressExecutionAutoOpen
@@ -4907,7 +4961,7 @@ export function ThreadWorkspace({
                   }
                   if (timelineItem.kind === 'run_artifacts') {
                     previousMessageAuthorKey = null
-                    const { run, imageGroups, fileChanges } = timelineItem
+                    const { run, imageGroups, memberCreations, fileChanges } = timelineItem
                     const member = memberById.get(run.agentId)
                     const profile = profileById.get(run.agentId)
                     const author = member?.displayName ?? profile?.displayName ?? run.agentId
@@ -4947,12 +5001,22 @@ export function ThreadWorkspace({
                             )}
                           </div>
                         </div>
-                        {fileChanges.map((changes) => (
-                          <AgentRunFileChangesTimelineCard key={`${changes.agentRunId}:${changes.executionEpoch}`}
-                            changes={changes} onOpenReview={(selectedEvidenceFileId) => {
-                              return filePreview?.openFileChanges(snapshot.thread.id, changes, selectedEvidenceFileId)
-                            }} onOpenCurrent={(evidenceFileId) => openCurrentAgentRunFile(changes, evidenceFileId)} />
-                        ))}
+                        {(memberCreations.length > 0 || fileChanges.length > 0) && (
+                          <div className="run-result-stack">
+                            {memberCreations.map((receipt) => (
+                              <MemberJoinedCard key={receipt.creationId} receipt={receipt} onConfigure={onConfigureRuntime} />
+                            ))}
+                            {fileChanges.map((changes) => (
+                              <AgentRunFileChangesTimelineCard key={`${changes.agentRunId}:${changes.executionEpoch}`}
+                                changes={changes} onOpenReview={(selectedEvidenceFileId) => {
+                                  return filePreview?.openFileChanges(snapshot.thread.id, changes, selectedEvidenceFileId)
+                                }} onOpenCurrent={(evidenceFileId) => openCurrentAgentRunFile(changes, evidenceFileId)} />
+                            ))}
+                          </div>
+                        )}
+                        {isUserInterruptedRun(run) && (
+                          <RunInterruptionMarker run={run} author={author} onOpen={openExecutionProcess} />
+                        )}
                       </section>
                     )
                     continue
@@ -5071,9 +5135,9 @@ export function ThreadWorkspace({
                   )
                   const isConversationFindCurrent = conversationFind.open
                     && conversationFind.snapshot?.match?.messageId === campMessage.id
-                  const trailingFileChangeItems: Extract<
+                  const trailingResultItems: Extract<
                     ThreadConversationTimelineItem,
-                    { kind: 'run_file_changes' }
+                    { kind: 'run_file_changes' | 'member_joined' }
                   >[] = []
                   if (campMessage.authorType === 'agent' && campMessage.sourceAgentRunId) {
                     for (
@@ -5082,11 +5146,11 @@ export function ThreadWorkspace({
                       nextIndex += 1
                     ) {
                       const candidate = conversationTimeline[nextIndex]
-                      if (
-                        candidate.kind !== 'run_file_changes'
-                        || candidate.changes.agentRunId !== campMessage.sourceAgentRunId
-                      ) break
-                      trailingFileChangeItems.push(candidate)
+                      const candidateRunId = candidate.kind === 'run_file_changes' ? candidate.changes.agentRunId
+                        : candidate.kind === 'member_joined' ? candidate.receipt.sourceAgentRunId : null
+                      if (candidateRunId !== campMessage.sourceAgentRunId
+                        || (candidate.kind !== 'run_file_changes' && candidate.kind !== 'member_joined')) break
+                      trailingResultItems.push(candidate)
                     }
                   }
                   const copied = copiedMessageId === campMessage.id
@@ -5322,7 +5386,7 @@ export function ThreadWorkspace({
                                 />
                               )}
                               {campMessage.authorType === 'agent'
-                                && trailingFileChangeItems.length === 0
+                                && trailingResultItems.length === 0 && !timelineItem.interruptedRun
                                 && (
                                   <MessageActions
                                     copied={copied}
@@ -5350,7 +5414,7 @@ export function ThreadWorkspace({
                           )}
                     </article>
                   )
-                  if (trailingFileChangeItems.length > 0) {
+                  if (trailingResultItems.length > 0 || timelineItem.interruptedRun) {
                     items.push(
                       <div
                         className={`agent-message-output public-message-output${followsSameAuthor ? ' same-author' : ''}${isGroupContinuation ? ' is-group-continuation' : ''}`}
@@ -5358,23 +5422,30 @@ export function ThreadWorkspace({
                         key={`agent-message-output:${campMessage.id}`}
                       >
                         {messageElement}
-                        {trailingFileChangeItems.map((fileChangeItem) => (
-                          <AgentRunFileChangesTimelineCard
-                            key={fileChangeItem.id}
-                            changes={fileChangeItem.changes}
-                            onOpenReview={(selectedEvidenceFileId) => {
-                              return filePreview?.openFileChanges(
-                                snapshot.thread.id,
-                                fileChangeItem.changes,
-                                selectedEvidenceFileId
-                              )
-                            }}
-                            onOpenCurrent={(evidenceFileId) => openCurrentAgentRunFile(
-                              fileChangeItem.changes,
-                              evidenceFileId
-                            )}
-                          />
-                        ))}
+                        {trailingResultItems.length > 0 && <div className="run-result-stack">
+                          {trailingResultItems.map((resultItem) => resultItem.kind === 'member_joined' ? (
+                            <MemberJoinedCard key={resultItem.id} receipt={resultItem.receipt} onConfigure={onConfigureRuntime} />
+                          ) : (
+                            <AgentRunFileChangesTimelineCard
+                              key={resultItem.id}
+                              changes={resultItem.changes}
+                              onOpenReview={(selectedEvidenceFileId) => {
+                                return filePreview?.openFileChanges(
+                                  snapshot.thread.id,
+                                  resultItem.changes,
+                                  selectedEvidenceFileId
+                                )
+                              }}
+                              onOpenCurrent={(evidenceFileId) => openCurrentAgentRunFile(
+                                resultItem.changes,
+                                evidenceFileId
+                              )}
+                            />
+                          ))}
+                        </div>}
+                        {timelineItem.interruptedRun && (
+                          <RunInterruptionMarker run={timelineItem.interruptedRun} author={author} onOpen={openExecutionProcess} />
+                        )}
                         <MessageActions
                           copied={copied}
                           className={`agent-message-output-actions${campMessage.id === latestAgentMessageId ? ' is-persistent' : ''}`}
@@ -5383,7 +5454,7 @@ export function ThreadWorkspace({
                         />
                       </div>
                     )
-                    timelineIndex += trailingFileChangeItems.length
+                    timelineIndex += trailingResultItems.length
                     previousMessageAuthorKey = null
                     continue
                   }
@@ -5684,10 +5755,6 @@ export function ThreadWorkspace({
                           : recipientSummary}</span>
                       </span>
                     )}
-                <ConfiguredModelSummary installations={installations}
-                  profile={profileById.get(continuationVisible && continuationIntent
-                    ? continuationIntent.recipient.agentId
-                    : defaultLead && campMemberIsLeadEligible(defaultLead) ? defaultLead.agentId : '') ?? null} />
               </div>
             )
           : null}
@@ -9234,6 +9301,24 @@ export function AgentRunFileChangesTimelineCard({
 }
 
 
+function RunInterruptionMarker({ run, author, onOpen }: {
+  run: AgentRunView
+  author: string
+  onOpen: (agentId: string, trigger: HTMLButtonElement, options: { runId: string }) => void
+}): JSX.Element {
+  return (
+    <div className="run-interruption-marker" data-interrupted-run-id={run.id}>
+      <button type="button" className="run-interruption-trigger"
+        aria-label={uiAttribute("你已中断，查看{0}的本次执行", author)}
+        title={uiAttribute("查看本次执行")}
+        onClick={(event) => onOpen(run.agentId, event.currentTarget, { runId: run.id })}>
+        <svg viewBox="0 0 6 6" aria-hidden="true"><rect x="1" y="1" width="4" height="4" rx="0.7" /></svg>
+        <UiText zh={"你已中断"} />
+      </button>
+    </div>
+  )
+}
+
 function StopOutcomeEvent({
   item,
   onOpenDrawer
@@ -10231,26 +10316,17 @@ function RunExecutionContent({
   ).filter((item) =>
     item.kind !== 'narration' || !finalKey || comparableMessageText(item.body) !== finalKey
   ), [effectiveProgress?.items, finalKey, narrationBodies])
-  const windowGroupKeys = useRef({ next: 0, byItem: new Map<string, string>() })
   const groupedProcessItems = useMemo(() => {
-    const groups = groupConsecutiveToolItems(processItems)
-    if (!windowedEvidence) return groups
-    const identities = windowGroupKeys.current
-    const currentKeys = new Set(processItems.map(item => item.key))
-    for (const key of identities.byItem.keys()) if (!currentKeys.has(key)) identities.byItem.delete(key)
-    const used = new Set<string>()
-    return groups.map(group => {
-      if (group.kind !== 'toolGroup') return group
-      // A page can prepend the first operation of an existing group. Keep its
-      // React identity so expanded child results and keyboard focus survive.
-      const key = group.items.map(item => identities.byItem.get(item.key))
-        .find((key): key is string => key !== undefined && !used.has(key))
-        ?? `window-tool-group:${identities.next++}`
-      used.add(key)
-      for (const item of group.items) identities.byItem.set(item.key, key)
-      return { ...group, key }
+    if (!windowedEvidence) return groupConsecutiveToolItems(processItems)
+    return windowPage.blocks.flatMap((block): GroupedExecutionProgressItem[] => {
+      const progress = buildLiveExecutionProgress(block.evidence.map(liveRuntimeEventFromExecutionEvidence), run.id, { includePublicResults: false })
+      if (block.kind === 'toolGroup') {
+        const items = progress.items.filter((item): item is ToolProgressItem => item.kind === 'tool')
+        return block.toolCount > 0 && items.length ? [{ key: block.key, kind: 'toolGroup' as const, items, block }] : []
+      }
+      return progress.items.filter(item => item.kind !== 'narration' || !finalKey || comparableMessageText(item.body) !== finalKey)
     })
-  }, [processItems, windowedEvidence])
+  }, [processItems, windowedEvidence, windowPage.blocks, run.id, finalKey])
   const activeToolItems = useMemo(
     () => processItems.filter((item): item is ToolProgressItem => item.kind === 'tool'),
     [processItems]
@@ -10309,8 +10385,8 @@ function RunExecutionContent({
     <ExecutionContentContext.Provider value={windowedEvidence ? windowPage.contentCache : null}>
     <div className="process-content" ref={windowPage.root}
       data-execution-run-id={run.id}
-      data-execution-loaded-count={windowedEvidence ? windowPage.evidence.length : undefined}
-      data-execution-first-sequence={windowedEvidence ? windowPage.evidence[0]?.sequence : undefined}>
+      data-execution-loaded-count={windowedEvidence ? windowPage.blocks.length : undefined}
+      data-execution-first-sequence={windowedEvidence ? windowPage.blocks[0]?.sequence : undefined}>
       {windowedEvidence && (windowPage.hasEarlier || earlierLoadError || earlierLoading) && (
         <div className={`camp-history-loader execution-history-loader${earlierLoadError ? ' is-error' : ''}`}
           role={earlierLoadError ? 'alert' : 'status'} aria-atomic="true">
@@ -10326,7 +10402,7 @@ function RunExecutionContent({
           </> : earlierLoadError ? uiAttribute("重试") : <><span aria-hidden="true">↑</span><span><UiText zh={"加载更早记录"} /></span></>}</button>
           {!earlierLoadError && windowPage.evidence.length > 0 && <>
             <span className="camp-history-separator" aria-hidden="true">·</span>
-            <span className="camp-history-count"><UiText zh={"已载入 "} />{processItems.length}<UiText zh={" 项"} /></span>
+            <span className="camp-history-count"><UiText zh={"已载入 "} />{groupedProcessItems.length}<UiText zh={" 项"} /></span>
           </>}
         </div>
       )}
@@ -10337,8 +10413,8 @@ function RunExecutionContent({
         gapAfter={(item, next) => (item.kind === 'toolGroup' && next.kind === 'compaction')
           || (item.kind === 'compaction' && (next.kind === 'toolGroup' || next.kind === 'compaction')) ? 4 : processItemGap}
         onVisible={visible => {
-        const keys = visible.flatMap(item => item.kind === 'toolGroup' ? item.items.map(child => child.key) : [item.key])
-        const sequences = keys.flatMap(key => sequenceByKey.has(key) ? [sequenceByKey.get(key)!] : [])
+        const sequences = visible.flatMap(item => item.kind === 'toolGroup' && item.block ? [item.block.sequence]
+          : sequenceByKey.has(item.key) ? [sequenceByKey.get(item.key)!] : [])
         if (sequences.length) windowPage.setViewport(Math.min(...sequences), Math.max(...sequences))
       }}>{(item) => {
         if (item.kind === 'toolGroup') {
@@ -10347,6 +10423,7 @@ function RunExecutionContent({
               key={item.key}
               threadId={threadId}
               items={item.items}
+              block={item.block}
               liveTail={item.key === liveTailToolGroupKey}
               cancelling={cancelling}
               runId={run.id}

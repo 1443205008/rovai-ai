@@ -28,7 +28,7 @@ pub const CAMP_LIST_TOOL_NAME: &str = "thread.list";
 pub const CAMP_SEARCH_TOOL_NAME: &str = "thread.search";
 pub const HISTORY_SEARCH_TOOL_NAME: &str = "history.search";
 pub const CAMP_READ_TOOL_NAME: &str = "thread.read";
-pub const CAMP_HISTORY_CONTRACT_VERSION: u32 = 10;
+pub const CAMP_HISTORY_CONTRACT_VERSION: u32 = 11;
 
 const CAMP_LIST_DEFAULT_LIMIT: usize = 20;
 const CAMP_LIST_MAX_LIMIT: usize = 50;
@@ -123,8 +123,8 @@ enum MessageFence {
 }
 
 #[derive(Debug, Clone)]
-struct ThreadTarget {
-    camp_id: String,
+pub(crate) struct ThreadTarget {
+    pub(crate) camp_id: String,
     fence: MessageFence,
     viewer_agent_id: String,
 }
@@ -766,6 +766,55 @@ fn resolve_live_read_target(
         fence: MessageFence::Current { boundary },
         viewer_agent_id: run.agent_id.clone(),
     }))
+}
+
+/// The execution query shares the live public read scope and the caller's frozen authority.
+pub(crate) fn public_read_target(
+    transaction: &Transaction<'_>,
+    run: &AuthenticatedTeamToolRun,
+    requested_thread_id: Option<&str>,
+) -> Result<Option<ThreadTarget>> {
+    let fence = load_run_fence(transaction, run)?;
+    resolve_live_read_target(transaction, run, &fence, requested_thread_id)
+}
+
+pub(crate) fn visible_message_bodies(
+    transaction: &Transaction<'_>,
+    target: &ThreadTarget,
+    message_ids: &[&str],
+) -> Result<HashMap<String, String>> {
+    if message_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let (prefix, fence, boundary) = match target.fence {
+        MessageFence::Current { boundary } => (String::new(), "sequence <= ?3", boundary),
+        MessageFence::History { global_boundary } => (
+            format!("WITH {}", public_camp_message_publication_cte()),
+            "EXISTS (SELECT 1 FROM public_camp_message_publication p WHERE p.message_id = camp_message.id AND p.global_sequence <= ?3)",
+            global_boundary,
+        ),
+    };
+    let mut statement = transaction.prepare(&format!(
+        "{prefix} SELECT id, structured_content_json FROM camp_message
+         WHERE id IN (SELECT value FROM json_each(?1)) AND camp_id = ?2 AND {fence}
+           AND tombstoned_at IS NULL AND recall_state <> 'withdrawn'"
+    ))?;
+    let sources = statement.query_map(
+        params![
+            serde_json::to_string(message_ids)?,
+            target.camp_id,
+            boundary
+        ],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )?;
+    let mut bodies = HashMap::new();
+    for source in sources {
+        let (id, content_json) = source?;
+        let content = normalize_content(serde_json::from_str(&content_json)?);
+        validate_content(&content)?;
+        bodies.insert(id, render_agent_plain_text(transaction, &content)?);
+    }
+    Ok(bodies)
 }
 
 fn camp_name_match_class(title: &str, folded_query: &str) -> u8 {
@@ -1726,23 +1775,48 @@ fn load_committed_self_written_message(
 }
 
 fn load_exact_addressing(transaction: &Transaction<'_>, message_id: &str) -> Result<Value> {
-    let (recipients_json, content_json): (String, String) = transaction.query_row(
+    load_message_addressing(transaction, &[message_id])?
+        .remove(message_id)
+        .context("normal message is missing addressing")
+}
+
+fn load_message_addressing(
+    transaction: &Transaction<'_>,
+    message_ids: &[&str],
+) -> Result<HashMap<String, Value>> {
+    if message_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut statement = transaction.prepare(
         r#"
-        SELECT effective_recipient_ids_json, structured_content_json
+        SELECT id, effective_recipient_ids_json, structured_content_json
         FROM camp_message
-        WHERE id = ?1 AND tombstoned_at IS NULL
+        WHERE id IN (SELECT value FROM json_each(?1)) AND tombstoned_at IS NULL
           AND recall_state <> 'withdrawn'
         "#,
-        [message_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    let recipients: Vec<String> = serde_json::from_str(&recipients_json)?;
-    let content: StructuredThreadMessageContent = serde_json::from_str(&content_json)?;
-    validate_content(&content)?;
-    Ok(json!({
-        "effectiveAgentRecipients": recipients,
-        "mentionsCurrentUser": mentions_current_user(&content),
-    }))
+    let sources = statement.query_map([serde_json::to_string(message_ids)?], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut addressing = HashMap::new();
+    for source in sources {
+        let (id, recipients_json, content_json) = source?;
+        let recipients: Vec<String> = serde_json::from_str(&recipients_json)?;
+        let content: StructuredThreadMessageContent = serde_json::from_str(&content_json)?;
+        validate_content(&content)?;
+        addressing.insert(
+            id,
+            json!({
+                "effectiveAgentRecipients": recipients,
+                "mentionsCurrentUser": mentions_current_user(&content),
+            }),
+        );
+    }
+    Ok(addressing)
 }
 
 fn read_thread(
@@ -2220,9 +2294,15 @@ fn fit_collection_response(
     rows: Vec<MessageRow>,
     mut response: Value,
 ) -> Result<Value> {
+    let message_ids: Vec<_> = rows
+        .iter()
+        .filter(|row| !row.withdrawn)
+        .map(|row| row.id.as_str())
+        .collect();
+    let addressing = load_message_addressing(transaction, &message_ids)?;
     response["items"] = Value::Array(
         rows.iter()
-            .map(|row| collection_item(transaction, target, row))
+            .map(|row| collection_item(transaction, target, row, addressing.get(&row.id)))
             .collect::<Result<Vec<_>>>()?,
     );
     Ok(response)
@@ -2232,6 +2312,7 @@ fn collection_item(
     transaction: &Transaction<'_>,
     target: &ThreadTarget,
     row: &MessageRow,
+    addressing: Option<&Value>,
 ) -> Result<Value> {
     if row.withdrawn {
         return Ok(withdrawn_item(row));
@@ -2245,6 +2326,7 @@ fn collection_item(
         "createdAt": row.created_at,
         "body": row.body,
         "attachmentCount": attachment_count(transaction, &row.id)?,
+        "addressing": addressing.context("normal message is missing addressing")?,
     });
     attach_message_quotes(transaction, target, &row.id, &mut value)?;
     Ok(value)
@@ -2449,6 +2531,8 @@ mod slow_tests {
             .execute_batch(
                 r#"
                 CREATE TABLE agent_profile(id TEXT PRIMARY KEY, display_name TEXT NOT NULL);
+                CREATE TABLE message_attachment(camp_message_id TEXT NOT NULL);
+                CREATE TABLE camp_message_attachment_ref(camp_message_id TEXT NOT NULL);
                 CREATE TABLE camp_message (
                     id TEXT PRIMARY KEY,
                     camp_id TEXT NOT NULL,
@@ -2546,6 +2630,23 @@ mod slow_tests {
         )
         .unwrap();
         assert_eq!(rows[0].body, "@User authoritative body");
+        let target = ThreadTarget {
+            camp_id: rows[0].camp_id.clone(),
+            fence: MessageFence::Current { boundary: 1 },
+            viewer_agent_id: "agent_1".into(),
+        };
+        let addressing = load_message_addressing(&transaction, &[rows[0].id.as_str()]).unwrap();
+        let collection =
+            collection_item(&transaction, &target, &rows[0], addressing.get(&rows[0].id)).unwrap();
+        assert_eq!(
+            collection["addressing"],
+            json!({"effectiveAgentRecipients": [], "mentionsCurrentUser": true})
+        );
+        let mut withdrawn = rows[0].clone();
+        withdrawn.withdrawn = true;
+        let marker = collection_item(&transaction, &target, &withdrawn, None).unwrap();
+        assert_eq!(marker.as_object().unwrap().len(), 4);
+        assert!(marker.get("addressing").is_none());
         // Only structured atoms accept the alias; literal old text and mixed queries remain literal.
         let body = "😀 @User literal @Principal then @User";
         let offsets = [2, body.chars().count() - "@User".chars().count()];
@@ -3076,7 +3177,8 @@ mod slow_tests {
                 .filter(|sequence| *sequence != 101)
                 .collect::<Vec<_>>()
         );
-        let rows = (1..=20)
+        // These rows must still be normal messages when collection metadata is read.
+        let rows = (4..=23)
             .map(|sequence| MessageRow {
                 id: format!("message-{sequence}"),
                 camp_id: "rvcamp_01h47kvsy5fk1shh6w1g60eecf".to_string(),

@@ -50,7 +50,7 @@ let deferredProjection: (() => void) | null = null
 const submissionOutcomes = new Map<string, PendingThreadInputSubmissionOutcome>()
 const eventListeners = new Set<(event: CoreEvent) => void>()
 const initial: ThreadSnapshot = {
-  schemaVersion: 34, throughGlobalSequence: 1,
+  schemaVersion: 35, throughGlobalSequence: 1,
   thread: { id: threadId, title: '响应模式与紧凑会话验收', activationState: 'active', projectBindingKind: 'directory',
     projectPath: '/fixture/workspace', defaultLeadAgentId: agents[0].agentId, membershipGeneration: 1, version: 1, createdAt: now, updatedAt: now },
   members: agents.map((agent, index) => ({ agentId: agent.agentId, displayName: agent.displayName, avatarRef: null,
@@ -80,6 +80,7 @@ let draft: ThreadComposerDraftView = { threadId, quotes: [], body: '验收中保
 const requests: Array<{ method: string; params: unknown }> = []
 let metricMode = false
 let metricValue: number | null = null
+let metricInputOutputComplete = false
 let metricGeneration = 1
 let metricSessionVisible = true
 let metricRuns: AgentRunView[] = []
@@ -112,6 +113,7 @@ Object.assign(window, { rovai: {
         return run ? [{ agentRunId: id, executionEpoch: run.executionEpoch,
           promptInputTotalTokens: metricValue, outputTokens: metricValue === null ? null : 20,
           cacheReadTokens: null, cacheWriteTokens: metricValue === null ? null : 0,
+          inputOutputComplete: metricInputOutputComplete,
           finalizedAt: run.status === 'succeeded' ? now : null, lastObservedAt: metricValue === null ? null : now }] : []
       }) : [],
       sessions: metricMode && metricSessionVisible ? [{ conversationId: 'conversation-agent-0', agentId: 'agent-0',
@@ -245,8 +247,9 @@ Object.assign(window, { fastTest: {
     metricRuns = current.agentRuns.map(run => run.id === 'run-agent-0' ? { ...run, status: 'succeeded', endedAt: now } : run)
     return { ...current, agentRuns: metricRuns }
   }),
-  metricsCommit: (value: number, generation = metricGeneration) => {
+  metricsCommit: (value: number, generation = metricGeneration, complete = true) => {
     metricValue = value
+    metricInputOutputComplete = complete
     metricGeneration = generation
     for (const listener of eventListeners) listener({ method: 'monitoring.changed', params: { reason: 'late_fixture_usage' } })
   },

@@ -3005,7 +3005,7 @@ fn build_session_charter(
          - Use rovai thread read only when needed Thread context is missing. A history boundary is a reference point, not a read or completion marker.";
     Ok(format!(
         "Rovai-ai Session Charter\n\n{authority_guidance}\n\
-         - When you cannot make further progress without another agent's reply, end this run instead of polling Thread history. Resume when you receive the reply.\n\n{}{}{}{}",
+         - When you cannot make further progress without another agent's reply, end this run instead of polling Thread history or execution status. Resume when you receive the reply.\n\n{}{}{}{}",
         BUILTIN_CLI_CHARTER.trim(),
         file_guidance,
         adapter_guidance,
@@ -10462,7 +10462,7 @@ mod slow_tests {
                 &mut fixture.database,
                 &run,
                 &ThreadReadInput {
-                    camp_id: Some(history_camp_id),
+                    camp_id: Some(history_camp_id.clone()),
                     message_id: Some(late_message_id.clone()),
                     thread: None,
                     before: None,
@@ -10472,6 +10472,23 @@ mod slow_tests {
             .unwrap();
         assert_eq!(read["items"][0]["messageId"], late_message_id);
         assert_eq!(read["items"][0]["body"], "CROSS_CAMP_AFTER_MANIFEST");
+        let executions = crate::thread_runs::read(
+            &mut fixture.database,
+            &run,
+            &crate::thread_runs::ThreadRunsInput {
+                thread_id: Some(history_camp_id.clone()),
+                active: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(executions["threadId"], history_camp_id);
+        assert!(!executions["items"].as_array().unwrap().is_empty());
+        crate::builtin_tool_cli_output::validate_schema(
+            &executions,
+            &crate::thread_runs::output_schema(),
+        )
+        .unwrap();
         fixture.cleanup();
     }
 
@@ -12062,6 +12079,8 @@ mod slow_tests {
         let legacy_charter = store
             .read_text(&fixture.database, &charter)
             .unwrap()
+            .replace("list|search|read|runs", "list|search|read")
+            .replace(" or execution status", "")
             .replace("Thread", "Camp")
             .replace("rovai thread", "rovai camp")
             .replace("The User is the human", "The Principal is the human user")
@@ -12089,6 +12108,8 @@ mod slow_tests {
         assert!(legacy.payload.contains("--to-principal"));
         assert!(!legacy.payload.contains("--to-user"));
         assert!(!legacy.payload.contains("rovai thread"));
+        assert!(!legacy.payload.contains("|runs"));
+        assert!(!legacy.payload.contains("or execution status"));
         let ContextMaterialization::Ready(prepared) = service
             .materialize(
                 &mut fixture.database,

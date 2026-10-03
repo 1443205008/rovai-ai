@@ -1784,6 +1784,8 @@ export interface FilePreviewApi {
 /** Creation-time snapshot, independent of the current member's configuration and presence. */
 export interface MemberCreationView {
   creationId: string
+  /** Authenticated creating Run; absent only on receipts written before Run association. */
+  sourceAgentRunId?: string | null
   agentId: string
   displayName: string
   avatarRef: string | null
@@ -2059,6 +2061,46 @@ export interface AgentRunExecutionWindowChanges {
   evidence: AgentRunExecutionEvidenceView[]
   /** In-place updates of previously loaded, unfinished evidence (including text). */
   refreshedEvidence: AgentRunExecutionEvidenceView[]
+}
+
+/** A read-time presentation boundary; tools inside it have a separate cursor. */
+export interface AgentRunExecutionBlock {
+  key: string
+  kind: 'item' | 'toolGroup'
+  sequence: number
+  lastSequence: number
+  changeSequence: number
+  toolCount: number
+  counts: Record<'completed' | 'failed' | 'stopped' | 'recorded' | 'running' | 'waiting', number>
+  /** One root item, or latest/active operations with their proven Shell supports (at most four rows). */
+  evidence: AgentRunExecutionEvidenceView[]
+}
+
+export interface AgentRunExecutionBlockPage extends Omit<AgentRunExecutionWindowPage, 'schemaVersion' | 'evidence' | 'activeEvidence'> {
+  schemaVersion: 3
+  blocks: AgentRunExecutionBlock[]
+  activeBlocks?: AgentRunExecutionBlock[]
+}
+
+export interface AgentRunExecutionBlockChanges extends Omit<AgentRunExecutionWindowChanges, 'schemaVersion' | 'evidence' | 'refreshedEvidence'> {
+  schemaVersion: 3
+  blocks: AgentRunExecutionBlock[]
+  /** Watched in-memory text may grow without advancing the durable change cursor. */
+  refreshedBlocks?: AgentRunExecutionBlock[]
+}
+
+export interface AgentRunExecutionGroupPage {
+  schemaVersion: 3
+  threadId: string
+  agentRunId: string
+  groupSequence: number
+  requestedBeforeSequence: number | null
+  requestedAfterSequence: number | null
+  nextBeforeSequence: number | null
+  nextAfterSequence: number | null
+  throughChangeSequence: number
+  hasMore: boolean
+  evidence: AgentRunExecutionEvidenceView[]
 }
 
 export interface ExecutionConsolePage {
@@ -2354,8 +2396,10 @@ export interface AgentRunImageContent {
   data: string
 }
 
+export const THREAD_SNAPSHOT_SCHEMA_VERSION = 35
+
 export interface ThreadSnapshot {
-  schemaVersion: 34
+  schemaVersion: typeof THREAD_SNAPSHOT_SCHEMA_VERSION
   throughGlobalSequence: number
   thread: {
     id: string
@@ -3126,6 +3170,27 @@ export interface DesktopStartupSnapshot {
 export interface WindowResetCapability {
   canReset: boolean
   reason: 'fullscreen' | null
+}
+
+export type WindowCloseBehavior = 'ask' | 'tray' | 'exit'
+export interface WindowCloseSnapshot {
+  revision: number
+  behavior: WindowCloseBehavior
+  promptId: number | null
+  busy: boolean
+  error: 'load_failed' | 'tray_unavailable' | 'save_failed' | 'quit_failed' | null
+}
+export interface WindowCloseResponse {
+  promptId: number
+  action: 'tray' | 'exit' | 'cancel'
+  remember: boolean
+}
+/** Windows Desktop only. Main owns the preference, prompt identity and native tray. */
+export interface WindowCloseApi {
+  get(): Promise<WindowCloseSnapshot>
+  setBehavior(behavior: WindowCloseBehavior): Promise<WindowCloseSnapshot>
+  respond(response: WindowCloseResponse): Promise<WindowCloseSnapshot>
+  onChanged(listener: (snapshot: WindowCloseSnapshot) => void): () => void
 }
 
 export interface WindowResetResult {
@@ -4170,6 +4235,7 @@ export interface RovaiApi {
   channels: ChannelsApi
   onboarding: OnboardingApi
   windowControls: WindowControlsApi
+  windowClose?: WindowCloseApi
   navigationPreferences: NavigationPreferencesApi
   memberAvatars: MemberAvatarsApi
   composerAttachments: {

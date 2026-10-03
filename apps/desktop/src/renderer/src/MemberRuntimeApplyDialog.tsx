@@ -18,8 +18,8 @@ import './member-runtime-apply.css'
 export type RuntimeApplySource = AgentProfile & { runtimeConfiguration: MemberRuntimeConfiguration }
 
 export function RuntimeApplyIcon(): React.JSX.Element {
-  return <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <rect x="7" y="7" width="10" height="10" rx="2"/><path d="M12 4V3H3v9h1"/>
+  return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M3 8h10m-4-4 4 4-4 4"/>
   </svg>
 }
 
