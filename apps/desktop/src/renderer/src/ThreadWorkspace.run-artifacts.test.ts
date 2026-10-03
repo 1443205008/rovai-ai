@@ -25,7 +25,7 @@ function run(overrides: Partial<AgentRunView> = {}): AgentRunView {
 
 function snapshot(runs: AgentRunView[] = [run()], images = true, files = true): ThreadSnapshot {
   return {
-    schemaVersion: 34, throughGlobalSequence: 1,
+    schemaVersion: 35, throughGlobalSequence: 1,
     thread: { id: 'camp-artifacts', title: '运行产物', activationState: 'active',
       projectBindingKind: 'quick_chat', projectPath: '/quick-chat', defaultLeadAgentId: 'agent_1',
       membershipGeneration: 1, version: 1, createdAt, updatedAt: endedAt },

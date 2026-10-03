@@ -2366,8 +2366,10 @@ export interface AgentRunImageContent {
   data: string
 }
 
+export const THREAD_SNAPSHOT_SCHEMA_VERSION = 35
+
 export interface ThreadSnapshot {
-  schemaVersion: 34
+  schemaVersion: typeof THREAD_SNAPSHOT_SCHEMA_VERSION
   throughGlobalSequence: number
   thread: {
     id: string
