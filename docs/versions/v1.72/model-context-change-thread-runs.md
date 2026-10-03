@@ -24,7 +24,7 @@ last_updated: 2026-10-03
 | 分支 | `docs/thread-runs-proposal` |
 | Worktree | `/Users/murray.xue/VSCodeProjects/opensource/rovai-ai-thread-runs-proposal` |
 | Governance | r2 已由 User 确认；实现与合同在同一 PR 合入，无主线治理先行要求 |
-| 状态 | `active`，实施与验证中；复用本 worktree |
+| 交付 | 实施与本地验证完成；本次真实任务 Gate 已获 User 豁免；合入记录见 [PR #616](https://github.com/murray17/rovai-ai/pull/616) |
 
 需求依据依次为本 Thread 消息 `98604f4e-d2b7-4ae4-87df-78a916d726e4` 的原方案、
 `03c543ae-71ce-414c-a9d6-94986a7e2bc7` 的范围修订、
@@ -531,7 +531,7 @@ r1/r2 方案阶段只改文档，其来源核对和复核记录如下：
 
 ### 实施验收记录
 
-在 `7f6fdafa` 主线基线上实施，复用本工作条目的 worktree。功能、封闭工具合同、CLI 帮助、最小 Charter
+在 `7f6fdafa` 主线基线上实施，随后同步 `e7525fa0` 并完成集成复验，复用本工作条目的 worktree。功能、封闭工具合同、CLI 帮助、最小 Charter
 改动与 Skill 文件已落地。正常 collection 按页批量读取 addressing；执行列表分页后批量读取冻结输入计数与
 首条预览源。桌面现有命令名称字典同步新增 operation，仅维持工具名称识别，不新增展示或交互。
 
@@ -540,17 +540,18 @@ r1/r2 方案阶段只改文档，其来源核对和复核记录如下：
 | 检查 | 结果 |
 | --- | --- |
 | `cargo fmt --all --check`、`cargo check --workspace` | 通过 |
-| `pnpm test:rust:pr` | workspace 442 项通过，1 项既有 ignored；包含旧 collection inline/blob 字节、digest、receipt 和受管 Skill 升级回归 |
+| `pnpm test:rust:pr` | 集成后 workspace 443 项通过，1 项既有 ignored；包含旧 collection inline/blob 字节、digest、receipt 和受管 Skill 升级回归 |
 | `cargo test -p rovai-core --features slow-tests --lib thread_runs::` | 3 项通过，包括最小 SQL owner |
 | 同 feature 的 `camp_history::`、`builtin_tool_` | 分别 7、32 项通过 |
 | 实时跨 Thread、旧 Bootstrap 补发、新 Binding Bootstrap、Single Chat 封闭策略 | 现有 slow owner 各 1 项通过 |
 | `antigravity_catalog_rename_preserves_binding_but_protocol_changes_do_not`，extended feature | 1 项通过；目录变化保持 Binding 兼容身份 |
-| `pnpm typecheck`、`pnpm test` | 通过；Vitest 2,482 项，Node 回归 328 项，2 项平台限定 skip；文档与 Skill 门禁包含在内 |
+| `pnpm typecheck`、`pnpm test` | 通过；集成后 Vitest 2,490 项，Node 回归 328 项，2 项平台限定 skip；文档与 Skill 门禁包含在内 |
 | 实际 CLI 根帮助、read/runs 帮助对照 | 与已确认附录逐字一致 |
 
 采用 `code-review` 的双轴只读审查：Standards 无明确违规；Spec 发现两项批量读取偏差及一项历史结果验证缺口，
 均已修正并复核通过。初轮测试暴露的旧夹具、目录计数和版本断言已同步，未以放宽合同消除失败。
 
-**真实任务 Gate 尚未执行，不能宣称整体门禁通过。** 已检查本地现有 Judge 配置，其策略为
-`catalog_bound_alias`，只能提供诊断；缺少本稿要求的可追溯 `pinned_snapshot` 配置。未将别名摘要伪装成固定
-模型版本，未变更 Case、评分或预算。PR 可供审阅，合并前仍需补齐上述真实任务 Gate，或由用户明确调整本次验收要求。
+**本次真实任务 Gate 未运行，验收状态为 User 豁免。** 本地现有 Judge 为 `catalog_bound_alias`，缺少本稿
+要求的可追溯 `pinned_snapshot` 配置。User 于 2026-10-03 在本 Thread sequence 19、消息
+`3d21f416-2187-4c13-90bc-1e1b0e7c7ba4` 明确要求“跳过这个Gate”，据此跳过本次 12 Case 真实任务 Gate，
+继续已授权的 PR 合并。本次豁免不改变通用评测规则、Case、评分或预算；上述本地回归、双轴审查与 CI 结果保留。
