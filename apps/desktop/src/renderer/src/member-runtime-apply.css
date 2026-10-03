@@ -1,8 +1,10 @@
 /* One-time application of saved Runtime configuration. Shared Desktop/Web surface. */
 .runtime-apply-save-row { flex-wrap: wrap; column-gap: 12px; row-gap: 10px; }
-.runtime-apply-entry { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 5px 0; border: 0; background: transparent; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.runtime-apply-entry > svg { width: 15px; height: 15px; flex: none; }
-.runtime-apply-entry:hover:not(:disabled) { color: var(--ink); background: transparent; }
+.member-runtime-form .runtime-apply-entry { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; height: auto; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.5; white-space: nowrap; }
+.runtime-apply-entry > svg { width: 13px; height: 13px; flex: none; }
+.member-runtime-form .runtime-apply-entry:is(:hover, :focus-visible):not(:disabled) { color: var(--ink); background: transparent; }
+.runtime-apply-entry:is(:hover, :focus-visible):not(:disabled) > span { text-decoration: underline; text-underline-offset: 4px; }
+.runtime-apply-entry:disabled { opacity: .42; cursor: not-allowed; }
 .runtime-apply-save-row .member-editor-save-status { margin-left: auto; }
 :root .dialog-content.app-dialog.runtime-apply-dialog { width: min(520px, calc(100vw - 48px)); }
 .runtime-apply-dialog .app-dialog-footer .dialog-actions { position: static; background: transparent; }
@@ -58,7 +60,7 @@
 .apply-spinner { width: 15px; height: 15px; border: 1.5px solid var(--line-strong); border-top-color: var(--ink); border-radius: 50%; animation: apply-spin 700ms linear infinite; }
 @keyframes apply-spin { to { transform: rotate(360deg); } }
 html[data-mobile-web='true'] .runtime-apply-save-row { gap: 12px; }
-html[data-mobile-web='true'] .runtime-apply-entry { order: 3; width: 100%; min-height: 44px; justify-content: center; border: 1px solid var(--dialog-field-line); border-radius: 7px; margin: 0; font-size: 13px; }
+html[data-mobile-web='true'] .member-runtime-form .runtime-apply-entry { order: 3; width: auto; flex-basis: 100%; min-height: 44px; justify-content: flex-start; margin: 0; font-size: 13px; }
 html[data-mobile-web='true'] .runtime-apply-save-row .member-editor-save-status { margin-left: 0; }
 html[data-mobile-web='true'] .runtime-apply-save-row > div { margin-left: auto; }
 :root[data-mobile-web='true'] .dialog-content.app-dialog.runtime-apply-dialog { top: auto; bottom: 0; left: 0; width: 100%; max-width: none; max-height: min(92dvh, calc(var(--mobile-viewport-height, 100dvh) - 12px)); border-radius: 14px 14px 0 0; transform: none; animation: apply-sheet-in 180ms ease-out; }

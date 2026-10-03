@@ -58,7 +58,11 @@ Roster rows keep a 40px circular image, 13px name and 11px role in a 60px row wi
 Use a subtle selected surface, 2px selection rail and aligned Runtime column. The header shows the total
 once; omit the redundant “在队” group when every teammate is present. If any teammate is away, show
 the meaningful presence groups and their counts. Above eight members, offer compact name/role search;
-the title reports matching / total counts while filtering. Keep one split Add action: AI conversation by default, manual creation in its dropdown. Reorder rows directly
+the title reports matching / total counts while filtering. Keep one compact “+ Add” action with a separate dropdown arrow,
+without an enclosing border or divider; each button has neutral hover/focus feedback and a 44px mobile touch height.
+AI conversation remains the default, manual creation stays in its dropdown. New AI conversations prefill the localized,
+editable request defined by Member Creation Flow v1 without sending; language changes and return navigation preserve edits.
+Reorder rows directly
 (on mobile, drag the avatar); preserve the portrait without an overlay handle. Alt+Up/Down and row context-menu
 actions provide keyboard movement within the same presence group. The resize divider remains available.
 Runtime shortcuts show the existing product logo in a 22px carrier; an unconfigured teammate uses a neutral
@@ -192,7 +196,8 @@ Electron fixture, covers both saves, cross-member drafts, conflicts, inline crea
 1440×920 / 1040×700 / 2560×1440 / 200% layouts, and can retain screenshots with
 `ROVAI_KEEP_MEMBER_EDITOR_FIXTURE=1`. This fixture contains explicit test data; production always reads Core.
 
-The Runtime save row also offers “应用到其他队员…”. Use the already saved configuration as the immutable source;
+The Runtime save row also offers “应用到其他队员 →” as an unboxed secondary text action with underline on hover/focus.
+On mobile it occupies a left-aligned row with a 44px touch height. Use the already saved configuration as the immutable source;
 disable the entry for pending Runtime edits, conflicts, active saving or a frozen configuration. The neutral dialog
 shows the source snapshot and a selectable roster, preselecting only unconfigured targets. Existing configurations
 require selection and an inline replacement preview. Runtime drafts, busy targets and frozen configurations cannot

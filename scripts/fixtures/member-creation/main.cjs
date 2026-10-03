@@ -43,12 +43,22 @@ app.whenReady().then(async () => {
   await window.loadFile(renderer)
   await wait('!!document.querySelector(".member-add-split")')
   stage = 'AI entry and starter'
+  const defaultZh = '帮我添加一位新队员。先聊聊我的需求，再一起确定角色、职责和性格。'
+  const defaultEn = 'Help me add a new teammate. Let’s discuss what I need, then define their role, responsibilities, and personality.'
   await click('.member-add-split > button:first-child')
-  await wait('!!document.querySelector(".camp-home-actions") && !!document.querySelector(".structured-mention-editor")')
+  await wait('document.querySelector(".structured-mention-editor")?.innerText === ' + JSON.stringify(defaultZh))
   const first = await run('[...window.memberCreationQA.threads.keys()][0]')
   assert.deepEqual(await run('window.memberCreationQA.calls.find(call=>call.method==="threads.create").params.memberAgentIds'), ['review-member-1'])
-  assert.equal(await run('document.querySelectorAll(".camp-nav-row").length'), 0)
-  await capture('desktop-empty-zh')
+  assert.equal(await run('document.querySelectorAll(".camp-nav-row").length'), 1)
+  assert.equal(await run('window.memberCreationQA.calls.filter(call=>call.method==="thread.messages.send").length'), 0)
+  assert.equal(await run('document.activeElement.classList.contains("structured-mention-editor")'), true)
+  await window.webContents.insertText('请偏向研究工作。'); await settle()
+  const editedDefault = defaultZh + '请偏向研究工作。'
+  assert.equal(await run('document.querySelector(".structured-mention-editor").innerText'), editedDefault)
+  await run('window.memberCreationQA.language("en")'); await settle()
+  assert.equal(await run('document.querySelector(".structured-mention-editor").innerText'), editedDefault)
+  await run('window.memberCreationQA.language("zh-CN")'); await settle()
+  await capture('desktop-prefilled-zh')
   await click('.camp-home-actions button:nth-child(2)')
   await wait('document.querySelectorAll(".camp-nav-row").length === 1')
   assert.equal(await run('document.querySelectorAll(".camp-draft-badge").length'), 1)
@@ -58,8 +68,13 @@ app.whenReady().then(async () => {
   stage = 'fresh drafts and switching'
   await click('.rail-button[aria-label="队员"]')
   await click('.member-add-split > button:first-child')
-  await wait('document.querySelector(".structured-mention-editor")?.innerText.trim() === ""')
+  await wait('document.querySelector(".structured-mention-editor")?.innerText === ' + JSON.stringify(defaultZh))
   assert.equal(await run('window.memberCreationQA.threads.size'), 2)
+  assert.equal(await run('document.querySelectorAll(".camp-nav-row").length'), 2)
+  await type('')
+  await run('window.memberCreationQA.language("en")'); await settle()
+  assert.equal(await run('document.querySelector(".structured-mention-editor").innerText.trim()'), '')
+  await run('window.memberCreationQA.language("zh-CN")'); await settle()
   assert.equal(await run('document.querySelectorAll(".camp-nav-row").length'), 1)
   await click(`[data-thread-id="${first}"] .camp-nav-open`)
   await wait(`document.querySelector('.structured-mention-editor')?.innerText === ${JSON.stringify(draftText)}`)
@@ -133,6 +148,8 @@ app.whenReady().then(async () => {
   await wait('!!document.querySelector(".member-leave-dialog")')
   await click('.member-leave-dialog .danger-button')
   await wait('!!document.querySelector(".mobile-starter-toggle")')
+  await wait('document.querySelector(".structured-mention-editor")?.innerText === ' + JSON.stringify(defaultEn))
+  await capture('mobile-prefilled-en')
   assert.equal(await run('document.querySelectorAll(".mobile-starter-list").length'), 0)
   await click('.mobile-starter-toggle')
   await click('.mobile-starter-list button:nth-child(3)')
@@ -158,7 +175,7 @@ app.whenReady().then(async () => {
   await capture('mobile-joined-en')
   await run('window.memberCreationQA.theme("night")'); await settle(); await capture('mobile-joined-night-en')
   assert.deepEqual(await run('window.memberCreationQA.errors'), [])
-  console.log(JSON.stringify({ok:true,cases:['single available helper','no sidebar before typing','editable starters','fresh draft every time','window-local draft switching','rejected send retains draft','accepted send activates','receipt hidden until Run ends','last reply then receipt then diff','desktop/mobile shared result geometry','static receipt after rename/away','existing runtime settings link','automatic manual fallback','split manual action','mobile native touch reorder','mobile English starters and Return newline','mobile light/dark joined card']}))
+  console.log(JSON.stringify({ok:true,cases:['single available helper','localized editable prefill without sending','caret appends to prefill','language changes preserve edits and cleared text','prefill appears in local sidebar','editable starters','fresh draft every time','window-local draft switching','rejected send retains draft','accepted send activates','receipt hidden until Run ends','last reply then receipt then diff','desktop/mobile shared result geometry','static receipt after rename/away','existing runtime settings link','automatic manual fallback','split manual action','mobile native touch reorder','mobile English prefill/starters and Return newline','mobile light/dark joined card']}))
   app.exit(0)
 }).catch(async error => {
   if (window) {

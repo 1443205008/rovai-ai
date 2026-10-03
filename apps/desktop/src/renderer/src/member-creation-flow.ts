@@ -1,6 +1,13 @@
 import type { NavigationSnapshot, NavigationThreadItem, ThreadComposerDraftView, ThreadCreationPreflight } from '@contracts'
 import { isNewConversationMemberAvailable } from './new-conversation-availability'
 import { uiAttribute } from './interface-language'
+import { emptyLocalThreadComposerDraft } from './camp-composer-local-store'
+import { composerDocumentFromText } from './composer-document'
+
+export function memberCreationInitialDraft(threadId: string): ThreadComposerDraftView {
+  const body = uiAttribute('帮我添加一位新队员。先聊聊我的需求，再一起确定角色、职责和性格。')
+  return { ...emptyLocalThreadComposerDraft(threadId), body, content: composerDocumentFromText(body) }
+}
 
 export function memberCreationHelper(preflight: ThreadCreationPreflight, defaultLeadAgentId: string | null): string | null {
   const available = [...preflight.presentMembers].filter(isNewConversationMemberAvailable)
