@@ -11,6 +11,14 @@ last_updated: 2026-10-02
 
 # Rovai-ai v1.72：Lark 独立渠道
 
+## 并行修复：HTML 内部诊断 CSP 归因
+
+保留作品安全策略，预览器只将当前内部诊断请求的明确 CSP 拒绝转为中性诊断不可用，并停止该文档的无效重试。
+作者脚本、资源和业务策略错误继续可见，页面交互与文档状态不受辅助诊断影响。范围见
+[File Preview v21](../../contracts/file-preview-v21.md)；真实浏览器回归覆盖严格 CSP、混合错误、导航及既有断流恢复。
+本地 `pnpm test:html-preview` 的 5 项浏览器／Electron 测试通过；严格 CSP 只出现一次内部拦截且作品问题数为零，
+混合场景保留 4 项真实错误。TypeScript、完整 `pnpm test`、默认 feature Rust workspace、桌面构建及通用文档门禁通过。
+
 ## 并行交付：消息寻址与执行查询
 
 User 于 2026-10-03 确认[方案 r2](model-context-change-thread-runs.md)和[完整提示词对照](thread-runs-prompt-comparison.md)，授权实现、PR 与合入 main。

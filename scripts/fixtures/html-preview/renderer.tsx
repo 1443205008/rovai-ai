@@ -7,7 +7,7 @@ import { FilePreviewPane } from '../../../apps/desktop/src/renderer/src/FilePrev
 import '../../../apps/desktop/src/renderer/src/styles.css'
 
 const bridge = (window as unknown as { previewFixture: { call(method: string, args: unknown): Promise<unknown> } }).previewFixture
-const api = Object.fromEntries(['updateRetention', 'bindCamp', 'open', 'restore', 'reopen', 'readText', 'readPage', 'resolveLine', 'readBinary', 'prepareHtml', 'prepareHtmlSite', 'releaseHtmlSite', 'reload', 'release', 'openInSystem', 'revealInFolder', 'copyPath', 'chooseAuthorizedRoot'].map(method => [method, (args: unknown) => bridge.call(method, args)])) as unknown as FilePreviewApi
+const api = Object.fromEntries(['updateRetention', 'bindThread', 'open', 'restore', 'reopen', 'readText', 'readPage', 'resolveLine', 'readBinary', 'prepareHtml', 'prepareHtmlSite', 'releaseHtmlSite', 'reload', 'release', 'openInSystem', 'revealInFolder', 'copyPath', 'chooseAuthorizedRoot'].map(method => [method, (args: unknown) => bridge.call(method, args)])) as unknown as FilePreviewApi
 api.onExternalUpdate = () => () => {}
 Object.assign(window, { rovai: { filePreview: api, windowControls: { onCloseTabRequested: () => () => {} } } })
 function Fixture(): React.JSX.Element {
