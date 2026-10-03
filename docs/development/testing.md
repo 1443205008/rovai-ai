@@ -97,6 +97,11 @@ Rust owner 分成四个可执行层级；feature gating 只改变日常路由，
 `thread_runs::read_tests` 拥有公共 Run/动态队列/冻结输入的 SQL 读取 seam；用最小隔离 SQLite 表验证私有候选排除、
 历史归属、计数不依赖可见性、缺失来源、逻辑状态、游标条目消失和无写入。纯函数不能证明 JOIN、聚合或事务读取，
 现有 claim owner 也不拥有该查询；最小命令为 `cargo test -p rovai-core --features extended-tests --lib thread_runs::read_tests::`。
+其中 `candidate_pages_bound_materialization_and_use_thread_indexes` 复用该夹具，独立拥有长历史查询的候选读取上限与索引访问：
+5 万条目标 Run、5 万条其他 Thread Run 和 2,000 条 waiting Delivery 下，SQL 只返回本页加一条；
+同时验证混合时间格式、纳秒与同刻身份排序、深页游标和完整聚合计数。修复前单页会物化全部 50,002 个候选，
+原可见性测试的小数据集不能证明这个成本边界。执行计划断言只验证现有 Thread/turn/队列索引的访问，
+不声称时间排序或完整等待计数是 O(limit)；不依赖耗时阈值，最小验证命令沿用该 read_tests owner。
 消息 addressing、实时历史范围、Single Chat、Bootstrap 和 Skill 升级复用现有 owner，不另建等价 fixture。
 历史 collection 结果沿用 `execution_evidence` 的既有持久化 owner，验证 inline/blob 原始字节、digest、receipt
 与当前 CLI 的严格 Schema 分离；不放宽新结果合同。
