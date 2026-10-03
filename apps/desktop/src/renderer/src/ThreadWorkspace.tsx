@@ -1,4 +1,4 @@
-import { ConfiguredModelSummary, MessageModelSummary, ModelSummaryText, ProfileModelFields } from './ThreadModelInformation'
+import { MessageModelSummary, ModelSummaryText, ProfileModelFields } from './ThreadModelInformation'
 import { memberRuntimeConfigurationPresentation, modelSummary, runtimeAdapterLabel } from './runtime-model-presentation'
 export { memberRuntimeConfigurationPresentation, type MemberRuntimeConfigurationPresentation } from './runtime-model-presentation'
 import { memberCreationStarters } from './member-creation-flow'
@@ -1832,6 +1832,7 @@ export function ThreadWorkspace({
   const activeThreadIdRef = useRef(snapshot.thread.id)
   const activeSnapshotRef = useRef(snapshot)
   const initialComposerDraftRef = useRef(initialComposerDraft)
+  const focusedMemberCreationDraftRef = useRef<string | null>(null)
   const activationStateRef = useRef(snapshot.thread.activationState)
   const pendingThreadLeaveRef = useRef(onPendingThreadLeave)
   const pendingDraftChangeRef = useRef(onPendingDraftChange)
@@ -3457,6 +3458,18 @@ export function ThreadWorkspace({
     continuationRepairRequired,
     replyRepairRequired
   ])
+
+  useEffect(() => {
+    const threadId = snapshot.thread.id
+    if (!memberCreation || snapshot.thread.activationState !== 'pending' || busy
+      || draftLoadState.state !== 'ready' || focusedMemberCreationDraftRef.current === threadId) return
+    const frame = window.requestAnimationFrame(() => {
+      if (!composerHandleRef.current) return
+      composerHandleRef.current.focus('end')
+      focusedMemberCreationDraftRef.current = threadId
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [memberCreation, snapshot.thread.id, snapshot.thread.activationState, busy, draftLoadState.state])
 
   useEffect(() => {
     if (!notificationFocus?.active || ['approval', 'single_chat'].includes(notificationFocus.kind)) return
@@ -5753,10 +5766,6 @@ export function ThreadWorkspace({
                           : recipientSummary}</span>
                       </span>
                     )}
-                <ConfiguredModelSummary installations={installations}
-                  profile={profileById.get(continuationVisible && continuationIntent
-                    ? continuationIntent.recipient.agentId
-                    : defaultLead && campMemberIsLeadEligible(defaultLead) ? defaultLead.agentId : '') ?? null} />
               </div>
             )
           : null}

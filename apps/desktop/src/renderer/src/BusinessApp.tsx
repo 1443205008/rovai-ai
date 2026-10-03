@@ -1,4 +1,4 @@
-import { memberCreationHelper, navigationWithMemberCreationDrafts, type MemberCreationDraft } from './member-creation-flow'
+import { memberCreationHelper, memberCreationInitialDraft, navigationWithMemberCreationDrafts, type MemberCreationDraft } from './member-creation-flow'
 import { navigationThreadReadState } from './navigation-unread'
 import { newCommandId } from '../../shared/command-id'
 import type { BusinessEnvironment } from './business-environment'
@@ -3685,7 +3685,7 @@ export function BusinessApp({
       const threadId = stringField(result.payload, 'threadId')
       if (!threadId) throw new Error(uiAttribute('会话已创建，但暂时无法打开。请刷新会话列表后重试。'))
       if (memberCreation) setMemberCreationDrafts((current) => new Map(current).set(threadId, {
-        draft: null,
+        draft: memberCreationInitialDraft(threadId),
         navigation: { id: threadId, title: uiAttribute('新建队员'), activationState: 'pending',
           projectBindingKind: 'quick_chat', projectPath: '', defaultLead: null, marker: 'none',
           lastActivityAt: new Date().toISOString(), lastActivityGlobalSequence: 0,
@@ -4512,7 +4512,6 @@ export function BusinessApp({
             health={health}
             agents={agents}
             generalPreferences={generalPreferences}
-            currentProjectLabel={currentProjectLabel}
             onGeneralPreferencesChange={setGeneralPreferences}
             installations={installations}
             busy={busy}
@@ -4794,7 +4793,6 @@ export function SettingsView({
   health,
   agents,
   generalPreferences,
-  currentProjectLabel,
   onGeneralPreferencesChange,
   installations,
   busy,
@@ -4814,7 +4812,6 @@ export function SettingsView({
   health: HealthStatus | null
   agents: AgentProfile[]
   generalPreferences?: GeneralPreferencesSnapshot | null
-  currentProjectLabel?: string
   onGeneralPreferencesChange?(preferences: GeneralPreferencesSnapshot): void
   installations: AdapterInstallation[]
   busy: string | null
@@ -4837,7 +4834,6 @@ export function SettingsView({
             browserAccess={nativeSettings?.browserAccess}
             agents={agents}
             initialPreferences={generalPreferences}
-            currentProjectLabel={currentProjectLabel}
             onPreferencesChange={onGeneralPreferencesChange}
           />
         )}

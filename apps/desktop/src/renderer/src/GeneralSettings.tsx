@@ -46,7 +46,6 @@ export function GeneralSettings({
   browserAccess,
   agents = [],
   initialPreferences = null,
-  currentProjectLabel = '快速对话',
   onPreferencesChange = ignorePreferencesChange
 }: {
   api: GeneralPreferencesApi
@@ -55,7 +54,6 @@ export function GeneralSettings({
   browserAccess?: ReactNode
   agents?: AgentProfile[]
   initialPreferences?: GeneralPreferencesSnapshot | null
-  currentProjectLabel?: string
   onPreferencesChange?(preferences: GeneralPreferencesSnapshot): void
 }): React.JSX.Element {
   if (!api) throw new Error(uiAttribute('通用设置缺少客户端偏好适配。'))
@@ -514,7 +512,7 @@ export function GeneralSettings({
                 </div>
                 {oneClickEnabled && (
                   savedDefaults
-                    ? <p className="general-effective-summary">{t('当前生效：{0} · {1} 位默认队员 · 队长 {2}', currentProjectLabel === '快速对话' ? t('快速对话') : currentProjectLabel, savedDefaults.members.length, savedDefaults.lead.displayName)}</p>
+                    ? <p className="general-effective-summary">{t('{0} 位默认队员 · 队长 {1}', savedDefaults.members.length, savedDefaults.lead.displayName)}</p>
                     : <p className="general-effective-summary attention" role="status"><UiText zh={"默认队员配置需要重新确认。一键创建时将改为打开创建弹窗。"} /></p>
                 )}
                 {!preferences?.newConversationDefaults && (

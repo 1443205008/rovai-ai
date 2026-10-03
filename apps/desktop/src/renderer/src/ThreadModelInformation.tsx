@@ -74,18 +74,6 @@ export function MessageModelSummary({ message, installations, displayName, avata
     className="message-model-summary" />
 }
 
-export function ConfiguredModelSummary({ profile, installations }: {
-  profile: AgentProfile | null
-  installations: AdapterInstallation[]
-}): React.JSX.Element | null {
-  if (!profile?.runtimeConfiguration) return null
-  const configuration = profile.runtimeConfiguration
-  const presentation = memberRuntimeConfigurationPresentation(configuration,
-    runtimeEditorInstallation(installations, configuration.adapterKind))
-  return <ModelInformation identity={profile} presentation={presentation} adapterKind={configuration.adapterKind}
-    className="composer-model-summary" />
-}
-
 export function ProfileModelFields({ profile, installations }: {
   profile: AgentProfile
   installations: AdapterInstallation[]

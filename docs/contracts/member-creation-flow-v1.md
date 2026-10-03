@@ -5,7 +5,7 @@ authority: member-creation-entry-and-presentation-receipt
 status: accepted
 version: 1
 source_version: v1.72
-last_updated: 2026-10-02
+last_updated: 2026-10-03
 ---
 
 # Member Creation Flow v1
@@ -25,7 +25,16 @@ directly. Each AI entry creates a new pending quick-chat Thread containing only 
 It uses ordinary conversation controls, delivery and permissions. It does not resume an earlier creation Thread, inject
 hidden instructions, change model context, configure Runtime, or invite the created member into this Thread.
 
-The three localized starters fill editable user text without sending. Their scenarios are adapting a favorite character,
+On creation, the Renderer seeds the new Thread's window-local Composer with one editable request in the current UI language:
+
+- Chinese: “帮我添加一位新队员。先聊聊我的需求，再一起确定角色、职责和性格。”
+- English: “Help me add a new teammate. Let’s discuss what I need, then define their role, responsibilities, and personality.”
+
+The caret starts at the end. This is visible unsent user text, not a hidden instruction or a publication: only an explicit
+send activates the Thread. The nonempty draft appears in the existing window-local navigation overlay. Switching language
+or returning to the Thread preserves the user's edits, including cleared text; it does not reseed or translate the draft.
+
+The three localized starters replace editable user text without sending. Their scenarios are adapting a favorite character,
 defining a work partner by responsibilities and collaboration style, and exploring an original companion.
 [Pending Camp Activation v3](pending-camp-activation-v3.md) owns the window-local draft and first-send boundary.
 

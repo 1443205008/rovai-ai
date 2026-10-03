@@ -9414,9 +9414,13 @@ button.skill-file-current:hover, .skill-file-current[aria-expanded="true"] { bac
 }
 
 /* AI-first member creation: retain the existing roster and workspace geometry. */
-.member-sidebar-actions.member-add-split { gap: 0; border: 1px solid var(--line-strong); border-radius: 6px; }
-.member-add-split > button:first-child { display: flex; gap: 4px; padding: 0 8px; border-radius: 5px 0 0 5px; color: var(--ink); }
-.member-add-split > button:last-child { min-width: 25px; border-left: 1px solid var(--line); border-radius: 0 5px 5px 0; }
+.member-sidebar-actions.member-add-split { gap: 2px; }
+.member-add-split > button:first-child { display: flex; gap: 5px; height: 28px; padding: 0 6px; border-radius: 5px; color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.4; }
+.member-add-split > button:last-child { min-width: 24px; width: 24px; height: 28px; padding: 0 4px; border-radius: 5px; }
+.member-add-split > button:first-child svg { width: 14px; height: 14px; stroke-width: 1.5; }
+.member-add-split > button:last-child svg { width: 12px; height: 12px; stroke-width: 1.5; }
+.member-add-split > button:is(:hover, :focus-visible, [data-state='open']):not(:disabled) { color: var(--ink); background: var(--neutral-hover); }
+.member-add-split > button:active:not(:disabled) { background: var(--neutral-selected); }
 .member-add-split > button > span { color: inherit; font: inherit; }
 .member-sidebar.is-collapsed .member-add-split > button:first-child { min-width: 28px; padding: 0 3px; }
 .member-sidebar.is-collapsed .member-add-split > button:first-child span { display: none; }
@@ -9439,8 +9443,8 @@ button.skill-file-current:hover, .skill-file-current[aria-expanded="true"] { bac
 .member-joined-card footer { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; padding: 10px 16px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11px; }
 .member-joined-configure { padding: 4px 0; border: 0; color: var(--brand-ink); background: none; cursor: pointer; font-size: 12px; }
 @media (max-width: 767px), (max-width: 1039px) and (max-height: 560px) and (pointer: coarse) {
-  .member-add-split > button { min-height: 44px; }
-  .member-add-split > button:last-child { min-width: 44px; }
+  .member-add-split > button { height: 44px; min-height: 44px; }
+  .member-add-split > button:last-child { min-width: 44px; width: 44px; }
   .member-sidebar-select { cursor: pointer; }
   .member-joined-body { gap: 12px; padding: 14px 12px; }
   .member-joined-body > .member-portrait { flex-basis: 76px; width: 76px; height: 104px; }
