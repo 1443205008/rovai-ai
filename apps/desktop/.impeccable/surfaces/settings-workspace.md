@@ -282,6 +282,11 @@ an explicit empty state. A duplicate first version heading is removed only from 
 within a bounded region, and all notes use the shared safe Markdown renderer. Renderer receives no remote HTML, local
 installer path or updater credential.
 
+更新日志正文跟随当前界面语言即时切换，中文与英文不并列重复展示。保持当前/新版本 tab 选择，
+不增加语言选择器、额外请求或冗长提示。历史无标记说明保留完整原文；缺少当前语言则显示一个
+可用语言版本，歧义格式保留全文。分段和回退由[更新架构](../../../../docs/architecture/desktop-app-updates.md#多语言发布与展示)拥有，
+最终仍通过共享 `SafeMarkdown`，不改写发布快照。
+
 Downloading shows determinate percent, transferred/total bytes and speed without blocking navigation or
 ordinary App use. Repeated download requests visibly remain one operation. Download completion changes the
 primary action to “安装并重启”; `ready_to_install` never quits by itself. A synchronous install failure leaves

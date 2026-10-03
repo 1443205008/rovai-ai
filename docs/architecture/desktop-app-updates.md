@@ -2,7 +2,7 @@
 document_type: architecture
 authority: desktop-application-update-component-boundary
 status: accepted
-last_updated: 2026-09-29
+last_updated: 2026-10-03
 ---
 
 # Desktop App Updates
@@ -29,7 +29,7 @@ build/release-notes.md
      -> latest.yml / latest-mac.yml releaseNotes
      -> electron-updater UpdateInfo.releaseNotes
      -> Main bounded candidate normalization -> availableRelease
-  -> Renderer exact-title display cleanup -> SafeMarkdown
+  -> Renderer interface-language selection -> exact-title display cleanup -> SafeMarkdown
 
 build/release-metadata.json
   -> Desktop Main and Desktop-hosted Web bundles
@@ -67,6 +67,27 @@ About displays the installed release when no candidate exists. With a candidate,
 offers a local version switch; neither switch performs a request or changes updater actions. A missing candidate note
 stays an empty state. A matching first Markdown H1 is removed only from the displayed copy to avoid repeating the
 release header; the source and update manifest remain intact.
+
+## 多语言发布与展示
+
+发布源保留公共版本首标题，随后通过独立 HTML 注释 `<!-- lang:en -->` 与
+`<!-- lang:zh-CN -->` 标记语言段。每段延续到下一个标记或文档结束，翻译后的摘要、更新内容和
+升级提醒全部属于各自语言段；首标记之前的公共前言始终保留。新发布门禁要求两种语言均非空，
+但历史说明、单语言更新结果与旧 App 快照的读取不增加此限制。
+
+GitHub Release、Desktop 更新清单和内嵌日志使用完整原文。Server draft 直接复制同一源为
+`RELEASE-NOTES.md`；draft job 安装锁定依赖以使用与 Renderer 相同的 Markdown 解析规则。
+公开发布不按界面语言删减正文，不引入第二份翻译或额外 GitHub 请求。
+
+Desktop、Desktop 托管 Web 与独立 Server 共用的正文组件订阅 `useInterfaceLanguage()`，
+只在展示副本中选择当前语言。先匹配完整语言标签，再匹配同语种，随后回退到英文和首个非空语言。
+空白、仅注释或仅链接定义的段不阻挡回退；无标记、全部为空、重复语言或标记格式歧义时保留全文。
+Markdown 语法树只接受顶层独立 HTML 注释作为标记，代码块、内联代码、引用、列表或普通注释
+中的示例不作为边界；歧义 HTML 块保留全文，不能误截断。文档级引用式链接定义不随未选语言段丢失。
+
+语言选择后沿用既有首 H1 去重与 `SafeMarkdown`，源、快照和清单不变。语言切换即时重算正文，
+不重新请求、不重置当前/新版本 tab，也不影响下载和安装资格。缺少当前语言时展示原有可用语言，
+不自动翻译历史内容。
 
 ## Check and prompt flow
 

@@ -5,7 +5,7 @@ version: 1
 status: accepted
 authority: interface-language-preference-and-presentation
 source_version: v1.71
-last_updated: 2026-09-30
+last_updated: 2026-10-03
 ---
 
 # Interface Language v1
@@ -21,6 +21,14 @@ The catalog contains only App-owned navigation, controls, explanatory copy, stat
 Shared AgentRun presentation retains its existing Chinese copy for non-Renderer callers. Camp execution status labels and recovery/approval instructions enter the interface catalog only at the Renderer display boundary; this does not translate Agent output or Feishu cards.
 
 Desktop may localize the App-owned first-run Camp default title at the display boundary, using the completed onboarding snapshot's `quickChatCampId` as provenance. Only that Camp while its saved title remains `初次集结` displays `First Chat` in English. The saved title and command payloads retain their original bytes; renamed Camps and other Camps with the same text remain user data. Navigation search accepts both the display title and the saved title.
+
+## 发布说明的语言展示
+
+Release Notes 不进入 UI 翻译目录。发布源通过独立 `<!-- lang:en -->` 与 `<!-- lang:zh-CN -->`
+注释提供语言正文，原始 `releaseNotes` 与发布清单保持完整。共用更新页订阅当前界面语言，只选择
+展示副本；语言切换不发请求、不重置版本 tab、不改变更新动作。缺少对应正文时回退到同语种、
+英文及首个非空语言；无标记历史或格式歧义说明保留全文，不推断或自动翻译内容。
+精确分段、安全渲染和发布门禁见[更新架构](../architecture/desktop-app-updates.md#多语言发布与展示)。
 
 ## References
 

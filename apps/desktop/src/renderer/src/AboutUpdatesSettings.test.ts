@@ -1,7 +1,8 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
-import type { AppUpdateRelease, AppUpdateSnapshot } from '@contracts'
+import { afterEach, describe, expect, it } from 'vitest'
+import type { AppUpdateRelease, AppUpdateSnapshot, GeneralPreferencesApi } from '@contracts'
+import { changeInterfaceLanguage } from './interface-language'
 import { AboutUpdatesSettingsView } from './AboutUpdatesSettings'
 import { displayReleaseNotes } from './release-notes-display'
 import type { AppUpdateActionError } from './useAppUpdates'
@@ -57,6 +58,12 @@ function render(value: AppUpdateSnapshot | null, options: {
     onInstall: () => undefined
   }))
 }
+
+const languageApi = {
+  setInterfaceLanguage: async (interfaceLanguage: 'zh-CN' | 'en') => ({ interfaceLanguage })
+} as GeneralPreferencesApi
+
+afterEach(async () => { await changeInterfaceLanguage(languageApi, 'zh-CN') })
 
 describe('AboutUpdatesSettingsView', () => {
   it('links Server update fallback to the exact bridge or unified release tag', () => {
@@ -244,7 +251,35 @@ describe('AboutUpdatesSettingsView', () => {
     expect(differentTitle).toContain('data-markdown-heading="Thread 改进"')
 
     const fencedSource = '```md\n# Rovai AI v0.0.3\n```\n\n本版摘要'
-    expect(displayReleaseNotes({ ...release, releaseNotes: fencedSource })).toBe(fencedSource)
+    expect(displayReleaseNotes({ ...release, releaseNotes: fencedSource }, 'zh-CN')).toBe(fencedSource)
+  })
+
+  it('中英文界面仅渲染对应正文，当前版本与新版本共用规则且原文不变', async () => {
+    const notes = '# Rovai AI v0.0.3\n\n<!-- lang:en -->\n\nEnglish release notes\n\n<!-- lang:zh-CN -->\n\n中文更新说明'
+    const value = snapshot({
+      status: 'available',
+      availableRelease: { ...release, releaseNotes: notes },
+      currentRelease: { ...release, version: '0.0.2', releaseNotes: notes.replaceAll('0.0.3', '0.0.2') }
+    })
+    const chinese = render(value)
+    expect(chinese.match(/中文更新说明/g)).toHaveLength(2)
+    expect(chinese).not.toContain('English release notes')
+    expect(chinese).not.toContain('lang:')
+    await changeInterfaceLanguage(languageApi, 'en')
+    const english = render(value)
+    expect(english.match(/English release notes/g)).toHaveLength(2)
+    expect(english).not.toContain('中文更新说明')
+    expect(english).not.toContain('lang:')
+    expect(value.availableRelease?.releaseNotes).toBe(notes)
+  })
+
+  it('语言选择先于标题去重，保留不匹配标题和参考链接', () => {
+    const source = '<!-- lang:en -->\n\n# Rovai AI v0.0.3\n\nRead [guide][docs].\n\n<!-- lang:zh-CN -->\n\n# 更新重点\n\n中文\n\n[docs]: https://example.com/guide'
+    const value = { ...release, releaseNotes: source }
+    expect(displayReleaseNotes(value, 'en')).not.toContain('# Rovai AI v0.0.3')
+    expect(displayReleaseNotes(value, 'zh-CN')).toContain('# 更新重点')
+    const english = displayReleaseNotes(value, 'en')
+    expect(english).toContain('[docs]: https://example.com/guide')
   })
 
   it('keeps renderer action failures recoverable without discarding the snapshot', () => {

@@ -1,4 +1,5 @@
-import type { AppUpdateRelease } from '@contracts'
+import type { AppUpdateRelease, InterfaceLanguage } from '@contracts'
+import { selectReleaseNotesLanguage } from '../../shared/release-notes-localization'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 
@@ -6,10 +7,10 @@ function normalizedTitle(value: string): string {
   return value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase()
 }
 
-/** Remove only a redundant first H1 from the display copy, never from release metadata. */
-export function displayReleaseNotes(release: AppUpdateRelease): string | null {
-  const source = release.releaseNotes
-  if (!source) return null
+/** 先选择界面语言，再移除冗余首标题；不改写发布元数据。 */
+export function displayReleaseNotes(release: AppUpdateRelease, language: InterfaceLanguage): string | null {
+  if (!release.releaseNotes) return null
+  const source = selectReleaseNotesLanguage(release.releaseNotes, language)
   const first = unified().use(remarkParse).parse(source).children[0]
   if (first?.type !== 'heading' || first.depth !== 1 || !first.position) return source
   if (first.children.some((node) => node.type !== 'text' && node.type !== 'inlineCode')) return source
