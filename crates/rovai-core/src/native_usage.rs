@@ -1,7 +1,7 @@
 //! Numeric Usage from verified, root-agent native journals. No journal content
 //! is retained or forwarded; a prompt starts with a cursor and identity baseline.
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, Metadata, OpenOptions},
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
     path::{Component, Path, PathBuf},
@@ -379,7 +379,15 @@ impl NativeJsonlUsageReader {
                     if self.seen.contains(&baseline_id) {
                         continue;
                     }
-                    parse_trae(record, &self.session_id).into_iter().collect()
+                    let mut calls: Vec<_> =
+                        parse_trae(record, &self.session_id).into_iter().collect();
+                    if let Some(call) = calls.first()
+                        && let Some(model) = self.context_model.as_ref()
+                        && let Some(gauge) = trae_context(&line, call, model)
+                    {
+                        calls.push(gauge);
+                    }
+                    calls
                 }
                 Dialect::Qoder => {
                     let Some(record) = qoder_record(&line, &self.session_id, &self.workspace)
@@ -402,7 +410,11 @@ impl NativeJsonlUsageReader {
                     if self.seen.contains(&baseline_id) {
                         continue;
                     }
-                    parse_qoder(record, &self.session_id)
+                    let mut calls = parse_qoder(record, &self.session_id);
+                    if let Some(model) = &self.context_model {
+                        supplement_qoder_context(&line, &mut calls, model);
+                    }
+                    calls
                 }
             };
             for observation in incoming {
@@ -889,6 +901,12 @@ struct TraeMessageEvent {
 struct TraeMessage {
     role: String,
     response_meta: Option<TraeResponseMeta>,
+    extra: Option<TraeMessageExtra>,
+}
+#[derive(Deserialize)]
+struct TraeMessageExtra {
+    #[serde(rename = "_source_model")]
+    source_model: Option<String>,
 }
 #[derive(Deserialize)]
 struct TraeResponseMeta {
@@ -939,6 +957,38 @@ fn parse_trae(record: TraeRecord, session_id: &str) -> Option<NativeUsageObserva
         fields,
         Some(time),
     ))
+}
+
+fn trae_context(
+    line: &[u8],
+    call: &NativeUsageObservation,
+    model: &NativeContextModel,
+) -> Option<NativeUsageObservation> {
+    let record: TraeRecord = serde_json::from_slice(line).ok()?;
+    if record.message.message.extra?.source_model.as_deref() != Some(model.model_id.as_str()) {
+        return None;
+    }
+    // Native /context's calibrated used count is the latest root prompt_tokens,
+    // excluding that response and prior calls. Verified against a long response.
+    let used = call.usage.fields.input_tokens?;
+    if used <= 0 || model.window_tokens.is_some_and(|window| used > window) {
+        return None;
+    }
+    let mut context = call.usage.clone();
+    context.identity_suffix = "native_context".into();
+    context.dialect_id = "trae-native-calibrated-context-v1".into();
+    context.scope = "session".into();
+    context.counter_mode = RuntimeUsageCounterMode::Gauge;
+    context.input_semantics = RuntimeInputSemantics::Unknown;
+    context.fields = RuntimeUsageFields {
+        context_used_tokens: Some(used),
+        context_size_tokens: model.window_tokens,
+        ..Default::default()
+    };
+    Some(NativeUsageObservation {
+        source_identity: format!("{}:context", call.source_identity),
+        usage: context,
+    })
 }
 
 #[derive(Deserialize)]
@@ -1013,6 +1063,7 @@ struct QoderRecord {
 struct QoderMessage {
     id: String,
     role: String,
+    model: Option<String>,
     usage: Option<QoderUsage>,
 }
 #[derive(Deserialize)]
@@ -1022,6 +1073,158 @@ struct QoderUsage {
     cache_read_input_tokens: Option<i64>,
     cache_creation_input_tokens: Option<i64>,
     context_usage_ratio: Option<f64>,
+}
+
+pub(crate) fn qoder_context_model(model_id: String) -> Option<NativeContextModel> {
+    use crate::runtime_discovery::{runtime_environment_variable, runtime_home_directory};
+    let root = runtime_environment_variable(AdapterKind::QoderCli, "QODER_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| runtime_home_directory(AdapterKind::QoderCli).map(|p| p.join(".qoder")))?;
+    if !root.is_absolute() {
+        return None;
+    }
+    let mut file = open_native_file(&root, &root.join("settings.json")).ok()??;
+    if file.metadata().ok()?.len() > MAX_LINE_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(MAX_LINE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_LINE_BYTES {
+        return None;
+    }
+    Some(NativeContextModel {
+        window_tokens: qoder_configured_window(&bytes, &model_id),
+        model_id,
+    })
+}
+
+fn qoder_configured_window(bytes: &[u8], model_id: &str) -> Option<i64> {
+    #[derive(Deserialize)]
+    struct Settings {
+        providers: BTreeMap<String, Provider>,
+    }
+    #[derive(Deserialize)]
+    struct Provider {
+        models: Vec<Model>,
+    }
+    #[derive(Deserialize)]
+    struct Model {
+        model: String,
+        #[serde(rename = "contextWindow")]
+        window: Option<i64>,
+    }
+    let (provider, model) = model_id.split_once('/')?;
+    let settings: Settings = serde_json::from_slice(bytes).ok()?;
+    let mut matches = settings
+        .providers
+        .get(provider)?
+        .models
+        .iter()
+        .filter(|m| m.model == model);
+    let window = matches.next()?.window?;
+    (matches.next().is_none() && window > 0 && window <= 9_007_199_254_740_991).then_some(window)
+}
+
+fn supplement_qoder_context(
+    line: &[u8],
+    calls: &mut [NativeUsageObservation],
+    model: &NativeContextModel,
+) {
+    let Ok(record) = serde_json::from_slice::<QoderRecord>(line) else {
+        return;
+    };
+    if record.model_source.as_deref() != Some("custom")
+        || record.message.model.as_deref() != Some(model.model_id.as_str())
+    {
+        return;
+    }
+    let Some(window) = model.window_tokens else {
+        return;
+    };
+    let Some(used) = calls
+        .iter()
+        .find(|c| c.usage.counter_mode == RuntimeUsageCounterMode::Delta)
+        .and_then(|c| c.usage.fields.input_tokens)
+        .filter(|n| *n > 0 && *n <= window)
+    else {
+        return;
+    };
+    for call in calls
+        .iter_mut()
+        .filter(|c| c.usage.counter_mode == RuntimeUsageCounterMode::Gauge)
+    {
+        // Native SH() computes ratio=input_tokens/window before redaction. Both
+        // quantities are independently observed; ratio only validates their pair.
+        // A conflicting override/configuration leaves the native ratio alone.
+        if call
+            .usage
+            .fields
+            .native_context_ratio
+            .is_some_and(|ratio| (ratio - used as f64 / window as f64).abs() <= 1e-9)
+        {
+            call.usage.fields.context_used_tokens = Some(used);
+            call.usage.fields.context_size_tokens = Some(window);
+            call.usage.dialect_id = "qoder-native-call-context-v1".into();
+        }
+    }
+}
+
+pub(crate) fn kiro_session_root() -> Option<PathBuf> {
+    use crate::runtime_discovery::{runtime_environment_variable, runtime_home_directory};
+    let root = runtime_environment_variable(AdapterKind::KiroCli, "KIRO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| runtime_home_directory(AdapterKind::KiroCli).map(|p| p.join(".kiro")))?;
+    root.is_absolute().then(|| root.join("sessions/cli"))
+}
+
+pub(crate) fn kiro_context_window(
+    root: &Path,
+    workspace: &Path,
+    session: &str,
+    model: &str,
+) -> Option<i64> {
+    #[derive(Deserialize)]
+    struct Session {
+        session_id: String,
+        cwd: String,
+        session_state: State,
+    }
+    #[derive(Deserialize)]
+    struct State {
+        rts_model_state: ModelState,
+    }
+    #[derive(Deserialize)]
+    struct ModelState {
+        model_info: ModelInfo,
+    }
+    #[derive(Deserialize)]
+    struct ModelInfo {
+        model_id: String,
+        context_window_tokens: Option<i64>,
+    }
+    if !safe_identity(session) {
+        return None;
+    }
+    let file = open_native_file(root, &root.join(format!("{session}.json"))).ok()??;
+    if file.metadata().ok()?.len() > MAX_LINE_BYTES {
+        return None;
+    }
+    let native: Session = serde_json::from_reader(file.take(MAX_LINE_BYTES + 1)).ok()?;
+    if native.session_id != session
+        || native.cwd != workspace.to_str()?
+        || native.session_state.rts_model_state.model_info.model_id != model
+    {
+        return None;
+    }
+    native
+        .session_state
+        .rts_model_state
+        .model_info
+        .context_window_tokens
+        .filter(|n| *n > 0 && *n <= 9_007_199_254_740_991)
 }
 
 fn qoder_record(line: &[u8], session_id: &str, workspace: &str) -> Option<QoderRecord> {
@@ -1152,6 +1355,32 @@ mod tests {
                 .unwrap()
                 .contains("PRIVATE_TRAE_CANARY")
         );
+        frame["message"]["message"]["extra"] = json!({"_source_model":"GLM-5.3"});
+        let model = NativeContextModel {
+            model_id: "GLM-5.3".into(),
+            window_tokens: Some(168000),
+        };
+        let gauge = trae_context(frame.to_string().as_bytes(), &parsed, &model).unwrap();
+        assert_eq!(gauge.usage.fields.context_used_tokens, Some(18015));
+        assert_eq!(gauge.usage.fields.context_size_tokens, Some(168000));
+        assert_eq!(gauge.usage.fields.output_tokens, None);
+        for (id, window, expected) in [
+            ("other", Some(168000), None),
+            ("GLM-5.3", Some(100), None),
+            ("GLM-5.3", None, Some(18015)),
+        ] {
+            let model = NativeContextModel {
+                model_id: id.into(),
+                window_tokens: window,
+            };
+            assert_eq!(
+                trae_context(frame.to_string().as_bytes(), &parsed, &model)
+                    .and_then(|v| v.usage.fields.context_used_tokens),
+                expected
+            );
+        }
+        frame["message"]["message"]["extra"] = serde_json::Value::Null;
+        assert!(trae_context(frame.to_string().as_bytes(), &parsed, &model).is_none());
         frame["message"]["message"]["response_meta"]["usage"]["prompt_token_details"] =
             serde_json::Value::Null;
         assert_eq!(
@@ -1321,6 +1550,47 @@ mod tests {
         assert_eq!(result[1].usage.fields.native_context_ratio, Some(0.125));
         assert_eq!(result[1].usage.fields.context_used_tokens, None);
         assert_eq!(result[1].usage.fields.context_size_tokens, None);
+        let configured = json!({"providers":{"custom":{"apiKey":"PRIVATE_CONFIG_SECRET","models":[{"model":"test","contextWindow":984}]}}});
+        assert_eq!(
+            qoder_configured_window(configured.to_string().as_bytes(), "custom/test"),
+            Some(984)
+        );
+        assert_eq!(
+            qoder_configured_window(configured.to_string().as_bytes(), "custom/other"),
+            None
+        );
+        frame["message"]["model"] = json!("custom/test");
+        let model = NativeContextModel {
+            model_id: "custom/test".into(),
+            window_tokens: Some(984),
+        };
+        let mut observed = parse(&frame);
+        supplement_qoder_context(frame.to_string().as_bytes(), &mut observed, &model);
+        assert_eq!(observed[1].usage.fields.context_used_tokens, Some(123));
+        assert_eq!(observed[1].usage.fields.context_size_tokens, Some(984));
+        assert!(
+            !serde_json::to_string(&observed[1].usage)
+                .unwrap()
+                .contains("PRIVATE_CONFIG_SECRET")
+        );
+        for (model_id, window) in [
+            ("custom/other", Some(984)),
+            ("custom/test", Some(1000)),
+            ("custom/test", None),
+        ] {
+            let mut observed = parse(&frame);
+            supplement_qoder_context(
+                frame.to_string().as_bytes(),
+                &mut observed,
+                &NativeContextModel {
+                    model_id: model_id.into(),
+                    window_tokens: window,
+                },
+            );
+            assert_eq!(observed[1].usage.fields.context_used_tokens, None);
+            assert_eq!(observed[1].usage.fields.native_context_ratio, Some(0.125));
+        }
+
         assert!(
             !serde_json::to_string(&result[0].usage)
                 .unwrap()
@@ -1634,6 +1904,63 @@ mod tests {
             assert!(terminal.poll().is_empty());
             fs::remove_dir_all(root).unwrap();
         }
+        let kiro_root =
+            std::env::temp_dir().join(format!("rovai-kiro-window-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&kiro_root).unwrap();
+        let mut native = json!({"session_id":"native-session","cwd":"/workspace","session_state":{"rts_model_state":{"model_info":{"model_id":"native-model","context_window_tokens":196000},"context_usage_percentage":7.7}},"text":"PRIVATE_KIRO_CANARY"});
+        let path = kiro_root.join("native-session.json");
+        fs::write(&path, native.to_string()).unwrap();
+        assert_eq!(
+            kiro_context_window(
+                &kiro_root,
+                Path::new("/workspace"),
+                "native-session",
+                "native-model"
+            ),
+            Some(196000)
+        );
+        assert_eq!(
+            kiro_context_window(
+                &kiro_root,
+                Path::new("/workspace"),
+                "native-session",
+                "changed-model"
+            ),
+            None
+        );
+        assert_eq!(
+            kiro_context_window(
+                &kiro_root,
+                Path::new("/other"),
+                "native-session",
+                "native-model"
+            ),
+            None
+        );
+        assert_eq!(
+            kiro_context_window(
+                &kiro_root,
+                Path::new("/workspace"),
+                "../native-session",
+                "native-model"
+            ),
+            None
+        );
+        for field in [json!(null), json!(0), json!("196000")] {
+            native["session_state"]["rts_model_state"]["model_info"]["context_window_tokens"] =
+                field;
+            fs::write(&path, native.to_string()).unwrap();
+            assert_eq!(
+                kiro_context_window(
+                    &kiro_root,
+                    Path::new("/workspace"),
+                    "native-session",
+                    "native-model"
+                ),
+                None
+            );
+        }
+        fs::remove_dir_all(kiro_root).unwrap();
         let root =
             std::env::temp_dir().join(format!("rovai-trae-identity-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();

@@ -8,7 +8,7 @@ last_updated: 2026-10-02
 
 # Runtime Monitoring 架构
 
-精确字段与方法见 [Runtime Usage Monitoring v6](../contracts/runtime-usage-monitoring-v6.md)；执行台的原生用量与上下文另见 [Runtime Execution Metrics v3](../contracts/runtime-execution-metrics-v3.md)。长期最小化、
+精确字段与方法见 [Runtime Usage Monitoring v7](../contracts/runtime-usage-monitoring-v7.md)；执行台的原生用量与上下文另见 [Runtime Execution Metrics v4](../contracts/runtime-execution-metrics-v4.md)。长期最小化、
 稀疏语义、clean break 与 Cost grain 由
 [Evidence 与 Usage 不变量](foundational-invariants.md#evidence-usage)拥有。本架构只说明 Usage Transport、内存归一化、
 Projection/Rollup、Read Side 和 Renderer 如何组合。
@@ -76,7 +76,14 @@ CodeBuddy、Kimi Code、Qoder 与 TRAE 使用当前 workspace／Session 下的 J
 这些 reader 只保留有界调用身份、offset、文件身份和必要数值。JSONL 的非 Usage 字段由封闭 DTO 跳过，
 SQLite 不读取 part／正文；原始行只在本次解析缓冲中存在，不进入 Evidence、Blob、日志或 Renderer。
 选定本地 Token 来源后不再混加 ACP Token；Gauge 和 Cost 独立处理。最新版本与字段语义由
-[Usage v6](../contracts/runtime-usage-monitoring-v6.md#原生逐调用来源)拥有。
+[Usage v7](../contracts/runtime-usage-monitoring-v7.md)及其继承的原生来源合同拥有。
+
+Antigravity 在当前根 DONE step 进入 buffer 前，只读对应原生 SQLite 的同调用数值，
+交叉核对 stream 与本地身份/计数后替换稀疏观测；Context 读取同一 generator 的原生窗口估计。
+Qoder 的 custom-provider input 与显式模型窗口须与原生比例相符；TRAE 的最近根 prompt
+占用按已核验的原生 calibrated 语义使用，窗口从本次有效原生模型目录取得。
+Kiro 只从精确绑定 Session 文件补原生窗口，缺少独立 used 时仍保留比例和未知数量。
+这些补充均不扫描历史会话、不恢复测速，也不从比例反推数量。
 
 Claude 的 Core 私有路径保留最新根调用的数值 Usage 和原生模型身份，在同一 result 的该模型
 `modelUsage.contextWindow` 到达时发出 Session Gauge；不使用整轮 Usage。Pi managed host v8
@@ -97,7 +104,7 @@ used/size，在 prompt 终态之前交给现有绑定栅栏；不增加轮询或
 Codex Run summary 可记录实际 service tier；费用投影先用原生观察、再用冻结/发送时请求档位。未知不套
 Standard 价，实际回退 Standard 不按请求 Fast 计价；失去档位依据时撤回旧目录估价。这个小型 metadata
 写入不新增计费系统，也不替代 Claude 等 Runtime 的原生 reported cost。精确行为由
-[Runtime Usage Monitoring v6](../contracts/runtime-usage-monitoring-v6.md) 拥有。
+[Runtime Usage Monitoring v7](../contracts/runtime-usage-monitoring-v7.md) 拥有。
 
 ```text
 visible Settings page
@@ -135,7 +142,7 @@ epoch、Database contract `v0.99` 与 projection schema `47`。不存在回填�
 ## References
 
 - [Evidence 与 Usage 不变量](foundational-invariants.md#evidence-usage)
-- [Runtime Usage Monitoring v6](../contracts/runtime-usage-monitoring-v6.md)
+- [Runtime Usage Monitoring v7](../contracts/runtime-usage-monitoring-v7.md)
 - [v0.99 implementation plan](../versions/v0.99/implementation-plan.md)
 - [Runtime monitoring feasibility audit](../research/runtime-monitoring/README.md)
 - [Core 受管内容不变量](foundational-invariants.md#core-managed-content)

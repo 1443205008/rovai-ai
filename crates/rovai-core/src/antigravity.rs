@@ -1,3 +1,5 @@
+mod native_metrics;
+
 use std::{
     collections::{HashMap, HashSet},
     error::Error as StdError,
@@ -427,6 +429,7 @@ impl AntigravityAppRuntimeAdapter {
             )?;
             ManagedProcess::spawn(spec)
         })();
+        let native_metrics_root = native_metrics::root_for_command(command.as_std());
         let mut child = launch_result.map_err(|error| {
             let raw_detail = error.to_string();
             let failure = antigravity_public_failure(
@@ -465,6 +468,7 @@ impl AntigravityAppRuntimeAdapter {
                     resumable_native_session_id.as_deref(),
                     runtime_events.as_ref(),
                     &image_log_path,
+                    native_metrics_root,
                 )
                 .await
                 .map(|capture| AntigravityStdoutCapture::Structured(Box::new(capture)))
@@ -969,6 +973,8 @@ struct AntigravityStreamCapture {
     model_observation_emitted: bool,
     usage_input_step: Option<u64>,
     observed_usage_steps: HashSet<u64>,
+    observed_native_calls: HashSet<u64>,
+    native_metrics_root: Option<PathBuf>,
     started_tools: HashSet<String>,
     terminal_tools: HashSet<String>,
     started_shell_commands: HashMap<String, String>,
@@ -988,13 +994,17 @@ async fn capture_antigravity_stream<R>(
     expected_session_id: Option<&str>,
     runtime_events: Option<&mpsc::UnboundedSender<AntigravityRuntimeEvent>>,
     log_path: &Path,
+    native_metrics_root: Option<PathBuf>,
 ) -> Result<AntigravityStreamCapture>
 where
     R: AsyncRead + Unpin,
 {
     let mut line = Vec::new();
     let mut buffer = [0_u8; 16 * 1024];
-    let mut capture = AntigravityStreamCapture::default();
+    let mut capture = AntigravityStreamCapture {
+        native_metrics_root,
+        ..Default::default()
+    };
     loop {
         let read = reader.read(&mut buffer).await?;
         if read == 0 {
@@ -1088,12 +1098,33 @@ async fn process_antigravity_stream_line(
                 && let Some(sender) = runtime_events
             {
                 capture.observed_usage_steps.insert(index);
+                // Select one observation for this call. A native supplement
+                // must replace the sparse stream observation before buffering,
+                // never add a second copy of its output/cache-read counters.
+                let native = if let Some(root) = &capture.native_metrics_root {
+                    native_metrics::read(root, input_step, index, &usage).await
+                } else {
+                    None
+                };
+                let observations = if let Some(native) = native {
+                    if capture.observed_native_calls.insert(native.call_index) {
+                        std::iter::once(native.usage)
+                            .chain(native.context)
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    vec![usage]
+                };
                 // Numeric projection only. result.usage is Session cumulative
-                // and must never be added to these completed native steps.
-                let _ = sender.send(AntigravityRuntimeEvent {
-                    event_type: "runtime.antigravity.usage",
-                    payload: serde_json::to_value(usage)?,
-                });
+                // and must never be added to these completed native calls.
+                for observation in observations {
+                    let _ = sender.send(AntigravityRuntimeEvent {
+                        event_type: "runtime.antigravity.usage",
+                        payload: serde_json::to_value(observation)?,
+                    });
+                }
             }
             if let Some(runtime_event) = normalize_antigravity_tool_step(step, capture)?
                 && let Some(sender) = runtime_events

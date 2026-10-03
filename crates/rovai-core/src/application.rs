@@ -20393,10 +20393,18 @@ async fn process_agent_run_acp_message(
 
     let mut usage =
         parse_acp_usage_message(adapter_kind, runtime.reported_version(), &method, &params);
-    if adapter_kind == AdapterKind::GrokBuild {
+    if usage.iter().any(|item| {
+        matches!(
+            item.dialect_id.as_str(),
+            "grok-acp-meta-context-v1" | "kiro-acp-context-percentage-v1"
+        )
+    }) {
         let window = runtime.observed_context_window().await;
         for item in &mut usage {
-            if item.dialect_id == "grok-acp-meta-context-v1" {
+            if matches!(
+                item.dialect_id.as_str(),
+                "grok-acp-meta-context-v1" | "kiro-acp-context-percentage-v1"
+            ) {
                 item.fields.context_size_tokens = window;
             }
         }

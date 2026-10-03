@@ -3977,14 +3977,28 @@ impl AcpRuntime {
         let kind = self.adapter_kind();
         let workspace = self.execution_root.clone();
         let native_session = session_id.clone();
-        let context_model = if kind == AdapterKind::CodebuddyCli {
-            self.session_result
+        let context_model = match kind {
+            AdapterKind::CodebuddyCli => self
+                .session_result
                 .read()
                 .await
                 .as_ref()
-                .and_then(codebuddy_context_model)
-        } else {
-            None
+                .and_then(codebuddy_context_model),
+            AdapterKind::QoderCli => {
+                if let Some(model_id) = self.observed_model_id().await {
+                    crate::native_usage::qoder_context_model(model_id)
+                } else {
+                    None
+                }
+            }
+            AdapterKind::TraeCnCli => {
+                if let Some(model_id) = self.observed_model_id().await {
+                    Some(trae_context_model(&self.host.executable_path, &workspace, model_id).await)
+                } else {
+                    None
+                }
+            }
+            _ => None,
         };
         *self.native_usage.lock().await = tokio::task::spawn_blocking(move || {
             NativeUsageReader::for_prompt(kind, &workspace, &native_session, context_model)
@@ -4354,12 +4368,22 @@ impl AcpRuntime {
     }
 
     pub(crate) async fn observed_context_window(&self) -> Option<i64> {
-        if self.adapter_kind() != AdapterKind::GrokBuild {
-            return None;
+        let model = self.observed_model_id().await?;
+        match self.adapter_kind() {
+            AdapterKind::GrokBuild => self.host.grok_context_windows.get(&model).copied(),
+            AdapterKind::KiroCli => {
+                let session = self.session_id().await?;
+                let workspace = self.execution_root.clone();
+                let root = crate::native_usage::kiro_session_root()?;
+                tokio::task::spawn_blocking(move || {
+                    crate::native_usage::kiro_context_window(&root, &workspace, &session, &model)
+                })
+                .await
+                .ok()
+                .flatten()
+            }
+            _ => None,
         }
-        self.observed_model_id()
-            .await
-            .and_then(|id| self.host.grok_context_windows.get(&id).copied())
     }
 
     pub(crate) async fn poll_native_usage(&self, prompt_end: bool) -> Vec<NativeUsageObservation> {
@@ -4440,6 +4464,51 @@ fn codebuddy_context_model(session: &Value) -> Option<NativeContextModel> {
         model_id,
         window_tokens,
     })
+}
+
+/// Query the effective native catalog once for this prompt. No model request,
+/// guessed alias/window, persistent catalog or recurring polling is involved.
+async fn trae_context_model(
+    executable: &Path,
+    workspace: &Path,
+    model_id: String,
+) -> NativeContextModel {
+    use crate::runtime_probe_process::{ProbeCommandLimits, run_bounded_command};
+    let mut command = Command::new(executable);
+    rovai_core::runtime_discovery::configure_runtime_command(AdapterKind::TraeCnCli, &mut command);
+    command.current_dir(workspace).args([
+        "--config",
+        "disable_auto_upgrade=true",
+        "models",
+        "--json",
+    ]);
+    let window_tokens = match run_bounded_command(
+        &mut command,
+        ProbeCommandLimits::new(Duration::from_secs(2)),
+    )
+    .await
+    {
+        Ok(output) if output.status.success() && !output.stdout.truncated => {
+            trae_catalog_window(&output.stdout.bytes, &model_id)
+        }
+        _ => None,
+    };
+    NativeContextModel {
+        model_id,
+        window_tokens,
+    }
+}
+
+fn trae_catalog_window(bytes: &[u8], selected: &str) -> Option<i64> {
+    #[derive(serde::Deserialize)]
+    struct ModelWindow {
+        name: String,
+        context_window: Option<i64>,
+    }
+    let models: Vec<ModelWindow> = serde_json::from_slice(bytes).ok()?;
+    let mut matches = models.iter().filter(|model| model.name == selected);
+    let window = matches.next()?.context_window?;
+    (matches.next().is_none() && window > 0 && window <= 9_007_199_254_740_991).then_some(window)
 }
 
 pub struct AcpCliRuntimeAdapter {
@@ -9342,7 +9411,7 @@ while IFS= read -r ignored; do :; done
     }
 
     #[tokio::test]
-    async fn trae_agent_execution_starts_one_session_process_without_a_diagnostic_child() {
+    async fn trae_execution_uses_one_session_host_and_a_bounded_numeric_catalog() {
         let root =
             std::env::temp_dir().join(format!("rovai-trae-agent-process-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -9353,6 +9422,10 @@ while IFS= read -r ignored; do :; done
             &format!(
                 r#"#!/bin/sh
 printf '%s\n' "$*" >> '{}'
+if [ "$*" = "--config disable_auto_upgrade=true models --json" ]; then
+  printf '%s\n' '[{{"name":"trae-default","context_window":168000}}]'
+  exit 0
+fi
 IFS= read -r initialize || exit 1
 printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentCapabilities":{{"loadSession":true}}}}}}'
 IFS= read -r session || exit 1
@@ -9416,6 +9489,52 @@ while IFS= read -r ignored; do :; done
         assert_eq!(invocations.lines().count(), 1);
         assert_eq!(invocations.trim(), "acp serve --permission-mode default");
         assert!(!invocations.contains("--version"));
+        // Session creation above still has one Host. Only the explicit numeric
+        // supplement adds one bounded catalog read; it never starts a prompt.
+        let model = trae_context_model(&executable, &root, "trae-default".into()).await;
+        assert_eq!(model.window_tokens, Some(168000));
+        let invocations = std::fs::read_to_string(&invocation_log).unwrap();
+        assert_eq!(
+            invocations.lines().collect::<Vec<_>>(),
+            vec![
+                "acp serve --permission-mode default",
+                "--config disable_auto_upgrade=true models --json"
+            ]
+        );
+        for (catalog, model, expected) in [
+            (
+                json!([{ "name":"selected","context_window":168000 },{"name":"other","context_window":256000}]),
+                "selected",
+                Some(168000),
+            ),
+            (
+                json!([{ "name":"selected","context_window":168000 }]),
+                "other",
+                None,
+            ),
+            (json!([{ "name":"selected" }]), "selected", None),
+            (
+                json!([{ "name":"selected","context_window":0 }]),
+                "selected",
+                None,
+            ),
+            (
+                json!([{ "name":"selected","context_window":"168000" }]),
+                "selected",
+                None,
+            ),
+            (
+                json!([{ "name":"selected","context_window":168000 },{"name":"selected","context_window":256000}]),
+                "selected",
+                None,
+            ),
+        ] {
+            assert_eq!(
+                trae_catalog_window(catalog.to_string().as_bytes(), model),
+                expected
+            );
+        }
+
         std::fs::remove_dir_all(root).unwrap();
     }
 

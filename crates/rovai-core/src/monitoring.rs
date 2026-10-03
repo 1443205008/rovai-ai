@@ -2034,7 +2034,8 @@ fn eligible_mask(runtime: AdapterKind, _runtime_version: Option<&str>) -> i64 {
         AdapterKind::CodexCli
         | AdapterKind::OpencodeCli
         | AdapterKind::Pi
-        | AdapterKind::GrokBuild => full_tokens,
+        | AdapterKind::GrokBuild
+        | AdapterKind::AntigravityApp => full_tokens,
         AdapterKind::ClaudeCodeCli | AdapterKind::CopilotCli => full_tokens | ELIGIBLE_COST,
         AdapterKind::CodebuddyCli => (full_tokens & !ELIGIBLE_CACHE_WRITE) | ELIGIBLE_COST,
         AdapterKind::QwenCode => {
@@ -2055,9 +2056,6 @@ fn eligible_mask(runtime: AdapterKind, _runtime_version: Option<&str>) -> i64 {
                 | ELIGIBLE_REASONING_OUTPUT
         }
         AdapterKind::KimiCodeCli => full_tokens & !ELIGIBLE_REASONING_OUTPUT,
-        AdapterKind::AntigravityApp => {
-            ELIGIBLE_OUTPUT | ELIGIBLE_CACHE_READ | ELIGIBLE_REASONING_OUTPUT
-        }
         AdapterKind::CursorAgent => 0,
     }
 }
