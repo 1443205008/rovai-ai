@@ -6,6 +6,7 @@ const VISIBLE: &str = r#"
     camp.deletion_operation_id IS NULL
     AND NOT EXISTS(SELECT 1 FROM mission WHERE mission.camp_id = camp.id)
     AND (camp.activation_state = 'active'
+      OR EXISTS(SELECT 1 FROM pending_camp_draft_presence d WHERE d.camp_id = camp.id AND d.client_id = ?1)
       OR EXISTS(SELECT 1 FROM camp_composer_draft d WHERE d.camp_id = camp.id AND d.client_id = ?1
                 AND (length(trim(d.body)) > 0 OR d.source_attachments_json <> '[]'))
       OR EXISTS(SELECT 1 FROM prepared_attachment WHERE camp_id = camp.id AND client_id = ?1))

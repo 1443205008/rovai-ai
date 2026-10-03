@@ -4133,6 +4133,7 @@ export type CoreMethod =
   | 'navigation.campViewed'
   | 'threads.create'
   | 'threads.discardPending'
+  | 'threads.pendingDraft.setPresence'
   | 'threads.rename'
   | 'threads.members.fast.check'
   | 'threads.members.fast.set'
