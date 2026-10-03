@@ -1190,6 +1190,7 @@ export type ThreadConversationTimelineItem =
       createdAt: string
       message: ThreadMessageView
       runtimeImageGroups: AgentRunImagesView[]
+      interruptedRun?: AgentRunView
     }
   | {
       kind: 'run_file_changes'
@@ -1238,6 +1239,10 @@ function compareTimelinePresentationOrder(
   return left.createdAt.localeCompare(right.createdAt)
     || TIMELINE_KIND_RANK[left.kind] - TIMELINE_KIND_RANK[right.kind]
     || left.id.localeCompare(right.id)
+}
+
+function isUserInterruptedRun(run: AgentRunView): boolean {
+  return run.status === 'cancelled' && run.cancelReasonCode === 'user_requested_agent_run_stop'
 }
 
 export function campConversationTimeline(
@@ -1326,7 +1331,22 @@ export function campConversationTimeline(
       createdAt: (receipt.sourceAgentRunId ? runById.get(receipt.sourceAgentRunId)?.endedAt : null) ?? receipt.createdAt,
       receipt
     }))
-  const sortedCards = [...taskCards, ...stopEvents, ...runImageCards, ...runFileChangeCards, ...joinedCards]
+  const runsWithArtifacts = new Set([
+    ...agentRunFileChanges.map((changes) => changes.agentRunId),
+    ...runImageCards.flatMap((item) => item.kind === 'run_images' ? [item.images.agentRunId] : []),
+    ...joinedCards.flatMap((item) => item.kind === 'member_joined' && item.receipt.sourceAgentRunId
+      ? [item.receipt.sourceAgentRunId] : [])
+  ])
+  // A stopped Run remains identifiable even if it produced no public reply or artifacts.
+  const emptyInterruptedOutputs: ThreadConversationTimelineItem[] = agentRuns
+    .filter((run) => isUserInterruptedRun(run)
+      && !publicAgentMessageRunIds.has(run.id) && !runsWithArtifacts.has(run.id))
+    .map((run) => ({
+      kind: 'run_artifacts', id: `run-artifacts:${run.id}`,
+      createdAt: run.endedAt ?? run.cancelRequestedAt ?? run.createdAt,
+      run, imageGroups: [], memberCreations: [], fileChanges: []
+    }))
+  const sortedCards = [...taskCards, ...stopEvents, ...runImageCards, ...runFileChangeCards, ...joinedCards, ...emptyInterruptedOutputs]
     .sort(compareTimelinePresentationOrder)
   const sortedItems: ThreadConversationTimelineItem[] = []
   let messageIndex = 0
@@ -1341,13 +1361,17 @@ export function campConversationTimeline(
     }
   }
   sortedItems.push(...sortedMessages.slice(messageIndex), ...sortedCards.slice(cardIndex))
-  const lastPublicMessageByRunId = new Map<string, ThreadConversationTimelineItem>()
+  const lastPublicMessageByRunId = new Map<string, Extract<ThreadConversationTimelineItem, { kind: 'camp_message' }>>()
   for (const item of sortedMessages) {
     if (item.kind === 'camp_message'
       && item.message.authorType === 'agent'
       && item.message.sourceAgentRunId) {
       lastPublicMessageByRunId.set(item.message.sourceAgentRunId, item)
     }
+  }
+  for (const run of agentRuns) {
+    const message = lastPublicMessageByRunId.get(run.id)
+    if (message && isUserInterruptedRun(run)) message.interruptedRun = run
   }
   const anchoredCardIds = new Set<string>()
   const cardsByAnchorMessageId = new Map<string, ThreadConversationTimelineItem[]>()
@@ -4988,6 +5012,9 @@ export function ThreadWorkspace({
                             ))}
                           </div>
                         )}
+                        {isUserInterruptedRun(run) && (
+                          <RunInterruptionMarker run={run} author={author} onOpen={openExecutionProcess} />
+                        )}
                       </section>
                     )
                     continue
@@ -5357,7 +5384,7 @@ export function ThreadWorkspace({
                                 />
                               )}
                               {campMessage.authorType === 'agent'
-                                && trailingResultItems.length === 0
+                                && trailingResultItems.length === 0 && !timelineItem.interruptedRun
                                 && (
                                   <MessageActions
                                     copied={copied}
@@ -5385,7 +5412,7 @@ export function ThreadWorkspace({
                           )}
                     </article>
                   )
-                  if (trailingResultItems.length > 0) {
+                  if (trailingResultItems.length > 0 || timelineItem.interruptedRun) {
                     items.push(
                       <div
                         className={`agent-message-output public-message-output${followsSameAuthor ? ' same-author' : ''}${isGroupContinuation ? ' is-group-continuation' : ''}`}
@@ -5393,7 +5420,7 @@ export function ThreadWorkspace({
                         key={`agent-message-output:${campMessage.id}`}
                       >
                         {messageElement}
-                        <div className="run-result-stack">
+                        {trailingResultItems.length > 0 && <div className="run-result-stack">
                           {trailingResultItems.map((resultItem) => resultItem.kind === 'member_joined' ? (
                             <MemberJoinedCard key={resultItem.id} receipt={resultItem.receipt} onConfigure={onConfigureRuntime} />
                           ) : (
@@ -5413,7 +5440,10 @@ export function ThreadWorkspace({
                               )}
                             />
                           ))}
-                        </div>
+                        </div>}
+                        {timelineItem.interruptedRun && (
+                          <RunInterruptionMarker run={timelineItem.interruptedRun} author={author} onOpen={openExecutionProcess} />
+                        )}
                         <MessageActions
                           copied={copied}
                           className={`agent-message-output-actions${campMessage.id === latestAgentMessageId ? ' is-persistent' : ''}`}
@@ -9163,6 +9193,24 @@ export function AgentRunFileChangesTimelineCard({
   )
 }
 
+
+function RunInterruptionMarker({ run, author, onOpen }: {
+  run: AgentRunView
+  author: string
+  onOpen: (agentId: string, trigger: HTMLButtonElement, options: { runId: string }) => void
+}): JSX.Element {
+  return (
+    <div className="run-interruption-marker" data-interrupted-run-id={run.id}>
+      <button type="button" className="run-interruption-trigger"
+        aria-label={uiAttribute("你已中断，查看{0}的本次执行", author)}
+        title={uiAttribute("查看本次执行")}
+        onClick={(event) => onOpen(run.agentId, event.currentTarget, { runId: run.id })}>
+        <svg viewBox="0 0 6 6" aria-hidden="true"><rect x="1" y="1" width="4" height="4" rx="0.7" /></svg>
+        <UiText zh={"你已中断"} />
+      </button>
+    </div>
+  )
+}
 
 function StopOutcomeEvent({
   item,

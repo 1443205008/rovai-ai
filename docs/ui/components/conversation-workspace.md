@@ -2,7 +2,7 @@
 document_type: ui-component-contract
 authority: renderer-camp-workspace
 status: accepted
-last_updated: 2026-10-02
+last_updated: 2026-10-03
 ---
 
 # Camp 会话工作区
@@ -775,6 +775,13 @@ Run 已成功、失败或取消但没有公开消息时，图片、入队卡片�
 直接使用该 `AgentRun.agentId` 显示队员头像和姓名。同 Run 的多个 epoch 共用一次作者头，图片排在文件卡之前；
 不同 Run 保持各自作者和归属。头像、姓名沿用公开消息的人物信息卡资格与缺失头像回退，离队或移除队员保持静态。
 该区域不创建 CampMessage、不合成正文，也不提供消息复制或回复；来源 Run 未加载时保留文件卡，不猜测作者。
+
+仅当 Run 为 `cancelled` 且 `cancelReasonCode = user_requested_agent_run_stop` 时，在该 Run 最后一条公开
+回复及全部产物之后显示一次“你已中断”。没有回复和产物时仍保留来源队员头与该标记，不合成消息正文。
+标记采用居中的 4px 实心方点与 11.5px 中性文字，距上方内容 8px，点击高度至少 24px；不加横线、边框、时间或箭头。
+它与结果列共用 620px 上限、42px 缩进及窄容器回流规则。点击或键盘激活打开精确来源 Run 的执行详情，并沿用
+执行台承载位置与关闭行为；后续 Run、其他队员、多个 epoch 不改变来源或重复标记。请求尚未终态、
+异常失败、整轮取消及其他取消原因不使用“你已中断”。
 
 入队卡片仅在其明确来源 Run 终态后出现，同 Run 的多张入队卡片按创建时间、创建 ID 排序，并始终排在
 Files Changed 之前。两类卡片共用宽度不超过 620px、左缩进 42px 的结果列，距回复 14px、卡片间距 12px；
