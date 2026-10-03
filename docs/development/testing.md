@@ -790,6 +790,13 @@ Windows 平台实测独立记录，不能由此 macOS 浏览器结果推断。
 
 ## 原生执行指标 Runtime 验收
 
+2026-10-03 遗漏字段修复沿用 `monitoring::tests::runtime_parsers_emit_sparse_usage_without_antigravity_inference`
+和 `zcode::transport::tests::provider_failure_reaches_core_without_poisoning_the_host` owner：前者增加
+DSH 原生精确 total 与缺失/矛盾分类，后者增加数值 Context、Session 栅栏与终态投递顺序。
+没有新增或退役 Rust owner；最低命令为对应完整测试名的 `cargo test -p rovai-core --features extended-tests --lib`。
+`node --test scripts/lib/dsh-host.test.mjs` 继续验证 bootstrap 的数值白名单和内容隔离。
+实测报告必须独立列出字段可用性，不能用 null/null 的对照通过替代采集完整性。
+
 `node scripts/probe-runtime-execution-metrics.mjs <runtime-kind>` 创建独立 Core、bundled CLI、data-dir、
 Skill Library、MCP 和工作区，执行包含只读工具调用的原生用量／上下文任务，最长观察 8 分钟。
 探针只保存原生字段形态、匿名身份、Token／Gauge 数值、观测时刻及持久化读回，不采集字符数量、

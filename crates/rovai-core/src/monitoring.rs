@@ -3097,6 +3097,22 @@ pub fn parse_antigravity_step_usage(step: &Value) -> Option<ParsedRuntimeUsage> 
     })
 }
 
+fn dsh_exact_prompt_total(usage: &Value, fields: &RuntimeUsageFields) -> Option<i64> {
+    let total = integer_at_any(usage, &["/totalTokens"])?;
+    let input = total.checked_sub(fields.output_tokens?)?;
+    let known = fields.uncached_input_tokens?
+        .checked_add(fields.cache_read_input_tokens.unwrap_or(0))?
+        .checked_add(fields.cache_write_input_tokens.unwrap_or(0))?;
+    if input < known
+        || (fields.cache_read_input_tokens.is_some()
+            && fields.cache_write_input_tokens.is_some()
+            && input != known)
+    {
+        return None;
+    }
+    Some(input)
+}
+
 pub fn parse_acp_usage_message(
     adapter_kind: AdapterKind,
     _runtime_version: Option<&str>,
@@ -3235,7 +3251,7 @@ pub fn parse_acp_usage_message(
                     _ => continue,
                 };
                 let usage = &record["usage"];
-                let fields = RuntimeUsageFields {
+                let mut fields = RuntimeUsageFields {
                     // DSH TokenUsage defines input/cache buckets as disjoint.
                     input_tokens: integer_at_any(usage, &["/inputTokens"]),
                     uncached_input_tokens: integer_at_any(usage, &["/inputTokens"]),
@@ -3248,13 +3264,28 @@ pub fn parse_acp_usage_message(
                 if fields.is_empty() {
                     continue;
                 }
+                // Native TokenUsage.totalTokens is the exact full-call total,
+                // including cached prompt tokens. Optional cache buckets can
+                // be absent even when that aggregate is authoritative. Preserve
+                // their absence while using total - output for inclusive Input.
+                let input_semantics = if usage.get("totalTokens").is_some() {
+                    match dsh_exact_prompt_total(usage, &fields) {
+                        Some(total) => {
+                            fields.input_tokens = Some(total);
+                            RuntimeInputSemantics::CacheInclusiveTotal
+                        }
+                        None => RuntimeInputSemantics::Unknown,
+                    }
+                } else {
+                    RuntimeInputSemantics::ExclusiveBuckets
+                };
                 observations.push(ParsedRuntimeUsage {
                     identity_suffix: format!("{source}:{seq}"),
-                    dialect_id: "dsh-committed-call-usage-v2".to_string(),
+                    dialect_id: "dsh-committed-call-usage-v3".to_string(),
                     source: "runtime_event".to_string(),
                     scope: "turn".to_string(),
                     counter_mode: RuntimeUsageCounterMode::Delta,
-                    input_semantics: RuntimeInputSemantics::ExclusiveBuckets,
+                    input_semantics,
                     native_session_id: string_at_any(params, &["/sessionId"]),
                     native_turn_id: Some(turn.to_string()),
                     fields,
@@ -3288,6 +3319,32 @@ pub fn parse_acp_usage_message(
     }
     if adapter_kind == AdapterKind::ZcodeApp && method == "session/update" {
         let update = &params["update"];
+        if update["sessionUpdate"] == "usage_update"
+            && let (Some(seq), Some(revision), Some(used), Some(size)) = (
+                update.pointer("/_meta/zcodeContext/eventSeq").and_then(Value::as_u64),
+                update.pointer("/_meta/zcodeContext/stateRevision").and_then(Value::as_u64),
+                integer_at_any(update, &["/used"]),
+                integer_at_any(update, &["/size"]).filter(|n| *n > 0),
+            )
+        {
+            return vec![ParsedRuntimeUsage {
+                identity_suffix: format!("native_context:{seq}:{revision}"),
+                dialect_id: "zcode-native-session-context-v1".into(),
+                source: "runtime_private_extension".into(),
+                scope: "session".into(),
+                counter_mode: RuntimeUsageCounterMode::Gauge,
+                input_semantics: RuntimeInputSemantics::Unknown,
+                native_session_id: string_at_any(params, &["/sessionId"]),
+                native_turn_id: None,
+                fields: RuntimeUsageFields {
+                    context_used_tokens: Some(used),
+                    context_size_tokens: Some(size),
+                    ..Default::default()
+                },
+                cost: None,
+                occurred_at: None,
+            }];
+        }
         let usage = &update["_meta"]["zcodeUsage"];
         if update["sessionUpdate"] == "usage_update"
             && usage["source"] == "provider"
@@ -5110,6 +5167,29 @@ mod tests {
         assert_eq!(dsh[1].native_turn_id.as_deref(), Some("1"));
         assert_eq!(dsh[1].fields.uncached_input_tokens, Some(30));
         assert_eq!(dsh[1].fields.cache_write_input_tokens, Some(50));
+
+        // Native exact totals can establish Input even when an optional cache
+        // bucket is omitted. Missing is still missing in the cache projection.
+        for (usage, expected) in [
+            (json!({"inputTokens":258,"outputTokens":115,"totalTokens":13429,"cacheReadTokens":13056}), Some(13314)),
+            (json!({"inputTokens":0,"outputTokens":0,"totalTokens":0}), Some(0)),
+            (json!({"inputTokens":20,"outputTokens":7,"cacheReadTokens":80}), None),
+            (json!({"inputTokens":20,"outputTokens":7,"cacheReadTokens":80,"cacheWriteTokens":5}), Some(105)),
+            (json!({"inputTokens":20,"outputTokens":7,"totalTokens":6}), None),
+            (json!({"inputTokens":20,"outputTokens":7,"totalTokens":100,"cacheReadTokens":80}), None),
+            (json!({"inputTokens":20,"outputTokens":7,"totalTokens":110,"cacheReadTokens":80,"cacheWriteTokens":5}), None),
+            (json!({"inputTokens":20,"totalTokens":110}), None),
+            (json!({"inputTokens":20,"outputTokens":7,"totalTokens":"107"}), None),
+        ] {
+            let raw = json!({"sessionId":"dsh-session","update":{"sessionUpdate":"usage_update","_meta":{"dshUsage":[
+                {"schemaVersion":1,"sessionId":"dsh-session","seq":12,"turn":2,"usage":usage}
+            ]}}});
+            let parsed = parse_acp_usage_message(AdapterKind::DeepseekHarness, None, "session/update", &raw);
+            let normalized = normalize_usage(&parsed[0]).unwrap();
+            assert_eq!(normalized.prompt_input_total_tokens, expected, "{usage}");
+            assert_eq!(normalized.cache_write_tokens, usage["cacheWriteTokens"].as_i64());
+            assert_eq!(normalized.output_tokens, usage["outputTokens"].as_i64());
+        }
 
         // ACP terminal Usage can be a single final call. It must never become
         // a complete Run merely because a version differs from the witness.

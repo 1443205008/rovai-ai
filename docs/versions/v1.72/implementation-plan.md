@@ -573,8 +573,15 @@ Electron 采用独立临时 userData/Skill Library 与显式内存 transport，�
 新增来源，OpenCode 补失败占位记录过滤。两轮同 Session 冷恢复及独立 raw fixture 见
 [原生格式兼容验收](../../research/runtime-monitoring/native-format-compatibility-2026-10-02.md)。
 
-当前合同为 [Runtime Usage Monitoring v5](../../contracts/runtime-usage-monitoring-v5.md) 和
-[Runtime Execution Metrics v2](../../contracts/runtime-execution-metrics-v2.md)；不新增迁移、输出测速、
+当前合同为 [Runtime Usage Monitoring v6](../../contracts/runtime-usage-monitoring-v6.md) 和
+[Runtime Execution Metrics v3](../../contracts/runtime-execution-metrics-v3.md)；不新增迁移、输出测速、
 模型提示或 Renderer 布局。未验证字段保持未知，CLI 实测版本和版本准入明确分开。
 默认 Rust gate 与生产 Renderer 500 Run 回放通过；真实逐 Runtime 同调用打包 App、正缓存写、
 未提供窗口和其他来源的 Context 仍按验收记录保留边界。
+
+## 2026-10-03 缺失字段修正
+
+补接 DSH 原生 totalTokens 与 ZCode 原生 Session snapshot 的 contextUsage；不添加版本门槛、
+历史上下文、测速或 UI 布局。修正先前 null/null 一致被当作完整采集通过的结论。
+真实打包 App 已复跑和核对：DSH 93.6k，ZCode 18.8k / 200k、9.4%；整体仍有缺口，
+见[逐字段证据与未决项](../../research/runtime-monitoring/missing-fields-verification-2026-10-03.md)。

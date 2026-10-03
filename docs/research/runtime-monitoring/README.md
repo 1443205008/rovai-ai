@@ -10,11 +10,13 @@ baseline_ref: "4b4fe088b15ef785cd76f54f221e5d87c9d639a4"
 # Rovai AI 运行监控指标可采集性审计
 
 > 2026-10-02：按用户要求撤下全部 Runtime 的输出测速。以下速度、v2/v3、思考计数及旧探针记录均为历史证据，
-> 对应代码保留在 Git 提交 `ee444ab1`。当前只保留原生用量与 Session 上下文，见[执行指标合同](../../contracts/runtime-execution-metrics-v2.md)。
+> 对应代码保留在 Git 提交 `ee444ab1`。当前只保留原生用量与 Session 上下文，见[执行指标合同](../../contracts/runtime-execution-metrics-v3.md)。
 
 当前执行台的取数范围、隐藏暂停、引用复用与迟到刷新收口见[执行指标读取验收](execution-metrics-refresh-verification-2026-10-01.md)。
 
-2026-10-03 同一个隔离打包 App、15 类 Runtime 的真实数值与界面对照见[同会话验收](all-runtime-app-verification-2026-10-03.md)。
+2026-10-03 最新[遗漏字段修复核验](missing-fields-verification-2026-10-03.md)：DSH 总量、ZCode Context 补接；
+Run 总量 13/15、上下文比例 12/15，全矩阵未完整通过。[同会话验收](all-runtime-app-verification-2026-10-03.md)
+保留初始 15 类 Runtime 数值与界面对照，不再作为字段齐全的结论。
 
 2026-10-02 本轮补采与版本兼容结果见[原生来源验收](native-format-compatibility-2026-10-02.md)。
 

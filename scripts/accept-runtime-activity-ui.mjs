@@ -1508,13 +1508,27 @@ async function verifyRealRuntimeExecutionMetrics(app, capturesRoot) {
   }
   const projection = await request('monitoring.execution', { campId: liveCampId, agentRunIds: [runId] })
   const usage = projection.runs.find(run => run.agentRunId === runId)
+  const context = projection.sessions[0]
+  const isCount = value => Number.isSafeInteger(value) && value >= 0
+  // Matching a null projection proves honest display, not field availability.
+  // Keep these facts separate even when optional verification gates are off.
+  const availability = {
+    usageFields: Object.fromEntries(['promptInputTotalTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens']
+      .map(field => [field, isCount(usage?.[field])])),
+    runTotal: status === 'succeeded' && Boolean(usage?.finalizedAt)
+      && isCount(usage?.promptInputTotalTokens) && isCount(usage?.outputTokens),
+    contextRatio: Boolean(context && (
+      (isCount(context.usedTokens) && isCount(context.windowTokens) && context.windowTokens > 0
+        && context.usedTokens <= context.windowTokens)
+      || (typeof context.nativeRatio === 'number' && Number.isFinite(context.nativeRatio)
+        && context.nativeRatio >= 0 && context.nativeRatio <= 1)))
+  }
   await writeFile(join(capturesRoot, `native-metrics-diagnostic-${runtimeKind}.json`),
-    JSON.stringify({ runtimeKind, status, samples, projection }, null, 2))
+    JSON.stringify({ runtimeKind, status, samples, projection, availability }, null, 2))
   assert(['succeeded', 'failed', 'cancelled'].includes(status),
     `Real Runtime did not reach a terminal within the 480s acceptance window; partial observations are retained`)
   if (process.env.ROVAI_METRICS_VERIFY_USAGE === '1') {
-    assert(usage?.finalizedAt && usage.promptInputTotalTokens > 0 && usage.outputTokens > 0,
-      'Real Runtime did not persist native Usage')
+    assert(availability.runTotal, 'Real Runtime did not persist a usable native Run total')
     await evaluate(app.cdp, `(() => {
       const history = ${drawerExpression}?.querySelector('.execution-history-toggle')
       if (history?.getAttribute('aria-expanded') === 'false') history.click()
@@ -1545,8 +1559,8 @@ async function verifyRealRuntimeExecutionMetrics(app, capturesRoot) {
   const contextLabel = await evaluate(app.cdp,
     `${drawerExpression}?.querySelector('.execution-drawer-header .execution-context-trigger')?.getAttribute('aria-label') ?? null`)
   if (process.env.ROVAI_METRICS_VERIFY_CONTEXT === '1') {
-    const context = projection.sessions[0]
-    assert(context && (context.usedTokens > 0 || context.nativeRatio != null)
+    assert(availability.contextRatio, 'Real Runtime did not provide a usable Context ratio; used alone is incomplete')
+    assert(context
       && contextLabel?.includes(metricK(context.usedTokens)) && contextLabel?.includes(metricK(context.windowTokens)),
     'Renderer Context differs from native projection')
     const percent = context.usedTokens != null && context.windowTokens > 0
@@ -1563,14 +1577,14 @@ async function verifyRealRuntimeExecutionMetrics(app, capturesRoot) {
     await capture(app.cdp, join(capturesRoot, `native-context-${runtimeKind}.png`))
   }
   const report = { runtimeKind, version: installation.snapshot?.reportedVersion, campId: liveCampId,
-    runId, status, projection, usageRows, contextLabel, samples }
+    runId, status, projection, availability, usageRows, contextLabel, samples }
   const reportPath = join(capturesRoot, `native-metrics-${runtimeKind}.json`)
   await writeFile(reportPath, JSON.stringify(report, null, 2))
   assert(status === 'succeeded'
     && samples.filter(sample => sample.status === 'running').every(sample =>
       sample.ui.overview === false && sample.ui.duration),
   `Real Runtime native metrics acceptance failed; evidence is in ${reportPath}`)
-  return { verified: { status, version: report.version, projection, usageRows, contextLabel },
+  return { verified: { status, version: report.version, projection, availability, usageRows, contextLabel },
     captures: { report: reportPath } }
 }
 

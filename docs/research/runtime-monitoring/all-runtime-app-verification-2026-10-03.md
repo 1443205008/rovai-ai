@@ -6,6 +6,11 @@ last_updated: 2026-10-03
 
 # 同一会话的 15 类 Runtime 打包 App 验收
 
+> **2026-10-03 验收结论修正：**本文的 15 类数值/UI 对照只证明“已有投影与选定来源一致”，
+> 包含 null 与 null 的一致，不能证明必需字段已经齐全。DSH 的 `totalTokens` 和 ZCode 的
+> `runtime.contextUsage` 实际存在但未接入。后续修复与逐项缺口见
+> [遗漏字段修复核验](missing-fields-verification-2026-10-03.md)。本轮不能被引用为“15 类完整采集通过”。
+
 ## 范围
 
 按用户要求，在隔离签名 App 中创建一个 Thread，加入 15 名分别使用不同 Runtime 的技术验收队员，
