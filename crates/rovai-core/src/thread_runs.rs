@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
-use rusqlite::{Transaction, params};
+use rusqlite::{Transaction, functions::FunctionFlags, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -227,10 +227,7 @@ fn read_transaction(
         .map(|text| decode_cursor(&text, &filter))
         .transpose()?;
     let limit = input.limit.unwrap_or(20);
-    let mut rows = candidates(transaction, &filter)?;
-    rows.retain(|row| after.as_ref().is_none_or(|last| row.key < *last));
-    rows.sort_unstable_by(|left, right| right.key.cmp(&left.key));
-    rows.truncate(limit + 1);
+    let mut rows = candidates(transaction, &filter, after.as_ref(), limit + 1)?;
     let has_more = rows.len() > limit;
     rows.truncate(limit);
     let next_cursor = if has_more {
@@ -334,42 +331,100 @@ fn decode_cursor(text: &str, filter: &Filter) -> Result<SortKey> {
     Ok(cursor.last)
 }
 
-fn candidates(transaction: &Transaction<'_>, filter: &Filter) -> Result<Vec<Candidate>> {
-    // Select public Runs before projecting counts, states or message sources.
-    // Sort UTC instants in Rust, retaining sub-millisecond precision across RFC3339 spellings.
-    let mut statement = transaction.prepare(r#"
-        WITH waiting AS (
+// Each source contributes at most the page size plus one before the final merge.
+// Existing indexes bound the Thread lookup, not the timestamp sort: SQLite still
+// examines matching Runs, and queue counts still cover the entire waiting set.
+const CANDIDATES_SQL: &str = r#"
+        WITH direct_runs AS (
+            SELECT r.id AS run_id, c.agent_id, r.status, r.invocation_kind = 'batch' AS batch,
+                   r.created_at, r.started_at, r.ended_at, r.cancel_requested_at,
+                   NULL AS message_count, NULL AS first_message,
+                   rovai_thread_run_time_key(r.created_at) AS created_key,
+                   1 AS source, r.id AS identity
+            FROM agent_run r JOIN conversation c ON c.id = r.conversation_id
+            WHERE r.camp_id = ?1
+              AND r.invocation_kind <> 'single_chat' AND c.kind <> 'single_chat'
+              AND (?2 IS NULL OR c.agent_id = ?2) AND (?3 IS NULL OR r.status = ?3)
+              AND (?4 = 0 OR r.status IN ('queued', 'running', 'waiting'))
+              AND (?5 IS NULL OR (created_key, 1, r.id) < (?5, ?6, ?7))
+            ORDER BY created_key DESC, r.id DESC LIMIT ?8
+        ), legacy_runs AS (
+            SELECT r.id AS run_id, c.agent_id, r.status, r.invocation_kind = 'batch' AS batch,
+                   r.created_at, r.started_at, r.ended_at, r.cancel_requested_at,
+                   NULL AS message_count, NULL AS first_message,
+                   rovai_thread_run_time_key(r.created_at) AS created_key,
+                   1 AS source, r.id AS identity
+            FROM camp_turn turn JOIN agent_run r ON r.camp_turn_id = turn.id
+            JOIN conversation c ON c.id = r.conversation_id
+            WHERE turn.camp_id = ?1 AND r.camp_id IS NULL
+              AND r.invocation_kind <> 'single_chat' AND c.kind <> 'single_chat'
+              AND (?2 IS NULL OR c.agent_id = ?2) AND (?3 IS NULL OR r.status = ?3)
+              AND (?4 = 0 OR r.status IN ('queued', 'running', 'waiting'))
+              AND (?5 IS NULL OR (created_key, 1, r.id) < (?5, ?6, ?7))
+            ORDER BY created_key DESC, r.id DESC LIMIT ?8
+        ), waiting AS (
             SELECT recipient_agent_id AS agent_id, COUNT(*) AS message_count, MIN(queue_sequence) AS head
             FROM camp_message_delivery
             WHERE camp_id = ?1 AND status = 'waiting'
+              AND (?2 IS NULL OR recipient_agent_id = ?2) AND (?3 IS NULL OR ?3 = 'queued')
             GROUP BY recipient_agent_id
-        ), candidates AS (
-            SELECT r.id AS run_id, c.agent_id, r.status, r.invocation_kind = 'batch' AS batch,
-                   r.created_at, r.started_at, r.ended_at, r.cancel_requested_at,
-                   NULL AS message_count, NULL AS first_message
-            FROM agent_run r
-            JOIN conversation c ON c.id = r.conversation_id
-            LEFT JOIN camp_turn turn ON turn.id = r.camp_turn_id
-            WHERE COALESCE(r.camp_id, turn.camp_id) = ?1
-              AND r.invocation_kind <> 'single_chat' AND c.kind <> 'single_chat'
-            UNION ALL
-            SELECT NULL, waiting.agent_id, 'queued', 0, delivery.created_at, NULL, NULL, NULL,
-                   waiting.message_count, delivery.message_id
-            FROM waiting JOIN camp_message_delivery delivery
+        ), queued AS (
+            SELECT NULL AS run_id, waiting.agent_id, 'queued' AS status, 0 AS batch,
+                   delivery.created_at, NULL AS started_at, NULL AS ended_at, NULL AS cancel_requested_at,
+                   waiting.message_count, delivery.message_id AS first_message,
+                   rovai_thread_run_time_key(delivery.created_at) AS created_key,
+                   0 AS source, waiting.agent_id AS identity
+            -- Drive head lookups from the aggregate, not from every waiting delivery.
+            FROM waiting CROSS JOIN camp_message_delivery delivery
               ON delivery.camp_id = ?1 AND delivery.recipient_agent_id = waiting.agent_id
              AND delivery.queue_sequence = waiting.head AND delivery.status = 'waiting'
+            WHERE ?5 IS NULL OR (created_key, 0, waiting.agent_id) < (?5, ?6, ?7)
+            ORDER BY created_key DESC, waiting.agent_id DESC LIMIT ?8
         )
-        SELECT * FROM candidates
-        WHERE (?2 IS NULL OR agent_id = ?2) AND (?3 IS NULL OR status = ?3)
-          AND (?4 = 0 OR status IN ('queued', 'running', 'waiting'))
-    "#)?;
+        SELECT * FROM direct_runs
+        UNION ALL SELECT * FROM legacy_runs
+        UNION ALL SELECT * FROM queued
+        ORDER BY created_key DESC, source DESC, identity DESC LIMIT ?8
+    "#;
+
+fn timestamp_key(value: &DateTime<Utc>) -> Vec<u8> {
+    // Order-preserving seconds + nanoseconds. SQLite datetime/julianday would
+    // lose precision; raw timestamp text would misorder offsets and old spellings.
+    let mut key = Vec::with_capacity(12);
+    key.extend_from_slice(&(value.timestamp() ^ i64::MIN).to_be_bytes());
+    key.extend_from_slice(&value.timestamp_subsec_nanos().to_be_bytes());
+    key
+}
+
+fn candidates(
+    transaction: &Transaction<'_>,
+    filter: &Filter,
+    after: Option<&SortKey>,
+    take: usize,
+) -> Result<Vec<Candidate>> {
+    transaction.create_scalar_function(
+        "rovai_thread_run_time_key",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |context| {
+            let value = context.get::<String>(0)?;
+            parse_timestamp(&value)
+                .map(|value| timestamp_key(&value))
+                .map_err(|error| rusqlite::Error::UserFunctionError(error.into()))
+        },
+    )?;
+    let mut statement = transaction.prepare(CANDIDATES_SQL)?;
     let mut rows = statement.query(params![
         filter.thread_id,
         filter.agent_id,
         filter.status,
-        filter.active
+        filter.active,
+        after.map(|key| timestamp_key(&key.created_at)),
+        after.map(|key| key.identity.0),
+        after.map(|key| &key.identity.1),
+        i64::try_from(take)?,
     ])?;
-    let mut candidates = Vec::new();
+    let mut candidates = Vec::with_capacity(take);
     while let Some(row) = rows.next()? {
         let run_id: Option<String> = row.get(0)?;
         let agent_id: String = row.get(1)?;
@@ -510,6 +565,23 @@ mod tests {
         }
         assert!(decode_cursor("not a cursor", &cursor.filter).is_err());
         assert!(cursor.last.created_at > parse_timestamp("2026-10-03 12:00:00").unwrap());
+        let instants = [
+            "1969-12-31T23:59:59.999999999Z",
+            "1970-01-01 00:00:00",
+            "2016-12-31T23:59:60Z",
+            "2017-01-01T00:00:00Z",
+            "2026-10-03T12:00:00.000000001Z",
+            "2026-10-03T20:00:00.000000002+08:00",
+        ]
+        .map(|value| parse_timestamp(value).unwrap());
+        for pair in instants.windows(2) {
+            assert!(pair[0] < pair[1]);
+            assert!(timestamp_key(&pair[0]) < timestamp_key(&pair[1]));
+        }
+        assert_eq!(
+            timestamp_key(&parse_timestamp("2026-10-03 12:00:00.000000001").unwrap()),
+            timestamp_key(&cursor.last.created_at)
+        );
     }
 }
 
@@ -518,23 +590,27 @@ mod read_tests {
     use super::*;
     use rusqlite::Connection;
 
-    // This fixture owns the read SQL/transaction seam; claim writes are covered by delivery_queue.
-    #[test]
-    fn public_scope_frozen_inputs_and_dynamic_queues_share_one_read_view() {
-        const THREAD: &str = "rvcamp_01h47kvsy5fk1shh6w1g60eecf";
-        const OTHER: &str = "rvcamp_01h47kvsy5fk1shh6w1g60eecg";
-        let mut connection = Connection::open_in_memory().unwrap();
+    const THREAD: &str = "rvcamp_01h47kvsy5fk1shh6w1g60eecf";
+    const OTHER: &str = "rvcamp_01h47kvsy5fk1shh6w1g60eecg";
+
+    fn read_fixture() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(r#"
             CREATE TABLE camp(id TEXT, last_message_sequence INTEGER, deletion_operation_id TEXT);
-            CREATE TABLE conversation(id TEXT, agent_id TEXT, kind TEXT);
-            CREATE TABLE camp_turn(id TEXT, camp_id TEXT);
-            CREATE TABLE agent_run(id TEXT, camp_id TEXT, camp_turn_id TEXT, conversation_id TEXT,
+            CREATE TABLE conversation(id TEXT PRIMARY KEY, agent_id TEXT, kind TEXT);
+            CREATE TABLE camp_turn(id TEXT PRIMARY KEY, camp_id TEXT, trigger_type TEXT, trigger_id TEXT,
+                UNIQUE(camp_id, trigger_type, trigger_id));
+            CREATE TABLE agent_run(id TEXT PRIMARY KEY, camp_id TEXT, camp_turn_id TEXT, conversation_id TEXT,
                 invocation_kind TEXT, execution_epoch INTEGER DEFAULT 1, status TEXT,
                 created_at TEXT DEFAULT '2026-10-03T12:00:00Z', started_at TEXT, ended_at TEXT, cancel_requested_at TEXT);
+            CREATE INDEX agent_run_camp_delete_idx ON agent_run(camp_id, id) WHERE camp_id IS NOT NULL;
+            CREATE INDEX agent_run_a2a_turn_idx ON agent_run(camp_turn_id, invocation_kind, created_at);
             CREATE TABLE context_manifest(id TEXT, agent_run_id TEXT, global_public_message_boundary INTEGER, history_fence_version INTEGER);
             CREATE TABLE agent_run_input(agent_run_id TEXT, ordinal INTEGER, message_id TEXT);
             CREATE TABLE camp_message_delivery(camp_id TEXT, recipient_agent_id TEXT, status TEXT,
                 queue_sequence INTEGER, created_at TEXT, message_id TEXT);
+            CREATE INDEX camp_message_delivery_waiting_idx
+                ON camp_message_delivery(camp_id, recipient_agent_id, queue_sequence) WHERE status = 'waiting';
             CREATE TABLE camp_message(id TEXT, camp_id TEXT, sequence INTEGER, author_type TEXT DEFAULT 'user',
                 author_id TEXT DEFAULT 'local_user', reply_to_camp_message_id TEXT, body TEXT DEFAULT 'STALE BODY',
                 created_at TEXT DEFAULT '2026-10-03T12:00:00Z', tombstoned_at TEXT,
@@ -542,16 +618,33 @@ mod read_tests {
             INSERT INTO conversation VALUES ('public', 'agent_1', 'camp'), ('private', 'agent_1', 'single_chat');
             INSERT INTO context_manifest VALUES ('manifest', 'caller', 0, 1);
         "#).unwrap();
+        connection
+    }
+
+    // This fixture owns the read SQL/transaction seam; claim writes are covered by delivery_queue.
+    #[test]
+    fn public_scope_frozen_inputs_and_dynamic_queues_share_one_read_view() {
+        let mut connection = read_fixture();
         for thread in [THREAD, OTHER] {
             connection
                 .execute("INSERT INTO camp VALUES (?1, 10, NULL)", [thread])
                 .unwrap();
         }
         connection
-            .execute("INSERT INTO camp_turn VALUES ('historical', ?1)", [THREAD])
+            .execute(
+                "INSERT INTO camp_turn(id,camp_id) VALUES ('historical', ?1)",
+                [THREAD],
+            )
             .unwrap();
         for (id, thread, turn, conversation, kind, status) in [
-            ("caller", Some(THREAD), None, "public", "direct", "running"),
+            (
+                "caller",
+                Some(THREAD),
+                Some("historical"),
+                "public",
+                "direct",
+                "running",
+            ),
             (
                 "actual-queued",
                 Some(THREAD),
@@ -588,7 +681,7 @@ mod read_tests {
             (
                 "elsewhere",
                 Some(OTHER),
-                None,
+                Some("historical"),
                 "public",
                 "direct",
                 "running",
@@ -768,5 +861,139 @@ mod read_tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn candidate_pages_bound_materialization_and_use_thread_indexes() {
+        let mut connection = read_fixture();
+        connection
+            .execute(
+                "INSERT INTO camp_turn(id,camp_id) VALUES ('historical', ?1)",
+                [THREAD],
+            )
+            .unwrap();
+        // 50k public Runs, half with each ownership form. Adjacent Runs share an
+        // instant, while the four timestamp spellings disagree lexicographically.
+        connection.execute(r#"
+            WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 50000)
+            INSERT INTO agent_run(id,camp_id,camp_turn_id,conversation_id,invocation_kind,status,created_at)
+            SELECT printf('run-%05d',n), CASE WHEN n % 2 = 0 THEN ?1 END,
+                   CASE WHEN n % 2 = 1 THEN 'historical' END, 'public', 'direct', 'succeeded',
+                   CASE n % 4
+                       WHEN 0 THEN printf('2026-10-03T12:00:00.%09dZ',n/2)
+                       WHEN 1 THEN printf('2026-10-03T20:00:00.%09d+08:00',n/2)
+                       WHEN 2 THEN printf('2026-10-03 12:00:00.%09d',n/2)
+                       ELSE printf('2026-10-03T07:00:00.%09d-05:00',n/2)
+                   END
+            FROM numbers
+        "#, [THREAD]).unwrap();
+        // An equally long unrelated Thread must not join the candidate scan.
+        connection.execute(r#"
+            INSERT INTO agent_run(id,camp_id,conversation_id,invocation_kind,status,created_at)
+            SELECT 'other-' || id, ?1, conversation_id, invocation_kind,status,created_at FROM agent_run
+        "#, [OTHER]).unwrap();
+        connection.execute(r#"
+            WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 2000)
+            INSERT INTO camp_message_delivery
+            SELECT ?1, CASE WHEN n % 2 = 0 THEN 'agent_1' ELSE 'agent_2' END, 'waiting', n,
+                   '2026-10-03T12:00:00.000025000Z', printf('message-%d', n) FROM numbers
+        "#, [THREAD]).unwrap();
+        let tx = connection.transaction().unwrap();
+        let filter = Filter {
+            thread_id: THREAD.into(),
+            agent_id: None,
+            active: false,
+            status: None,
+        };
+        let before = tx.total_changes();
+        // Exercise SQL's returned-candidate boundary, before public projection or
+        // Rust truncation. The previous all-candidate query returned 50,002 here.
+        let page = candidates(&tx, &filter, None, 21).unwrap();
+        assert_eq!(page.len(), 21);
+        assert_eq!(page[0].run_id.as_deref(), Some("run-50000"));
+        assert_eq!(page[1].agent_id, "agent_2");
+        assert_eq!(page[2].agent_id, "agent_1");
+        for (queue, first) in [(&page[1], "message-1"), (&page[2], "message-2")] {
+            assert!(queue.run_id.is_none());
+            assert_eq!(queue.count, Some(1000));
+            assert_eq!(queue.first_message.as_deref(), Some(first));
+        }
+        for (row, n) in page[3..].iter().zip((49982..=49999).rev()) {
+            assert_eq!(row.run_id.as_deref(), Some(format!("run-{n:05}").as_str()));
+        }
+        // Both source identities at the same instant must survive page seams;
+        // changing page size does not change the order or duplicate the last row.
+        for (after, expected) in [
+            (&page[0].key, (0, "agent_2")),
+            (&page[1].key, (0, "agent_1")),
+            (&page[2].key, (1, "run-49999")),
+            (&page[19].key, (1, "run-49982")),
+        ] {
+            let next = candidates(&tx, &filter, Some(after), 2).unwrap();
+            assert_eq!(next.len(), 2);
+            assert_eq!(next[0].key.identity, (expected.0, expected.1.into()));
+            assert!(next.iter().all(|row| row.key < *after));
+        }
+        let deep = SortKey {
+            created_at: parse_timestamp("2026-10-03T12:00:00.000005000Z").unwrap(),
+            identity: (1, "run-10000".into()),
+        };
+        let page = candidates(&tx, &filter, Some(&deep), 21).unwrap();
+        assert_eq!(page.len(), 21);
+        for (row, n) in page.iter().zip((9979..=9999).rev()) {
+            assert_eq!(row.run_id.as_deref(), Some(format!("run-{n:05}").as_str()));
+        }
+        let first = SortKey {
+            created_at: parse_timestamp("2026-10-03T12:00:00Z").unwrap(),
+            identity: (1, "run-00001".into()),
+        };
+        assert!(
+            candidates(&tx, &filter, Some(&first), 21)
+                .unwrap()
+                .is_empty()
+        );
+        let agent_filter = Filter {
+            agent_id: Some("agent_1".into()),
+            active: true,
+            ..filter
+        };
+        let queues = candidates(&tx, &agent_filter, None, 2).unwrap();
+        assert_eq!(queues.len(), 1);
+        assert_eq!(queues[0].count, Some(1000));
+
+        // Verify access paths against production index definitions. Timestamp
+        // sorting remains proportional to matching history; do not claim O(limit).
+        let plan = tx
+            .prepare(&format!("EXPLAIN QUERY PLAN {CANDIDATES_SQL}"))
+            .unwrap()
+            .query_map(
+                params![
+                    THREAD,
+                    None::<String>,
+                    None::<String>,
+                    false,
+                    None::<Vec<u8>>,
+                    None::<u8>,
+                    None::<String>,
+                    21
+                ],
+                |row| row.get::<_, String>(3),
+            )
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+            .join("\n");
+        assert!(
+            plan.contains("SEARCH r USING INDEX agent_run_camp_delete_idx (camp_id=?)"),
+            "{plan}"
+        );
+        assert!(
+            plan.contains("SEARCH r USING INDEX agent_run_a2a_turn_idx (camp_turn_id=?)"),
+            "{plan}"
+        );
+        assert!(plan.contains("SEARCH camp_message_delivery USING COVERING INDEX camp_message_delivery_waiting_idx (camp_id=?)"), "{plan}");
+        assert!(plan.contains("SEARCH delivery USING INDEX camp_message_delivery_waiting_idx (camp_id=? AND recipient_agent_id=? AND queue_sequence=?)"), "{plan}");
+        assert!(!plan.contains("SCAN r"), "{plan}");
+        assert_eq!(tx.total_changes(), before);
     }
 }
