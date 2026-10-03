@@ -1867,6 +1867,7 @@ mod tests {
                 },
                 permission_semantics: PermissionSemantics::CoreEnforcedV1,
                 runtime: FrozenAgentRuntimeConfig {
+                    custom_api: None,
                     camp_fast: None,
                     adapter_kind: AdapterKind::AntigravityApp,
                     installation_id: "smoke".to_string(),
@@ -2055,6 +2056,7 @@ mod tests {
             },
             permission_semantics: PermissionSemantics::RuntimeManagedV2,
             runtime: FrozenAgentRuntimeConfig {
+                custom_api: None,
                 camp_fast: None,
                 adapter_kind: AdapterKind::AntigravityApp,
                 installation_id: "agy-test".to_string(),
@@ -2485,6 +2487,7 @@ echo "Created conversation 0bdd2166-d420-40c6-94be-70b93eb290c5" > "$log_file"
                 },
                 permission_semantics: PermissionSemantics::RuntimeManagedV2,
                 runtime: FrozenAgentRuntimeConfig {
+                    custom_api: None,
                     camp_fast: None,
                     adapter_kind: AdapterKind::AntigravityApp,
                     installation_id: "delivered-failure-test".to_string(),
@@ -2588,6 +2591,7 @@ exec sleep 30
             },
             permission_semantics: PermissionSemantics::CoreEnforcedV1,
             runtime: FrozenAgentRuntimeConfig {
+                custom_api: None,
                 camp_fast: None,
                 adapter_kind: AdapterKind::AntigravityApp,
                 installation_id: "agy-test".to_string(),

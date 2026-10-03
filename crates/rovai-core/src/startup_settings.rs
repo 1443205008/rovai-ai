@@ -18,6 +18,7 @@ use tokio::sync::{Mutex, oneshot};
 pub(crate) struct StartupPreview {
     pub configuration: RuntimeStartupConfiguration,
     pub result: Mutex<Option<Value>>,
+    _credential: Option<runtime_startup::DraftCredential>,
 }
 
 #[derive(Deserialize)]
@@ -31,6 +32,8 @@ struct KindParams {
 struct DraftParams {
     runtime_kind: AdapterKind,
     configuration: RuntimeStartupConfiguration,
+    #[serde(default)]
+    api_key: rovai_core::runtime_custom_api::ApiKeyChange,
 }
 
 #[derive(Deserialize)]
@@ -39,6 +42,8 @@ struct SaveParams {
     runtime_kind: AdapterKind,
     expected_revision: u64,
     configuration: RuntimeStartupConfiguration,
+    #[serde(default)]
+    api_key: rovai_core::runtime_custom_api::ApiKeyChange,
 }
 
 impl Core {
@@ -76,10 +81,11 @@ impl Core {
                 Ok(serde_json::to_value(settings)?)
             }
             "runtime.startup.inspect" | "runtime.startup.check" => {
-                let params: DraftParams = serde_json::from_value(params)?;
-                let configuration = params.configuration.validated(cfg!(windows))?;
+                let params: DraftParams = serde_json::from_value(params).map_err(|_| anyhow::anyhow!("启动设置输入格式无效。"))?;
+                let (configuration, credential) = runtime_startup::resolve_draft(
+                    &*self.database.lock().await, params.runtime_kind, params.configuration, params.api_key)?;
                 if method == "runtime.startup.check" {
-                    self.check_runtime_startup(params.runtime_kind, configuration)
+                    self.check_runtime_startup(params.runtime_kind, configuration, credential)
                         .await
                 } else {
                     self.inspect_runtime_startup(params.runtime_kind, configuration, false)
@@ -87,7 +93,7 @@ impl Core {
                 }
             }
             "runtime.startup.save" => {
-                let params: SaveParams = serde_json::from_value(params)?;
+                let params: SaveParams = serde_json::from_value(params).map_err(|_| anyhow::anyhow!("启动设置输入格式无效。"))?;
                 let kind = params.runtime_kind;
                 ensure!(
                     current_runtime_platform_blocker(kind).is_none(),
@@ -98,7 +104,7 @@ impl Core {
                 {
                     let database = self.database.lock().await;
                     let saved = runtime_startup::load(&database, kind)?;
-                    if saved.revision > 0 && saved.configuration == configuration {
+                    if saved.revision > 0 && saved.configuration == configuration && params.api_key.is_keep() {
                         return Ok(serde_json::to_value(saved)?);
                     }
                 }
@@ -132,14 +138,16 @@ impl Core {
                 }
                 let settings = {
                     let mut database = self.database.lock().await;
-                    runtime_startup::save(
+                    runtime_startup::save_with_api_key(
                         &mut database,
                         kind,
                         params.expected_revision,
                         configuration,
                         search.generation(),
+                        params.api_key,
                     )?
                 };
+                let search = search.with_startup_configuration(kind, settings.configuration.clone());
                 search.activate_for_runtime_commands();
                 *self.runtime_search_environment.write().await = Arc::new(search);
                 self.native_skill_discovery.invalidate_cache();
@@ -259,10 +267,12 @@ impl Core {
         &self,
         kind: AdapterKind,
         configuration: RuntimeStartupConfiguration,
+        credential: Option<runtime_startup::DraftCredential>,
     ) -> Result<Value> {
         let preview = Arc::new(StartupPreview {
             configuration,
             result: Mutex::new(None),
+            _credential: credential,
         });
         let (acknowledged, acknowledgement) = oneshot::channel();
         let (completed, completion) = oneshot::channel();

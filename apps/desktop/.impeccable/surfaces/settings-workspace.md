@@ -1,5 +1,5 @@
 ---
-version: 17
+version: 18
 slug: "settings-workspace"
 primary_target: "apps/desktop/src/renderer/src/SettingsPageHeader.tsx"
 related_targets:
@@ -9,6 +9,8 @@ related_targets:
   - "apps/desktop/src/renderer/src/SkillSettings.tsx"
   - "apps/desktop/src/renderer/src/McpSettings.tsx"
   - "apps/desktop/src/renderer/src/AboutUpdatesSettings.tsx"
+  - "apps/desktop/src/renderer/src/RuntimeStartupSettings.tsx"
+  - "apps/desktop/src/renderer/src/RuntimeCustomApiFields.tsx"
 ---
 
 # Settings workspace surface brief
@@ -211,8 +213,9 @@ Renderer-only preview and must not be relabeled “待支持”.
 
 Kimi Code is a Product Runtime Catalog row and is qualified on macOS arm64, macOS x64 and Windows x64.
 Each platform follows the ordinary machine availability flow after platform admission. Settings never
-renders the private provider file, token or base URL, and does not expose a Rovai-owned switch that forces
-Kimi/MiniMax thinking off.
+imports or renders the private native provider file, stored token or native base URL. The explicit custom
+API form below owns only its user-entered override; there is no Rovai-owned switch that forces Kimi/MiniMax
+thinking off.
 
 If an existing teammate references an unqualified Runtime, preserve the Runtime/model/permission/parameter
 subobject byte-for-byte through unrelated profile edits. Show the frozen values read-only and keep identity,
@@ -302,9 +305,10 @@ refresh or chevron icon, and the settings gear as consistent columns. Settings r
 and missing Runtimes admitted on the current platform. Preserve actual installation/login guide content.
 
 The startup page reuses the 1040px content track and an at-most-800px form. Show Runtime identity, program
-path with native picker and restore-auto action, the inline check result, then environment rows. Values start
-masked and have reveal/delete controls. Keep errors actionable and local; no empty-state explanation, top-right
-unsaved badge or repeated “next launch”/“does not change system variables” small print.
+path with native picker and restore-auto action, the inline check result, the supported custom API section,
+then environment rows. Environment values start masked and have reveal/delete controls. Keep errors
+actionable and local; no empty-state explanation, top-right unsaved badge or repeated “next launch”/
+“does not change system variables” small print.
 
 “放弃更改” and “保存” remain visible from first load. Both are disabled while clean or submitting and enabled
 when values change; save validates rather than requiring a prior manual check. Save failure preserves the
@@ -316,3 +320,35 @@ the draft; returning to the catalog asks before discarding an unsaved draft. Beh
 Draft checks and restore-auto previews read fresh private search inputs. Failed previews must not fall back
 to the saved program/version as though it had just been checked. Editing or leaving invalidates older
 preview responses. A fallback search source retains a local warning without exposing environment values.
+
+### Custom API
+
+Claude Code, Codex CLI, Kimi Code and Grok Build extend the same open startup form with a custom API
+section between the program path and environment variables. This Operate surface keeps the existing
+section dividers, neutral controls and shared save/discard row. State the current Host and Runtime scope
+once: the setting applies to every teammate using that Runtime on this Host. Keep the enabled switch,
+address, API Key and Runtime-specific fields directly visible.
+
+| Runtime | Fields and local guidance |
+| --- | --- |
+| Claude Code | Address and API Key, followed by five optional overrides: main, Thinking, Haiku, Sonnet and Opus model. Blank model fields keep the inherited value. The concise note identifies Anthropic Messages/Bearer compatibility and makes Thinking support conditional on the Runtime version. |
+| Codex CLI | One shared address/key and an editable model list containing only model ID, optional display name and one default choice. Keep add/delete actions beside the list; deleting the current default requires choosing a replacement first. The note identifies OpenAI Responses. |
+| Kimi Code | Kimi / Anthropic / OpenAI interface selector, address, API Key and one default model. |
+| Grok Build | Address, API Key and one default model on the native API-key route. Explain that the model must already be recognized by the Runtime and auxiliary features use the same connection. |
+
+The API Key password input is empty after reading or saving. Its saved-state placeholder comes from the
+configured boolean, never a returned credential. Keep, replace and clear are distinct draft operations;
+“保持原密钥” cancels a pending replacement or clear. Clearing a saved key requires disabling the custom
+API first and takes effect only on save. Disabling retains all fields and the saved key. Enabled copy
+states that requests may carry prompts, code and tool results to the entered service; an HTTP address
+shows its transport warning inline.
+
+Custom API edits participate in the existing dirty state, local validation, save recovery, discard and
+back-navigation guard. Save persists configuration locally; it does not probe the endpoint or model and
+does not claim connectivity. Keep the existing explicit Runtime “检查状态” action in the program section;
+do not add a separate Test API action or automatic endpoint/model checks.
+
+Porcelain Day and Steel Night share the same fields and state structure through semantic tokens. Wide
+forms align muted labels beside their controls. At widths up to 600px, labels stack above inputs; each
+Codex row shows its own model ID, display-name and default labels while keeping default/delete actions
+beside the row. Preserve the existing field surfaces, compact spacing and accessible control names.

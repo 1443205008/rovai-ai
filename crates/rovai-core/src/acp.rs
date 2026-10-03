@@ -1211,6 +1211,8 @@ struct ZcodeBackgroundRoute {
 }
 
 pub(crate) struct AcpHost {
+    custom_api: Option<rovai_core::runtime_custom_api::CustomApiSnapshot>,
+    credential_redactor: Option<rovai_core::runtime_custom_api::CredentialRedactor>,
     adapter_kind: AdapterKind,
     reported_version: Option<String>,
     client_terminal_mode: AcpClientTerminalMode,
@@ -1268,8 +1270,8 @@ impl AcpHost {
             prepare_private_host_config(private_runtime_dir, frozen_runtime.adapter_kind)?;
         let private_config_root = private_config.as_ref().map(|config| config.root.as_path());
         let host_instance_id = uuid::Uuid::new_v4().to_string();
-        let grok_byok_configured =
-            frozen_runtime.adapter_kind == AdapterKind::GrokBuild && grok_native_byok_configured()?;
+        let grok_byok_configured = frozen_runtime.adapter_kind == AdapterKind::GrokBuild
+            && (frozen_runtime.custom_api.is_some() || grok_native_byok_configured()?);
         let mut command = if frozen_runtime.adapter_kind == AdapterKind::ZcodeApp {
             crate::zcode::command(Path::new(&frozen_runtime.executable_path))?
         } else {
@@ -1390,6 +1392,8 @@ impl AcpHost {
             (Box::new(stdin), Box::new(stdout))
         };
         let host = Arc::new(Self {
+            credential_redactor: frozen_runtime.custom_api.as_ref().map(|api| api.redactor()).transpose()?,
+            custom_api: frozen_runtime.custom_api.clone(),
             adapter_kind: frozen_runtime.adapter_kind,
             reported_version: frozen_runtime.reported_version.clone(),
             client_terminal_mode,
@@ -1450,6 +1454,8 @@ impl AcpHost {
                 *host.initialize_result.write().await = Some(result.clone());
                 let auth_method = match frozen_runtime.adapter_kind {
                     AdapterKind::CursorAgent => Ok(Some(("cursor_login", "Cursor"))),
+                    AdapterKind::GrokBuild if frozen_runtime.custom_api.is_some() => health::require_grok_custom_auth_method(&result)
+                        .map(|method| Some((method, "Grok Build"))),
                     AdapterKind::GrokBuild => health::select_grok_noninteractive_auth_method(
                         &result,
                         grok_byok_configured,
@@ -1548,6 +1554,7 @@ impl AcpHost {
                                 continue;
                             }
                         };
+                        if let Some(redactor) = &host.credential_redactor { redactor.value(&mut message); }
                         if host.adapter_kind == AdapterKind::DeepseekHarness
                             && let Some(root) = host.private_config_root.as_deref()
                             && let Err(error) = crate::dsh::enrich_message(root, &mut message)
@@ -1933,6 +1940,7 @@ impl AcpHost {
             }
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
+                let line = host.credential_redactor.as_ref().map_or_else(|| line.clone(), |redactor| redactor.text(&line));
                 if !line.trim().is_empty() {
                     {
                         let mut diagnostic = host.startup_diagnostics.lock().await;
@@ -3509,6 +3517,14 @@ impl AcpRuntime {
         external_mcp_servers: &BTreeMap<String, McpServerDefinition>,
         new_session_native_rules: Option<&str>,
     ) -> Result<String> {
+        let (model_source, model) = match &self.host.custom_api {
+            Some(api) if self.host.adapter_kind == AdapterKind::KimiCodeCli => {
+                anyhow::ensure!(model_source == "runtime_default" || api.model_is_configured(model), "当前接口未配置此模型，请重新选择。");
+                ("explicit", "__kimi_env_model__")
+            }
+            Some(api) => ("explicit", if model_source == "runtime_default" { api.configuration.default_model().unwrap_or(model) } else { model }),
+            None => (model_source, model),
+        };
         let cwd = acp_protocol_path(&self.execution_root);
         let run_tmp = self
             .host
@@ -3738,6 +3754,10 @@ impl AcpRuntime {
     }
 
     pub async fn observed_model_id(&self) -> Option<String> {
+        if let Some(api) = &self.host.custom_api
+            && self.host.adapter_kind == AdapterKind::KimiCodeCli {
+            return api.configuration.default_model().map(str::to_owned);
+        }
         self.session_result
             .read()
             .await
@@ -3758,7 +3778,7 @@ impl AcpRuntime {
         config_id: &str,
         value: &str,
     ) -> Result<()> {
-        self.host
+        let result = self.host
             .rpc(
                 "session/set_config_option",
                 json!({
@@ -3769,6 +3789,12 @@ impl AcpRuntime {
                 }),
             )
             .await?;
+        if self.host.custom_api.is_some() && self.host.adapter_kind == AdapterKind::KimiCodeCli && config_id == "model" {
+            let selected = result.get("configOptions").and_then(Value::as_array)
+                .and_then(|options| options.iter().find(|option| option["id"] == "model"))
+                .and_then(|option| option["currentValue"].as_str());
+            anyhow::ensure!(selected == Some(value), "Kimi Code 未选择本次自定义 API 的临时模型，已停止执行。");
+        }
         Ok(())
     }
 
@@ -4510,10 +4536,9 @@ pub(crate) fn runtime_compatibility_digest(
     external_mcp_servers: &BTreeMap<String, McpServerDefinition>,
     attachment_authorization: &ThreadOutputDirectory,
 ) -> Result<String> {
-    let kimi_provider_environment_digest = (frozen_runtime.adapter_kind
-        == AdapterKind::KimiCodeCli)
-        .then(kimi_model_environment_compatibility_digest)
-        .transpose()?;
+    let kimi_provider_environment_digest = if frozen_runtime.adapter_kind == AdapterKind::KimiCodeCli {
+        Some(match &frozen_runtime.custom_api { Some(api) => api.identity()?, None => kimi_model_environment_compatibility_digest()? })
+    } else { None };
     runtime_compatibility_digest_with_provider_environment(
         frozen_runtime,
         workspace,
@@ -4566,7 +4591,7 @@ fn runtime_compatibility_digest_with_provider_environment(
             .context("Runtime compatibility payload must be an object")?;
         compatibility.insert(
             "grokNativeConfigurationDigest".to_string(),
-            json!(grok_native_configuration_compatibility_digest()?),
+            json!(grok_effective_configuration_digest(frozen_runtime)?),
         );
         compatibility.insert(
             "grokNativeRulesRevision".to_string(),
@@ -4643,7 +4668,7 @@ pub(crate) fn freeze_native_session_compatibility(
             .context("Native Session compatibility payload must be an object")?;
         compatibility.insert(
             "grokNativeConfigurationDigest".to_string(),
-            json!(grok_native_configuration_compatibility_digest()?),
+            json!(grok_effective_configuration_digest(&frozen_runtime)?),
         );
         compatibility.insert(
             "grokNativeRulesRevision".to_string(),
@@ -4952,7 +4977,7 @@ fn configure_runtime_command(
             // Formal AgentRun hosts inherit the user's KIMI_CODE_HOME, or
             // Kimi's native default when it is unset. The provider overlay is
             // process-local and must not replace Kimi's state/config home.
-            configure_kimi_model_environment(command)?;
+            configure_kimi_effective_environment(command, runtime.custom_api.as_ref())?;
         }
         AdapterKind::DeepseekHarness => {
             crate::dsh::configure_host(
@@ -4997,7 +5022,10 @@ fn configure_runtime_command(
             // Formal AgentRun hosts inherit the user's official Grok Home and
             // config.toml. Only environment names referenced by that native
             // configuration are resolved from $GROK_HOME/.env for this child.
-            configure_grok_native_environment(command)?;
+            if let Some(api) = &runtime.custom_api {
+                rovai_core::runtime_custom_api::grok_native::configure(api, command,
+                    (runtime.model.source == "explicit").then_some(runtime.model.model_id.as_str()))?;
+            } else { configure_grok_native_environment(command)?; }
             return Ok(plugin);
         }
         AdapterKind::CodexCli
@@ -5036,10 +5064,22 @@ pub(crate) fn configure_kimi_model_environment(command: &mut Command) -> Result<
     configure_kimi_model_environment_from_path(command, &path)
 }
 
+pub(crate) fn configure_kimi_effective_environment(command: &mut Command, api: Option<&rovai_core::runtime_custom_api::CustomApiSnapshot>) -> Result<()> {
+    if let Some(api) = api {
+        // The legacy file is not read when the form owns the complete connection.
+        for name in KIMI_MODEL_ENVIRONMENT_KEYS { command.env_remove(name); }
+        command.env_remove("KIMI_CODE_CUSTOM_HEADERS");
+        apply_kimi_model_environment(command, api.environment()?);
+        Ok(())
+    } else { configure_kimi_model_environment(command) }
+}
+
+fn apply_kimi_model_environment(command: &mut Command, values: BTreeMap<String, String>) {
+    command.envs(values);
+}
+
 fn configure_kimi_model_environment_from_path(command: &mut Command, path: &Path) -> Result<()> {
-    for (key, value) in load_kimi_model_environment_from_path(path)? {
-        command.env(key, value);
-    }
+    apply_kimi_model_environment(command, load_kimi_model_environment_from_path(path)?);
     Ok(())
 }
 
@@ -5446,6 +5486,14 @@ pub(crate) fn configure_grok_native_environment(command: &mut Command) -> Result
 
 fn grok_native_configuration_compatibility_digest() -> Result<String> {
     Ok(load_grok_native_configuration()?.compatibility_digest)
+}
+
+fn grok_effective_configuration_digest(runtime: &FrozenAgentRuntimeConfig) -> Result<String> {
+    match &runtime.custom_api {
+        Some(api) => rovai_core::runtime_custom_api::grok_native::compatibility(api, Path::new(&runtime.executable_path),
+            (runtime.model.source == "explicit").then_some(runtime.model.model_id.as_str())),
+        None => grok_native_configuration_compatibility_digest(),
+    }
 }
 
 fn configure_compaction_detector_command(
@@ -7103,6 +7151,7 @@ mod tests {
 
     fn frozen_trae_runtime(executable: &Path) -> FrozenAgentRuntimeConfig {
         FrozenAgentRuntimeConfig {
+            custom_api: None,
             camp_fast: None,
             adapter_kind: AdapterKind::TraeCnCli,
             installation_id: "installation-trae".to_string(),
@@ -7133,6 +7182,7 @@ mod tests {
 
     fn frozen_kiro_runtime() -> FrozenAgentRuntimeConfig {
         FrozenAgentRuntimeConfig {
+            custom_api: None,
             camp_fast: None,
             adapter_kind: AdapterKind::KiroCli,
             installation_id: "installation-kiro".to_string(),
@@ -7163,6 +7213,7 @@ mod tests {
 
     fn frozen_cursor_runtime(executable: &Path) -> FrozenAgentRuntimeConfig {
         FrozenAgentRuntimeConfig {
+            custom_api: None,
             camp_fast: None,
             adapter_kind: AdapterKind::CursorAgent,
             installation_id: "installation-cursor".to_string(),
@@ -7200,6 +7251,7 @@ mod tests {
 
     fn frozen_kimi_runtime(executable: &Path) -> FrozenAgentRuntimeConfig {
         FrozenAgentRuntimeConfig {
+            custom_api: None,
             camp_fast: None,
             adapter_kind: AdapterKind::KimiCodeCli,
             installation_id: "installation-kimi".to_string(),
@@ -7230,6 +7282,7 @@ mod tests {
 
     fn frozen_grok_runtime(executable: &Path) -> FrozenAgentRuntimeConfig {
         FrozenAgentRuntimeConfig {
+            custom_api: None,
             camp_fast: None,
             adapter_kind: AdapterKind::GrokBuild,
             installation_id: "installation-grok".to_string(),

@@ -1,10 +1,47 @@
-import type { RuntimeStartupConfiguration } from '@contracts'
+import type { AdapterKind, RuntimeApiKeyChange, RuntimeCustomApiConfiguration, RuntimeStartupConfiguration } from '@contracts'
 
 export function normalizedStartupConfiguration(draft: RuntimeStartupConfiguration): RuntimeStartupConfiguration {
   return {
     programPath: draft.programPath?.trim() || null,
-    environment: draft.environment.map(({ name, value }) => ({ name: name.trim(), value }))
+    environment: draft.environment.map(({ name, value }) => ({ name: name.trim(), value })),
+    ...(draft.customApi ? { customApi: normalizedCustomApi(draft.customApi) } : {})
   }
+}
+
+export function emptyCustomApi(kind: AdapterKind): RuntimeCustomApiConfiguration | null {
+  const connection = { enabled: false, baseUrl: '' }
+  switch (kind) {
+    case 'claude-code-cli': return { ...connection, kind, models: { model: '', reasoningModel: '', haikuModel: '', sonnetModel: '', opusModel: '' } }
+    case 'codex-cli': return { ...connection, kind, models: [], defaultModel: '' }
+    case 'kimi-code-cli': return { ...connection, kind, apiType: 'kimi', model: '' }
+    case 'grok-build': return { ...connection, kind, model: '' }
+    default: return null
+  }
+}
+
+function normalizedCustomApi(api: RuntimeCustomApiConfiguration): RuntimeCustomApiConfiguration {
+  const connection = { ...api, baseUrl: api.baseUrl.trim() }
+  switch (connection.kind) {
+    case 'claude-code-cli': return { ...connection, models: Object.fromEntries(Object.entries(connection.models).map(([key, value]) => [key, value.trim()])) as typeof connection.models }
+    case 'codex-cli': return { ...connection, defaultModel: connection.defaultModel.trim(), models: connection.models.map(({ id, displayName }) => ({ id: id.trim(), displayName: displayName.trim() })) }
+    default: return { ...connection, model: connection.model.trim() }
+  }
+}
+
+export function customApiError(draft: RuntimeStartupConfiguration, key: RuntimeApiKeyChange, keyConfigured: boolean): string | null {
+  const api = draft.customApi ? normalizedCustomApi(draft.customApi) : null
+  if (!api?.enabled) return null
+  try {
+    const url = new URL(api.baseUrl)
+    if (!['https:', 'http:'].includes(url.protocol) || !url.hostname || url.username || url.password || url.hash) throw new Error()
+  } catch { return '请输入有效的 HTTP 或 HTTPS 地址，且不要在地址中包含账号或密码。' }
+  if (key.action === 'clear' || (key.action === 'keep' && !keyConfigured) || (key.action === 'replace' && !key.value.trim())) return '启用自定义 API 需要已保存或新输入的 API Key。'
+  if (api.kind === 'codex-cli') {
+    if (!api.models.length || api.models.some((model) => !model.id)) return '请至少添加一个模型，并填写每个模型 ID。'
+    if (new Set(api.models.map((model) => model.id)).size !== api.models.length) return '模型 ID 不能重复。'
+    if (!api.defaultModel || !api.models.some((model) => model.id === api.defaultModel)) return '请选择一个默认模型。'
+  } else if (api.kind !== 'claude-code-cli' && !api.model) return '请填写默认模型。'
+  return null
 }
 
 export function runtimeStartupKey(draft: RuntimeStartupConfiguration): string {

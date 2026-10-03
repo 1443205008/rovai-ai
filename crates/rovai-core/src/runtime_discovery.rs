@@ -736,6 +736,11 @@ fn effective_startup_configuration(
         })
 }
 
+/// Only native checks use the current scoped configuration. Executions use their frozen snapshot.
+pub fn custom_api_snapshot(kind: AdapterKind) -> Option<crate::runtime_custom_api::CustomApiSnapshot> {
+    effective_startup_configuration(kind)?.custom_api_snapshot
+}
+
 fn configured_environment_variable(kind: AdapterKind, key: &str) -> Option<OsString> {
     effective_startup_configuration(kind)?
         .environment
@@ -1923,6 +1928,8 @@ mod tests {
         let configured = search.with_startup_configuration(
             AdapterKind::CodexCli,
             crate::runtime_startup::RuntimeStartupConfiguration {
+                custom_api: None,
+                custom_api_snapshot: None,
                 program_path: Some(
                     directory
                         .join("manual/codex")

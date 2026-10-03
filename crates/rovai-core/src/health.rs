@@ -201,7 +201,9 @@ pub async fn codex_runtime_probe_at(path: &Path) -> AgentRuntimeProbeResult {
     }
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let fingerprint = executable_fingerprint_async(path.clone()).await;
-    codex_runtime_probe_uncached(path, path_text, fingerprint, probed_at).await
+    let mut result = codex_runtime_probe_uncached(path, path_text, fingerprint, probed_at).await;
+    redact_probe(AdapterKind::CodexCli, &mut result);
+    result
 }
 
 pub async fn acp_capability_probe_at_for_purpose(
@@ -209,7 +211,24 @@ pub async fn acp_capability_probe_at_for_purpose(
     kind: AdapterKind,
     purpose: RuntimeLaunchPurpose,
 ) -> AcpCapabilityProbe {
-    acp_probe_at(path, kind, acp_deep_session_probe_enabled(kind), purpose).await
+    let mut probe = acp_probe_at(path, kind, acp_deep_session_probe_enabled(kind), purpose).await;
+    redact_probe(kind, &mut probe.result);
+    if let Some(redactor) = probe_redactor(kind) {
+        for value in [&mut probe.initialize_result, &mut probe.session_result].into_iter().flatten() { redactor.value(value); }
+    }
+    probe
+}
+
+fn probe_redactor(kind: AdapterKind) -> Option<rovai_core::runtime_custom_api::CredentialRedactor> {
+    rovai_core::runtime_discovery::custom_api_snapshot(kind).and_then(|api| api.redactor().ok())
+}
+
+fn redact_probe(kind: AdapterKind, result: &mut AgentRuntimeProbeResult) {
+    if let Some(redactor) = probe_redactor(kind) {
+        let mut value = serde_json::to_value(&*result).expect("serializable probe");
+        redactor.value(&mut value);
+        *result = serde_json::from_value(value).expect("redaction preserves the probe shape");
+    }
 }
 
 fn runtime_launch_disallowed_detail(purpose: RuntimeLaunchPurpose) -> String {
@@ -225,7 +244,9 @@ fn runtime_launch_disallowed_detail(purpose: RuntimeLaunchPurpose) -> String {
 }
 
 pub async fn claude_code_capability_probe_at(path: &Path) -> ClaudeCodeCapabilityProbe {
-    claude_code_probe_at(path).await
+    let mut probe = claude_code_probe_at(path).await;
+    redact_probe(AdapterKind::ClaudeCodeCli, &mut probe.result);
+    probe
 }
 
 pub async fn antigravity_capability_probe_at(path: &Path) -> AntigravityCapabilityProbe {
@@ -629,8 +650,13 @@ async fn claude_code_probe_at(path: &Path) -> ClaudeCodeCapabilityProbe {
     }
 
     let mut auth_command = runtime_command(&canonical, Some(AdapterKind::ClaudeCodeCli));
-    auth_command.args(["auth", "status"]);
-    let auth = bounded_output(&mut auth_command, Duration::from_secs(15)).await;
+    let auth = async {
+        if let Some(api) = rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::ClaudeCodeCli) {
+            rovai_core::runtime_custom_api::claude_native::configure(&api, &mut auth_command)?;
+        }
+        auth_command.args(["auth", "status"]);
+        bounded_output(&mut auth_command, Duration::from_secs(15)).await
+    }.await;
     let authenticated = match auth {
         Ok(output) if output.status.success() => {
             serde_json::from_slice::<Value>(&output.stdout.bytes)
@@ -1247,12 +1273,16 @@ fn public_probe_status(
 }
 
 /// Uses the same inherited environment and active PATH overlay as an AgentRun.
-/// No model, permission, settings or provider override is installed by discovery.
+/// The same effective custom connection is used by checks and execution.
 async fn claude_code_model_catalog(
     path: &Path,
     deadline: Duration,
 ) -> Result<Vec<ModelDescriptor>> {
     let mut command = runtime_command(path, Some(AdapterKind::ClaudeCodeCli));
+    let custom_api = rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::ClaudeCodeCli);
+    if let Some(api) = &custom_api {
+        rovai_core::runtime_custom_api::claude_native::configure(api, &mut command)?;
+    }
     command.args([
         "--print",
         "--input-format",
@@ -1310,7 +1340,13 @@ async fn claude_code_model_catalog(
                             .unwrap_or("unknown control error")
                     );
                 }
-                return claude_code_models(&response["response"]);
+                let models = claude_code_models(&response["response"])?;
+                if let Some(api) = &custom_api {
+                    let settings = claude_private_configuration(stdin, lines, "get_settings").await?;
+                    let status = claude_private_configuration(stdin, lines, "get_status").await?;
+                    rovai_core::runtime_custom_api::claude_native::validate(api, &settings, &status, None)?;
+                }
+                return Ok(models);
             }
             anyhow::bail!("Claude Code exited before returning the initialization model catalog")
         };
@@ -1329,6 +1365,24 @@ async fn claude_code_model_catalog(
         ))),
         Err(error) => Err(error),
     }
+}
+
+async fn claude_private_configuration(
+    stdin: &mut ManagedChildStdin,
+    lines: &mut crate::runtime_probe_process::BoundedLineReader<crate::managed_process::ManagedChildStdout>,
+    subtype: &str,
+) -> Result<Value> {
+    let id = uuid::Uuid::new_v4().to_string();
+    write_json_line(stdin, &json!({"type":"control_request", "request_id":id, "request":{"subtype":subtype}})).await?;
+    while let Some(line) = lines.next_line().await? {
+        let value: Value = serde_json::from_str(&line).context("Claude Code 返回了无效的配置响应。")?;
+        if value["response"]["request_id"].as_str() == Some(&id) {
+            anyhow::ensure!(value["response"]["subtype"] == "success" && value["response"]["response"].is_object(),
+                "当前 Claude Code 无法报告最终配置，此版本的自定义 API 路径尚不兼容。");
+            return Ok(value["response"]["response"].clone());
+        }
+    }
+    bail!("Claude Code 未返回最终配置。")
 }
 
 fn claude_code_required_capabilities() -> Vec<String> {
@@ -1710,6 +1764,7 @@ async fn run_acp_probe_with_scope(
         write_kiro_additive_agent_config(&probe_root, &Default::default())?;
     }
     let mut command = runtime_command(path, Some(kind));
+    let custom_api = rovai_core::runtime_discovery::custom_api_snapshot(kind);
     configure_acp_command(&mut command, kind, false);
     if kind == AdapterKind::CodebuddyCli
         && let Ok(model) = env::var("ROVAI_CODEBUDDY_MODEL")
@@ -1720,12 +1775,14 @@ async fn run_acp_probe_with_scope(
         }
     }
     if kind == AdapterKind::KimiCodeCli {
-        crate::acp::configure_kimi_model_environment(&mut command)?;
+        crate::acp::configure_kimi_effective_environment(&mut command, custom_api.as_ref())?;
     }
-    let grok_byok_configured =
-        kind == AdapterKind::GrokBuild && crate::acp::grok_native_byok_configured()?;
+    let grok_byok_configured = kind == AdapterKind::GrokBuild
+        && (custom_api.is_some() || crate::acp::grok_native_byok_configured()?);
     if kind == AdapterKind::GrokBuild {
-        crate::acp::configure_grok_native_environment(&mut command)?;
+        if let Some(api) = &custom_api {
+            rovai_core::runtime_custom_api::grok_native::configure(api, &mut command, None)?;
+        } else { crate::acp::configure_grok_native_environment(&mut command)?; }
     }
     if kind == AdapterKind::TraeCnCli {
         command.args(["--permission-mode", "default"]);
@@ -1777,7 +1834,8 @@ async fn run_acp_probe_with_scope(
             let auth_method = match kind {
                 AdapterKind::CursorAgent => Some(("cursor_login", "Cursor")),
                 AdapterKind::GrokBuild => Some((
-                    select_grok_noninteractive_auth_method(&initialize, grok_byok_configured)?,
+                    if custom_api.is_some() { require_grok_custom_auth_method(&initialize)? }
+                    else { select_grok_noninteractive_auth_method(&initialize, grok_byok_configured)? },
                     "Grok Build",
                 )),
                 _ => None,
@@ -1919,6 +1977,16 @@ async fn run_acp_probe_with_scope(
                 .await?;
                 read_rpc_result(lines, next_request_id).await?;
             }
+            let mut session = session;
+            if let Some(api) = &custom_api
+                && kind == AdapterKind::GrokBuild {
+                anyhow::ensure!(rovai_core::agent_runtime_adapter::acp_runtime_model_id_from_session(&session).as_deref() == api.configuration.default_model(),
+                    "Grok Build 未选择本次默认模型；原生配置或当前目录不支持此选择，未静默换模型。");
+            }
+            if let Some(api) = &custom_api
+                && kind == AdapterKind::KimiCodeCli {
+                rovai_core::runtime_custom_api::project_kimi_session(api, &mut session)?;
+            }
             Ok((initialize, Some(session), grok_resume_verified))
         };
         match timeout(deadline, exchange).await {
@@ -1988,6 +2056,13 @@ pub(crate) fn select_grok_noninteractive_auth_method(
          (expected cached_token or xai.api_key; advertised: {advertised}). \
          Run `grok login` or `grok login --device-auth` before retrying account authentication"
     )
+}
+
+pub(crate) fn require_grok_custom_auth_method(initialize: &Value) -> Result<&'static str> {
+    anyhow::ensure!(initialize.get("authMethods").and_then(Value::as_array)
+        .is_some_and(|methods| methods.iter().any(|method| method["id"] == "xai.api_key")),
+        "Grok Build 未允许 xai.api_key 认证；自定义 API 与当前原生版本或组织策略冲突，未尝试其他账号。");
+    Ok("xai.api_key")
 }
 
 pub(crate) async fn inspect_grok_native_mcp_server_names(
@@ -2662,6 +2737,10 @@ fn classify_acp_probe_failure(detail: &str) -> AgentRuntimeProbeStatus {
 
 pub async fn codex_model_catalog(path: &Path) -> Result<Value> {
     let mut command = runtime_command(path, Some(AdapterKind::CodexCli));
+    let custom_api = rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::CodexCli);
+    if let Some(api) = &custom_api {
+        rovai_core::runtime_custom_api::codex_catalog::configure(api, &mut command)?;
+    }
     command.args(["app-server", "--listen", "stdio://"]);
     let mut process = RuntimeProbeProcess::spawn(
         &mut command,
@@ -2692,6 +2771,11 @@ pub async fn codex_model_catalog(path: &Path) -> Result<Value> {
             read_rpc_result(lines, 1).await?;
             write_json_line(stdin, &json!({"method": "initialized", "params": {}})).await?;
 
+            if let Some(api) = &custom_api {
+                write_json_line(stdin, &json!({"method":"config/read","id":1000,"params":{"includeLayers":false}})).await?;
+                let config = read_rpc_result(lines, 1000).await?;
+                rovai_core::runtime_custom_api::codex_catalog::validate_effective(api, &config)?;
+            }
             let mut models = Vec::new();
             let mut cursor: Option<String> = None;
             let mut request_id = 2_u64;
@@ -2727,6 +2811,9 @@ pub async fn codex_model_catalog(path: &Path) -> Result<Value> {
                     bail!("model/list exceeded the pagination safety limit");
                 }
             }
+            if let Some(api) = &custom_api {
+                models.retain(|model| model.get("model").or_else(|| model.get("id")).and_then(Value::as_str).is_some_and(|id| api.model_is_configured(id)));
+            }
             Ok::<_, anyhow::Error>(json!({"data": models}))
         };
         timeout(Duration::from_secs(30), query)
@@ -2750,6 +2837,7 @@ pub async fn claude_fast_eligibility(
     cwd: &Path,
 ) -> Result<rovai_core::camp_fast::NativeFastEligibility> {
     use rovai_core::camp_fast::{NativeFastEligibility, claude_fast_version_supported};
+    if runtime.custom_api.is_some() { return Ok(NativeFastEligibility::default()); }
     if !claude_fast_version_supported(runtime.reported_version.as_deref())
         || custom_fast_environment(AdapterKind::ClaudeCodeCli)
     {
@@ -2801,6 +2889,7 @@ pub async fn codex_fast_eligibility(
     cwd: &Path,
 ) -> Result<rovai_core::camp_fast::NativeFastEligibility> {
     use rovai_core::camp_fast::{CODEX_FAST_TURN_CAPABILITY, NativeFastEligibility};
+    if runtime.custom_api.is_some() { return Ok(NativeFastEligibility::default()); }
     if !runtime
         .capabilities
         .iter()
@@ -3050,6 +3139,10 @@ async fn codex_runtime_probe_uncached(
 
 async fn probe_initialize_handshake(path: &Path, require_external_provider: bool) -> Result<()> {
     let mut command = runtime_command(path, Some(AdapterKind::CodexCli));
+    let custom_api = rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::CodexCli);
+    if let Some(api) = &custom_api {
+        rovai_core::runtime_custom_api::codex_catalog::configure(api, &mut command)?;
+    }
     command.args(["app-server", "--listen", "stdio://"]);
     let mut process = RuntimeProbeProcess::spawn(
         &mut command,
@@ -3108,6 +3201,11 @@ async fn probe_initialize_handshake(path: &Path, require_external_provider: bool
                     .await?;
                 stdin.write_all(b"\n").await?;
                 stdin.flush().await?;
+                if let Some(api) = &custom_api {
+                    write_json_line(stdin, &json!({"method":"config/read","id":3,"params":{"includeLayers":false}})).await?;
+                    let config = read_rpc_result(lines, 3).await?;
+                    rovai_core::runtime_custom_api::codex_catalog::validate_effective(api, &config)?;
+                }
                 if !require_external_provider {
                     return Ok(());
                 }

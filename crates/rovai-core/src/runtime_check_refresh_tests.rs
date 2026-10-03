@@ -169,6 +169,8 @@ fn configuration(
     process_path: &Path,
 ) -> RuntimeStartupConfiguration {
     RuntimeStartupConfiguration {
+        custom_api: None,
+        custom_api_snapshot: None,
         program_path: path.map(|path| path.to_string_lossy().to_string()),
         environment: vec![
             RuntimeEnvironmentVariable {
@@ -371,6 +373,25 @@ async fn fresh_formal_and_draft_checks_preserve_program_selection_and_private_st
         captures,
         "same-write retries remain idempotent"
     );
+    // Write-only API-key input never appears in the RPC's successful readback or errors.
+    let api_kind = AdapterKind::ClaudeCodeCli;
+    let api_configuration = json!({"programPath":null,"environment":[],"customApi":{
+        "kind":"claude-code-cli","enabled":true,"baseUrl":"https://offline.invalid/prefix","models":{}
+    }});
+    let saved = fixture.core.handle_runtime_startup("runtime.startup.save", json!({
+        "runtimeKind":api_kind,"expectedRevision":0,"configuration":api_configuration,
+        "apiKey":{"action":"replace","value":"private-rpc-test-key"}
+    })).await.unwrap();
+    assert_eq!(saved["apiKeyConfigured"], true);
+    assert!(!saved.to_string().contains("private-rpc-test-key"));
+    let read = fixture.core.handle_runtime_startup("runtime.startup.get", json!({"runtimeKind":api_kind})).await.unwrap();
+    assert_eq!(read, saved);
+    assert!(fixture.core.runtime_search_environment.read().await.startup_configuration(api_kind).custom_api_snapshot.is_some());
+    let bad = fixture.core.handle_runtime_startup("runtime.startup.save", json!({
+        "runtimeKind":api_kind,"expectedRevision":1,"configuration":api_configuration,
+        "apiKey":{"action":"private-rpc-test-key"}
+    })).await.unwrap_err();
+    assert!(!format!("{bad:#}").contains("private-rpc-test-key"));
     fixture.close().await;
 }
 

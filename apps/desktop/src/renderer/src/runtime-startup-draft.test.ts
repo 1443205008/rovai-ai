@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey } from './runtime-startup-draft'
+import { customApiError, emptyCustomApi, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey } from './runtime-startup-draft'
 
 describe('startup editor draft contract', () => {
   it('treats returning to the saved values as clean and preserves empty or spaced values', () => {
@@ -18,4 +18,20 @@ describe('startup editor draft contract', () => {
       expect(runtimeEnvironmentErrors({ ...draft, environment: [{ name, value: '' }] }, false)[0]).toBeTruthy()
     }
   })
+  it('validates a single connection locally without requiring online model verification', () => {
+    const key = { action: 'keep' } as const
+    const codex = { ...emptyCustomApi('codex-cli')!, kind: 'codex-cli', enabled: true, baseUrl: 'https://offline.invalid/prefix', models: [{ id: 'private-id', displayName: '' }, { id: 'private-id-2', displayName: '' }], defaultModel: 'private-id-2' } as const
+    const draft = { programPath: null, environment: [], customApi: { ...codex, models: [...codex.models] } }
+    expect(customApiError(draft, key, true)).toBeNull()
+    expect(customApiError(draft, key, false)).toContain('API Key')
+    expect(customApiError(draft, { action: 'clear' }, true)).toContain('API Key')
+    expect(customApiError({ ...draft, customApi: { ...draft.customApi, models: [draft.customApi.models[0]] } }, key, true)).toContain('默认模型')
+    expect(customApiError({ ...draft, customApi: { ...draft.customApi, models: [draft.customApi.models[0], draft.customApi.models[0]] } }, key, true)).toContain('重复')
+    expect(customApiError({ ...draft, customApi: { ...draft.customApi, baseUrl: 'https://user:pass@offline.invalid' } }, key, true)).toContain('地址')
+    expect(customApiError({ ...draft, customApi: { ...draft.customApi, enabled: false, models: [] } }, { action: 'clear' }, true)).toBeNull()
+    const claude = { ...emptyCustomApi('claude-code-cli')!, enabled: true, baseUrl: 'http://localhost:1234/prefix' }
+    expect(customApiError({ ...draft, customApi: claude }, { action: 'replace', value: 'fake-local-key' }, false)).toBeNull()
+    expect(emptyCustomApi('pi')).toBeNull()
+  })
+
 })

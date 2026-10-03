@@ -2,10 +2,11 @@ import { newCommandId } from '../../shared/command-id'
 import { useThreadClient } from './camp-client'
 import { useEffect, useId, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import type { AdapterKind, HealthStatus, RuntimeStartupConfiguration, RuntimeStartupInspection, RuntimeStartupSettings as StartupSettings } from '@contracts'
+import type { AdapterKind, HealthStatus, RuntimeApiKeyChange, RuntimeStartupConfiguration, RuntimeStartupInspection, RuntimeStartupSettings as StartupSettings } from '@contracts'
 import { AppDialogContent, AppDialogFooter, AppDialogHeader, DialogControlIcon } from './AppDialog'
 import { adapterLabel, PRODUCT_RUNTIME_LOGOS } from './runtime-products'
-import { normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey } from './runtime-startup-draft'
+import { customApiError, emptyCustomApi, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey } from './runtime-startup-draft'
+import { RuntimeCustomApiFields } from './RuntimeCustomApiFields'
 import { readErrorMessage } from './error-message'
 import { UiText, uiAttribute } from './interface-language'
 
@@ -21,6 +22,8 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   const client = useThreadClient()
   const [saved, setSaved] = useState<StartupSettings | null>(null)
   const [draft, setDraft] = useState<RuntimeStartupConfiguration>(EMPTY)
+  const [apiKey, setApiKey] = useState<RuntimeApiKeyChange>({ action: 'keep' })
+  const [formGeneration, setFormGeneration] = useState(0)
   const [rowIds, setRowIds] = useState<string[]>([])
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<'load' | 'save' | 'pick' | 'inspect' | 'check' | null>('load')
@@ -33,7 +36,8 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   const loaded = useRef(false)
   const state = useRef({ draft, busy, dirty: false })
   const id = useId()
-  const dirty = saved !== null && runtimeStartupKey(draft) !== runtimeStartupKey(saved.configuration)
+  const dirty = saved !== null && (apiKey.action !== 'keep' || runtimeStartupKey(draft) !== runtimeStartupKey(saved.configuration))
+  const customApi = draft.customApi ?? emptyCustomApi(runtimeKind)
   state.current = { draft, busy, dirty }
   const item = health?.runtimeAvailability.find((candidate) => candidate.runtimeKind === runtimeKind)
   const initialPath = item?.discovery.executablePath ?? null
@@ -42,6 +46,8 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   const applySaved = (settings: StartupSettings): void => {
     setSaved(settings)
     setDraft(settings.configuration)
+    setApiKey({ action: 'keep' })
+    setFormGeneration((value) => value + 1)
     setRowIds(settings.configuration.environment.map(() => newCommandId()))
     setRevealed(new Set())
     setErrors({})
@@ -82,7 +88,9 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   const validate = (next: RuntimeStartupConfiguration): boolean => {
     const nextErrors = runtimeEnvironmentErrors(next, health?.hostPlatform === 'windows-x64')
     setErrors(nextErrors)
-    return Object.keys(nextErrors).length === 0
+    const apiError = customApiError(next, apiKey, saved?.apiKeyConfigured ?? false)
+    setError(apiError ? uiAttribute(apiError) : null)
+    return Object.keys(nextErrors).length === 0 && !apiError
   }
 
   const inspect = async (next: RuntimeStartupConfiguration, deep = false): Promise<void> => {
@@ -93,7 +101,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     setInspection(null)
     try {
       const result = await client.request<RuntimeStartupInspection>(deep ? 'runtime.startup.check' : 'runtime.startup.inspect', {
-        runtimeKind, configuration: normalizedStartupConfiguration(next)
+        runtimeKind, configuration: normalizedStartupConfiguration(next), apiKey
       })
       if (sequence.current === request) setInspection(result)
     } catch (nextError) {
@@ -124,7 +132,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     setError(null)
     try {
       const settings = await client.request<StartupSettings>('runtime.startup.save', {
-        runtimeKind, expectedRevision: saved.revision, configuration: next
+        runtimeKind, expectedRevision: saved.revision, configuration: next, apiKey
       })
       applySaved(settings)
       try { await onReload() } catch { setError(uiAttribute('已保存，列表刷新失败。')) }
@@ -175,7 +183,11 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
         </div>
         {environmentIncomplete && <p className="runtime-startup-result is-warning" role="status"><UiText zh={"部分查找来源不可用，本次结果使用已读取的可用环境。"} /></p>}
       </section>
-      <section className="runtime-startup-section">
+      {customApi && <RuntimeCustomApiFields key={formGeneration} value={customApi} apiKey={apiKey}
+        keyConfigured={saved?.apiKeyConfigured ?? false} disabled={locked}
+        onChange={(customApi) => change({ ...draft, customApi })}
+        onKeyChange={(value) => { change({ ...draft, customApi }); setApiKey(value) }} />}
+      <section className="runtime-startup-section runtime-startup-environment-section">
         <div className="runtime-startup-section-heading"><h2><UiText zh={"环境变量"} /></h2><button className="quiet-button" type="button" disabled={locked || draft.environment.length >= 128}
           onClick={() => { setRowIds([...rowIds, newCommandId()]); change({ ...draft, environment: [...draft.environment, { name: '', value: '' }] }) }}><DialogControlIcon name="plus" /><UiText zh={"添加变量"} /></button></div>
         {draft.environment.length > 0 && <div className="runtime-startup-environment">

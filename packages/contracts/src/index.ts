@@ -127,6 +127,7 @@ export interface RuntimeModelCatalogCache {
 }
 
 export interface RuntimeModelCatalogView {
+  customApiModelIds?: string[] | null
   runtimeKind: AdapterKind
   cache: RuntimeModelCatalogCache
   models: ModelDescriptor[]
@@ -179,6 +180,7 @@ export interface AdapterRelocationAudit {
 }
 
 export interface AdapterInstallation {
+  customApiModelIds?: string[] | null
   id: string
   adapterKind: AdapterKind
   executablePath: string
@@ -359,12 +361,23 @@ export interface RuntimeEnvironmentVariable { name: string; value: string }
 export interface RuntimeStartupConfiguration {
   programPath: string | null
   environment: RuntimeEnvironmentVariable[]
+  customApi?: RuntimeCustomApiConfiguration | null
 }
+
+export type RuntimeCustomApiConfiguration =
+  | { kind: 'claude-code-cli'; enabled: boolean; baseUrl: string; models: { model: string; reasoningModel: string; haikuModel: string; sonnetModel: string; opusModel: string } }
+  | { kind: 'codex-cli'; enabled: boolean; baseUrl: string; models: { id: string; displayName: string }[]; defaultModel: string }
+  | { kind: 'kimi-code-cli'; enabled: boolean; baseUrl: string; apiType: 'kimi' | 'anthropic' | 'openai'; model: string }
+  | { kind: 'grok-build'; enabled: boolean; baseUrl: string; model: string }
+
+/** Write only; omitted means keep. Masked values are never round-tripped as credentials. */
+export type RuntimeApiKeyChange = { action: 'keep' } | { action: 'replace'; value: string } | { action: 'clear' }
 
 export interface RuntimeStartupSettings {
   runtimeKind: AdapterKind
   revision: number
   configuration: RuntimeStartupConfiguration
+  apiKeyConfigured: boolean
 }
 
 export interface RuntimeStartupInspection {
