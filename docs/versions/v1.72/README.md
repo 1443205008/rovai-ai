@@ -11,6 +11,13 @@ last_updated: 2026-10-02
 
 # Rovai-ai v1.72：Lark 独立渠道
 
+## 并行交付：消息寻址与执行查询
+
+User 于 2026-10-03 确认[方案 r2](model-context-change-thread-runs.md)和[完整提示词对照](thread-runs-prompt-comparison.md)，授权实现、PR 与合入 main。
+本次补齐 thread read 正常条目的 addressing，新增 thread runs 的统一执行/排队查询；范围由
+[Camp History v11](../../contracts/camp-history-v11.md)、[Thread Runs v1](../../contracts/thread-runs-v1.md)和
+[Built-in Transport v35](../../contracts/builtin-tool-transport-v35.md)拥有。旧 Session 保留冻结 Bootstrap，Skill 沿原路径更新；无数据库迁移。
+
 ## 已实现：User 统一称呼
 
 [上下文变更说明 r2](model-context-change-principal-user.md)与[完整前后对照](principal-user-context-comparison.md)

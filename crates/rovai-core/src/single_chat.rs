@@ -3536,6 +3536,7 @@ mod tests {
             );
         }
         for denied_operation in [
+            "thread.runs",
             "thread.message.send",
             "team.gather",
             "team.get_task",

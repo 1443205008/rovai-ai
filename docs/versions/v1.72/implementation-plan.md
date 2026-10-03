@@ -604,3 +604,12 @@ Electron 采用独立临时 userData/Skill Library 与显式内存 transport，�
 `pnpm test:windows-close` 在非 Windows 上只验证控制流和真实 Electron 界面，
 在 Windows runner 上额外创建原生托盘。固定 Server CI 不能代替 Windows 10/11 的任务栏、Explorer 重启、多屏 DPI、
 NVDA、High Contrast 或安装升级的真人验收，未取得这些证据前不宣称这些项目完成。
+
+## 消息寻址与执行查询
+
+按已确认[方案 r2](model-context-change-thread-runs.md)实施：正常 thread read collection 增加已有 addressing；新增只读 thread.runs，
+统一返回实际 Run 与队员排队集合。复用现有认证、事务、CLI、结果 Schema 和错误合同，保留动态分页限制与 null 等待原因。
+不扩展执行诊断、调度管理、权限、存储或 Session 迁移；旧 Bootstrap 和已有绑定保持，Skill 随包同步。
+验证覆盖公开范围、来源计数、首条输入、状态、Unicode、分页、Single Chat policy 和冻结 Bootstrap/Skill 更新。
+实现与验证结果在[方案验证记录](model-context-change-thread-runs.md#实施验收记录)收口。
+User 于 2026-10-03 明确豁免本次真实任务 Gate；其余本地检查、独立复核与 CI 已通过，交付见 [PR #616](https://github.com/murray17/rovai-ai/pull/616)。
