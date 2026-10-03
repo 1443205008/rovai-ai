@@ -1380,6 +1380,7 @@
   "重新加载失败：": "Reload failed:",
   "。已显示的内容会保留。": ". Previously displayed content will be retained.",
   "资源诊断连接中断，部分资源错误信息可能不完整": "Document diagnosis connection interrupted; some resource error information may be incomplete",
+  "资源诊断受此页面策略限制，部分诊断信息不可用。": "This page’s policy restricts resource diagnostics; some diagnostic information is unavailable.",
   "文档：": "Document:",
   "· 脚本：": "· Script:",
   "· 资源：": "· Resources:",
