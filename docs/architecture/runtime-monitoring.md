@@ -8,7 +8,7 @@ last_updated: 2026-10-03
 
 # Runtime Monitoring 架构
 
-精确字段与方法见 [Runtime Usage Monitoring v8](../contracts/runtime-usage-monitoring-v8.md)；执行台的原生用量与上下文另见 [Runtime Execution Metrics v5](../contracts/runtime-execution-metrics-v5.md)。长期最小化、
+精确字段与方法见 [Runtime Usage Monitoring v8](../contracts/runtime-usage-monitoring-v8.md)；执行台的原生用量与上下文另见 [Runtime Execution Metrics v6](../contracts/runtime-execution-metrics-v6.md)。长期最小化、
 稀疏语义、clean break 与 Cost grain 由
 [Evidence 与 Usage 不变量](foundational-invariants.md#evidence-usage)拥有。本架构只说明 Usage Transport、内存归一化、
 Projection/Rollup、Read Side 和 Renderer 如何组合。
@@ -91,8 +91,9 @@ Qoder 的 custom-provider input 与显式模型窗口须与原生比例相符；
 Kiro 只从精确绑定 Session 文件补原生窗口，缺少独立 used 时仍保留比例和未知数量。
 这些补充均不扫描历史会话、不恢复测速，也不从比例反推数量。
 
-Claude 的 Core 私有路径保留最新根调用的数值 Usage 和原生模型身份，在同一 result 的该模型
-`modelUsage.contextWindow` 到达时发出 Session Gauge；不使用整轮 Usage。Pi managed host v8
+Claude 的 Core 私有路径保留最新根调用的数值 Usage 和原生模型身份；真实 message_delta 的
+三个输入桶齐全即发出 used-only Session Gauge，同一 result 的该模型 `modelUsage.contextWindow`
+到达后再配对窗口。未知窗口不阻断 used，也不借用旧调用窗口；不使用整轮 Usage。Pi managed host v8
 调用原生 `ctx.getContextUsage()` 并只发送封闭数值 status，Core 验证 Host、Run、Session、绑定代次和
 实际 provider/model 后消费；正文或全会话统计不进入此路径。只有窗口上限时 used 仍未知，压缩后
 原生 tokens 尚未重新有效时清空旧 used。两条私有路径均在公开 Evidence 分发前截断。

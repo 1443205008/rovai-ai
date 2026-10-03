@@ -668,3 +668,17 @@ NVDA、High Contrast 或安装升级的真人验收，未取得这些证据前�
 验证覆盖公开范围、来源计数、首条输入、状态、Unicode、分页、Single Chat policy 和冻结 Bootstrap/Skill 更新。
 实现与验证结果在[方案验证记录](model-context-change-thread-runs.md#实施验收记录)收口。
 User 于 2026-10-03 明确豁免本次真实任务 Gate；其余本地检查、独立复核与 CI 已通过，交付见 [PR #616](https://github.com/murray17/rovai-ai/pull/616)。
+
+
+## Claude 运行中 Context 修复（2026-10-03）
+
+按 [Execution Metrics v6](../../contracts/runtime-execution-metrics-v6.md) 提前发出最近根模型调用 used，
+窗口在匹配原生 result 到达后补齐；不新增迁移、公共字段、轮询、测速或模型上下文文本。
+这是既有数值采集路径的可逆修复，无新增 Version Decision 准入事项。
+真实故障和逐 Runtime 时机审计见[本轮记录](../../research/runtime-monitoring/live-context-verification-2026-10-03.md)。
+既有 Rust stream/持久化 owner 扩展用例，App 验收新增可选的运行中 used-only 数值与气泡一致性门槛。
+
+本地验证：Claude 33 项、monitoring 13 项、ACP 输入确认 owner 与默认 Rust workspace 450 项通过；
+隔离打包 App 的 Claude 2.1.280 真实多工具 Run 成功，运行中 used-only 六次更新，终态窗口和四项用量
+与 Renderer 一致。脚本当前版本/Thread 命名适配、原生脱敏数字、真实验收范围与尚未解决的 ACP/ZCode
+时机限制均写入上述记录；不将代码审计扩大为全部 Runtime 的动态验收。

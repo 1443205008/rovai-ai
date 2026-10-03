@@ -4275,6 +4275,28 @@ mod tests {
             occurred_at: Some(at.to_string()),
         };
         let tx = connection.transaction().unwrap();
+        let mut live = parse_claude_observed_usage(
+            "runtime.context.observed",
+            &json!({"sessionId":"session-a","messageId":"live-call","modelId":"native-model",
+                "usedTokens":115268,"windowTokens":null}),
+        )
+        .remove(0);
+        live.occurred_at = Some("2026-09-28T00:00:10Z".into());
+        assert!(!normalize_usage(&live).unwrap().any_observed());
+        let claude_run = RuntimeUsageRun {
+            runtime_kind: AdapterKind::ClaudeCodeCli,
+            runtime_version: Some("2.1.280".into()),
+            ..run("run-a")
+        };
+        persist_session_context(&tx, &claude_run, &live).unwrap();
+        let saved: (Option<i64>, Option<i64>, Option<f64>) = tx.query_row(
+            "SELECT context_used_tokens,context_window_tokens,native_context_ratio FROM runtime_session_context_latest",
+            [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(
+            saved,
+            (Some(115268), None, None),
+            "live used survives without a terminal/window"
+        );
         persist_session_context(
             &tx,
             &run("run-a"),
