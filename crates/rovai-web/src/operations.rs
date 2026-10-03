@@ -55,6 +55,8 @@ pub enum Operation {
     CampRetryDeletion,
     #[serde(rename = "threads.discardPending", alias = "camps.discardPending")]
     CampDiscardPending,
+    #[serde(rename = "threads.pendingDraft.setPresence")]
+    PendingDraftPresence,
     #[serde(
         rename = "threads.members.fast.check",
         alias = "camps.members.fast.check"
@@ -421,6 +423,7 @@ impl Operation {
             Self::CampDeletionIssues => "camps.deletionIssues",
             Self::CampRetryDeletion => "camps.retryDeletion",
             Self::CampDiscardPending => "camps.discardPending",
+            Self::PendingDraftPresence => "camps.pendingDraft.setPresence",
             Self::CampFastCheck => "camps.members.fast.check",
             Self::CampFastSet => "camps.members.fast.set",
             Self::MemberRemovalPreview => "members.removalPreview",

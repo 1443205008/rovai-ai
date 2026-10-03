@@ -64,6 +64,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
         matches!(
             classify_database_contract(&tx)?,
             DatabaseContractClassification::Current(_)
+                | DatabaseContractClassification::SupportedMigrationSource(_)
         ),
         "Member creation migration failed schema admission"
     );
@@ -73,6 +74,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 
 #[cfg(test)]
 pub(super) fn downgrade_for_test(connection: &Connection) {
+    pending_draft::downgrade_for_test(connection);
     let applied: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=182)",

@@ -9,7 +9,8 @@ last_updated: 2026-10-03
 
 ## Public Camp v1.60 当前边界
 
-- 已激活 Camp 的输入内容不进入 Core Draft/Pending；Desktop 按 Camp 保存本机快照，切换、刷新、重建窗口和普通重启后恢复。
+- 已激活及普通一键 Pending Camp 的输入内容按 Camp 保存本机快照，切换、刷新、重建窗口和普通重启后恢复。
+  普通 Pending 输入保存后显示侧栏草稿行；同一项目可以保留多份，清空后隐藏。AI 创建队员仍按其窗口内草稿合同运行。
   发送失败或结果未知保留当前内容，确认发送成功才清空已发送快照。
 - 等待阶段在执行台展示由 Delivery 支撑的“排队消息”卡，但不伪装尚不存在的 AgentRun，也不提供 Run 停止入口。
   Scheduler claim 后才出现真实 Run，并由真实 Run 接管后续状态与停止语义。
@@ -24,7 +25,7 @@ last_updated: 2026-10-03
   Agent 发言不增加前缀。
 
 字段与状态见 [Message Delivery v10](../../contracts/message-delivery-v10.md)、
-[Camp Composer Draft v15](../../contracts/camp-composer-draft-v15.md)和
+[Camp Composer Draft v16](../../contracts/camp-composer-draft-v16.md)和
 [Camp History v10](../../contracts/camp-history-v10.md)。本文件后续仍描述的 Core-owned public Draft/Pending、
 CampTurn Stop、Gather 或业务重试均为历史交互，不再适用于当前 public Camp；本机草稿与 recipient
 continuation 是当前 Desktop 行为。
@@ -137,7 +138,8 @@ Escape 收起预览。定位只滚动公共时间线并聚焦目标消息，保�
 不足 400ms 不显示加载提示，超时后由共享的不透明整窗品牌画布遮住框架，直到真实目标内容可用再淡出。Camp shell 不得
 用标题区、骨架或结构占位伪装 meaningful content，也不得在 `camps.enter` 成功前提交权威 Camp。成功 enter 的 Active Camp 保持 Active；meaningful
 未激活的 Pending Camp 外壳保持 Pending。若该 Camp 已有有效 Desktop-local Composer snapshot，则在 Camp
-权威进入后恢复，但本机草稿本身不会激活 Camp 或使其进入导航。Members 与 Memory 同样由自己的读取 owner 取得数据，
+权威进入后恢复；普通一键 Pending 的客户端 presence 允许其进入侧栏，但不会激活 Camp，
+也不使它成为 Main Window Session 的自动恢复目标。Members 与 Memory 同样由自己的读取 owner 取得数据，
 但冷启动可见等待共用品牌画布；失败切换到独立恢复面，应用已就绪后的普通切换仍留在局部 surface 重试。仅明确
 `camps.exists === false` 的已删除 Camp 可以回到 Quick Chat。Notification navigation、恢复位置写入和已读确认要等权威 route commit。
 
@@ -363,7 +365,7 @@ Web 与 Desktop 共用上述结构和样式；Mobile 横竖屏均取消额外左
 一层紧凑父引用，作者与摘要同样只占一个可视行，超出显示省略号；点击通过 same-Camp anchor load 定位并
 聚焦原消息。父消息不可用时显示“引用的消息当前不可用”，不落到最近消息。不递归展开祖先、不缩进
 时间线，也不创建私密 thread。失效作者错误和替代成员选择独立展开，不受单行引用规则裁切。领域与字段边界见
-[Camp Composer Draft v15](../../contracts/camp-composer-draft-v15.md)，评审方向见
+[Camp Composer Draft v16](../../contracts/camp-composer-draft-v16.md)，评审方向见
 [HTML 交互稿](https://github.com/murray17/rovai-ai/blob/0de773a75231038e384c03cd761fea56344a6e4f/docs/prototypes/message-reply-chain/README.md)。
 
 渠道 `external_quote` 复用相同的回复图标、作者与单行摘要，无独立底色或边框；附件名称并入摘要，长内容省略。
@@ -401,7 +403,7 @@ reply、显式 Member Mention、多人 Mention 和 `@所有队员` 都比 contin
 标签出现后对象在空白 Draft 失效时，标签消失并持久抑制该来源；正文或附件已经存在时，保留全部 Draft，
 展开“原接收者当前不可接收，请选择其他成员”，禁用发送并把焦点交给第一个有效替代选择。不得隐藏错误、
 自动插入失效 Mention 或改投 Lead。字段和竞态边界见
-[Camp Composer Draft v15](../../contracts/camp-composer-draft-v15.md)，交互探索见
+[Camp Composer Draft v16](../../contracts/camp-composer-draft-v16.md)，交互探索见
 [延续路由原型](https://github.com/murray17/rovai-ai/blob/0de773a75231038e384c03cd761fea56344a6e4f/docs/prototypes/composer-continuation-routing/index.html)。
 
 ## Camp 内单聊
@@ -1068,7 +1070,7 @@ Message Mention 通知导航必须以 `campId + sourceMessageId` 加载和定位
 长名称必须省略且可取得完整名称。拖放命中、反馈和卡片合同见
 [会话区文件与文件夹拖放](conversation-drop-zone.md)，领域边界见
 [Camp Attachment v9](../../contracts/camp-attachment-v9.md)，发送边界见
-[Camp Composer Draft v15](../../contracts/camp-composer-draft-v15.md)。
+[Camp Composer Draft v16](../../contracts/camp-composer-draft-v16.md)。
 
 准备区固定使用 D 档：普通文件项高 48px、约 11px 圆角并始终显示浅边框，采用用户侧中性图形、文件名和
 独立格式标签，不显示大小；图片是 48×48px 圆角缩略块，不显示文件名。两者共处一条不换行的附件带，删除

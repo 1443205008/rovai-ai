@@ -1,3 +1,4 @@
+import { PendingThreadDraftPersistence } from './pending-thread-draft'
 import { MessageModelSummary, ModelSummaryText, ProfileModelFields } from './ThreadModelInformation'
 import { memberRuntimeConfigurationPresentation, modelSummary, runtimeAdapterLabel } from './runtime-model-presentation'
 export { memberRuntimeConfigurationPresentation, type MemberRuntimeConfigurationPresentation } from './runtime-model-presentation'
@@ -1822,6 +1823,10 @@ export function ThreadWorkspace({
   const initialComposerDraftRef = useRef(initialComposerDraft)
   const focusedMemberCreationDraftRef = useRef<string | null>(null)
   const activationStateRef = useRef(snapshot.thread.activationState)
+  const memberCreationRef = useRef(memberCreation)
+  memberCreationRef.current = memberCreation
+  const pendingDraftPersistence = useRef<PendingThreadDraftPersistence | null>(null)
+  if (!pendingDraftPersistence.current) pendingDraftPersistence.current = new PendingThreadDraftPersistence(client)
   const pendingThreadLeaveRef = useRef(onPendingThreadLeave)
   const pendingDraftChangeRef = useRef(onPendingDraftChange)
   pendingDraftChangeRef.current = onPendingDraftChange
@@ -1837,7 +1842,7 @@ export function ThreadWorkspace({
         const initial = initialComposerDraftRef.current?.threadId === threadId
           ? initialComposerDraftRef.current
           : null
-        let draft = (activationStateRef.current === 'active'
+        let draft = (activationStateRef.current === 'active' || !memberCreationRef.current
           ? loadLocalThreadComposerDraft(threadId)
           : null) ?? initial ?? emptyLocalComposerDraft(threadId)
         if (draft.attachments.length > 0 && client.composerAttachments.restore) {
@@ -1886,13 +1891,18 @@ export function ThreadWorkspace({
             }
           }
         }
-        return {
-          ...draft,
-          body: composerBodyForContent(draft.content, activeSnapshotRef.current.members)
+        draft = { ...draft, body: composerBodyForContent(draft.content, activeSnapshotRef.current.members) }
+        if (activationStateRef.current === 'pending' && !memberCreationRef.current) {
+          await pendingDraftPersistence.current!.persist(draft)
         }
+        return draft
       },
       mutate: async (draft, mutation) => {
-        return mutateComposerDraft(client, draft, mutation, activeSnapshotRef.current)
+        const next = await mutateComposerDraft(client, draft, mutation, activeSnapshotRef.current)
+        if (activationStateRef.current === 'pending' && !memberCreationRef.current) {
+          await pendingDraftPersistence.current!.persist(next)
+        }
+        return next
       },
       onChange: (draft, _epoch, kind) => {
         if (draft && activationStateRef.current === 'pending') pendingDraftChangeRef.current?.(draft)
@@ -4054,6 +4064,9 @@ export function ThreadWorkspace({
           addressedAgentIds: sendReceipt.addressedAgentIds,
           members: activeSnapshotRef.current.members
         })
+        // The accepted response can arrive before the Active projection. Clear the
+        // persisted first input immediately so reopening cannot resurrect a sent draft.
+        saveLocalThreadComposerDraft(nextDraft)
         if (draftThreadId.current === threadId) {
           draftCoordinator.acceptAuthoritativeDraft(nextDraft)
           initializedComposerRoute.current = {
@@ -4066,8 +4079,6 @@ export function ThreadWorkspace({
           composerHandle.replaceDocument(nextDraft.content, 'end')
           setComposerPersistenceError(null)
           setDraftLoadState({ state: 'ready' })
-        } else {
-          saveLocalThreadComposerDraft(nextDraft)
         }
       } catch (error) {
         if (draftThreadId.current === threadId) {

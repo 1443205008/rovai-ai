@@ -18,16 +18,19 @@ const model = createReviewModel('web', 'camp')
 const profiles = structuredClone(agents)
 const calls: Array<{ method: string; params: any }> = []
 const events = new Set<(event: any) => void>()
-const threads = new Map<string, any>()
+const pendingMode = new URLSearchParams(location.search).get('flow') === 'pending'
+const checkpoint = pendingMode ? JSON.parse(localStorage.getItem('pending-fixture') ?? 'null') : null
+const threads = new Map<string, any>(checkpoint?.threads ?? [])
+const pendingPresence = new Set<string>(checkpoint?.presence ?? [])
 let unavailable = false, rejectSend = false, lastHelper: string | null = profiles[1].agentId
-let sequence = 1
+let sequence = checkpoint?.sequence ?? 1
 const appearance = { ...DEFAULT_APPEARANCE, preference: 'day', resolvedTheme: 'day' } as const
 applyAppearanceSnapshot(document.documentElement, appearance)
-const prefs = { ...DEFAULT_GENERAL_PREFERENCES, newConversationDefaults: { memberAgentIds: [profiles[0].agentId], defaultLeadAgentId: profiles[0].agentId } }
+const prefs = { ...DEFAULT_GENERAL_PREFERENCES, oneClickNewConversationEnabled: pendingMode, newConversationDefaults: { memberAgentIds: [profiles[0].agentId], defaultLeadAgentId: profiles[0].agentId } }
 const navPrefs = { schemaVersion: 4, pins: [], removedProjects: [], projectOrder: [], projectNames: {}, threadReadStates: {} }
 const applied = (payload = {}) => ({ status: 'applied', code: 'ok', payload, resultEntity: null })
 const nav = () => {
-  const rows = [...threads.values()].filter((thread) => thread.thread.activationState === 'active').map((thread) => navigation(thread).quickChat.recentThreads[0])
+  const rows = [...threads.values()].filter((thread) => (thread.thread.activationState === 'active' || pendingPresence.has(thread.thread.id))).map((thread) => navigation(thread).quickChat.recentThreads[0])
   return { schemaVersion: 3, throughGlobalSequence: sequence, projects: [], quickChat: { totalCount: rows.length, recentThreads: rows } }
 }
 const invalidate = (threadId: string) => events.forEach((fn) => fn({ method: 'thread.memberCreated', params: { threadId } }))
@@ -50,8 +53,15 @@ const client = { ...model.client, onInvalidated: undefined,
     if (method === 'health.check') return { runtimeAvailability: availability, hostPlatform: 'darwin', runtimePlatformAdmission: [] }
     if (['memory.hearthReviewItems.list', 'missions.list', 'missions.cleanup.list'].includes(method)) return []
     if (method === 'navigation.snapshot') return nav()
-    if (method === 'navigation.threads') return { throughGlobalSequence: sequence, groupKeys: ['quick-chat'], threads: [] }
-    if (method === 'navigation.findThread') return thread?.thread.activationState === 'active' ? navigation(thread).quickChat.recentThreads[0] : null
+    if (method === 'navigation.threads') return { throughGlobalSequence: sequence, groupKeys: ['quick-chat'], threads: nav().quickChat.recentThreads }
+    if (method === 'navigation.findThread') return thread && (thread.thread.activationState === 'active' || pendingPresence.has(thread.thread.id)) ? navigation(thread).quickChat.recentThreads[0] : null
+    if (method === 'threads.pendingDraft.setPresence') {
+      if (!thread || thread.thread.activationState !== 'pending') throw new Error('pending draft unavailable')
+      const changed = pendingPresence.has(command.threadId) !== command.present
+      if (command.present) pendingPresence.add(command.threadId); else pendingPresence.delete(command.threadId)
+      if (changed) events.forEach(fn => fn({ method: 'navigation.invalidated', params: { scope: 'group', threadId: command.threadId, groupKeys: ['quick-chat'] } }))
+      return { changed }
+    }
     if (method === 'threads.exists') return !!thread
     if (method === 'threads.creationPreflight') return { admissible: true, blockers: [], initialLeadAgentId: profiles[0].agentId,
       lastMemberCreationHelperAgentId: lastHelper, presentMembers: profiles.filter((member) => member.presence === 'present').map((member) => ({
@@ -60,14 +70,14 @@ const client = { ...model.client, onInvalidated: undefined,
     if (method === 'threads.create') {
       const id = `rvcamp_fixture_${++sequence}`
       const snapshot = structuredClone(initial)
-      snapshot.thread = { ...snapshot.thread, id, title: '', projectBindingKind: 'quick_chat', projectPath: '', defaultLeadAgentId: command.defaultLeadAgentId, activationState: command.activationState }
+      snapshot.thread = { ...snapshot.thread, id, title: command.name || '未命名对话', projectBindingKind: 'quick_chat', projectPath: '', defaultLeadAgentId: command.defaultLeadAgentId, activationState: command.activationState }
       snapshot.messages = []
       snapshot.members = snapshot.members.filter((member) => command.memberAgentIds.includes(member.agentId)).map((member) => ({ ...member, isDefaultLead: true }))
       threads.set(id, snapshot)
       return applied({ threadId: id })
     }
     if (method === 'threads.open' || method === 'threads.enter') return projection(thread)
-    if (method === 'threads.discardPending') { if (thread?.thread.activationState === 'pending') threads.delete(command.threadId); return applied() }
+    if (method === 'threads.discardPending') { if (thread?.thread.activationState === 'pending' && !pendingPresence.has(command.threadId)) threads.delete(command.threadId); return applied() }
     if (method === 'navigation.threadViewed') return { threadId: command.threadId, lastSeenGlobalSequence: command.throughGlobalSequence, changed: false, navigation: { throughGlobalSequence: sequence, groupKeys: [], threads: [] } }
     if (method === 'thread.pendingInputs.get') return { threadId: command.threadId, executionActive: false, items: [], editSession: null, submissionOutcomes: [] }
     if (method === 'thread.messages.send') {
@@ -75,7 +85,7 @@ const client = { ...model.client, onInvalidated: undefined,
       const content = command.content.segments ?? command.content
       const body = content.map((segment: any) => segment.text ?? '').join('')
       const item = { ...message(thread.messages.length + 1, body, 'user'), addressedAgentIds: [thread.thread.defaultLeadAgentId], createdAt: new Date().toISOString() }
-      thread.thread.activationState = 'active'; thread.thread.title = body.split('\n')[0]; thread.messages.push(item); sequence++
+      pendingPresence.delete(command.threadId); thread.thread.activationState = 'active'; thread.thread.title = body.split('\n')[0]; thread.messages.push(item); sequence++
       return { commandResult: applied({ threadMessageId: item.id, sequence: item.sequence, deliveryIds: [], agentRunIds: [], addressedAgentIds: [thread.thread.defaultLeadAgentId] }) }
     }
     if (method === 'events.subscribe') return { schemaVersion: 9, events: [], nextGlobalSequence: sequence, throughGlobalSequence: sequence, resetRequired: false }
@@ -91,8 +101,9 @@ const preferences: any = { appearance: { get: async () => appearance, onChanged:
   generalPreferences: new Proxy({}, { get: (_, key) => async (...args: any[]) => { if (key === 'setInterfaceLanguage') prefs.interfaceLanguage = args[0]; return prefs } }),
   navigationPreferences: new Proxy({}, { get: () => async () => navPrefs }) }
 const environment: any = { client, files: { ...model.fileApi, bindThread: async () => {} }, preferences,
-  navigationHistory: { initial: { entries: [{ kind: 'members', agentId: profiles[0].agentId, tab: 'identity' }], index: 0 }, write: (state: any) => state, go: async () => false, listen: () => () => {} } }
-;(window as any).memberCreationQA = { calls, threads, profiles, errors: [],
+  navigationHistory: { initial: { entries: [pendingMode ? { kind: 'quick_chat' } : { kind: 'members', agentId: profiles[0].agentId, tab: 'identity' }], index: 0 }, write: (state: any) => state, go: async () => false, listen: () => () => {} } }
+;(window as any).memberCreationQA = { calls, threads, profiles, pendingPresence, errors: [],
+  checkpoint: () => localStorage.setItem('pending-fixture', JSON.stringify({ threads: [...threads].filter(([id, t]) => t.thread.activationState === 'active' || pendingPresence.has(id)), presence: [...pendingPresence], sequence })),
   unavailable: (value: boolean) => { unavailable = value },
   rejectSend: () => { rejectSend = true },
   lastHelper: (id: string | null) => { lastHelper = id },
