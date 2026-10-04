@@ -291,7 +291,7 @@ pub async fn configure(snapshot: &CustomApiSnapshot, command: &mut Command) -> R
         if models_changed(&current.configuration, &snapshot.configuration) {
             let catalog = generate(
                 Some(Path::new(command.as_std().get_program())),
-                &snapshot.context,
+                &snapshot.context.for_command(command),
                 &current,
                 &snapshot.configuration,
             )
@@ -321,7 +321,7 @@ pub async fn configure(snapshot: &CustomApiSnapshot, command: &mut Command) -> R
         if native.observation.initial_mode == Some(super::ConnectionMode::CustomApi) {
             let catalog = super::native_resource::bundled_catalog(
                 Path::new(command.as_std().get_program()),
-                &snapshot.context,
+                &snapshot.context.for_command(command),
             )
             .await?;
             let model = catalog["models"]

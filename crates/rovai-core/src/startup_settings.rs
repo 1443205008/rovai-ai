@@ -198,7 +198,7 @@ impl Core {
                     .iter()
                     .any(|e| e.path.first().is_some_and(|p| p == "codexModels"))
                 {
-                    let context = {
+                    let mut context = {
                         let database = self.database.lock().await;
                         rovai_core::runtime_custom_api::native::NativeContext::resolve(
                             kind,
@@ -206,6 +206,11 @@ impl Core {
                             database.path(),
                         )?
                     };
+                    let mut metadata_command = tokio::process::Command::new(
+                        executable.unwrap_or(std::path::Path::new("codex")),
+                    );
+                    search.configure_tokio_command(kind, &mut metadata_command);
+                    context = context.for_command(&metadata_command);
                     let desired = configuration
                         .custom_api
                         .as_ref()

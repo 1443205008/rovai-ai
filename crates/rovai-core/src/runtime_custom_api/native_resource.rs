@@ -121,6 +121,17 @@ mod tests {
                 ("HOME".into(), root.to_string_lossy().into_owned()),
             ]),
         };
+        // A GUI PATH may omit a shim dependency. Reuse the actual launcher's
+        // resolved environment instead of the host process's original PATH.
+        let mut gui_context = context.clone();
+        gui_context
+            .environment
+            .insert("PATH".into(), "/missing-gui-path".into());
+        let mut launcher = tokio::process::Command::new(&wrapper);
+        launcher.env("PATH", "/usr/bin:/bin");
+        launcher.env_remove("UNUSED_CREDENTIAL");
+        let context = gui_context.for_command(&launcher);
+        assert_eq!(context.env("PATH").as_deref(), Some("/usr/bin:/bin"));
         let snapshot = crate::runtime_custom_api::native::read(&context, None)
             .unwrap()
             .snapshot(&context, false);

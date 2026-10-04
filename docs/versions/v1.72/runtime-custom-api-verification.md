@@ -113,3 +113,8 @@ Claude 静态 Key 替换保留认证变量，官方 OAuth 环境令牌保留且�
 同步主线后，完整 Node 测试发现 `create-configured-camp` 夹具仍期待旧 `camps.*` RPC；已同步为现行
 `threads.*`／`thread.messages.send`，保留原 Composer 与回执断言，未修改协作执行代码。
 真实中转、真实 OAuth 登录/刷新、真实钥匙串、其他平台及其他实际 CLI 版本仍未实测；这些边界不会变成版本封禁。
+
+本地目录子进程随后收敛为复用实际启动命令的环境（含桌面 Shell 发现后的 PATH）。定向 owner 的包装器 case
+覆盖宿主 PATH 缺少依赖、启动 PATH 可解析依赖的场景；原生连接 5 项和运行检查竞争 3 项再次通过。
+另在 `node-wrapper-native` 使用 `/usr/bin/env node` 包装同一 Codex 0.159.2 完整重跑上述 Codex 原生流程并通过。
+这验证 Node 包装入口及环境传递，未声称测试了所有 npm 安装布局。

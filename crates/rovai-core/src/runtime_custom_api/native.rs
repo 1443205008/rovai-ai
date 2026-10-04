@@ -101,6 +101,30 @@ impl NativeContext {
             self.environment.get(name).cloned()
         }
     }
+    /// Local metadata commands must see the same launcher environment (notably
+    /// the shell-discovered PATH used by npm shims) as the actual native process.
+    pub fn for_command(&self, command: &tokio::process::Command) -> Self {
+        let mut context = self.clone();
+        if context.environment.is_empty() {
+            context.environment = std::env::vars().collect();
+        }
+        for (name, value) in command.as_std().get_envs() {
+            let name = name.to_string_lossy().into_owned();
+            if cfg!(windows) {
+                context
+                    .environment
+                    .retain(|key, _| !key.eq_ignore_ascii_case(&name));
+            }
+            if let Some(value) = value {
+                context
+                    .environment
+                    .insert(name, value.to_string_lossy().into_owned());
+            } else {
+                context.environment.remove(&name);
+            }
+        }
+        context
+    }
     pub fn login_command(&self, program: Option<&str>) -> String {
         let claude = self.kind == AdapterKind::ClaudeCodeCli;
         let binary = if claude { "claude" } else { "codex" };
