@@ -3,7 +3,7 @@ document_type: architecture
 architecture: runtime-catalog-boundaries
 authority: runtime-catalog-and-preview-boundaries
 status: accepted
-last_updated: 2026-09-19
+last_updated: 2026-10-04
 ---
 
 # Runtime Catalog Boundaries
@@ -558,6 +558,14 @@ set_config_option 设置并核对。普通 Probe 使用该 Runtime 原生 Home�
 ACP composition 的 provider/model 是该入口自己的 native default，独立于交互入口的
 agent-default-model settings。BYOK 仍通过原生 llm-pi-ai providers 与 ACP profile patch 配置，
 Rovai 显式选模使用真实 catalog ID；产品不读取其他 Runtime 的凭据。
+
+Host 为原生 `settings.yaml` 中显式采用 `openai-responses`、且未声明
+`compat.supportsStrictMode` 的 Provider 添加 composition 层默认值 `true`。该开关表示端点接受
+`strict` 字段；DSH 的普通工具由此显式发送 `strict: false`，保留可选参数。原生 settings 中
+Provider / Model 的显式开关仍按原生优先级生效，其他协议不增加默认值。Host patch 只投影路由名与布尔值，
+不复制 endpoint、headers、模型列表或凭据，也不改写原生 settings、工具参数或 sandbox/approval 校验。
+Bootstrap revision 参与已有配置摘要，使旧 Host 不继续复用。实测范围与配置来源限制见
+[Responses 工具兼容验收](../research/deepseek-harness-runtime/responses-tools-2026-10-04.md)。
 
 共享 ACP Host/Fleet 拥有 resident_multi_session、租约、LRU 与停止。Run-local MCP evidence 与 Session 模型
 不进入进程兼容键；真实 MCP 定义、权限、cwd、原生 settings/credentials/profile 配置摘要变化会 fence 复用。

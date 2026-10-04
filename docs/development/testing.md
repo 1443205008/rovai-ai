@@ -1,7 +1,7 @@
 ---
 document_type: development-guide
 authority: test-policy-and-command-routing
-last_updated: 2026-09-30
+last_updated: 2026-10-04
 ---
 
 # 测试与 Smoke Test
@@ -128,6 +128,15 @@ Open API grant 兑换、独立 CDN 请求无 token、取消与丢失 grant 的 s
 ## 测试层级
 
 ### DeepSeek Harness ACP
+
+Responses 工具兼容由 `dsh::tests::responses_tool_defaults_preserve_native_overrides_and_private_settings`
+拥有：此前显式 `openai-responses` 路由缺少兼容默认值，工具定义省略 `strict`；测试只用临时 settings，
+覆盖默认投影、Provider / Model 显式开关不复制或改写、其他协议不投影、私有字段不进入 patch、解析错误脱敏。
+既有权限 owner 不拥有 Provider 配置投影，因此增加这一个独立 owner；无需数据库或真实模型。
+最小命令：`cargo test -p rovai-core --lib dsh::tests::`。
+构建 Debug Core/CLI 后运行 `node scripts/smoke-dsh-responses-tools.mjs`，用已安装 DSH 与受控本机 Responses
+端点验证实际 wire `strict: false`、原生 Provider / Model 覆盖优先级、真实 shell 副作用与非法空理由仍拒绝。
+该 Smoke 自动隔离 Core data、Skills、MCP 与 DSH Home，不使用真实凭据或远端模型；模型行为仍需真实调用验证。
 
 新增 owner 均使用临时目录，不读取真实凭据、不启动模型；最小命令为
 `cargo test -p rovai-core --lib dsh` 和
