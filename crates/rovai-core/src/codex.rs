@@ -443,11 +443,17 @@ impl CodexHost {
                     .rpc("config/read", json!({"cwd":cwd,"includeLayers":false}))
                     .await?;
                 rovai_core::runtime_custom_api::codex_catalog::validate_effective(api, &config)?;
-                if rovai_core::runtime_custom_api::codex_catalog::requires_account_check(api) {
-                    let account = host
+                // Observe only an explicit official/API selection conflict. API
+                // execution needs no account preflight; unavailable account
+                // metadata is handled by the native authentication/call path.
+                if !api.configuration.enabled()
+                    && let Ok(account) = host
                         .rpc("account/read", json!({"refreshToken":false}))
-                        .await?;
-                    rovai_core::runtime_custom_api::codex_catalog::validate_account(api, &account)?;
+                        .await
+                {
+                    rovai_core::runtime_custom_api::codex_catalog::validate_account_selection(
+                        api, &account,
+                    )?;
                 }
                 Ok::<_, anyhow::Error>(())
             }

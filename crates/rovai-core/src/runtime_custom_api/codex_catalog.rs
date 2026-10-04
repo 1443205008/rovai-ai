@@ -511,29 +511,14 @@ fn native_headers(
     Ok((headers, environment))
 }
 
-pub fn requires_account_check(snapshot: &CustomApiSnapshot) -> bool {
-    !snapshot.configuration.enabled()
-        || matches!(
-            snapshot.credential_source,
-            super::native::CredentialSource::NativeManaged { .. }
-        )
-}
-/// Local account metadata only; no token refresh, HTTP probe or credential extraction.
-pub fn validate_account(snapshot: &CustomApiSnapshot, account: &Value) -> Result<()> {
-    if snapshot.configuration.enabled() {
-        ensure!(
-            matches!(
-                account.pointer("/account/type").and_then(Value::as_str),
-                Some("apiKey" | "chatgpt")
-            ),
-            "当前原生凭据来源不可用；请修复该来源或为此连接输入新 Key，未尝试备用账号。"
-        );
-    } else {
-        ensure!(
-            account.pointer("/account/type").and_then(Value::as_str) == Some("chatgpt"),
-            "尚未使用 ChatGPT 登录。请在本机终端运行 codex login，按提示完成登录；未使用其他 Key。"
-        );
-    }
+/// Reject only a known selection conflict. Login readiness and credential
+/// validity remain native-owned; missing or future metadata is not admission.
+pub fn validate_account_selection(snapshot: &CustomApiSnapshot, account: &Value) -> Result<()> {
+    ensure!(
+        snapshot.configuration.enabled()
+            || account.pointer("/account/type").and_then(Value::as_str) != Some("apiKey"),
+        "已选择官方登录，但 Codex 原生认证当前选用了 API Key；请在原生来源处理该连接冲突，未修改或删除凭据。"
+    );
     Ok(())
 }
 

@@ -212,12 +212,11 @@ async fn main() -> Result<()> {
             if frame["result"].get("config").is_some() {
                 runtime_custom_api::codex_catalog::validate_effective(&snapshot, &frame["result"])?;
             }
-            if frame["result"].get("account").is_some()
-                && (snapshot.configuration.enabled()
-                    || root.join(".rovai-official-login-acceptance").is_file())
-                && runtime_custom_api::codex_catalog::requires_account_check(&snapshot)
-            {
-                runtime_custom_api::codex_catalog::validate_account(&snapshot, &frame["result"])?;
+            if frame["result"].get("account").is_some() && !snapshot.configuration.enabled() {
+                runtime_custom_api::codex_catalog::validate_account_selection(
+                    &snapshot,
+                    &frame["result"],
+                )?;
             }
         }
         output.write_all(line.as_bytes()).await?;

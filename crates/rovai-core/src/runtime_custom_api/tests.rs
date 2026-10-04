@@ -331,7 +331,10 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
         draft.key().unwrap().as_deref(),
         Some("draft-auto-replacement")
     );
-    assert!(!codex_catalog::requires_account_check(&draft));
+    assert!(matches!(
+        draft.credential_source,
+        native::CredentialSource::Environment { .. }
+    ));
     assert_ne!(codex_catalog::execution_provider(&draft).unwrap(), "openai");
     assert_eq!(std::fs::read(codex_path).unwrap(), codex_bytes);
     let current = runtime_startup::load(&db, kind).unwrap();
@@ -635,18 +638,28 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         .await
         .unwrap();
     assert!(
-        codex_catalog::validate_account(
+        codex_catalog::validate_account_selection(
             &auto.snapshot(&context, true),
             &json!({"account":{"type":"apiKey"}})
         )
         .is_err()
     );
-    codex_catalog::validate_account(
+    codex_catalog::validate_account_selection(
         &auto.snapshot(&context, true),
         &json!({"account":{"type":"chatgpt"}}),
     )
     .unwrap();
     let auto_api = native::read(&context, Some(ConnectionMode::CustomApi)).unwrap();
+    for account in [
+        json!({"account":null}),
+        json!({}),
+        json!({"account":{"type":"future-native-identity"}}),
+    ] {
+        codex_catalog::validate_account_selection(&auto.snapshot(&context, true), &account)
+            .unwrap();
+        codex_catalog::validate_account_selection(&auto_api.snapshot(&context, true), &account)
+            .unwrap();
+    }
     let frozen_api = auto_api.snapshot(&context, true);
     let frozen_official = auto.snapshot(&context, true);
     let mut external = fallback.clone();
@@ -957,6 +970,17 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     official
         .configuration
         .set_mode(Some(ConnectionMode::OfficialLogin));
+    for identity in [
+        claude_native::Identity::Unknown,
+        claude_native::Identity::SignedOut,
+    ] {
+        claude_native::validate_identity(&snapshot, &identity).unwrap();
+        claude_native::validate_identity(&official, &identity).unwrap();
+    }
+    assert!(
+        claude_native::validate_identity(&snapshot, &claude_native::Identity::Official).is_err()
+    );
+    assert!(claude_native::validate_identity(&official, &status).is_err());
     if let CustomApiConfiguration::ClaudeCode { models, .. } = &mut official.configuration {
         models.sonnet_model = "dormant-api-sonnet".into();
     }

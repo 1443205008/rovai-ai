@@ -85,10 +85,10 @@ pub fn validate_identity(snapshot: &CustomApiSnapshot, identity: &Identity) -> R
     } else {
         matches!(identity, Identity::Official)
     };
-    // Older native identity responses may omit optional identity metadata. The
-    // effective settings still bind routing; lack of a display hint is not a new gate.
+    // Login availability is owned by native authentication and model calls.
+    // This boundary only rejects a positively identified selection conflict.
     ensure!(
-        matches || *identity == Identity::Unknown,
+        matches || matches!(identity, Identity::Unknown | Identity::SignedOut),
         "Claude Code 的原生认证来源与所选连接方式不一致，请检查原生认证或组织策略。"
     );
     Ok(())
