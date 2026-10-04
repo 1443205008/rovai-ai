@@ -470,6 +470,32 @@ pub fn prepare_save(
             api.validate_model_list(kind, list_edited || !inherited_api)?;
         }
     }
+    if official && edits.iter().any(|e| e.path == ["mode"]) {
+        let referenced = current
+            .configuration
+            .custom_api_snapshot
+            .as_ref()
+            .and_then(|snapshot| match &snapshot.credential_source {
+                native::CredentialSource::Environment { name } => Some(name.as_str()),
+                _ => None,
+            });
+        // These values belong to Rovai's old startup editor. Remove them only on
+        // official Save; never expose, migrate, or retain a second API credential.
+        configuration.environment.retain(|entry| {
+            let api_override = match kind {
+                AdapterKind::ClaudeCodeCli => matches!(
+                    entry.name.to_ascii_uppercase().as_str(),
+                    "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_BASE_URL"
+                ),
+                AdapterKind::CodexCli => matches!(
+                    entry.name.to_ascii_uppercase().as_str(),
+                    "OPENAI_API_KEY" | "CODEX_API_KEY" | "OPENAI_BASE_URL"
+                ),
+                _ => false,
+            };
+            !api_override && referenced != Some(entry.name.as_str())
+        });
+    }
     Ok(PreparedSave {
         current,
         configuration: configuration.validated(cfg!(windows))?,
@@ -530,8 +556,22 @@ pub fn commit_save(
         .iter()
         .any(|e| !matches!(e.path[0].as_str(), "programPath" | "environment"))
     {
-        let context =
+        let future_context =
             native::NativeContext::resolve(kind, &prepared.configuration, database.path())?;
+        let official = prepared
+            .configuration
+            .custom_api
+            .as_ref()
+            .is_some_and(|api| api.mode() == Some(ConnectionMode::OfficialLogin));
+        let context = if official {
+            native::NativeContext::resolve(kind, &prepared.current.configuration, database.path())?
+        } else {
+            future_context.clone()
+        };
+        ensure!(
+            context.path() == future_context.path(),
+            "原生配置目录已变化，请先保存目录再编辑连接。草稿已保留。"
+        );
         let read = native::read(&context, None)?;
         ensure!(
             Some(&read.connection_revision) == prepared.current.native_revision.as_ref(),
@@ -542,37 +582,16 @@ pub fn commit_save(
             .custom_api
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("缺少连接配置。"))?;
-        let before = native::read_bytes(&context.path())?;
-        let credential_before = if desired.mode() == Some(ConnectionMode::OfficialLogin)
-            && kind == AdapterKind::CodexCli
-        {
-            let path = context.directory.join("auth.json");
-            Some((path.clone(), native::read_bytes(&path)?))
-        } else if matches!(key, ApiKeyChange::Clear) {
-            match &read.source {
-                native::CredentialSource::Json { path, .. } if path != &context.path() => {
-                    Some((path.clone(), native::read_bytes(path)?))
-                }
-                _ => None,
-            }
-        } else {
-            None
-        };
-        native_written = native_edit::write(
+        native_rollback = native_edit::write_with_saved_environment(
             &context,
             &read,
             desired,
             &prepared.edits,
             &key,
             generated_catalog,
+            &future_context,
         )?;
-        if native_written {
-            native_rollback.push((context.path(), before, native::read_bytes(&context.path())?));
-            if let Some((path, before)) = credential_before {
-                let after = native::read_bytes(&path)?;
-                native_rollback.push((path, before, after));
-            }
-        }
+        native_written = !native_rollback.is_empty();
     }
     if let Err(error) = persist(
         database,
@@ -581,23 +600,8 @@ pub fn commit_save(
         prepared.configuration,
         search_generation,
     ) {
-        for (path, before, after) in native_rollback {
-            if native::read_bytes(&path).ok() == Some(after) {
-                let restored = match before {
-                    Some(bytes) => {
-                        crate::platform::private_storage::atomic_write_private_bytes(&path, &bytes)
-                    }
-                    None => std::fs::remove_file(&path).map_err(Into::into),
-                };
-                ensure!(
-                    restored.is_ok(),
-                    "启动状态保存失败，原生配置回退也失败；草稿已保留，请检查原生文件权限。"
-                );
-            } else {
-                anyhow::bail!(
-                    "启动状态保存失败，原生配置随后又被外部修改；未覆盖外部变化。草稿已保留，请检查连接设置。"
-                );
-            }
+        for (file, after) in native_rollback {
+            file.restore(&after)?;
         }
         return Err(error);
     }

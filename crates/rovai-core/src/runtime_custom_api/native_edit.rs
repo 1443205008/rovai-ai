@@ -2,6 +2,7 @@
 use super::{
     ApiKeyChange, ConnectionMode, CustomApiConfiguration, FieldEdit,
     native::{self, CredentialSource, NativeContext, NativeRead},
+    native_file::NativeFile,
 };
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
@@ -14,6 +15,29 @@ pub fn write(
     key: &ApiKeyChange,
     generated_catalog: Option<&Value>,
 ) -> Result<bool> {
+    write_with_saved_environment(
+        context,
+        current,
+        desired,
+        edits,
+        key,
+        generated_catalog,
+        context,
+    )
+    .map(|written| !written.is_empty())
+}
+
+/// Only Save may remove Rovai-owned environment entries. Validate official selection
+/// against the environment that will remain after the same save commits.
+pub(crate) fn write_with_saved_environment(
+    context: &NativeContext,
+    current: &NativeRead,
+    desired: &CustomApiConfiguration,
+    edits: &[FieldEdit],
+    key: &ApiKeyChange,
+    generated_catalog: Option<&Value>,
+    saved_environment: &NativeContext,
+) -> Result<Vec<(NativeFile, Option<Vec<u8>>)>> {
     let official = desired.mode() == Some(ConnectionMode::OfficialLogin);
     let key = if official { &ApiKeyChange::Keep } else { key };
     key.validate()?;
@@ -29,24 +53,18 @@ pub fn write(
         && !changed("defaultRowId")
         && key.is_keep()
     {
-        return Ok(false);
+        return Ok(Vec::new());
     }
     let path = context.path();
-    let before = native::read_bytes(&path)?;
+    let file = NativeFile::read(&path)?;
     // Re-read after conflict resolution and immediately before constructing the native patch.
     ensure!(
         native::read(context, current.configuration.mode())?.revision == current.revision,
         "原生配置在保存期间又发生变化；草稿已保留，请再次保存以合并最新字段。"
     );
-    ensure!(
-        !path
-            .symlink_metadata()
-            .is_ok_and(|m| m.file_type().is_symlink()),
-        "原生配置是符号链接，请在实际来源编辑，避免替换链接。"
-    );
     let mut credential_patch: Option<(std::path::PathBuf, Option<Vec<u8>>, Vec<u8>)> = None;
     let bytes = if official {
-        official_configuration(context, current, &mut credential_patch)?
+        official_configuration(context, current, &mut credential_patch, saved_environment)?
     } else {
         match desired {
             CustomApiConfiguration::ClaudeCode {
@@ -93,7 +111,7 @@ pub fn write(
                     ApiKeyChange::Keep => {}
                     ApiKeyChange::Replace { value } => {
                         let variable = current.source.claude_variable();
-                        doc["env"][variable] = json!(value);
+                        doc["env"][variable] = json!(value.trim());
                         let other = if variable == "ANTHROPIC_API_KEY" {
                             "ANTHROPIC_AUTH_TOKEN"
                         } else {
@@ -127,91 +145,115 @@ pub fn write(
                     .get("profile")
                     .and_then(toml_edit::Item::as_str)
                     .map(str::to_owned);
-                let provider_id = if current.provider_id == "openai" {
+                let connection_changed = changed("baseUrl")
+                    || !key.is_keep()
+                    || current.configuration.mode() != desired.mode();
+                let provider_id = if connection_changed && current.provider_id == "openai" {
                     "rovai_custom"
                 } else {
                     current.provider_id.as_str()
                 };
-                let provider_path = ["model_providers", provider_id];
-                let provider = table(&mut doc, &provider_path)?;
-                if current.provider_id == "openai" {
-                    set(provider, "name", toml_edit::value("Rovai custom API"));
-                }
-                if changed("baseUrl") || current.provider_id == "openai" {
-                    set(provider, "base_url", toml_edit::value(base_url));
-                }
-                set(provider, "wire_api", toml_edit::value("responses"));
-                match key {
-                    ApiKeyChange::Keep => {
-                        // An existing auth.json/keyring source stays runtime-owned. Never copy its value.
-                        if current.provider_id == "openai" {
-                            match &current.source {
-                                CredentialSource::Environment { name } => {
-                                    set(provider, "env_key", toml_edit::value(name));
-                                    set(provider, "requires_openai_auth", toml_edit::value(false));
-                                }
-                                CredentialSource::Missing => {
-                                    set(
-                                        provider,
-                                        "env_key",
-                                        toml_edit::value("ROVAI_UNCONFIGURED_API_KEY"),
-                                    );
-                                    set(provider, "requires_openai_auth", toml_edit::value(false));
-                                }
-                                CredentialSource::NativeManaged { .. } => {
-                                    ensure!(
-                                        !changed("baseUrl")
-                                            || desired.base_url()
-                                                == current.configuration.base_url(),
-                                        "当前凭据由 Codex 原生系统管理，尚无法确认其为 API Key；更换接口地址时请填写新 Key，或先在原生配置中绑定该接口。已有连接仍可直接复用。"
-                                    );
-                                    set(provider, "requires_openai_auth", toml_edit::value(true));
-                                }
-                                _ => {
-                                    set(provider, "requires_openai_auth", toml_edit::value(true));
+                if connection_changed {
+                    let provider_path = ["model_providers", provider_id];
+                    let provider = table(&mut doc, &provider_path)?;
+                    if current.provider_id == "openai" {
+                        set(provider, "name", toml_edit::value("Rovai custom API"));
+                    }
+                    if changed("baseUrl") || current.provider_id == "openai" {
+                        set(provider, "base_url", toml_edit::value(base_url));
+                    }
+                    set(provider, "wire_api", toml_edit::value("responses"));
+                    match key {
+                        ApiKeyChange::Keep => {
+                            // An existing auth.json/keyring source stays runtime-owned. Never copy its value.
+                            if current.provider_id == "openai" {
+                                match &current.source {
+                                    CredentialSource::Environment { name } => {
+                                        set(provider, "env_key", toml_edit::value(name));
+                                        set(
+                                            provider,
+                                            "requires_openai_auth",
+                                            toml_edit::value(false),
+                                        );
+                                    }
+                                    CredentialSource::Missing => {
+                                        set(
+                                            provider,
+                                            "env_key",
+                                            toml_edit::value("ROVAI_UNCONFIGURED_API_KEY"),
+                                        );
+                                        set(
+                                            provider,
+                                            "requires_openai_auth",
+                                            toml_edit::value(false),
+                                        );
+                                    }
+                                    CredentialSource::NativeManaged { .. } => {
+                                        ensure!(
+                                            !changed("baseUrl")
+                                                || desired.base_url()
+                                                    == current.configuration.base_url(),
+                                            "当前凭据由 Codex 原生系统管理，尚无法确认其为 API Key；更换接口地址时请填写新 Key，或先在原生配置中绑定该接口。已有连接仍可直接复用。"
+                                        );
+                                        set(
+                                            provider,
+                                            "requires_openai_auth",
+                                            toml_edit::value(true),
+                                        );
+                                    }
+                                    _ => {
+                                        set(
+                                            provider,
+                                            "requires_openai_auth",
+                                            toml_edit::value(true),
+                                        );
+                                    }
                                 }
                             }
                         }
-                    }
-                    ApiKeyChange::Replace { value } => {
-                        // Native inline bearer is a supported provider source; no shell or auth.json mutation.
-                        provider.remove("env_key");
-                        set(
-                            provider,
-                            "experimental_bearer_token",
-                            toml_edit::value(value),
-                        );
-                        set(provider, "requires_openai_auth", toml_edit::value(false));
-                    }
-                    ApiKeyChange::Clear => {
-                        ensure!(
-                            current.credential.can_clear,
-                            "此凭据由原生认证管理；请在原生来源清除，或输入新 Key 替换当前连接。"
-                        );
-                        if let CredentialSource::Json {
-                            path: auth_path,
-                            pointer,
-                            ..
-                        } = &current.source
-                        {
-                            ensure!(pointer == "/OPENAI_API_KEY", "此原生凭据字段无法安全清除。");
-                            let original = native::read_bytes(auth_path)?;
-                            let mut auth = native::read_json(auth_path)?;
-                            auth.as_object_mut()
-                                .ok_or_else(|| anyhow::anyhow!("原生认证文件格式无效。"))?
-                                .remove("OPENAI_API_KEY");
-                            let mut updated = serde_json::to_vec_pretty(&auth)?;
-                            updated.push(b'\n');
-                            credential_patch = Some((auth_path.clone(), original, updated));
+                        ApiKeyChange::Replace { value } => {
+                            // Native inline bearer is a supported provider source; no shell or auth.json mutation.
+                            provider.remove("env_key");
+                            set(
+                                provider,
+                                "experimental_bearer_token",
+                                toml_edit::value(value.trim()),
+                            );
+                            set(provider, "requires_openai_auth", toml_edit::value(false));
                         }
-                        provider.remove("experimental_bearer_token");
-                        // A required, unset reference prevents falling back to a saved official account.
-                        set(
-                            provider,
-                            "env_key",
-                            toml_edit::value("ROVAI_UNCONFIGURED_API_KEY"),
-                        );
-                        set(provider, "requires_openai_auth", toml_edit::value(false));
+                        ApiKeyChange::Clear => {
+                            ensure!(
+                                current.credential.can_clear,
+                                "此凭据由原生认证管理；请在原生来源清除，或输入新 Key 替换当前连接。"
+                            );
+                            if let CredentialSource::Json {
+                                path: auth_path,
+                                pointer,
+                                ..
+                            } = &current.source
+                            {
+                                ensure!(
+                                    pointer == "/OPENAI_API_KEY",
+                                    "此原生凭据字段无法安全清除。"
+                                );
+                                let original = native::read_bytes(auth_path)?;
+                                let mut auth = native::read_json(auth_path)?;
+                                auth.as_object_mut()
+                                    .ok_or_else(|| anyhow::anyhow!("原生认证文件格式无效。"))?
+                                    .remove("OPENAI_API_KEY");
+                                let mut updated = serde_json::to_vec_pretty(&auth)?;
+                                updated.push(b'\n');
+                                credential_patch = Some((auth_path.clone(), original, updated));
+                            }
+                            provider.remove("experimental_bearer_token");
+                            // A required, unset reference prevents falling back to a saved official account.
+                            set(
+                                provider,
+                                "env_key",
+                                toml_edit::value("ROVAI_UNCONFIGURED_API_KEY"),
+                            );
+                            set(provider, "requires_openai_auth", toml_edit::value(false));
+                        }
                     }
                 }
                 // Select within the active profile where native precedence requires it.
@@ -220,7 +262,9 @@ pub fn write(
                 } else {
                     doc.as_table_mut()
                 };
-                set(target, "model_provider", toml_edit::value(provider_id));
+                if connection_changed {
+                    set(target, "model_provider", toml_edit::value(provider_id));
+                }
                 if changed("codexModels") {
                     let catalog = generated_catalog
                         .ok_or_else(|| anyhow::anyhow!("模型目录尚未生成，原配置未被修改。"))?;
@@ -255,39 +299,31 @@ pub fn write(
             }
         }
     };
-    ensure!(
-        native::read_bytes(&path)? == before,
-        "原生文件在写入前发生变化；草稿已保留，请再次保存。"
-    );
+    file.unchanged()?;
+    let mut credential_file = None;
     if let Some((auth_path, before, after)) = &credential_patch {
+        let auth = NativeFile::read(auth_path)?;
         ensure!(
-            native::read_bytes(auth_path)? == *before
-                && !auth_path
-                    .symlink_metadata()
-                    .is_ok_and(|m| m.file_type().is_symlink()),
+            auth.matches(before)?,
             "原生凭据来源在保存期间变化，草稿已保留。"
         );
-        crate::platform::private_storage::atomic_write_private_bytes(auth_path, after)
-            .map_err(|_| anyhow::anyhow!("无法更新原生 API 凭据字段；请检查文件权限。"))?;
+        auth.write(after)
+            .map_err(|error| anyhow::anyhow!("无法更新原生 API 凭据字段；草稿已保留：{error:#}"))?;
+        credential_file = Some(auth);
     }
-    let write = crate::platform::private_storage::atomic_write_private_bytes(&path, &bytes);
-    if write.is_err() {
-        if let Some((auth_path, before, after)) = credential_patch {
-            ensure!(
-                native::read_bytes(&auth_path)? == Some(after),
-                "保存失败，原生凭据又被外部修改；未覆盖外部变化，请检查原生来源。"
-            );
-            if let Some(original) = before {
-                crate::platform::private_storage::atomic_write_private_bytes(&auth_path, &original)
-                    .map_err(|_| anyhow::anyhow!("保存失败且凭据回退失败，请检查原生文件权限。"))?;
-            }
+    if let Err(error) = file.write(&bytes) {
+        if let (Some(auth), Some((_, _, after))) = (credential_file, credential_patch) {
+            auth.restore(&Some(after))?;
         }
-        anyhow::bail!(
-            "保存原生配置失败；请检查文件权限。草稿已保留：{}",
-            path.display()
-        );
+        anyhow::bail!("保存原生配置失败；草稿已保留：{error:#}");
     }
-    Ok(true)
+    // Retain precisely our published bytes for database-failure rollback. Reading
+    // them back here could capture a subsequent external edit as if it were ours.
+    let mut written = vec![(file, Some(bytes))];
+    if let (Some(auth), Some((_, _, after))) = (credential_file, credential_patch) {
+        written.push((auth, Some(after)));
+    }
+    Ok(written)
 }
 
 type CredentialPatch = Option<(std::path::PathBuf, Option<Vec<u8>>, Vec<u8>)>;
@@ -297,6 +333,7 @@ fn official_configuration(
     context: &NativeContext,
     current: &NativeRead,
     credential_patch: &mut CredentialPatch,
+    saved_environment: &NativeContext,
 ) -> Result<Vec<u8>> {
     if context.kind == crate::agent_profile::AdapterKind::ClaudeCodeCli {
         let mut doc = native::read_json(&context.path())?;
@@ -346,7 +383,7 @@ fn official_configuration(
             ] {
                 // Native settings.env can mask an inherited shell value. This is
                 // a saved native setting, never a per-execution environment patch.
-                if context.env(name).is_some_and(|v| !v.is_empty()) {
+                if saved_environment.env(name).is_some_and(|v| !v.is_empty()) {
                     env.insert(name.into(), json!(""));
                 } else {
                     env.remove(name);
@@ -373,7 +410,7 @@ fn official_configuration(
     );
     for name in ["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"] {
         ensure!(
-            !context.env(name).is_some_and(|v| !v.is_empty()),
+            !saved_environment.env(name).is_some_and(|v| !v.is_empty()),
             "当前连接使用环境变量 {}，无法通过原生配置文件停用；请在启动该程序的环境中移除该覆盖后重试。草稿已保留。",
             name
         );
@@ -433,15 +470,15 @@ fn official_configuration(
 fn table<'a>(
     document: &'a mut toml_edit::DocumentMut,
     keys: &[&str],
-) -> Result<&'a mut toml_edit::Table> {
-    let mut current = document.as_table_mut();
+) -> Result<&'a mut dyn toml_edit::TableLike> {
+    let mut current: &mut dyn toml_edit::TableLike = document.as_table_mut();
     for key in keys {
         if !current.contains_key(key) {
-            current.insert(key, toml_edit::Item::Table(toml_edit::Table::new()));
+            current.insert(key, toml_edit::value(toml_edit::InlineTable::new()));
         }
         current = current
             .get_mut(key)
-            .and_then(toml_edit::Item::as_table_mut)
+            .and_then(toml_edit::Item::as_table_like_mut)
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Codex 原生字段 {} 不是可编辑配置表；请保留当前草稿并修复原生结构。",
@@ -471,7 +508,7 @@ pub fn set_at(value: &mut Value, path: &[String], next: Value) -> Result<()> {
     Ok(())
 }
 
-fn set(table: &mut toml_edit::Table, name: &str, mut item: toml_edit::Item) {
+fn set(table: &mut dyn toml_edit::TableLike, name: &str, mut item: toml_edit::Item) {
     if let Some(old) = table.get(name).and_then(toml_edit::Item::as_value) {
         if old.to_string() == item.to_string() {
             return;

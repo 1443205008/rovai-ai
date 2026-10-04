@@ -14,6 +14,7 @@ pub mod claude_native;
 pub mod codex_catalog;
 pub mod native;
 pub mod native_edit;
+pub(crate) mod native_file;
 mod native_resource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,6 +201,7 @@ impl ApiKeyChange {
     }
     pub fn validate(&self) -> Result<()> {
         if let Self::Replace { value } = self {
+            let value = value.trim();
             ensure!(
                 !value.is_empty()
                     && value.len() <= 8192

@@ -147,7 +147,7 @@ fn configuration_rejects_ambiguous_connections_and_preserves_optional_models() {
         models.push(models[0].clone());
     }
     assert!(codex.validate(AdapterKind::CodexCli).is_err());
-    for value in ["", "********", "bad\nkey"] {
+    for value in ["", "********", "bad\nkey", "  ***** \n", " \t \r\n"] {
         assert!(
             ApiKeyChange::Replace {
                 value: value.into()
@@ -156,6 +156,11 @@ fn configuration_rejects_ambiguous_connections_and_preserves_optional_models() {
             .is_err()
         );
     }
+    ApiKeyChange::Replace {
+        value: " \t trimmed-key \r\n".into(),
+    }
+    .validate()
+    .unwrap();
     assert!(serde_json::from_value::<CustomApiConfiguration>(json!({"kind":"grok-build","enabled":false,"baseUrl":"","model":"","apiKey":"never-store-me"})).is_err());
     assert!(
         serde_json::from_value::<RuntimeStartupConfiguration>(
@@ -549,6 +554,164 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
                 .any(|e| e.edit.path == ["nativeRevision"])
         );
     }
+    // Official Save owns removal of old private startup entries, including a
+    // referenced provider key. Read and preparation cannot remove them early.
+    for kind in [AdapterKind::ClaudeCodeCli, AdapterKind::CodexCli] {
+        let context = native::NativeContext::resolve(
+            kind,
+            &RuntimeStartupConfiguration::default(),
+            db.path(),
+        )
+        .unwrap();
+        let key_name = if kind == AdapterKind::CodexCli {
+            "LEGACY_RELAY_KEY"
+        } else {
+            "ANTHROPIC_AUTH_TOKEN"
+        };
+        let base_name = if kind == AdapterKind::CodexCli {
+            "OPENAI_BASE_URL"
+        } else {
+            "ANTHROPIC_BASE_URL"
+        };
+        let mut environment = vec![
+            RuntimeEnvironmentVariable {
+                name: key_name.into(),
+                value: "legacy-private-key".into(),
+            },
+            RuntimeEnvironmentVariable {
+                name: base_name.into(),
+                value: "https://legacy.example".into(),
+            },
+            RuntimeEnvironmentVariable {
+                name: "KEEP_ME".into(),
+                value: "ordinary".into(),
+            },
+        ];
+        if kind == AdapterKind::ClaudeCodeCli {
+            environment.push(RuntimeEnvironmentVariable {
+                name: "CLAUDE_CODE_OAUTH_TOKEN".into(),
+                value: "official-private-token".into(),
+            });
+            std::fs::write(
+                context.path(),
+                br#"{"permissions":{"defaultMode":"default"},"model":"api-model"}"#,
+            )
+            .unwrap();
+        } else {
+            environment.push(RuntimeEnvironmentVariable {
+                name: "OPENAI_API_KEY".into(),
+                value: "legacy-fallback-key".into(),
+            });
+            std::fs::write(context.path(), b"model_provider='relay'\nmodel_providers={relay={base_url='https://legacy.example',env_key='LEGACY_RELAY_KEY'},other={name='keep'}}\n").unwrap();
+            std::fs::write(context.directory.join("auth.json"), br#"{"auth_mode":"apikey","OPENAI_API_KEY":"file-api-key","tokens":{"access_token":"official-token","refresh_token":"official-refresh"}}"#).unwrap();
+        }
+        let legacy = RuntimeStartupConfiguration {
+            environment,
+            ..Default::default()
+        };
+        let revision = runtime_startup::load(&db, kind).unwrap().revision;
+        runtime_startup::save(&mut db, kind, revision, legacy, 6).unwrap();
+        let auth_path = context.directory.join("auth.json");
+        #[cfg(unix)]
+        for path in std::iter::once(context.path())
+            .chain((kind == AdapterKind::CodexCli).then_some(auth_path.clone()))
+        {
+            let target = path.with_extension("native-target");
+            std::fs::rename(&path, &target).unwrap();
+            std::os::unix::fs::symlink(target.file_name().unwrap(), &path).unwrap();
+        }
+        let before = std::fs::read(context.path()).unwrap();
+        let auth_before = native::read_bytes(&auth_path).unwrap();
+        let saved = runtime_startup::load(&db, kind).unwrap();
+        let public = serde_json::to_string(&runtime_startup::public(saved.clone())).unwrap();
+        assert!(
+            !public.contains("legacy-private-key") && !public.contains("official-private-token")
+        );
+        let edits = vec![FieldEdit {
+            path: vec!["mode".into()],
+            before: json!("custom_api"),
+            after: json!("official_login"),
+            label: String::new(),
+        }];
+        let prepared =
+            runtime_startup::prepare_save(&db, kind, edits.clone(), &ApiKeyChange::Keep).unwrap();
+        assert!(
+            !prepared
+                .configuration
+                .environment
+                .iter()
+                .any(|e| e.name == key_name || e.name == base_name || e.name == "OPENAI_API_KEY")
+        );
+        assert!(
+            runtime_startup::load(&db, kind)
+                .unwrap()
+                .configuration
+                .environment
+                .iter()
+                .any(|e| e.name == key_name)
+        );
+        assert_eq!(std::fs::read(context.path()).unwrap(), before);
+        db.connection().execute_batch("CREATE TRIGGER reject_legacy_clear BEFORE INSERT ON runtime_startup_setting BEGIN SELECT RAISE(FAIL, 'isolated failure'); END;").unwrap();
+        assert!(
+            runtime_startup::commit_save(&mut db, kind, prepared, 7, ApiKeyChange::Keep, None)
+                .is_err()
+        );
+        assert_eq!(std::fs::read(context.path()).unwrap(), before);
+        assert_eq!(native::read_bytes(&auth_path).unwrap(), auth_before);
+        assert!(
+            runtime_startup::load(&db, kind)
+                .unwrap()
+                .configuration
+                .environment
+                .iter()
+                .any(|e| e.name == key_name)
+        );
+        db.connection()
+            .execute_batch("DROP TRIGGER reject_legacy_clear;")
+            .unwrap();
+        let prepared =
+            runtime_startup::prepare_save(&db, kind, edits, &ApiKeyChange::Keep).unwrap();
+        let saved =
+            runtime_startup::commit_save(&mut db, kind, prepared, 8, ApiKeyChange::Keep, None)
+                .unwrap();
+        assert_eq!(
+            saved.configuration.custom_api.as_ref().unwrap().mode(),
+            Some(ConnectionMode::OfficialLogin)
+        );
+        assert!(
+            saved
+                .configuration
+                .environment
+                .iter()
+                .any(|e| e.name == "KEEP_ME")
+        );
+        assert!(
+            !saved
+                .configuration
+                .environment
+                .iter()
+                .any(|e| e.name == key_name || e.name == base_name || e.name == "OPENAI_API_KEY")
+        );
+        if kind == AdapterKind::ClaudeCodeCli {
+            assert!(saved.configuration.environment.iter().any(|e| e.name
+                == "CLAUDE_CODE_OAUTH_TOKEN"
+                && e.value == "official-private-token"));
+        } else {
+            let auth = native::read_json(&auth_path).unwrap();
+            assert!(auth.get("OPENAI_API_KEY").is_none());
+            assert_eq!(auth["tokens"]["refresh_token"], "official-refresh");
+        }
+        #[cfg(unix)]
+        for path in std::iter::once(context.path())
+            .chain((kind == AdapterKind::CodexCli).then_some(auth_path.clone()))
+        {
+            assert!(
+                path.symlink_metadata().unwrap().file_type().is_symlink(),
+                "both commit and rollback preserve native links"
+            );
+        }
+    }
+
     // Optional native observation cannot turn an unreadable source into a new execution gate.
     db.connection().execute(
         "UPDATE runtime_startup_setting SET configuration_json=?1 WHERE runtime_kind='codex-cli'",
@@ -1011,6 +1174,148 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         .snapshot(&context, false);
     assert!(maintained.model_is_configured("custom-b"));
     assert!(!maintained.model_is_configured("custom-a"));
+
+    // Native TOML tables and inline tables are equivalent; edit only selected
+    // fields without converting or dropping unrelated profile/provider content.
+    for (index, tables) in [
+        "model_providers={relay={base_url='https://inline.example',env_key='RELAY_KEY',query_params={version='v1'}},other={name='untouched'}}\nprofiles={work={model_provider='relay',model='a',unknown='keep'},other={model='leave'}}\n",
+        "[model_providers]\nrelay={base_url='https://inline.example',env_key='RELAY_KEY',query_params={version='v1'}}\nother={name='untouched'}\n[profiles]\nwork={model_provider='relay',model='a',unknown='keep'}\nother={model='leave'}\n",
+    ].iter().enumerate() {
+        let mut inline = context.clone();
+        inline.directory = root.join(format!("inline-{index}"));
+        private_storage::atomic_write_private_bytes(&inline.path(), format!("# retain comment\nprofile='work'\n{tables}").as_bytes()).unwrap();
+        let read = native::read(&inline, None).unwrap();
+        let mut desired = read.configuration.clone();
+        if let CustomApiConfiguration::Codex { base_url, default_model, .. } = &mut desired {
+            *base_url = "https://edited.example/prefix".into();
+            *default_model = "b".into();
+        }
+        let edits = ["baseUrl", "defaultRowId"].map(|name| FieldEdit { path: vec![name.into()], before: Value::Null, after: Value::Null, label: String::new() });
+        native_edit::write(&inline, &read, &desired, &edits, &ApiKeyChange::Replace { value: " \t padded-key \r\n".into() }, None).unwrap();
+        let text = std::fs::read_to_string(inline.path()).unwrap();
+        assert!(text.starts_with("# retain comment"));
+        let doc: toml::Value = toml::from_str(&text).unwrap();
+        assert_eq!(doc["model_providers"]["relay"]["experimental_bearer_token"].as_str(), Some("padded-key"));
+        assert_eq!(doc["model_providers"]["relay"]["query_params"]["version"].as_str(), Some("v1"));
+        assert_eq!(doc["model_providers"]["other"]["name"].as_str(), Some("untouched"));
+        assert_eq!(doc["profiles"]["work"]["unknown"].as_str(), Some("keep"));
+        assert_eq!(doc["profiles"]["work"]["model"].as_str(), Some("b"));
+        assert_eq!(doc["profiles"]["other"]["model"].as_str(), Some("leave"));
+        let read = native::read(&inline, None).unwrap();
+        desired.set_mode(Some(ConnectionMode::OfficialLogin));
+        native_edit::write(&inline, &read, &desired, &[FieldEdit { path: vec!["mode".into()], before: json!("custom_api"), after: json!("official_login"), label: String::new() }], &ApiKeyChange::Keep, None).unwrap();
+        let doc: toml::Value = toml::from_str(&std::fs::read_to_string(inline.path()).unwrap()).unwrap();
+        assert_eq!(doc["profiles"]["work"]["model_provider"].as_str(), Some("openai"));
+        assert_eq!(doc["profiles"]["work"]["unknown"].as_str(), Some("keep"));
+        assert_eq!(doc["profiles"]["other"]["model"].as_str(), Some("leave"));
+    }
+    // An unrecognized native credential mechanism does not authorize rebuilding
+    // the existing provider or inserting an unset Key reference during model edits.
+    let mut opaque = context.clone();
+    opaque.directory = root.join("opaque-credential");
+    opaque.environment = BTreeMap::from([("HOME".into(), root.to_string_lossy().into_owned())]);
+    private_storage::atomic_write_private_bytes(
+        &opaque.path(),
+        b"openai_base_url='https://opaque.example'\nmodel='a'\nfuture_auth='native-source'\n",
+    )
+    .unwrap();
+    let read = native::read(&opaque, None).unwrap();
+    assert_eq!(read.credential.status, "missing");
+    let mut desired = read.configuration.clone();
+    if let CustomApiConfiguration::Codex { default_model, .. } = &mut desired {
+        *default_model = "b".into();
+    }
+    native_edit::write(
+        &opaque,
+        &read,
+        &desired,
+        &[FieldEdit {
+            path: vec!["defaultRowId".into()],
+            before: Value::Null,
+            after: Value::Null,
+            label: String::new(),
+        }],
+        &ApiKeyChange::Keep,
+        None,
+    )
+    .unwrap();
+    let doc = native::read_toml(&opaque.path()).unwrap();
+    assert_eq!(doc["model"].as_str(), Some("b"));
+    assert_eq!(doc["future_auth"].as_str(), Some("native-source"));
+    assert!(doc.get("model_providers").is_none() && doc.get("model_provider").is_none());
+    // An external shell Key remains external: official Save reports it and leaves
+    // native bytes intact rather than attempting an execution-time override.
+    opaque
+        .environment
+        .insert("OPENAI_API_KEY".into(), "external-key".into());
+    let read = native::read(&opaque, None).unwrap();
+    desired.set_mode(Some(ConnectionMode::OfficialLogin));
+    let before = std::fs::read(opaque.path()).unwrap();
+    let error = native_edit::write(
+        &opaque,
+        &read,
+        &desired,
+        &[FieldEdit {
+            path: vec!["mode".into()],
+            before: json!("custom_api"),
+            after: json!("official_login"),
+            label: String::new(),
+        }],
+        &ApiKeyChange::Keep,
+        None,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("OPENAI_API_KEY") && !error.contains("external-key"));
+    assert_eq!(std::fs::read(opaque.path()).unwrap(), before);
+    #[cfg(unix)]
+    {
+        use super::native_file::NativeFile;
+        use std::os::unix::fs::PermissionsExt;
+        let linked = root.join("linked-config");
+        let first = root.join("first-target");
+        let second = root.join("second-target");
+        std::fs::write(&first, b"before").unwrap();
+        std::fs::write(&second, b"before").unwrap();
+        std::os::unix::fs::symlink(first.file_name().unwrap(), &linked).unwrap();
+        let file = NativeFile::read(&linked).unwrap();
+        std::fs::remove_file(&linked).unwrap();
+        std::os::unix::fs::symlink(second.file_name().unwrap(), &linked).unwrap();
+        assert!(
+            file.write(b"must-not-write").is_err(),
+            "retargeting conflicts even when bytes match"
+        );
+        assert_eq!(std::fs::read(&first).unwrap(), b"before");
+        assert_eq!(std::fs::read(&second).unwrap(), b"before");
+        let shared = root.join("shared-dotfiles");
+        std::fs::create_dir(&shared).unwrap();
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let missing = shared.join("missing-target");
+        let dangling = root.join("dangling-link");
+        std::os::unix::fs::symlink(missing.strip_prefix(&root).unwrap(), &dangling).unwrap();
+        NativeFile::read(&dangling).unwrap().write(b"new").unwrap();
+        assert!(
+            dangling
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read(&missing).unwrap(), b"new");
+        assert_eq!(
+            std::fs::metadata(&shared).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(
+            std::fs::metadata(&missing).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let written = NativeFile::read(&dangling).unwrap();
+        written.write(b"our-write").unwrap();
+        std::fs::write(&missing, b"external-write").unwrap();
+        assert!(written.restore(&Some(b"our-write".to_vec())).is_err());
+        assert_eq!(std::fs::read(&missing).unwrap(), b"external-write");
+    }
 
     let claude = native::NativeContext {
         kind: AdapterKind::ClaudeCodeCli,

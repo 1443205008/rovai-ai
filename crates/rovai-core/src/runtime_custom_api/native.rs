@@ -773,7 +773,8 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
         None
     };
     let revision = canonical_json_digest(
-        &json!({"configuration":configuration, "credential":credential.version, "native":evidence}),
+        &json!({"configuration":configuration, "credential":credential.version, "native":evidence,
+            "target":super::native_file::target(&path)?}),
     )?;
     let connection_revision = connection_revision(
         context,

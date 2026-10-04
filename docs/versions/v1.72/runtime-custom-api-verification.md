@@ -83,13 +83,35 @@ python3 scripts/smoke-runtime-custom-api.py --claude /absolute/claude --codex /a
 - Codex 常见包装入口通过实际启动入口的本地 `debug models --bundled` 读取；无资源 SHA 或版本号白名单。
   已有完整目录的小改不依赖重新扫描程序。未知模型的兼容默认值来自原生实现，不标为真实能力验证。
 - `ANTHROPIC_REASONING_MODEL` 可保存、清空并由原生配置进入进程；不能据此宣称目标 Claude 实际识别了该兼容字段。
-- 若 Codex 当前进程环境中仍有会抢占官方路径的 `OPENAI_API_KEY`、`CODEX_API_KEY` 或 `OPENAI_BASE_URL`，
+- Rovai 历史启动环境中的当前 API Key 与地址覆盖在官方保存时直接移除，保留 OAuth 和无关变量，不再隐藏后要求用户自行查找。
+  若移除 Rovai 自有项后，Codex 的外部继承环境仍有会抢占官方路径的 `OPENAI_API_KEY`、`CODEX_API_KEY` 或 `OPENAI_BASE_URL`，
   保存官方选择会指出来源及移除覆盖的处理办法，保留草稿；不在每次启动屏蔽变量，也不退出账号。
   已知强制 API 登录策略同样在保存时报告，未绕过组织策略；原生未知身份不新增运行门槛。
 - 原生系统凭据继续由 CLI 消费。不可见来源的状态不等于已登录；普通环境引用可通过输入新 Key 替换连接，
   不强制迁移原来源。Codex 不明类型系统凭据切到新地址时需绑定该地址或输入新 Key，避免发送官方 token 到未知接口。
 - Codex 的原生 HTTP 栈没有把 Proxy-Authorization 发到 origin；验证的是代理凭据配置保留与不误拦截，未声称真实代理认证成功。
 - 保存成功只表示原生写回完成，相关 Rovai 实例按既有机制重连；对共享原生配置的外部会话不承诺无影响。
+
+## 可用性修复验收（2026-10-05）
+
+在同一任务 worktree 和既有测试 owner 中补齐以下回归，无新增表单、提示、探活或执行时认证覆盖：
+
+| 场景 | 结果与证据 |
+| --- | --- |
+| 旧启动环境的隐藏 Key → 官方保存 | SQLite owner 覆盖 Claude 静态 Key、Codex 标准 Key 及当前 provider 的任意 env 引用；准备阶段无写入，成功时删除自有 API 环境，OAuth 与普通环境保留 |
+| 原生或数据库提交失败 | 同一 owner 注入数据库发布失败，原生配置和 auth 文件恢复旧内容，启动环境保留；重试可成功，草稿不丢 |
+| 凭据回显未识别时编辑模型 | 原生 owner 保留未知认证字段与现有 provider，不插入未配置 Key 引用；正式 React 组件分别以 missing／invalid_reference 状态保存 Claude 模型和 Codex 显示名称，无需新 Key |
+| 新 Key 带首尾空白 | Renderer 请求与原生保存均仅写入去除首尾空白后的值；空值、内部控制字符和掩码仍拒绝 |
+| 符号链接目标 | 原生配置、Codex auth 的相对符号链接正常写入与回退，链接保留；目标被改指即使字节相同也冲突；可写的缺失目标可创建，Unix 已有父目录权限不变、新文件为 0600 |
+| TOML 内联表 | 顶层内联 model_providers／profiles，以及普通表内的内联 provider／profile，均支持地址、Key、默认模型和官方保存；查询参数、未知字段、其他 profile 及注释保留 |
+| 外部 shell 覆盖 | 不修改系统环境；仍阻止官方路径的变量返回具体名称，文件保持原状，错误不含 Key |
+
+定向 `runtime_custom_api` 仍为 5 项通过，草稿 Vitest 仍为 3 项；Electron owner 通过，目录为
+`/private/tmp/rovai-api-usability-ui-b1winj`，使用独立 `user-data` 与其下 `managed-skill-library`。
+界面验收覆盖原有草稿往返、放弃、错误／冲突恢复，并新增未知凭据模型编辑及 Key 空白处理；没有保存提醒。
+实际 Claude Code 2.1.280、Codex 0.159.2 重新运行本地假服务验收，目录
+`/private/tmp/rovai-api-usability-native-20261005`。两种 CLI 均通过，Codex auto 文件回退也通过；
+地址前缀、查询参数、认证方式、Key 轮换和恢复继续符合上面的原生调用记录，没有真实订阅请求。
 
 ## 测试准入与退役
 

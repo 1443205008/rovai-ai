@@ -34,6 +34,7 @@ export function startupEdits(saved: RuntimeStartupSettings, draft: RuntimeStartu
 
 // The editing session retains the whole draft; only the final selected mode is submitted.
 export function startupSubmission(saved: RuntimeStartupSettings, draft: RuntimeStartupConfiguration, key: RuntimeApiKeyChange): { edits: FieldEdit[]; apiKey: RuntimeApiKeyChange } {
+  if (key.action === 'replace') key = { action: 'replace', value: key.value.trim() }
   const all = startupEdits(saved, draft, key)
   if (draft.customApi?.mode !== 'official_login') {
     // An external switch must not silently discard API edits or apply them to official mode.
@@ -54,7 +55,7 @@ export function nativeConnectionChange(saved: RuntimeStartupSettings, draft: Run
   return edits.length ? edits : null
 }
 
-export function customApiError(draft: RuntimeStartupConfiguration, key: RuntimeApiKeyChange, credential: NativeCredential | undefined, requireModelList = true): string | null {
+export function customApiError(draft: RuntimeStartupConfiguration, key: RuntimeApiKeyChange, credential: NativeCredential | undefined, requireModelList = true, requireCredential = true): string | null {
   const api = draft.customApi ? normalizedCustomApi(draft.customApi) : null
   if (api?.mode === 'official_login') return null
   if (key.action === 'replace' && credential?.canReplace === false) return [credential.sourceLabel, credential.restriction, credential.remedy].filter(Boolean).join('。')
@@ -66,7 +67,7 @@ export function customApiError(draft: RuntimeStartupConfiguration, key: RuntimeA
     if (!['https:', 'http:'].includes(url.protocol) || !url.hostname || url.username || url.password || url.hash) throw new Error()
   } catch { return '请输入有效的 HTTP 或 HTTPS 地址，且不要在地址中包含账号或密码。' }
   // Explicit removal is savable; the resulting missing-credential state remains visible.
-  if (key.action === 'keep' && !reusableCredential(credential)) return '当前连接没有可复用的凭据，请填写 API Key 或修复原生凭据来源。'
+  if (requireCredential && key.action === 'keep' && !reusableCredential(credential)) return '当前连接没有可复用的凭据，请填写 API Key 或修复原生凭据来源。'
   if (key.action === 'replace' && !key.value.trim()) return '请输入 API Key。'
   if (api.kind === 'codex-cli' && requireModelList) {
     if (!api.models.length || api.models.some((model) => !model.id)) return '请至少添加一个模型，并填写每个模型 ID。'

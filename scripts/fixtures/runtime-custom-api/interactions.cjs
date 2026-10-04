@@ -103,6 +103,24 @@ module.exports=async({window,run,click,settle,waitFor,navigate,capture,noOverflo
  await input('.runtime-api-model-row input[aria-label="模型 ID 2"]','model-b');
  await click('[data-model-row="two"] input[type=radio]');await click('[data-model-row="one"] button');await click(save)
  assert.equal(await run("window.settingsTest.state.startup['codex-cli'].configuration.customApi.models.length"),1)
+ // A native credential projection is advisory for model-only editing. Unknown
+ // sources must not force users to replace a working native connection's Key.
+ for(const [kind,status,selector] of [
+  ['claude-code-cli','missing','.runtime-custom-api-fields > label input:not([type])'],
+  ['codex-cli','invalid_reference','[data-model-row="one"] input[aria-label="显示名称 1"]']
+ ]) {
+  await navigate();await run(`window.settingsTest.reset(${JSON.stringify(kind)});window.settingsTest.state.startup[${JSON.stringify(kind)}].credential.status=${JSON.stringify(status)}`)
+  await navigate(kind);await waitFor('document.querySelector("input[type=url]")')
+  await input(selector,'native-model-edit');await click(save)
+  assert.equal(await run('window.settingsTest.requests.at(-1).params.apiKey.action'),'keep')
+  assert.equal(await run(`window.settingsTest.state.startup[${JSON.stringify(kind)}].revision`),1,'model edit is saved without a new Key')
+  assert.equal(await run(`window.settingsTest.state.startup[${JSON.stringify(kind)}].credential.status`),status)
+  await input('input[type=url]','https://different.example/prefix');await click(save)
+  assert.ok((await text()).includes('当前连接没有可复用的凭据'),'a changed connection still validates its credential source')
+  await input('.runtime-custom-api-key-input input',' \t replacement-key \r\n');await click(save)
+  assert.equal(await run('window.settingsTest.requests.at(-1).params.apiKey.value'),'replacement-key','replacement trims only surrounding whitespace')
+  assert.equal(await run('document.querySelector(".runtime-custom-api-key-input input").value'),'','saved replacement leaves no sensitive draft')
+ }
  for(const theme of ['day','night']){await run(`document.documentElement.dataset.theme=${JSON.stringify(theme)}`);await settle();await noOverflow(theme);await capture('codex-'+theme)}
  window.setContentSize(520,920);await settle();await noOverflow('compact');await capture('codex-compact')
  await navigate();await run(`window.settingsTest.state.failure='runtime.startup.get'`);await navigate('claude-code-cli');await waitFor('document.querySelector(".runtime-native-read-error")');await click('.runtime-native-read-error button');await waitFor('document.querySelector("input[type=url]")')

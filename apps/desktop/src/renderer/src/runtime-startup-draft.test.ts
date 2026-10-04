@@ -35,6 +35,9 @@ describe('startup editor draft contract', () => {
     expect(customApiError(inherited, key, credential, false)).toBeNull()
     expect(customApiError(inherited, key, credential, true)).toContain('至少添加一个模型')
     expect(customApiError(draft, key, undefined)).toContain('API Key')
+    for (const status of ['missing', 'invalid_reference'] as const) {
+      expect(customApiError(draft, key, { ...credential, status }, true, false)).toBeNull()
+    }
     expect(customApiError(draft, { action: 'clear' }, credential)).toBeNull()
     expect(customApiError({ ...draft, customApi: { ...draft.customApi, models: [draft.customApi.models[0]] } }, key, credential)).toContain('默认模型')
     expect(customApiError({ ...draft, customApi: { ...draft.customApi, models: [draft.customApi.models[0], draft.customApi.models[0]] } }, key, credential)).toContain('重复')
@@ -53,6 +56,7 @@ describe('startup editor draft contract', () => {
     expect(customApiError(official, { action: 'replace', value: 'bad key\n' }, { ...credential, canReplace: false })).toBeNull()
     const saved: RuntimeStartupSettings = { runtimeKind: 'codex-cli', revision: 1, configuration: draft, credential, nativeRevision: 'native-1', connectionObservation: null, connectionReadError: null, reconnectRequired: false, nativeWritten: false }
     const keyDraft = { action: 'replace', value: 'memory-only-key' } as const
+    expect(startupSubmission(saved, draft, { action: 'replace', value: ' \t padded-key \r\n' }).apiKey).toEqual({ action: 'replace', value: 'padded-key' })
     const submission = startupSubmission(saved, official, keyDraft)
     expect(submission.apiKey).toEqual({ action: 'keep' })
     expect(submission.edits.map(edit => edit.path[0])).toEqual(['mode', 'nativeRevision'])
