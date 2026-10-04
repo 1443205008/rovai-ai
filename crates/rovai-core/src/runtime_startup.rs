@@ -161,7 +161,9 @@ fn read_settings(database: &Database, kind: AdapterKind) -> Result<RuntimeStartu
         let read = native::NativeContext::resolve(kind, &configuration, database.path())
             .and_then(|context| native::read(&context, mode).map(|read| (context, read)));
         match read {
-            Ok((context, read)) => {
+            Ok((context, mut read)) => {
+                read.observation.login_command =
+                    context.login_command(configuration.program_path.as_deref());
                 if mode.is_some() || read.configuration.enabled() {
                     configuration.custom_api_snapshot =
                         Some(read.snapshot(&context, mode.is_some()));
@@ -444,7 +446,14 @@ pub fn prepare_save(
                     )
                 }))
         {
-            api.validate(kind)?;
+            let list_edited = edits
+                .iter()
+                .any(|e| matches!(e.path[0].as_str(), "codexModels" | "defaultRowId"));
+            let inherited_api = current
+                .connection_observation
+                .as_ref()
+                .is_some_and(|o| o.initial_mode == Some(ConnectionMode::CustomApi));
+            api.validate_model_list(kind, list_edited || !inherited_api)?;
         }
     }
     Ok(PreparedSave {
@@ -483,7 +492,7 @@ pub fn commit_save(
     prepared: PreparedSave,
     search_generation: u64,
     key: ApiKeyChange,
-    executable: Option<&Path>,
+    generated_catalog: Option<&serde_json::Value>,
 ) -> Result<RuntimeStartupSettings> {
     ensure!(prepared.conflicts.is_empty(), "请先处理字段冲突。");
     let current = load_record(database.connection(), kind)?;
@@ -529,8 +538,14 @@ pub fn commit_save(
         } else {
             None
         };
-        native_written =
-            native_edit::write(&context, &read, desired, &prepared.edits, &key, executable)?;
+        native_written = native_edit::write(
+            &context,
+            &read,
+            desired,
+            &prepared.edits,
+            &key,
+            generated_catalog,
+        )?;
         if native_written {
             native_rollback.push((context.path(), before, native::read_bytes(&context.path())?));
             if let Some((path, before)) = credential_before {
@@ -656,14 +671,24 @@ pub fn resolve_draft(
     let mut snapshot = read.snapshot(&context, mode.is_some());
     snapshot.preview = true;
     if let Some(mut api) = configuration.custom_api.clone() {
-        api.validate(kind)?;
+        let list_edited =
+            crate::runtime_custom_api::codex_catalog::models_changed(&read.configuration, &api);
+        api.validate_model_list(
+            kind,
+            list_edited || read.observation.initial_mode != Some(ConnectionMode::CustomApi),
+        )?;
+        if crate::runtime_custom_api::codex_catalog::model_ids_changed(&read.configuration, &api) {
+            if let CustomApiConfiguration::Codex { models, .. } = &api {
+                snapshot.configured_model_ids = Some(models.iter().map(|m| m.id.clone()).collect());
+            }
+        }
         snapshot.configuration = api;
     }
     if let ApiKeyChange::Replace { value } = change {
         snapshot.draft_key = Some(value);
         if kind == AdapterKind::ClaudeCodeCli {
             snapshot.credential_source = native::CredentialSource::Environment {
-                name: "ANTHROPIC_AUTH_TOKEN".into(),
+                name: snapshot.credential_source.claude_variable().into(),
             };
         }
     } else if matches!(change, ApiKeyChange::Clear) {

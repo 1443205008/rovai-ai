@@ -37,7 +37,7 @@ export function nativeConnectionChange(saved: RuntimeStartupSettings, draft: Run
   return edits.length ? edits : null
 }
 
-export function customApiError(draft: RuntimeStartupConfiguration, key: RuntimeApiKeyChange, credential: NativeCredential | undefined): string | null {
+export function customApiError(draft: RuntimeStartupConfiguration, key: RuntimeApiKeyChange, credential: NativeCredential | undefined, requireModelList = true): string | null {
   const api = draft.customApi ? normalizedCustomApi(draft.customApi) : null
   if (key.action === 'replace' && credential?.canReplace === false) return [credential.sourceLabel, credential.restriction, credential.remedy].filter(Boolean).join('。')
   if (key.action === 'clear' && credential?.canClear === false) return `无法在此清除 ${credential.sourceLabel}。${credential.remedy ?? '请在该原生来源处理。'}`
@@ -50,7 +50,7 @@ export function customApiError(draft: RuntimeStartupConfiguration, key: RuntimeA
   // Explicit removal is savable; the resulting missing-credential state remains visible.
   if (key.action === 'keep' && !reusableCredential(credential)) return '当前连接没有可复用的凭据，请填写 API Key 或修复原生凭据来源。'
   if (key.action === 'replace' && !key.value.trim()) return '请输入 API Key。'
-  if (api.kind === 'codex-cli') {
+  if (api.kind === 'codex-cli' && requireModelList) {
     if (!api.models.length || api.models.some((model) => !model.id)) return '请至少添加一个模型，并填写每个模型 ID。'
     if (new Set(api.models.map((model) => model.id)).size !== api.models.length) return '模型 ID 不能重复。'
     if (!api.defaultRowId || !api.models.some((model) => model.rowId === api.defaultRowId)) return '请选择一个默认模型。'

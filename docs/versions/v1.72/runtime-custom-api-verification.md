@@ -60,11 +60,13 @@ python3 scripts/smoke-runtime-custom-api.py --claude /absolute/claude --codex /a
 
 - 上述为实际 CLI 对本地假服务的配置交付实测，不是对真实中转的能力、工具或账号有效性证明。
 - `ANTHROPIC_REASONING_MODEL` 的保存与进程注入可验证；目标 Claude 是否真正识别它不能由此推出。
-- Codex 目录生成依据所选 0.159.2 二进制内嵌资源及对应原生 fallback。其他资源、版本或不可读取资源的包装程序
-  需要 adapter 适配；原有原生配置无需先生成新目录即可读取复用。
+- Codex 优先经实际启动入口读取 `debug models --bundled`，兼容包装入口；不再有资源 SHA 或版本号白名单。
+  已有完整条目的简单编辑不依赖二进制读取。未知模型采用 adapter 中有来源标注的原生兼容默认值，
+  当前 fallback 来源仍是 0.159.2 原生实现，不表示所有未来 schema 或真实接口能力已验证。
 - 未使用真实 OAuth 账号测试登录／刷新。原生账号路径和冲突隔离通过本地元数据处理，不新增 OAuth 生命周期。
   Codex auth.json 只存 API Key 而无法无损选择 OAuth 的情况明确拒绝切换，保留凭据。
-- Claude 原生系统凭据未提供可只读确认的登录状态时显示“未确认”，不把没有 Key 显示为已登录。
+- Claude 原生系统凭据未提供可靠身份时显示“由原生 CLI 管理，尚未确认”，不把没有 Key 显示为已登录。
+  已有 auth status 返回官方身份时可短时回显；未新增钥匙串扫描或认证探活。
 - 原生辅助凭据／系统钥匙串继续交给 CLI 消费；未做真实系统凭据或刷新实测。API Key 与既有认证请求头冲突时
   明确报出原生来源，停止该连接，不自动改写请求头或尝试其他账号。非认证请求头按原配置保留。
 - 只有官方 OAuth 登录不算已有 API Key。Codex 内置 provider 的系统凭据类型尚不能离线确定时，
@@ -79,3 +81,35 @@ python3 scripts/smoke-runtime-custom-api.py --claude /absolute/claude --codex /a
 同一修改退出四 Runtime 私存草稿及 Key GC 合同，对应旧测试由原生读取/字段写回/无副本测试替代；
 URL 闭集、掩码、输出脱敏、权限、路径逃逸和不可变文件的有效边界保留。Kimi/Grok 新表单测试退出，原有 Adapter 测试保留。
 原有原生 Smoke owner 收敛到两种 Runtime 并覆盖新来源，不增加在线服务的用户准入门槛。
+
+## PR #632 兼容回归修正
+
+按源码审查修复继承默认模型形成允许名单、简单编辑重建已有元数据、资源指纹硬限制及包装入口读取失败。
+Claude 静态 Key 替换保留认证变量，官方 OAuth 环境令牌保留且在私有输出边界脱敏；补齐顶层主模型来源和登录命令。
+主线更新基线为 `b2c9c976`；原有草稿、字段合并、清除语义和两个简单表单保留。
+
+定向单测扩展既有配置 parser、原生来源/写回及目录 patch owner，覆盖默认项不重写目录、名称/ID 修改保留完整条目、
+原生默认不限制成员模型、静态 Key 两种认证方式（文件/环境）、顶层模型清空、官方 OAuth 和原生身份提示。
+新增的 `selected_wrapper_reads_local_catalog_without_resource_fingerprints` 独立拥有子进程入口和输出解析合同；
+原纯目录转换测试无法证明实际启动了包装器并保留 `--bundled`。它使用隔离 shell 夹具，不启动真实 Runtime 或请求网络。
+最低成本命令仍为 `cargo test -p rovai-core --features extended-tests --lib runtime_custom_api`。
+
+本轮隔离目录为 `/private/tmp/rovai-api-review-20261004-02`，生产界面夹具使用 `ui/user-data` 与
+`ui/user-data/managed-skill-library`，不运行 Core；原生夹具位于 `final-native`。结果：
+
+- 默认 Rust workspace：455 passed／1 既有 ignored；原生连接 owner 5 项、启动设置 2 项、运行检查竞争 3 项、
+  profile/binding 1 项均通过。目录资源改变使用新的内容修订文件，旧文件保持不变。
+- 完整 `pnpm test`：237 个 Vitest 文件／2587 项，Node 334 passed／2 平台 skipped；`pnpm typecheck`、
+  `pnpm build:desktop`、格式检查与三项通用文档门禁通过。
+- Electron 生产组件：原有草稿/冲突/密钥/稳定行/日夜主题/窄屏场景通过；增加自定义登录命令、明确的未知登录状态、
+  复制成功/失败和窄窗口换行。剪贴板在隔离夹具中模拟，不覆盖本机剪贴板；未把它当作系统剪贴板兼容实测。
+- macOS arm64：Claude Code 2.1.280 对 loopback 假服务验证 Bearer 与 X-Api-Key 替换、顶层主模型写回、原生请求头，
+  并用固定假 OAuth 环境令牌验证官方路径保留输入及原生状态（不向官方发模型请求，不证明 token 有效）。
+- Codex 0.159.2 经 shell 包装入口读取完整本地目录；首次继承默认 A 时、未保存即成功执行另一个未知 ID；
+  保存模型名称时保留外部目录的 8192 上下文、纯文本输入、关闭 reasoning summary 及未知字段，并成功加载/执行。
+  默认模型、地址和 Key 轮换、新旧进程、会话恢复及官方目录恢复均通过。资源内容变化的单测无 SHA 白名单，
+  不是对第二个真实 Codex 版本的实测。
+
+同步主线后，完整 Node 测试发现 `create-configured-camp` 夹具仍期待旧 `camps.*` RPC；已同步为现行
+`threads.*`／`thread.messages.send`，保留原 Composer 与回执断言，未修改协作执行代码。
+真实中转、真实 OAuth 登录/刷新、真实钥匙串、其他平台及其他实际 CLI 版本仍未实测；这些边界不会变成版本封禁。

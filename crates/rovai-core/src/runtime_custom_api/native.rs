@@ -101,6 +101,111 @@ impl NativeContext {
             self.environment.get(name).cloned()
         }
     }
+    pub fn login_command(&self, program: Option<&str>) -> String {
+        let claude = self.kind == AdapterKind::ClaudeCodeCli;
+        let binary = if claude { "claude" } else { "codex" };
+        let variable = if claude {
+            "CLAUDE_CONFIG_DIR"
+        } else {
+            "CODEX_HOME"
+        };
+        let home = self
+            .env(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            .map(PathBuf::from)
+            .or_else(dirs::home_dir);
+        let custom_directory = home.is_none_or(|home| {
+            self.directory != home.join(if claude { ".claude" } else { ".codex" })
+        });
+        login_command(
+            binary,
+            program,
+            custom_directory.then_some((variable, self.directory.to_string_lossy().as_ref())),
+            cfg!(windows),
+        )
+    }
+}
+
+pub(super) fn login_command(
+    binary: &str,
+    program: Option<&str>,
+    directory: Option<(&str, &str)>,
+    windows: bool,
+) -> String {
+    let quote = |value: &str| {
+        if windows {
+            format!("'{}'", value.replace('\'', "''"))
+        } else {
+            format!("'{}'", value.replace('\'', "'\\''"))
+        }
+    };
+    let command = program
+        .map(|path| format!("{}{}", if windows { "& " } else { "" }, quote(path)))
+        .unwrap_or_else(|| binary.into());
+    let prefix = directory
+        .map(|(name, value)| {
+            if windows {
+                format!("$env:{name}={}; ", quote(value))
+            } else {
+                format!("{name}={} ", quote(value))
+            }
+        })
+        .unwrap_or_default();
+    format!(
+        "{prefix}{command}{}",
+        if binary == "codex" { " login" } else { "" }
+    )
+}
+
+// Only the existing native auth check populates this short-lived identity hint.
+// It stores no credentials, starts no process and never participates in admission.
+type LoginHints = std::collections::BTreeMap<PathBuf, (String, std::time::Instant, String)>;
+static CLAUDE_LOGIN_HINTS: std::sync::OnceLock<std::sync::Mutex<LoginHints>> =
+    std::sync::OnceLock::new();
+fn login_evidence(directory: &Path) -> Result<String> {
+    canonical_json_digest(&json!([
+        read_bytes(&directory.join("settings.json"))?,
+        read_bytes(&directory.join(".credentials.json"))?
+    ]))
+}
+pub fn record_claude_login(payload: &Value, directory: Option<&Path>) {
+    let status = match (
+        payload["loggedIn"].as_bool(),
+        payload["authMethod"].as_str(),
+    ) {
+        (Some(true), Some("claude.ai" | "oauth_token")) => "signed_in",
+        (Some(false), Some("none")) => "signed_out",
+        _ => return, // An API check does not establish an official login identity.
+    };
+    let Some(directory) = directory.or_else(|| payload["configDirectory"].as_str().map(Path::new))
+    else {
+        return;
+    };
+    if !directory.is_absolute() {
+        return;
+    }
+    if payload["configDirectory"]
+        .as_str()
+        .is_some_and(|path| Path::new(path) != directory)
+    {
+        return;
+    }
+    let Ok(evidence) = login_evidence(directory) else {
+        return;
+    };
+    if let Ok(mut hints) = CLAUDE_LOGIN_HINTS.get_or_init(Default::default).lock() {
+        hints.retain(|_, (_, time, _)| time.elapsed() < std::time::Duration::from_secs(300));
+        hints.insert(
+            directory.to_owned(),
+            (evidence, std::time::Instant::now(), status.into()),
+        );
+    }
+}
+fn observed_claude_login(directory: &Path) -> Option<String> {
+    let evidence = login_evidence(directory).ok()?;
+    let hints = CLAUDE_LOGIN_HINTS.get()?.lock().ok()?;
+    let (old, time, status) = hints.get(directory)?;
+    (*old == evidence && time.elapsed() < std::time::Duration::from_secs(300))
+        .then(|| status.clone())
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -142,11 +247,13 @@ pub struct NativeRead {
     pub source: CredentialSource,
     pub provider_id: String,
     pub catalog_path: Option<PathBuf>,
+    pub configured_model_ids: Option<Vec<String>>,
 }
 impl NativeRead {
     pub fn snapshot(&self, context: &NativeContext, explicit_mode: bool) -> CustomApiSnapshot {
         CustomApiSnapshot {
             configuration: self.configuration.clone(),
+            configured_model_ids: self.configured_model_ids.clone(),
             context: context.clone(),
             native_revision: self.revision.clone(),
             credential_version: self.credential.version.clone(),
@@ -339,16 +446,25 @@ pub fn read(context: &NativeContext, selected: Option<ConnectionMode>) -> Result
         let base_url = get("ANTHROPIC_BASE_URL");
         let native_api = !base_url.is_empty() || !matches!(source, CredentialSource::Missing);
         let login = read_json(&context.directory.join(".credentials.json"))?;
-        let login_status = if login["claudeAiOauth"]["accessToken"]
-            .as_str()
-            .is_some_and(|v| !v.is_empty())
+        let observed_login = observed_claude_login(&context.directory);
+        let login_status = if !get("CLAUDE_CODE_OAUTH_TOKEN").is_empty()
+            || login["claudeAiOauth"]["accessToken"]
+                .as_str()
+                .is_some_and(|v| !v.is_empty())
         {
             "signed_in"
         } else {
-            "unknown"
+            observed_login.as_deref().unwrap_or("unknown")
         };
         let models = ClaudeApiModels {
-            model: get("ANTHROPIC_MODEL"),
+            model: {
+                let model = get("ANTHROPIC_MODEL");
+                if model.is_empty() {
+                    settings["model"].as_str().unwrap_or_default().into()
+                } else {
+                    model
+                }
+            },
             reasoning_model: get("ANTHROPIC_REASONING_MODEL"),
             haiku_model: get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
             sonnet_model: get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
@@ -370,7 +486,7 @@ pub fn read(context: &NativeContext, selected: Option<ConnectionMode>) -> Result
             config,
             source,
             initial,
-            login_status,
+            login_status.to_owned(),
             String::new(),
             None,
             settings,
@@ -553,7 +669,7 @@ pub fn read(context: &NativeContext, selected: Option<ConnectionMode>) -> Result
             configuration,
             source,
             initial,
-            login_status,
+            login_status.to_owned(),
             provider_id,
             catalog_path,
             json!({"config": doc, "catalog": catalog, "auth": auth}),
@@ -570,6 +686,21 @@ pub fn read(context: &NativeContext, selected: Option<ConnectionMode>) -> Result
         );
     }
     let credential = credential(context, &source)?;
+    let configured_model_ids = if configuration.enabled()
+        && evidence
+            .pointer("/catalog/rovai_managed_model_list")
+            .and_then(Value::as_bool)
+            == Some(true)
+    {
+        match &configuration {
+            CustomApiConfiguration::Codex { models, .. } => {
+                Some(models.iter().map(|m| m.id.clone()).collect())
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
     let revision = canonical_json_digest(
         &json!({"configuration":configuration, "credential":credential.version, "native":evidence}),
     )?;
@@ -580,11 +711,13 @@ pub fn read(context: &NativeContext, selected: Option<ConnectionMode>) -> Result
             initial_mode,
             login_status: login_status.into(),
             conflict: None,
+            login_command: context.login_command(None),
         },
         revision,
         source,
         provider_id,
         catalog_path,
+        configured_model_ids,
     })
 }
 pub fn row_id(id: &str) -> Result<String> {

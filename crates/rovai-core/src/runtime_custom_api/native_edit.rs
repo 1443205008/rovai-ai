@@ -5,7 +5,6 @@ use super::{
 };
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
-use std::path::Path;
 
 pub fn write(
     context: &NativeContext,
@@ -13,7 +12,7 @@ pub fn write(
     desired: &CustomApiConfiguration,
     edits: &[FieldEdit],
     key: &ApiKeyChange,
-    executable: Option<&Path>,
+    generated_catalog: Option<&Value>,
 ) -> Result<bool> {
     key.validate()?;
     let changed = |name: &str| {
@@ -64,14 +63,37 @@ pub fn write(
             ];
             for ((env, value), name) in native::claude_models(models).into_iter().zip(names) {
                 if edits.iter().any(|e| e.path == ["claudeModels", name]) {
-                    doc["env"][env] = json!(value);
+                    let env_model = doc["env"][env]
+                        .as_str()
+                        .map(str::to_owned)
+                        .or_else(|| context.env(env))
+                        .unwrap_or_default();
+                    if name == "model" && env_model.is_empty() && doc["model"].is_string() {
+                        if value.is_empty() {
+                            doc.as_object_mut().unwrap().remove("model");
+                        } else {
+                            doc["model"] = json!(value);
+                        }
+                    } else {
+                        doc["env"][env] = json!(value);
+                        // Clearing the effective primary model must not resurrect a shadowed one.
+                        if name == "model" && value.is_empty() {
+                            doc.as_object_mut().unwrap().remove("model");
+                        }
+                    }
                 }
             }
             match key {
                 ApiKeyChange::Keep => {}
                 ApiKeyChange::Replace { value } => {
-                    doc["env"]["ANTHROPIC_AUTH_TOKEN"] = json!(value);
-                    doc["env"]["ANTHROPIC_API_KEY"] = json!("");
+                    let variable = current.source.claude_variable();
+                    doc["env"][variable] = json!(value);
+                    let other = if variable == "ANTHROPIC_API_KEY" {
+                        "ANTHROPIC_AUTH_TOKEN"
+                    } else {
+                        "ANTHROPIC_API_KEY"
+                    };
+                    doc["env"][other] = json!("");
                     doc["apiKeyHelper"] = json!("");
                 }
                 ApiKeyChange::Clear => {
@@ -192,18 +214,16 @@ pub fn write(
                 doc.as_table_mut()
             };
             set(target, "model_provider", toml_edit::value(provider_id));
-            if changed("codexModels") || changed("defaultRowId") {
-                let executable = executable.ok_or_else(|| {
-                    anyhow::anyhow!("生成模型目录需要当前 Codex 程序，请先选择可执行文件。")
-                })?;
-                let catalog = super::codex_catalog::generate(executable, desired)?;
-                let hash = crate::command::canonical_json_digest(&catalog)?;
+            if changed("codexModels") {
+                let catalog = generated_catalog
+                    .ok_or_else(|| anyhow::anyhow!("模型目录尚未生成，原配置未被修改。"))?;
+                let hash = crate::command::canonical_json_digest(catalog)?;
                 // Native config references a key-free catalog in the native config directory.
                 let catalog_path = context
                     .directory
                     .join("rovai-model-catalogs")
                     .join(format!("{}.json", hash.trim_start_matches("sha256:")));
-                let contents = serde_json::to_vec(&catalog)?;
+                let contents = serde_json::to_vec(catalog)?;
                 if catalog_path.exists() {
                     ensure!(
                         std::fs::read(&catalog_path)? == contents,
@@ -220,6 +240,8 @@ pub fn write(
                     "model_catalog_json",
                     toml_edit::value(catalog_path.to_string_lossy().as_ref()),
                 );
+            }
+            if changed("codexModels") || changed("defaultRowId") {
                 set(target, "model", toml_edit::value(default_model));
             }
             doc.to_string().into_bytes()

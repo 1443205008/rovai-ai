@@ -114,7 +114,7 @@ pub fn validate(
         );
     } else {
         ensure!(
-            row("Auth token").is_none()
+            row("Auth token").is_none_or(|source| source == "CLAUDE_CODE_OAUTH_TOKEN")
                 && row("API key").is_none()
                 && row("Anthropic base URL").is_none(),
             "Claude Code 官方登录仍被自定义接口或凭据覆盖。"

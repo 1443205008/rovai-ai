@@ -1763,6 +1763,9 @@
 .runtime-connection-help p { margin: 6px 0; }
 .runtime-api-help { padding-left: 170px; margin-top: 0; }
 .runtime-login-help { margin-top: 8px; }
+.runtime-login-command { display: flex; align-items: start; gap: 8px; }
+.runtime-login-command code { min-width: 0; overflow-wrap: anywhere; user-select: text; }
+.runtime-login-command button { flex-shrink: 0; }
 .runtime-connection-help code { font-size: 12px; color: var(--ink); }
 .runtime-credential-restriction { margin: 0; padding-left: 170px; color: var(--attention); font-size: 12px; line-height: 1.65; }
 .runtime-native-read-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--danger); font-size: 13px; }

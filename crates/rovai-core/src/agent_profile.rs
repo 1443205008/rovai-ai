@@ -1266,9 +1266,9 @@ impl AgentProfileService {
             installation.custom_api_model_ids =
                 crate::runtime_startup::load(database, installation.adapter_kind)?
                     .configuration
-                    .custom_api
+                    .custom_api_snapshot
                     .as_ref()
-                    .and_then(|api| api.configured_model_ids());
+                    .and_then(|api| api.configured_model_ids.clone());
             if let (Some(ids), Some(snapshot)) = (
                 &installation.custom_api_model_ids,
                 &mut installation.snapshot,
@@ -6683,6 +6683,7 @@ mod slow_tests {
         // The admission/rebind seam freezes the connection, including a frozen absence.
         // Reusing this fixture keeps executable/permission evidence identical across cases.
         let api = crate::runtime_custom_api::CustomApiSnapshot {
+            configured_model_ids: Some(vec![frozen.model.model_id.clone()]),
             configuration: crate::runtime_custom_api::CustomApiConfiguration::Codex {
                 mode: Some(crate::runtime_custom_api::ConnectionMode::CustomApi),
                 base_url: "https://old.example/prefix".into(),

@@ -370,7 +370,7 @@ impl CodexHost {
             &mut command,
         );
         if let Some(api) = &custom_api {
-            rovai_core::runtime_custom_api::codex_catalog::configure(api, &mut command)?;
+            rovai_core::runtime_custom_api::codex_catalog::configure(api, &mut command).await?;
         }
         if let Some(config) = &builtin_tools {
             config.configure_command(&mut command)?;

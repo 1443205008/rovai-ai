@@ -1,4 +1,4 @@
-//! Native catalog adaptation, qualified against Codex 0.159.2.
+//! Preserve native catalogs; new metadata comes from the actual selected entrypoint.
 //! Known metadata is read from the selected executable, never another installation/cache.
 use super::{CustomApiConfiguration, CustomApiSnapshot};
 use anyhow::{Context, Result, ensure};
@@ -6,19 +6,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use tokio::process::Command;
 
-const CATALOG_MARKER: &[u8] = b"{\n  \"models\": [";
-// Exact embedded resource in upstream rust-v0.159.2, excluding its trailing newline.
-const CATALOG_SHA256: &str = "719c75b77ed02c783263f8fe62532ecd0abc1d1ccf2c34b12e5d221d509995a1";
 const BASE_INSTRUCTIONS: &str = include_str!("codex-0.159.2-prompt.txt");
-
-fn embedded_catalog(executable: &Path) -> Result<Value> {
-    super::native_resource::embedded_json(
-        executable,
-        CATALOG_MARKER,
-        CATALOG_SHA256,
-        "Codex 0.159.2",
-    )
-}
 
 /// Mirrors models-manager/src/model_info.rs::model_info_from_slug at rust-v0.159.2.
 /// These are native compatibility defaults, not claims about a relay's capabilities.
@@ -50,57 +38,170 @@ fn fallback_model(id: &str) -> Value {
     model
 }
 
-fn adapt_catalog(mut catalog: Value, configuration: &CustomApiConfiguration) -> Result<Value> {
-    let CustomApiConfiguration::Codex {
-        models,
-        default_model,
-        ..
-    } = configuration
-    else {
+/// Patch only editor-owned fields. Hidden capability/unknown fields and internal
+/// entries retain their native values, including when an existing row changes ID.
+fn adapt_catalog(
+    mut catalog: Value,
+    current: &CustomApiConfiguration,
+    desired: &CustomApiConfiguration,
+    bundled: Option<&Value>,
+    inherited_catalog: bool,
+) -> Result<Value> {
+    let CustomApiConfiguration::Codex { models, .. } = desired else {
         anyhow::bail!("Codex 自定义 API 类型不匹配。");
     };
-    let native = catalog
-        .get_mut("models")
-        .and_then(Value::as_array_mut)
-        .context("Codex 原生目录缺少模型数组。")?;
+    let CustomApiConfiguration::Codex {
+        models: previous, ..
+    } = current
+    else {
+        anyhow::bail!("Codex 原生配置类型不匹配。");
+    };
+    super::native_resource::validate_catalog(&catalog)?;
+    let managed_list =
+        catalog["rovai_managed_model_list"] == true || model_ids_changed(current, desired);
+    let native = catalog["models"].as_array_mut().unwrap();
     let original = native.clone();
-    // Keep all native internal entries, but expose only the user's configured models.
-    for item in native.iter_mut() {
-        item["visibility"] = json!("hide");
+    // A generated first catalog contains bundled internal entries as well. Keep
+    // them, while the explicitly edited list owns what appears in the picker.
+    if !inherited_catalog && managed_list {
+        for item in native.iter_mut() {
+            item["visibility"] = json!("hide");
+        }
     }
-    for (index, model) in models.iter().enumerate() {
+    for row in previous
+        .iter()
+        .filter(|old| !models.iter().any(|m| m.row_id == old.row_id))
+    {
+        if let Some(item) = native.iter_mut().find(|item| item["slug"] == row.id) {
+            item["visibility"] = json!("hide");
+        }
+    }
+    for model in models {
+        let previous_row = previous.iter().find(|old| old.row_id == model.row_id);
+        let old_id = previous_row.map(|row| row.id.as_str()).unwrap_or(&model.id);
         let mut item = original
             .iter()
-            .find(|item| item["slug"].as_str() == Some(&model.id))
+            .find(|entry| entry["slug"] == old_id)
             .cloned()
+            .or_else(|| {
+                original
+                    .iter()
+                    .find(|entry| entry["slug"] == model.id)
+                    .cloned()
+            })
+            .or_else(|| {
+                bundled
+                    .and_then(|c| c["models"].as_array())
+                    .and_then(|entries| entries.iter().find(|entry| entry["slug"] == model.id))
+                    .cloned()
+            })
             .unwrap_or_else(|| fallback_model(&model.id));
+        item["slug"] = json!(model.id);
         item["visibility"] = json!("list");
-        item["priority"] = json!(if &model.id == default_model {
-            0
-        } else {
-            index + 1
-        });
-        item["display_name"] = json!(if model.display_name.is_empty() {
-            &model.id
-        } else {
-            &model.display_name
-        });
-        // A configured model must not advertise an unconfigured upgrade target in the picker.
-        item["upgrade"] = Value::Null;
-        if let Some(existing) = native
-            .iter_mut()
-            .find(|entry| entry["slug"] == item["slug"])
+        if previous_row.is_none_or(|old| old.display_name != model.display_name)
+            || old_id != model.id
+            || !inherited_catalog
         {
-            *existing = item;
+            item["display_name"] = json!(if model.display_name.is_empty() {
+                &model.id
+            } else {
+                &model.display_name
+            });
+        }
+        if let Some(index) = original.iter().position(|entry| entry["slug"] == old_id) {
+            native[index] = item;
         } else {
             native.push(item);
         }
     }
+    catalog["rovai_managed_model_list"] = json!(managed_list);
+    super::native_resource::validate_catalog(&catalog)?;
     Ok(catalog)
 }
 
-pub fn generate(executable: &Path, configuration: &CustomApiConfiguration) -> Result<Value> {
-    adapt_catalog(embedded_catalog(executable)?, configuration)
+pub async fn generate(
+    executable: Option<&Path>,
+    context: &super::native::NativeContext,
+    current: &super::native::NativeRead,
+    desired: &CustomApiConfiguration,
+) -> Result<Value> {
+    let existing = current
+        .catalog_path
+        .as_ref()
+        .map(|p| super::native::read_json(p))
+        .transpose()?;
+    let CustomApiConfiguration::Codex { models, .. } = desired else {
+        anyhow::bail!("Codex 连接类型不匹配。");
+    };
+    let previous = match &current.configuration {
+        CustomApiConfiguration::Codex { models, .. } => models,
+        _ => unreachable!(),
+    };
+    let needs_metadata = existing.is_none()
+        || models.iter().any(|model| {
+            let id = previous
+                .iter()
+                .find(|old| old.row_id == model.row_id)
+                .map(|old| &old.id)
+                .unwrap_or(&model.id);
+            !existing
+                .as_ref()
+                .and_then(|c| c["models"].as_array())
+                .is_some_and(|entries| entries.iter().any(|entry| entry["slug"] == *id))
+        });
+    let bundled = if needs_metadata {
+        let executable =
+            executable.context("新模型目录需要读取当前 Codex 程序的本地元数据，请先选择程序。")?;
+        Some(super::native_resource::bundled_catalog(executable, context).await?)
+    } else {
+        None
+    };
+    let base = existing
+        .clone()
+        .or_else(|| bundled.clone())
+        .context("Codex 原生目录不可用。")?;
+    adapt_catalog(
+        base,
+        &current.configuration,
+        desired,
+        bundled.as_ref(),
+        existing.is_some(),
+    )
+}
+
+pub fn models_changed(before: &CustomApiConfiguration, after: &CustomApiConfiguration) -> bool {
+    matches!((before, after), (CustomApiConfiguration::Codex { models: a, .. }, CustomApiConfiguration::Codex { models: b, .. }) if a != b)
+}
+pub fn model_ids_changed(before: &CustomApiConfiguration, after: &CustomApiConfiguration) -> bool {
+    match (before, after) {
+        (
+            CustomApiConfiguration::Codex { models: a, .. },
+            CustomApiConfiguration::Codex { models: b, .. },
+        ) => {
+            a.iter()
+                .map(|m| &m.id)
+                .collect::<std::collections::BTreeSet<_>>()
+                != b.iter()
+                    .map(|m| &m.id)
+                    .collect::<std::collections::BTreeSet<_>>()
+        }
+        _ => false,
+    }
+}
+pub(super) fn write_catalog(
+    snapshot: &CustomApiSnapshot,
+    catalog: &Value,
+) -> Result<std::path::PathBuf> {
+    // An unchanged connection can be launched by an updated runtime. Its new
+    // bundled catalog must not overwrite (or collide with) an older process's file.
+    let digest = crate::command::canonical_json_digest(catalog)?;
+    snapshot.write_artifact(
+        &format!(
+            "codex-catalog-{}.json",
+            digest.trim_start_matches("sha256:")
+        ),
+        &serde_json::to_vec(catalog)?,
+    )
 }
 
 pub fn execution_provider(snapshot: &CustomApiSnapshot) -> Result<String> {
@@ -123,7 +224,7 @@ pub fn execution_provider(snapshot: &CustomApiSnapshot) -> Result<String> {
             .collect::<String>()
     ))
 }
-pub fn configure(snapshot: &CustomApiSnapshot, command: &mut Command) -> Result<()> {
+pub async fn configure(snapshot: &CustomApiSnapshot, command: &mut Command) -> Result<()> {
     snapshot.assert_current()?;
     let CustomApiConfiguration::Codex {
         base_url,
@@ -187,13 +288,15 @@ pub fn configure(snapshot: &CustomApiSnapshot, command: &mut Command) -> Result<
         }
         // An unchanged native catalog remains authoritative. Generation occurs only for an edited draft.
         let current = super::native::read(&snapshot.context, snapshot.configuration.mode())?;
-        if current.configuration != snapshot.configuration {
+        if models_changed(&current.configuration, &snapshot.configuration) {
             let catalog = generate(
-                Path::new(command.as_std().get_program()),
+                Some(Path::new(command.as_std().get_program())),
+                &snapshot.context,
+                &current,
                 &snapshot.configuration,
-            )?;
-            let path =
-                snapshot.write_artifact("codex-catalog.json", &serde_json::to_vec(&catalog)?)?;
+            )
+            .await?;
+            let path = write_catalog(snapshot, &catalog)?;
             overrides.push(("model_catalog_json".into(), json!(path)));
         }
     } else {
@@ -216,7 +319,11 @@ pub fn configure(snapshot: &CustomApiSnapshot, command: &mut Command) -> Result<
         ));
         let native = super::native::read(&snapshot.context, snapshot.configuration.mode())?;
         if native.observation.initial_mode == Some(super::ConnectionMode::CustomApi) {
-            let catalog = embedded_catalog(Path::new(command.as_std().get_program()))?;
+            let catalog = super::native_resource::bundled_catalog(
+                Path::new(command.as_std().get_program()),
+                &snapshot.context,
+            )
+            .await?;
             let model = catalog["models"]
                 .as_array()
                 .and_then(|models| {
@@ -227,10 +334,7 @@ pub fn configure(snapshot: &CustomApiSnapshot, command: &mut Command) -> Result<
                 })
                 .and_then(|model| model["slug"].as_str())
                 .context("原生目录没有可用默认模型。")?;
-            let path = snapshot.write_artifact(
-                "codex-official-catalog.json",
-                &serde_json::to_vec(&catalog)?,
-            )?;
+            let path = write_catalog(snapshot, &catalog)?;
             overrides.push(("model_catalog_json".into(), json!(path)));
             overrides.push(("model".into(), json!(model)));
         }
@@ -437,7 +541,11 @@ mod tests {
         known["context_window"] = json!(123456);
         known["supports_search_tool"] = json!(true);
         let native = json!({"models":[known, fallback_model("native-internal")]});
-        let catalog = adapt_catalog(native, &config).unwrap();
+        let mut inherited = config.clone();
+        if let CustomApiConfiguration::Codex { models, .. } = &mut inherited {
+            models.clear();
+        }
+        let catalog = adapt_catalog(native, &inherited, &config, None, false).unwrap();
         let models = catalog["models"].as_array().unwrap();
         assert_eq!(models.len(), 3);
         assert_eq!(models[0]["context_window"], 123456);
@@ -446,11 +554,48 @@ mod tests {
         assert_eq!(models[1]["visibility"], "hide");
         assert_eq!(models[2]["supports_search_tool"], false);
         assert_eq!(models[2]["context_window"], 272000);
-        assert_eq!(models[2]["priority"], 0);
+        assert_eq!(models[2]["priority"], 99);
         assert_eq!(models[2]["display_name"], "known-but-unknown-suffix");
         assert!(
-            adapt_catalog(json!({"data":[]}), &config).is_err(),
+            adapt_catalog(json!({"data":[]}), &config, &config, None, false).is_err(),
             "model/list is not a full native catalog"
+        );
+        let mut original = catalog.clone();
+        original["vendor_extension"] = json!({"preserved": true});
+        original["models"][0]["context_window"] = json!(8192);
+        original["models"][0]["input_modalities"] = json!(["text"]);
+        original["models"][0]["supports_reasoning_summary_parameter"] = json!(false);
+        original["models"][0]["future_capability"] = json!({"declared": false});
+        original["models"][0]["upgrade"] = json!({"model": "native-internal"});
+        let mut renamed = config.clone();
+        if let CustomApiConfiguration::Codex { models, .. } = &mut renamed {
+            models[0].display_name = "Renamed".into();
+        }
+        let updated = adapt_catalog(original.clone(), &config, &renamed, None, true).unwrap();
+        let mut expected = original.clone();
+        expected["models"][0]["display_name"] = json!("Renamed");
+        assert_eq!(
+            updated, expected,
+            "a label edit must not rewrite capabilities or unknown fields"
+        );
+        if let CustomApiConfiguration::Codex { models, .. } = &mut renamed {
+            models[0].id = "custom-renamed-id".into();
+        }
+        let updated = adapt_catalog(original.clone(), &config, &renamed, None, true).unwrap();
+        expected["models"][0]["slug"] = json!("custom-renamed-id");
+        assert_eq!(
+            updated, expected,
+            "row identity retains native metadata when its ID changes"
+        );
+        let mut removed = renamed.clone();
+        if let CustomApiConfiguration::Codex { models, .. } = &mut removed {
+            models.remove(0);
+        }
+        let updated = adapt_catalog(updated, &renamed, &removed, None, true).unwrap();
+        assert_eq!(updated["models"][0]["visibility"], "hide");
+        assert_eq!(
+            updated["models"][1], original["models"][1],
+            "internal entry stays byte-for-value intact"
         );
         let provider = json!({"name":"Rovai custom API", "base_url":"https://relay.example/a?b=quoted", "env_key":"ROVAI_CUSTOM_API_KEY", "wire_api":"responses", "requires_openai_auth":false});
         let encoded = toml_value(&provider).unwrap();
@@ -460,6 +605,7 @@ mod tests {
             Some("https://relay.example/a?b=quoted")
         );
         let snapshot = CustomApiSnapshot {
+            configured_model_ids: None,
             configuration: config,
             native_revision: "fixture".into(),
             credential_version: "fixture".into(),

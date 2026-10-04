@@ -25,6 +25,9 @@ describe('startup editor draft contract', () => {
     const codex: Extract<RuntimeCustomApiConfiguration, { kind: 'codex-cli' }> = { kind: 'codex-cli', mode: 'custom_api', baseUrl: 'https://offline.invalid/prefix', models: [{ rowId: 'one', id: 'private-id', displayName: '' }, { rowId: 'two', id: 'private-id-2', displayName: '' }], defaultModel: 'private-id-2', defaultRowId: 'two' }
     const draft = { programPath: null, environment: [], customApi: { ...codex, models: [...codex.models] } }
     expect(customApiError(draft, key, credential)).toBeNull()
+    const inherited = { ...draft, customApi: { ...codex, models: [], defaultRowId: null, defaultModel: '' } }
+    expect(customApiError(inherited, key, credential, false)).toBeNull()
+    expect(customApiError(inherited, key, credential, true)).toContain('至少添加一个模型')
     expect(customApiError(draft, key, undefined)).toContain('API Key')
     expect(customApiError(draft, { action: 'clear' }, credential)).toBeNull()
     expect(customApiError({ ...draft, customApi: { ...draft.customApi, models: [draft.customApi.models[0]] } }, key, credential)).toContain('默认模型')

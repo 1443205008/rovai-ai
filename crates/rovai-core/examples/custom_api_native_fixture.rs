@@ -66,6 +66,12 @@ async fn main() -> Result<()> {
             "rovai-isolated-fake-key".into(),
         );
     }
+    if root.join("official-oauth-fixture").is_file() && kind == AdapterKind::ClaudeCodeCli {
+        environment.insert(
+            "CLAUDE_CODE_OAUTH_TOKEN".into(),
+            "fake-official-oauth-token".into(),
+        );
+    }
     let context = native::NativeContext {
         kind,
         directory,
@@ -94,7 +100,20 @@ async fn main() -> Result<()> {
             label: String::new(),
         })
         .collect::<Vec<_>>();
-    if configuration.enabled() {
+    if configuration.enabled() && !root.join("reuse-native-fixture").is_file() {
+        let catalog = if kind == AdapterKind::CodexCli {
+            Some(
+                runtime_custom_api::codex_catalog::generate(
+                    Some(executable),
+                    &context,
+                    &before,
+                    &configuration,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
         native_edit::write(
             &context,
             &before,
@@ -112,11 +131,25 @@ async fn main() -> Result<()> {
                     .into(),
                 }
             },
-            Some(executable),
+            catalog.as_ref(),
         )?;
     }
     let read = native::read(&context, configuration.mode())?;
+    // Expose only the parsed catalog path to the isolated smoke owner. No second
+    // TOML parser or credential projection is needed in the Python fixture.
+    std::fs::write(
+        root.join("catalog-path.json"),
+        serde_json::to_vec(&read.catalog_path)?,
+    )?;
     let snapshot = read.snapshot(&context, true);
+    if root.join("reuse-native-fixture").is_file() && kind == AdapterKind::CodexCli {
+        ensure!(
+            snapshot.configured_model_ids.is_none()
+                && snapshot.model_is_configured("rovai-unknown"),
+            "inherited default restricted another member model"
+        );
+    }
+
     let mut command = Command::new(executable);
     command
         .env_clear()
@@ -124,7 +157,7 @@ async fn main() -> Result<()> {
         .current_dir(root);
     match &snapshot.configuration {
         CustomApiConfiguration::Codex { .. } => {
-            runtime_custom_api::codex_catalog::configure(&snapshot, &mut command)?;
+            runtime_custom_api::codex_catalog::configure(&snapshot, &mut command).await?;
             command.args(["app-server", "--listen", "stdio://"]);
         }
         CustomApiConfiguration::ClaudeCode { .. } => {

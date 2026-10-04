@@ -386,6 +386,7 @@ export interface RuntimeConnectionObservation {
   initialMode: RuntimeConnectionMode | null
   loginStatus: 'signed_in' | 'signed_out' | 'unknown'
   conflict: string | null
+  loginCommand?: string
 }
 export interface RuntimeStartupSettings {
   runtimeKind: AdapterKind

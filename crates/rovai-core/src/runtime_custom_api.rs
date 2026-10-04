@@ -100,16 +100,14 @@ impl CustomApiConfiguration {
         };
         (!value.is_empty()).then_some(value.as_str())
     }
-    pub fn configured_model_ids(&self) -> Option<Vec<String>> {
-        if !self.enabled() {
-            return None;
-        }
-        match self {
-            Self::Codex { models, .. } => Some(models.iter().map(|row| row.id.clone()).collect()),
-            _ => None,
-        }
-    }
     pub fn validate(&mut self, kind: AdapterKind) -> Result<()> {
+        self.validate_model_list(kind, true)
+    }
+    pub fn validate_model_list(
+        &mut self,
+        kind: AdapterKind,
+        require_model_list: bool,
+    ) -> Result<()> {
         ensure!(self.kind() == kind, "连接类型与当前智能体不一致。");
         let enabled = self.enabled();
         let base_url = match self {
@@ -157,7 +155,7 @@ impl CustomApiConfiguration {
                 ..
             } => {
                 ensure!(
-                    models.len() <= 128 && (!enabled || !models.is_empty()),
+                    models.len() <= 128 && (!enabled || !require_model_list || !models.is_empty()),
                     "请至少添加一个模型，最多 128 项。"
                 );
                 let mut ids = BTreeSet::new();
@@ -177,7 +175,7 @@ impl CustomApiConfiguration {
                     .iter()
                     .find(|row| Some(&row.row_id) == default_row_id.as_ref());
                 ensure!(
-                    !enabled || selected.is_some(),
+                    !enabled || !require_model_list || selected.is_some(),
                     "请选择一个默认模型；删除默认项前请先指定新的默认项。"
                 );
                 *default_model = selected.map(|row| row.id.clone()).unwrap_or_default();
@@ -236,6 +234,7 @@ pub struct ConnectionObservation {
     pub initial_mode: Option<ConnectionMode>,
     pub login_status: String,
     pub conflict: Option<String>,
+    pub login_command: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -257,6 +256,10 @@ pub struct FieldConflict {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CustomApiSnapshot {
     pub configuration: CustomApiConfiguration,
+    /// Only a deliberately maintained native list restricts member selections.
+    /// An inherited default model is never an allowlist.
+    #[serde(default)]
+    pub configured_model_ids: Option<Vec<String>>,
     pub context: native::NativeContext,
     pub native_revision: String,
     pub credential_version: String,
@@ -293,7 +296,19 @@ impl CustomApiSnapshot {
         Ok(value)
     }
     pub fn redactor(&self) -> Result<CredentialRedactor> {
-        Ok(CredentialRedactor(self.key()?.into_iter().collect()))
+        let mut secrets: Vec<_> = self.key()?.into_iter().collect();
+        if self.context.kind == AdapterKind::ClaudeCodeCli {
+            let settings = native::read_json(&self.context.path())?;
+            if let Some(token) = settings
+                .pointer("/env/CLAUDE_CODE_OAUTH_TOKEN")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| self.context.env("CLAUDE_CODE_OAUTH_TOKEN"))
+            {
+                secrets.push(token);
+            }
+        }
+        Ok(CredentialRedactor(secrets))
     }
     pub fn assert_current(&self) -> Result<()> {
         let current = native::read(&self.context, self.configuration.mode())?;
@@ -329,8 +344,8 @@ impl CustomApiSnapshot {
     pub fn model_is_configured(&self, id: &str) -> bool {
         !self.configuration.enabled()
             || self
-                .configuration
-                .configured_model_ids()
+                .configured_model_ids
+                .as_ref()
                 .is_none_or(|ids| ids.iter().any(|value| value == id))
     }
     pub fn environment(&self) -> Result<BTreeMap<String, String>> {
@@ -367,6 +382,8 @@ impl CustomApiSnapshot {
             anyhow::bail!("连接类型不匹配。")
         };
         let mut environment = BTreeMap::<String, String>::new();
+        let inherited_api = !self.configuration.enabled()
+            && native::read(&self.context, None)?.configuration.enabled();
         for name in [
             "CLAUDE_CODE_USE_BEDROCK",
             "CLAUDE_CODE_USE_VERTEX",
@@ -376,6 +393,7 @@ impl CustomApiSnapshot {
         }
         if self.configuration.enabled() {
             environment.insert("ANTHROPIC_BASE_URL".into(), base_url.clone());
+            environment.insert("CLAUDE_CODE_OAUTH_TOKEN".into(), String::new());
             for (name, value) in native::claude_models(models) {
                 if !value.is_empty() {
                     environment.insert(name.into(), value.to_owned());
@@ -393,7 +411,6 @@ impl CustomApiSnapshot {
                 "ANTHROPIC_CUSTOM_HEADERS",
                 "ANTHROPIC_AUTH_TOKEN",
                 "ANTHROPIC_API_KEY",
-                "CLAUDE_CODE_OAUTH_TOKEN",
                 "ANTHROPIC_MODEL",
                 "ANTHROPIC_REASONING_MODEL",
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -403,10 +420,26 @@ impl CustomApiSnapshot {
                 "ANTHROPIC_FEDERATION_RULE_ID",
                 "ANTHROPIC_ORGANIZATION_ID",
             ] {
+                if !inherited_api
+                    && matches!(
+                        name,
+                        "ANTHROPIC_MODEL"
+                            | "ANTHROPIC_REASONING_MODEL"
+                            | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
+                            | "ANTHROPIC_DEFAULT_SONNET_MODEL"
+                            | "ANTHROPIC_DEFAULT_OPUS_MODEL"
+                    )
+                {
+                    continue;
+                }
                 environment.insert(name.into(), String::new());
             }
         }
         let mut settings = json!({"env": environment});
+        if inherited_api && !models.model.is_empty() {
+            // A top-level native model can also belong to the dormant API connection.
+            settings["model"] = json!("default");
+        }
         if !self.configuration.enabled()
             || !matches!(
                 self.credential_source,

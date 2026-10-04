@@ -147,6 +147,27 @@ def run(kind, executable, helper, root, base):
         (root / "claude").mkdir()
         (root / "claude/settings.json").write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:1/old", "ANTHROPIC_AUTH_TOKEN": "old-fake-key", "ANTHROPIC_MODEL": "old-model", "ANTHROPIC_CUSTOM_HEADERS":"x-rovai-fixture: preserved"}}))
     start = len(REQUESTS)
+    if kind == "codex":
+        # Existing native API needs neither an initial save nor a model allowlist.
+        path = root / "codex/config.toml"
+        original = path.read_text()
+        inherited_text = original.replace('http://127.0.0.1:1/old', base).replace('old-fake-key', FAKE_KEY)
+        inherited_text = 'model="gpt-6.1-sol"\n' + inherited_text.replace('wire_api="responses"', 'wire_api="responses"\nexperimental_bearer_token="' + FAKE_KEY + '"')
+        path.write_text(inherited_text)
+        (root / "reuse-native-fixture").touch()
+        inherited = Native(helper, executable, root, config)
+        try:
+            inherited.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
+            inherited.send({"method":"initialized","params":{}})
+            provider = inherited.rpc("config/read", {"cwd":str(root),"includeLayers":False})["config"]["model_provider"]
+            session = inherited.rpc("thread/start", {"cwd":str(root),"model":"rovai-unknown","modelProvider":provider,"approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
+            inherited.rpc("turn/start", {"threadId":session["thread"]["id"],"input":[{"type":"text","text":"Reply OK."}]})
+            assert inherited.wait(lambda f:f.get("method")=="turn/completed")["params"]["turn"]["status"] == "completed"
+            assert path.read_text() == inherited_text, "reading/using native settings must not rewrite them"
+        finally:
+            inherited.close()
+            (root / "reuse-native-fixture").unlink()
+        path.write_text(original)
     native = Native(helper, executable, root, config)
     try:
         if kind == "claude":
@@ -165,6 +186,7 @@ def run(kind, executable, helper, root, base):
             native.send({"method": "initialized", "params": {}})
             effective = native.rpc("config/read", {"cwd": str(root), "includeLayers": False})["config"]
             provider_id = effective["model_provider"]
+            assert effective["model"] == "rovai-unknown", "native default must match the selected row"
             assert provider_id.startswith("rovai_custom_")
             provider = effective["model_providers"][provider_id]
             assert provider["base_url"] == base and provider["env_key"] == "ROVAI_CUSTOM_API_KEY"
@@ -181,13 +203,29 @@ def run(kind, executable, helper, root, base):
                 assert result["params"]["turn"]["status"] == "completed", "Codex turn failed"
             # A new process resumes with the new connection; an already-running
             # different thread in the old process keeps its captured credentials.
+            native_config_path = root / "codex/config.toml"
+            config_text = native_config_path.read_text()
+            previous_catalog_path = Path(json.loads((root / "catalog-path.json").read_text()))
+            previous_catalog_bytes = previous_catalog_path.read_bytes()
+            existing_catalog = json.loads(previous_catalog_bytes)
+            existing_entry = next(m for m in existing_catalog["models"] if m["slug"] == "rovai-unknown")
+            existing_entry.update(context_window=8192, max_context_window=8192, input_modalities=["text"], supports_reasoning_summary_parameter=False, future_native_metadata={"preserved":True})
+            external_catalog_path = root / "codex/external-native-catalog.json"
+            external_catalog_path.write_text(json.dumps(existing_catalog))
+            native_config_path.write_text(config_text.replace(str(previous_catalog_path), str(external_catalog_path)))
             (root / "rotate-fixture-key").touch()
-            rotated = Native(helper, executable, root, {**config, "baseUrl": base + "/rotated"})
+            renamed_models = [{**row,"displayName":"Edited existing name"} if row["id"] == "rovai-unknown" else row for row in config["models"]]
+            rotated = Native(helper, executable, root, {**config, "models":renamed_models, "baseUrl": base + "/rotated"})
             try:
                 rotated.rpc("initialize", {"clientInfo": {"name": "rovai_fixture", "version": "1"}})
                 rotated.send({"method": "initialized", "params": {}})
                 rotated_provider = rotated.rpc("config/read", {"cwd":str(root),"includeLayers":False})["config"]["model_provider"]
                 assert rotated_provider != provider_id
+                edited_catalog_path = Path(json.loads((root / "catalog-path.json").read_text()))
+                edited_entry = next(m for m in json.loads(edited_catalog_path.read_text())["models"] if m["slug"] == "rovai-unknown")
+                assert edited_entry == {**existing_entry,"display_name":"Edited existing name"}, "a label edit must retain all native model metadata"
+                assert previous_catalog_path.read_bytes() == previous_catalog_bytes, "old runtime catalog stays immutable"
+
                 fresh = rotated.rpc("thread/start", {"cwd":str(root),"model":"rovai-unknown","modelProvider":rotated_provider,"approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
                 boundary = len(REQUESTS)
                 rotated.rpc("turn/start", {"threadId": fresh["thread"]["id"], "input": [{"type":"text","text":"Reply OK."}]})
@@ -229,6 +267,30 @@ def run(kind, executable, helper, root, base):
                 assert FAKE_KEY not in path.read_text(), "shell credentials must not be copied into a file"
             finally:
                 shell.close()
+            # Rotate an existing x-api-key connection and retain the header and top-level model source.
+            (root / "shell-credential-fixture").unlink()
+            data = json.loads(path.read_text())
+            data["env"].pop("ANTHROPIC_AUTH_TOKEN", None)
+            data["env"]["ANTHROPIC_API_KEY"] = "previous-x-api-key"
+            data["env"].pop("ANTHROPIC_MODEL", None)
+            data["model"] = "old-top-model"
+            path.write_text(json.dumps(data))
+            boundary = len(REQUESTS)
+            rotated_header = Native(helper, executable, root, config)
+            try:
+                rotated_header.control("initialize")
+                resolved, status = rotated_header.control("get_settings"), rotated_header.control("get_status")
+                rows = {row["label"]:row["value"] for section in status["sections"] for row in section["rows"]}
+                assert rows["API key"] == "ANTHROPIC_API_KEY"
+                assert resolved["applied"]["model"] == "rovai-main"
+                assert json.loads(path.read_text())["model"] == "rovai-main"
+                rotated_header.send({"type":"user","session_id":rows["Session ID"],"message":{"role":"user","content":"Reply OK."},"parent_tool_use_id":None})
+                assert not rotated_header.wait(lambda f:f.get("type")=="result").get("is_error")
+                assert REQUESTS[boundary:] and all(r["authHeader"] == "x-api-key" for r in REQUESTS[boundary:])
+            finally:
+                rotated_header.close()
+            # Fake official OAuth input only checks native status; no official request is sent.
+            (root / "official-oauth-fixture").touch()
         # Switching modes selects an official route without rewriting the dormant API key.
         config_path = root / ("claude/settings.json" if kind == "claude" else "codex/config.toml")
         native_before = config_path.read_bytes()
@@ -249,14 +311,17 @@ def run(kind, executable, helper, root, base):
                 for name in ["ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_API_KEY"]:
                     assert settings["effective"]["env"][name] == ""
                 rows = {row["label"]:row["value"] for section in status["sections"] for row in section["rows"]}
-                assert "Auth token" not in rows and "API key" not in rows and "Anthropic base URL" not in rows
+                assert rows.get("Auth token") == "CLAUDE_CODE_OAUTH_TOKEN", rows
+                assert "API key" not in rows and "Anthropic base URL" not in rows
             assert config_path.read_bytes() == native_before, "mode selection must not erase dormant API configuration"
         finally:
             official.close()
         requests = REQUESTS[start:]
         assert requests and all(r["keyMatches"] and r["path"].startswith("/custom/prefix/") for r in requests), requests
-        if kind in ["claude", "codex"]:
+        if kind == "codex":
             assert all(r["authHeader"] == "bearer" for r in requests)
+        else:
+            assert {r["authHeader"] for r in requests} == {"bearer", "x-api-key"}
         expected = {"claude": {"rovai-main"}, "codex": {"gpt-6.1-sol", "rovai-unknown"}}[kind]
         assert expected <= {r["model"] for r in requests}, requests
         assert all(r["nativeHeaderPreserved"] for r in requests)

@@ -82,6 +82,15 @@ impl Core {
                         );
                     }
                 }
+                if let Some(observation) = &mut settings.connection_observation {
+                    let context = rovai_core::runtime_custom_api::native::NativeContext::resolve(
+                        params.runtime_kind,
+                        &settings.configuration,
+                        database.path(),
+                    )?;
+                    observation.login_command =
+                        context.login_command(settings.configuration.program_path.as_deref());
+                }
                 Ok(serde_json::to_value(runtime_startup::public(settings))?)
             }
             "runtime.startup.inspect" | "runtime.startup.check" => {
@@ -182,6 +191,36 @@ impl Core {
                     .executable_path
                     .as_deref()
                     .map(std::path::Path::new);
+                // The local catalog command runs outside the database lock. The
+                // native revision is checked again by commit_save before writing.
+                let generated_catalog = if prepared
+                    .edits
+                    .iter()
+                    .any(|e| e.path.first().is_some_and(|p| p == "codexModels"))
+                {
+                    let context = {
+                        let database = self.database.lock().await;
+                        rovai_core::runtime_custom_api::native::NativeContext::resolve(
+                            kind,
+                            &configuration,
+                            database.path(),
+                        )?
+                    };
+                    let desired = configuration
+                        .custom_api
+                        .as_ref()
+                        .context("缺少 Codex 连接配置。")?;
+                    let current =
+                        rovai_core::runtime_custom_api::native::read(&context, desired.mode())?;
+                    Some(
+                        rovai_core::runtime_custom_api::codex_catalog::generate(
+                            executable, &context, &current, desired,
+                        )
+                        .await?,
+                    )
+                } else {
+                    None
+                };
                 let settings = {
                     let mut database = self.database.lock().await;
                     runtime_startup::commit_save(
@@ -190,7 +229,7 @@ impl Core {
                         prepared,
                         search.generation(),
                         params.api_key,
-                        executable,
+                        generated_catalog.as_ref(),
                     )?
                 };
                 let search =

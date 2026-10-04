@@ -53,10 +53,12 @@ HTTP 有传输风险提示。保存只做本地校验、目录构造和解析，
 
 ## 原生读写与运行接入
 
-Claude 使用实际 `CLAUDE_CONFIG_DIR`／原生 Home 下的设置、相关环境和凭据引用。新 Key 写入原生
-`env.ANTHROPIC_AUTH_TOKEN`，按 Bearer 发送；已有 `ANTHROPIC_API_KEY`、环境引用或 `apiKeyHelper` 继续按原生方式复用。
+Claude 使用实际 `CLAUDE_CONFIG_DIR`／原生 Home 下的设置、相关环境和凭据引用。替换已有静态 Key 时保留
+`ANTHROPIC_API_KEY`（X-Api-Key）或 `ANTHROPIC_AUTH_TOKEN`（Bearer）的原认证方式，包括来自环境的静态 Key；
+新配置无静态来源时默认写入原生 `env.ANTHROPIC_AUTH_TOKEN`。未替换的环境引用或 `apiKeyHelper` 继续按原生方式复用。
 五项模型分别映射 `ANTHROPIC_MODEL`、`ANTHROPIC_REASONING_MODEL`、三个
 `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`；清空字段消除对应值，不把所有家族填成主模型。
+主模型按有效 `ANTHROPIC_MODEL`、顶层 `model` 的顺序回显，编辑原有来源；清空时不复活被遮蔽的旧主模型。
 Thinking 只作兼容字段透传，不改推理强度，不把变量进入进程当成运行时实际识别。
 子进程环境和原生 `--settings` 控制连接选择；Key 不进入 argv 或派生 settings 文件。
 既有初始化中的 `get_settings/get_status` 核对有效地址、认证来源、值和模型；冲突明确失败，不尝试其他认证。
@@ -67,17 +69,30 @@ Codex 使用实际 `CODEX_HOME`、活动 profile、provider、模型目录及引
 正式子进程使用带连接身份的内部 provider，绑定地址、私有环境引用和 Responses；其标识不进入用户表单。
 `config/read` 与 thread start/resume 的返回核对实际 provider；旧接口或优先认证字段不能静默生效。
 
-修改 Codex 模型列表时，从实际选择的可执行文件读取经版本核对的完整资源。精确匹配用原生元数据，未知 ID 用目标版本
-原生 fallback，不按名称猜能力。保留内部条目，不用 model/list 响应替代完整目录。目录在原生配置目录内按内容修订生成，
-不含 Key；生成失败不修改 config.toml 指针。现有合法原生连接的读取和使用不要求先重新生成目录。
-不支持的资源／包装程序只对目录编辑报具体兼容错误，不据此建立官方模型白名单。
+原生默认模型不是允许模型集合。首次继承原生 API（有无目录均可）继续沿用既有模型发现与成员选择，
+无需首次保存；只改地址、Key、显示名称或默认项不建立限制名单。用户主动添加、删除或更改模型 ID 后，用目录中的
+`rovai_managed_model_list` 标记该列表的所有权，此时删除模型才使对应成员选择显示不可用。
+该标记及快照中的 `configuredModelIds` 为派生语义，不是用户输入字段。
+
+已有完整目录的模型条目按稳定行标识保留，名称或 ID 编辑只更新对应字段，保留能力声明、未知字段与内部条目；
+只改默认项只写原生 `model`，不重建目录。需要新增元数据时优先通过实际启动入口运行本地
+`debug models --bundled`；该命令不刷新远端模型，不是 API 探活。原生二进制无此入口时可读取其内嵌完整目录，
+不以版本号或固定资源 SHA 限制使用，不读取另一份安装或旧目录冒充新元数据。
+精确已知 ID 复用所选运行时元数据；未知 ID 使用 adapter 的原生兼容默认值，不按名称猜能力，也不宣称实际接口支持。
+目录解析和正常执行报告具体不兼容；未实测版本不自动被禁止。无法获取完整目录的错误只针对需要新建／恢复目录的操作，
+已有目录的简单编辑可独立完成。生成文件位于原生配置目录内、按内容修订、不含 Key；失败不修改 config.toml 指针，
+不覆盖旧进程可能读取的文件。`model/list` 不作为完整目录输入。
 
 ## 官方登录与兼容性
 
 官方登录与登录状态独立。Claude 复用原生 Claude 账号，Codex 复用 ChatGPT 登录；切换不删除账号，不接管 OAuth、额度或刷新。
 执行中的官方路径必须排除自定义地址和凭据，而不是把停止覆盖换个名称。原生配置及 API Key 保留待用。
 原生认证文件仅保存 API Key、而版本无法无损选择 OAuth 时明确限制；不得用可能注销原凭据的
-`forced_login_method` 强行切换。登录提示用“本机”，由用户在相应 CLI 完成操作。
+`forced_login_method` 强行切换。Claude 官方路径保留 `CLAUDE_CODE_OAUTH_TOKEN`，仅 API 路径停用它以绑定 API 凭据；
+官方 OAuth 不被当作 API Key 导入、替换或清除。纯官方配置的原生主模型继续保留。
+登录提示用“本机”，默认安装保留短命令，自定义程序／配置目录提供匹配来源的可复制命令（不含凭据）。
+登录状态可复用既有原生 `auth status` 的明确官方身份；该内存提示只短时回显、来源变化即失效，不参与资格或准入。
+没有可靠身份时显示“由原生 CLI 管理，尚未确认”，不阻止原有连接，不新增后台检查。
 
 编辑的是共享原生配置，其他 CLI／应用也可能受影响，页面一次说明作用范围。保存成功不等于热切换成功。
 连接、凭据摘要与模型目录进入既有 Host 和 binding compatibility digest；新执行重新读取，不误用旧认证进程。

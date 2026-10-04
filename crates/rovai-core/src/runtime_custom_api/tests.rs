@@ -38,6 +38,29 @@ pub(super) fn configuration(kind: AdapterKind) -> CustomApiConfiguration {
 // This parser owner retains the URL/key/closed-schema boundaries from the superseded secret-store draft.
 #[test]
 fn configuration_rejects_ambiguous_connections_and_preserves_optional_models() {
+    assert_eq!(
+        native::login_command("codex", None, None, false),
+        "codex login"
+    );
+    assert_eq!(native::login_command("claude", None, None, false), "claude");
+    assert_eq!(
+        native::login_command(
+            "codex",
+            Some("/tools/my codex"),
+            Some(("CODEX_HOME", "/my config")),
+            false
+        ),
+        "CODEX_HOME='/my config' '/tools/my codex' login"
+    );
+    assert_eq!(
+        native::login_command(
+            "claude",
+            Some("C:\\tools\\claude.exe"),
+            Some(("CLAUDE_CONFIG_DIR", "C:\\config's")),
+            true
+        ),
+        "$env:CLAUDE_CONFIG_DIR='C:\\config''s'; & 'C:\\tools\\claude.exe'"
+    );
     for kind in [AdapterKind::ClaudeCodeCli, AdapterKind::CodexCli] {
         let mut config = configuration(kind);
         config.validate(kind).unwrap();
@@ -261,8 +284,8 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
 }
 
 // File-based native precedence, comment preservation and read-only credential replacement owner.
-#[test]
-fn native_sources_keep_environment_references_and_replace_only_the_selected_connection() {
+#[tokio::test]
+async fn native_sources_keep_environment_references_and_replace_only_the_selected_connection() {
     let root = std::env::temp_dir().join(format!("rovai-native-config-{}", uuid::Uuid::new_v4()));
     let context = native::NativeContext {
         kind: AdapterKind::CodexCli,
@@ -279,6 +302,13 @@ fn native_sources_keep_environment_references_and_replace_only_the_selected_conn
     )
     .unwrap();
     let read = native::read(&context, None).unwrap();
+    assert!(read.configured_model_ids.is_none());
+    assert!(
+        read.snapshot(&context, false)
+            .model_is_configured("previously-selected-other-model"),
+        "native default is not an allowlist"
+    );
+
     assert!(matches!(
         read.source,
         native::CredentialSource::Environment { .. }
@@ -336,7 +366,9 @@ fn native_sources_keep_environment_references_and_replace_only_the_selected_conn
     let read = native::read(&context, None).unwrap();
     let snapshot = read.snapshot(&context, false);
     let mut command = tokio::process::Command::new("not-spawned");
-    codex_catalog::configure(&snapshot, &mut command).unwrap();
+    codex_catalog::configure(&snapshot, &mut command)
+        .await
+        .unwrap();
     assert!(
         !format!("{:?}", command.as_std().get_args().collect::<Vec<_>>())
             .contains("replacement-key")
@@ -359,7 +391,9 @@ fn native_sources_keep_environment_references_and_replace_only_the_selected_conn
     std::fs::write(&path, doc.to_string()).unwrap();
     let read = native::read(&context, None).unwrap();
     let mut command = tokio::process::Command::new("not-spawned");
-    codex_catalog::configure(&read.snapshot(&context, false), &mut command).unwrap();
+    codex_catalog::configure(&read.snapshot(&context, false), &mut command)
+        .await
+        .unwrap();
     assert!(
         !format!("{:?}", command.as_std().get_args().collect::<Vec<_>>())
             .contains("private-routing-tag")
@@ -378,6 +412,7 @@ fn native_sources_keep_environment_references_and_replace_only_the_selected_conn
         &read.snapshot(&context, false),
         &mut tokio::process::Command::new("not-spawned"),
     )
+    .await
     .unwrap_err()
     .to_string();
     assert!(error.contains("认证请求头") && !error.contains("unrelated-secret"));
@@ -486,6 +521,137 @@ fn native_sources_keep_environment_references_and_replace_only_the_selected_conn
         native::CredentialSource::Missing
     ));
 
+    // A full native catalog is edited without launching/scanning any executable.
+    let full = json!({"models":[
+        {"slug":"custom-a","display_name":"A","visibility":"list","context_window":4096,"input_modalities":["text"],"supports_reasoning_summary_parameter":false,"future_field":{"keep":true}},
+        {"slug":"custom-b","display_name":"B","visibility":"list","context_window":8192},
+        {"slug":"internal","display_name":"Internal","visibility":"hide","opaque":"keep"}
+    ],"native_extension":{"keep":true}});
+    let catalog_path = root.join("existing-catalog.json");
+    std::fs::write(&catalog_path, serde_json::to_vec(&full).unwrap()).unwrap();
+    let config_text = format!(
+        "model_provider='relay'\nmodel='custom-a'\nmodel_catalog_json={}\n[model_providers.relay]\nbase_url='https://relay.example'\nenv_key='RELAY_KEY'\nwire_api='responses'\n",
+        serde_json::to_string(&catalog_path).unwrap()
+    );
+    std::fs::write(&path, &config_text).unwrap();
+    let current = native::read(&context, None).unwrap();
+    assert!(
+        current.configured_model_ids.is_none(),
+        "an imported catalog is not a Rovai-maintained list"
+    );
+    let mut desired = current.configuration.clone();
+    if let CustomApiConfiguration::Codex {
+        models,
+        default_model,
+        default_row_id,
+        ..
+    } = &mut desired
+    {
+        *default_model = models[1].id.clone();
+        *default_row_id = Some(models[1].row_id.clone());
+    }
+    let default_edit = FieldEdit {
+        path: vec!["defaultRowId".into()],
+        before: Value::Null,
+        after: Value::Null,
+        label: String::new(),
+    };
+    native_edit::write(
+        &context,
+        &current,
+        &desired,
+        &[default_edit],
+        &ApiKeyChange::Keep,
+        None,
+    )
+    .unwrap();
+    let after_default = native::read(&context, None).unwrap();
+    assert_eq!(after_default.catalog_path.as_ref(), Some(&catalog_path));
+    assert_eq!(native::read_json(&catalog_path).unwrap(), full);
+    assert_eq!(
+        after_default.configuration.default_model(),
+        Some("custom-b")
+    );
+    assert!(
+        after_default
+            .snapshot(&context, false)
+            .model_is_configured("other-model")
+    );
+    if let CustomApiConfiguration::Codex { models, .. } = &mut desired {
+        models[0].display_name = "Edited name".into();
+    }
+    let generated = codex_catalog::generate(None, &context, &after_default, &desired)
+        .await
+        .unwrap();
+    let mut expected = full.clone();
+    expected["models"][0]["display_name"] = json!("Edited name");
+    expected["rovai_managed_model_list"] = json!(false);
+    assert_eq!(generated, expected);
+    let list_edit = FieldEdit {
+        path: vec!["codexModels".into()],
+        before: Value::Null,
+        after: Value::Null,
+        label: String::new(),
+    };
+    native_edit::write(
+        &context,
+        &after_default,
+        &desired,
+        &[list_edit],
+        &ApiKeyChange::Keep,
+        Some(&generated),
+    )
+    .unwrap();
+    let saved = native::read(&context, None).unwrap();
+    assert!(
+        saved
+            .snapshot(&context, false)
+            .model_is_configured("custom-b")
+    );
+    assert!(
+        saved
+            .snapshot(&context, false)
+            .model_is_configured("other-native-model"),
+        "editing a label alone must not create an allowlist"
+    );
+    assert_eq!(
+        native::read_json(saved.catalog_path.as_ref().unwrap()).unwrap(),
+        expected
+    );
+    assert_eq!(
+        native::read_json(&catalog_path).unwrap(),
+        full,
+        "old files remain immutable for running processes"
+    );
+
+    let mut removed = desired.clone();
+    if let CustomApiConfiguration::Codex { models, .. } = &mut removed {
+        models.remove(0);
+    }
+    let generated = codex_catalog::generate(None, &context, &saved, &removed)
+        .await
+        .unwrap();
+    let edit = FieldEdit {
+        path: vec!["codexModels".into()],
+        before: Value::Null,
+        after: Value::Null,
+        label: String::new(),
+    };
+    native_edit::write(
+        &context,
+        &saved,
+        &removed,
+        &[edit],
+        &ApiKeyChange::Keep,
+        Some(&generated),
+    )
+    .unwrap();
+    let maintained = native::read(&context, None)
+        .unwrap()
+        .snapshot(&context, false);
+    assert!(maintained.model_is_configured("custom-b"));
+    assert!(!maintained.model_is_configured("custom-a"));
+
     let claude = native::NativeContext {
         kind: AdapterKind::ClaudeCodeCli,
         directory: root.join("claude"),
@@ -531,5 +697,162 @@ fn native_sources_keep_environment_references_and_replace_only_the_selected_conn
         models.sonnet_model = "dormant-api-sonnet".into();
     }
     claude_native::validate(&official, &json!({"effective":official.claude_settings().unwrap(),"applied":{"model":"native-sonnet"}}), &json!({"sections":[{"rows":[]}]}), Some("sonnet")).unwrap();
+
+    // Key rotation preserves the effective authentication method, including shell sources.
+    for (index, variable) in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+        .iter()
+        .enumerate()
+    {
+        for shell in [false, true] {
+            let mut context = claude.clone();
+            context.directory = root.join(format!("rotation-{index}-{shell}"));
+            context.environment = BTreeMap::from([
+                ("HOME".into(), root.to_string_lossy().into_owned()),
+                (
+                    "CLAUDE_CODE_OAUTH_TOKEN".into(),
+                    "fake-official-oauth".into(),
+                ),
+            ]);
+            let mut native_doc = json!({"model":"top-model","env":{"ANTHROPIC_BASE_URL":"https://relay.example"},"unknown":{"keep":true}});
+            if shell {
+                context
+                    .environment
+                    .insert((*variable).into(), "old-static-key".into());
+            } else {
+                native_doc["env"][*variable] = json!("old-static-key");
+            }
+            private_storage::atomic_write_private_bytes(
+                &context.path(),
+                &serde_json::to_vec(&native_doc).unwrap(),
+            )
+            .unwrap();
+            let read = native::read(&context, None).unwrap();
+            assert_eq!(read.configuration.default_model(), Some("top-model"));
+            let mut desired = read.configuration.clone();
+            if let CustomApiConfiguration::ClaudeCode { models, .. } = &mut desired {
+                models.model = "edited-top-model".into();
+            }
+            let edit = FieldEdit {
+                path: vec!["claudeModels".into(), "model".into()],
+                before: json!("top-model"),
+                after: json!("edited-top-model"),
+                label: String::new(),
+            };
+            native_edit::write(
+                &context,
+                &read,
+                &desired,
+                &[edit.clone()],
+                &ApiKeyChange::Replace {
+                    value: "rotated-static-key".into(),
+                },
+                None,
+            )
+            .unwrap();
+            let doc = native::read_json(&context.path()).unwrap();
+            assert_eq!(doc["env"][*variable], "rotated-static-key");
+            assert_eq!(doc["model"], "edited-top-model");
+            assert!(doc["env"].get("ANTHROPIC_MODEL").is_none());
+            assert!(!doc.to_string().contains("fake-official-oauth"));
+            let read = native::read(&context, Some(ConnectionMode::OfficialLogin)).unwrap();
+            assert_eq!(read.observation.login_status, "signed_in");
+            let snap = read.snapshot(&context, true);
+            assert!(
+                snap.claude_settings().unwrap()["env"]
+                    .get("CLAUDE_CODE_OAUTH_TOKEN")
+                    .is_none()
+            );
+            let mut command = Command::new("not-spawned");
+            claude_native::configure_environment(&snap, &mut command).unwrap();
+            assert!(
+                !command
+                    .as_std()
+                    .get_envs()
+                    .any(|(name, _)| name == "CLAUDE_CODE_OAUTH_TOKEN")
+            );
+            claude_native::validate(&snap,&json!({"effective":snap.claude_settings().unwrap()}),&json!({"sections":[{"rows":[{"label":"Auth token","value":"CLAUDE_CODE_OAUTH_TOKEN"}]}]}),None).unwrap();
+            if let CustomApiConfiguration::ClaudeCode { models, .. } = &mut desired {
+                models.model.clear();
+            }
+            native_edit::write(
+                &context,
+                &read,
+                &desired,
+                &[edit],
+                &ApiKeyChange::Keep,
+                None,
+            )
+            .unwrap();
+            assert!(
+                native::read_json(&context.path())
+                    .unwrap()
+                    .get("model")
+                    .is_none()
+            );
+            assert_eq!(
+                native::read(&context, None)
+                    .unwrap()
+                    .configuration
+                    .default_model(),
+                None
+            );
+        }
+    }
+    let mut login_context = claude.clone();
+    login_context.directory = root.join("keychain-status");
+    login_context.environment.clear();
+    // Prevent this fixture from falling through to ambient process environment.
+    login_context
+        .environment
+        .insert("HOME".into(), root.to_string_lossy().into_owned());
+    assert_eq!(
+        native::read(&login_context, None)
+            .unwrap()
+            .observation
+            .login_status,
+        "unknown"
+    );
+    native::record_claude_login(
+        &json!({"loggedIn":true,"authMethod":"api_key"}),
+        Some(&login_context.directory),
+    );
+    assert_eq!(
+        native::read(&login_context, None)
+            .unwrap()
+            .observation
+            .login_status,
+        "unknown"
+    );
+    native::record_claude_login(
+        &json!({"loggedIn":true,"authMethod":"claude.ai"}),
+        Some(&login_context.directory),
+    );
+    assert_eq!(
+        native::read(&login_context, None)
+            .unwrap()
+            .observation
+            .login_status,
+        "signed_in"
+    );
+    native::record_claude_login(
+        &json!({"loggedIn":false,"authMethod":"none"}),
+        Some(&login_context.directory),
+    );
+    assert_eq!(
+        native::read(&login_context, None)
+            .unwrap()
+            .observation
+            .login_status,
+        "signed_out"
+    );
+    private_storage::atomic_write_private_bytes(&login_context.path(), b"{}\n").unwrap();
+    assert_eq!(
+        native::read(&login_context, None)
+            .unwrap()
+            .observation
+            .login_status,
+        "unknown",
+        "external config changes invalidate native identity hints"
+    );
     std::fs::remove_dir_all(root).unwrap();
 }

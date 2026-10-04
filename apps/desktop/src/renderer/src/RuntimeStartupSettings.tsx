@@ -98,7 +98,9 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     const nextErrors = runtimeEnvironmentErrors(next, health?.hostPlatform === 'windows-x64')
     setErrors(nextErrors)
     const connectionChanged = saved ? nativeConnectionChange(saved, next, apiKey) !== null : false
-    const apiError = connectionChanged ? customApiError(next, apiKey, saved?.credential ?? undefined) : null
+    const connectionEdits = saved ? nativeConnectionChange(saved, next, apiKey) : null
+    const requireModelList = saved?.connectionObservation?.initialMode !== 'custom_api' || Boolean(connectionEdits?.some(edit => ['codexModels', 'defaultRowId'].includes(edit.path[0])))
+    const apiError = connectionChanged ? customApiError(next, apiKey, saved?.credential ?? undefined, requireModelList) : null
     setError(apiError ? uiAttribute(apiError) : null)
     return Object.keys(nextErrors).length === 0 && !apiError
   }

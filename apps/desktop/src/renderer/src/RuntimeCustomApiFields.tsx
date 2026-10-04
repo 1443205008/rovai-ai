@@ -16,6 +16,7 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
 }): React.JSX.Element {
   const id = useId()
   const [revealed, setRevealed] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<string | null>(null)
   const activeApi = usesCustomApi(value)
   const keyInput = apiKey.action === 'replace' ? apiKey.value : ''
   const keyAvailable = reusableCredential(credential)
@@ -25,6 +26,7 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
       : credential?.status === 'invalid_reference' ? uiAttribute('未能读取 {0}。可填写新 Key，或修复该来源。', credential.sourceLabel)
         : '未找到可复用的凭据，请填写 API Key。'
   const loginStatus = observation?.loginStatus ?? 'unknown'
+  const loginCommand = observation?.loginCommand || (value.kind === 'claude-code-cli' ? 'claude' : 'codex login')
   return <section className="runtime-startup-section runtime-custom-api" aria-labelledby={`${id}-title`}>
     <div className="runtime-startup-section-heading"><h2 id={`${id}-title`}><UiText zh={"连接设置"} /></h2></div>
     <p className="runtime-custom-api-scope"><UiText zh={"此处修改会同步到该智能体的原生配置。其他共用这份配置的 CLI 或应用也可能受到影响。"} /></p>
@@ -39,12 +41,18 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
       {value.mode === null && <p className="runtime-custom-api-note runtime-connection-unselected"><UiText zh={"请选择连接方式。"} /></p>}
       {!activeApi && <div className="runtime-connection-login">
         <div className="runtime-connection-login-row" role="status" aria-atomic="true"><span><UiText zh={"登录状态"} /></span><span className={`runtime-login-status is-${loginStatus}`}>
-          {uiAttribute(loginStatus === 'signed_in' ? '已登录' : loginStatus === 'signed_out' ? '未登录' : '未确认')}
+          {uiAttribute(loginStatus === 'signed_in' ? '已登录' : loginStatus === 'signed_out' ? '未登录' : '由原生 CLI 管理，尚未确认')}
         </span></div>
-        <details className="runtime-connection-help runtime-login-help" open={loginStatus !== 'signed_in' || undefined}>
+        <details className="runtime-connection-help runtime-login-help" open={loginStatus === 'signed_out' || undefined}>
           <summary><UiText zh={"登录与账号操作"} /></summary>
-          {value.kind === 'claude-code-cli' ? <p><UiText zh={"在本机终端运行 "} /><code>claude</code><UiText zh={"，进入后用 "} /><code>/login</code><UiText zh={" 登录，并选择 Claude 账号。"} /></p>
-            : <p><UiText zh={"在本机终端运行 "} /><code>codex login</code><UiText zh={"，按提示完成 ChatGPT 登录。"} /></p>}
+          <p><UiText zh={"在本机终端运行："} /></p>
+          <div className="runtime-login-command"><code>{loginCommand}</code><button type="button" className="quiet-button" onClick={async () => {
+            try { await navigator.clipboard.writeText(loginCommand); setCopyStatus('已复制') }
+            catch { setCopyStatus('复制失败，请选中命令复制。') }
+          }}><UiText zh="复制命令" /></button></div>
+          {copyStatus && <p role="status">{uiAttribute(copyStatus)}</p>}
+          {value.kind === 'claude-code-cli' ? <p><UiText zh={"进入后用 "} /><code>/login</code><UiText zh={" 登录，并选择 Claude 账号。"} /></p>
+            : <p><UiText zh={"按提示完成 ChatGPT 登录。"} /></p>}
           <p><UiText zh={"登录、退出或切换账号在对应 CLI 中操作；完成后重新进入此页。此处切换连接方式不会退出账号。"} /></p>
         </details>
         {observation?.conflict && <p role="alert" className="runtime-startup-result is-warning runtime-connection-conflict">{observation.conflict}</p>}
@@ -87,7 +95,7 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
         {credential?.sourceWritable === false && credential.canReplace && <p><UiText zh={"当前来源："} />{credential.sourceLabel}<UiText zh={"。可为此连接换用新 Key；原来源不被改写。"} /></p>}
         {value.kind === 'claude-code-cli' ? <>
           <p><UiText zh={"成员选择“运行时默认”时使用主模型；成员明确指定模型时优先。清空模型字段并保存，会移除对应的原生模型覆盖。"} /></p>
-          <p><UiText zh={"推理模型用于兼容映射，不切换 Thinking；是否识别取决于 CLI 版本。新 Key 使用 Bearer 认证；已有原生凭据按其原有方式复用。"} /></p>
+          <p><UiText zh={"推理模型用于兼容映射，不切换 Thinking；是否识别取决于 CLI 版本。替换 Key 沿用原认证方式；新配置默认使用 Bearer。"} /></p>
         </> : <p><UiText zh={"成员选择“运行时默认”时使用勾选的默认模型；成员明确指定模型时优先。显示名称清空后使用模型 ID。删除默认项前须先指定另一项。"} /></p>}
       </details>
     </div>}
