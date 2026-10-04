@@ -118,3 +118,48 @@ Claude 静态 Key 替换保留认证变量，官方 OAuth 环境令牌保留且�
 覆盖宿主 PATH 缺少依赖、启动 PATH 可解析依赖的场景；原生连接 5 项和运行检查竞争 3 项再次通过。
 另在 `node-wrapper-native` 使用 `/usr/bin/env node` 包装同一 Codex 0.159.2 完整重跑上述 Codex 原生流程并通过。
 这验证 Node 包装入口及环境传递，未声称测试了所有 npm 安装布局。
+
+## PR #632 连接保留与认证语义修正
+
+本轮不增加界面字段、探活或版本白名单。Codex 执行沿用已选原生 provider，以局部原生表覆盖连接字段，
+保留 `query_params`、WebSocket 声明、请求/流重试、流空闲及 WebSocket 连接超时。原生 CLI 的 `-c` 路径不解析
+带引号的段，因此覆盖采用 TOML 表值，支持名称含点的 provider；未把查询参数和原生请求头值复制到 argv。
+未设置的可选环境请求头继续按原生语义忽略。两种 Runtime 均允许代理认证独立于模型 Key。
+
+新增的密钥变量限制按智能体分别应用，其他 Runtime 的普通环境读取、编辑和保存语义不变。保存并发修订继续
+包含完整原生内容；执行摘要仅包含当前使用的连接、凭据、目录及相关策略，忽略未使用 provider、无关 UI/MCP/Skills
+设置和未使用认证文件。官方模式下，停用 API Key 的轮换不阻断恢复。
+
+Claude 正式执行与既有检查使用同一 `Identity` 语义，读取初始化 `account` 和 `auth status` 的明确字段，
+不再读取 `get_status` 的展示行。官方订阅、OAuth 环境令牌、API Key、helper、未登录与未知身份分别处理；
+只有邮箱或字段缺失不证明已登录，也不会单独形成新版本门槛。
+
+Codex `auto` 保持原生钥匙串优先、不可用或缺失时回退文件；回退文件不被提升为覆盖钥匙串的环境 Key，
+最终身份由已有 `account/read` 返回。相关强制登录策略可能导致原生注销文件凭据时，明确报告具体冲突。
+已验证钥匙串缺失时的文件回退；未用真实钥匙串账号验证双来源同时存在的情况。
+API 模式的摘要包含可回退文件中的有效凭据版本，忽略刷新时间及被 API Key 遮蔽的旧 OAuth 信息；
+原生系统凭据保持不可见，未建立账号扫描或同步。草稿中输入替换 Key 时明确使用本次输入，不再沿用旧的
+`auto` / keyring 来源，也不在检查过程中持久化新 Key。
+
+自动验收目录为 `/private/tmp/rovai-api-compat-20261004-03`。只启动隔离原生 CLI，不启动日常 App/Core。
+同一 Claude Code 2.1.280 / Codex 0.159.2 已通过本地假服务实测：原生参数保留、独立代理认证配置、模型目录、
+新旧进程凭据、新连接恢复，以及 `auto` 使用文件 Key 完成 Responses 调用且不迁移或删除原文件。
+Smoke helper 还把实际私有响应交给正式 `validate_effective` / Claude `validate`，不只断言注入变量。
+Codex 的原生 HTTP 栈未把 Proxy-Authorization 发送到 origin；已验证配置保留与不误拦截，未把它冒充真实代理认证成功。
+
+测试扩展既有 owner，没有新增平行 Rust 测试：原生来源 owner 覆盖连接摘要与保存修订的区别、代理认证和文件回退；
+启动环境 owner 按全部 Runtime kind 覆盖显示/编辑/拒绝规则；身份 parser 覆盖字段优先级和误导展示文案。
+实际原生过程的不同失败边界继续由独立 Smoke 拥有。
+
+本轮定向原生连接 5 项、启动设置 2 项、运行检查竞争 3 项及冻结 binding 1 项通过；默认 Rust workspace
+455 passed / 1 既有 ignored。完整 `pnpm test` 为 237 个 Vitest 文件 / 2587 项、Node 334 passed / 2 平台 skipped；
+类型检查、桌面构建、Rust examples 检查、格式检查及三项通用文档门禁通过。最终原生证据在 `final-confirm`：
+Claude 直接入口与 Codex Node 包装入口均通过上述本地调用和正式配置校验，未新增第二个真实 CLI 版本的验收声明。
+
+真实官方登录往返仍为待验收项。新增显式开发验收参数 `--official-roundtrip-root`，要求预先在隔离目录完成原生
+Claude / ChatGPT 登录；顺序为官方最小回复 → loopback 假 Key 回复 → 官方最小回复，核对原身份与实际路由。
+只发送固定的 `Reply only OK. Do not use tools.`，官方调用可能消耗额度；不复制日常凭据，不输出账号信息或令牌，
+也不在产品中添加认证流程。未完成隔离登录时不得把该项记为通过。
+
+目录应为绝对路径并显式包含 `.rovai-official-login-acceptance` 标记；原生登录使用该目录的 `home`、`claude`、
+`codex` 子目录。现有 helper 和脚本的普通运行仍只使用假 Key；真实验收需额外传入该参数。

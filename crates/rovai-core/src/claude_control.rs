@@ -28,6 +28,7 @@ struct PendingPermission {
 #[derive(Default)]
 struct ControlState {
     initialized: bool,
+    native_identity: rovai_core::runtime_custom_api::claude_native::Identity,
     prompt_sent: bool,
     closed: bool,
     closing: bool,
@@ -108,6 +109,12 @@ impl ClaudeControl {
                 .map_err(anyhow::Error::msg)
         };
         (control, ready, receiver)
+    }
+
+    pub(crate) fn native_identity(
+        &self,
+    ) -> rovai_core::runtime_custom_api::claude_native::Identity {
+        self.state.lock().unwrap().native_identity.clone()
     }
 
     pub(crate) fn set_credential_redactor(
@@ -281,7 +288,9 @@ impl ClaudeControl {
                     if mode.is_some_and(|mode| mode != self.permission_mode) {
                         Err("Claude Code initialized with a different permission mode".to_string())
                     } else {
-                        self.state.lock().unwrap().initialized = true;
+                        let mut state = self.state.lock().unwrap();
+                        state.initialized = true;
+                        state.native_identity = rovai_core::runtime_custom_api::claude_native::Identity::from_initialize(&response["response"]);
                         Ok(())
                     }
                 } else {

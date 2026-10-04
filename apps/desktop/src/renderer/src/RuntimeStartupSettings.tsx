@@ -95,7 +95,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   }
 
   const validate = (next: RuntimeStartupConfiguration): boolean => {
-    const nextErrors = runtimeEnvironmentErrors(next, health?.hostPlatform === 'windows-x64')
+    const nextErrors = runtimeEnvironmentErrors(next, health?.hostPlatform === 'windows-x64', runtimeKind)
     setErrors(nextErrors)
     const connectionChanged = saved ? nativeConnectionChange(saved, next, apiKey) !== null : false
     const connectionEdits = saved ? nativeConnectionChange(saved, next, apiKey) : null

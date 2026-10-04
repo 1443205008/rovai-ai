@@ -4,6 +4,96 @@ use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use tokio::process::Command;
 
+/// Native identity fields, shared by auth status and the existing initialize
+/// response. Human-facing diagnostic sections are never authentication evidence.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Identity {
+    Official,
+    Api(String),
+    SignedOut,
+    ThirdParty,
+    #[default]
+    Unknown,
+}
+impl Identity {
+    pub fn from_auth_status(value: &Value) -> Self {
+        if value["apiProvider"]
+            .as_str()
+            .is_some_and(|v| v != "firstParty")
+        {
+            return Self::ThirdParty;
+        }
+        match (value["loggedIn"].as_bool(), value["authMethod"].as_str()) {
+            (Some(false), Some("none")) => Self::SignedOut,
+            (Some(true), Some("claude.ai" | "oauth_token")) => Self::Official,
+            (Some(true), Some("api_key" | "api_key_helper")) => value["apiKeySource"]
+                .as_str()
+                .map(|source| Self::Api(source.into()))
+                .unwrap_or(Self::Unknown),
+            (Some(true), Some("third_party")) => Self::ThirdParty,
+            _ => Self::Unknown,
+        }
+    }
+    pub fn from_initialize(value: &Value) -> Self {
+        let account = &value["account"];
+        if account["apiProvider"]
+            .as_str()
+            .is_some_and(|v| v != "firstParty")
+        {
+            return Self::ThirdParty;
+        }
+        match account["tokenSource"].as_str() {
+            Some(
+                "claude.ai"
+                | "CLAUDE_CODE_OAUTH_TOKEN"
+                | "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"
+                | "CCR_OAUTH_TOKEN_FILE",
+            ) => Self::Official,
+            Some("ANTHROPIC_AUTH_TOKEN" | "apiKeyHelper") => {
+                Self::Api(account["tokenSource"].as_str().unwrap().into())
+            }
+            // Native subscription auth omits tokenSource and supplies subscriptionType.
+            // Its value can be null; email alone is never login evidence.
+            None if account.get("subscriptionType").is_some() => Self::Official,
+            Some("none") | None => match account["apiKeySource"].as_str() {
+                Some(source) if source != "none" => Self::Api(source.into()),
+                _ if account["tokenSource"] == "none" => Self::SignedOut,
+                _ => Self::Unknown,
+            },
+            Some(source) => Self::Api(source.into()),
+        }
+    }
+    pub fn official_login_status(&self) -> Option<&'static str> {
+        match self {
+            Self::Official => Some("signed_in"),
+            Self::SignedOut => Some("signed_out"),
+            _ => None,
+        }
+    }
+}
+pub fn validate_identity(snapshot: &CustomApiSnapshot, identity: &Identity) -> Result<()> {
+    let expected = if matches!(
+        snapshot.credential_source,
+        super::native::CredentialSource::Helper { .. }
+    ) {
+        "apiKeyHelper"
+    } else {
+        snapshot.credential_source.claude_variable()
+    };
+    let matches = if snapshot.configuration.enabled() {
+        matches!(identity, Identity::Api(source) if source == expected)
+    } else {
+        matches!(identity, Identity::Official)
+    };
+    // Older native identity responses may omit optional identity metadata. The
+    // effective settings still bind routing; lack of a display hint is not a new gate.
+    ensure!(
+        matches || *identity == Identity::Unknown,
+        "Claude Code 的原生认证来源与所选连接方式不一致，请检查原生认证或组织策略。"
+    );
+    Ok(())
+}
+
 pub fn configure(snapshot: &CustomApiSnapshot, command: &mut Command) -> Result<()> {
     configure_environment(snapshot, command)?;
     let settings = snapshot.claude_settings()?;
@@ -33,13 +123,10 @@ pub fn configure_environment(snapshot: &CustomApiSnapshot, command: &mut Command
 pub fn validate(
     snapshot: &CustomApiSnapshot,
     settings: &Value,
-    status: &Value,
+    identity: &Identity,
     explicit: Option<&str>,
 ) -> Result<()> {
-    let CustomApiConfiguration::ClaudeCode {
-        models, base_url, ..
-    } = &snapshot.configuration
-    else {
+    let CustomApiConfiguration::ClaudeCode { models, .. } = &snapshot.configuration else {
         anyhow::bail!("Claude 自定义 API 类型不匹配。");
     };
     let requested = snapshot.claude_settings()?;
@@ -57,19 +144,7 @@ pub fn validate(
             name
         );
     }
-    let rows = status
-        .get("sections")
-        .and_then(Value::as_array)
-        .context("Claude Code 未报告实际认证来源。")?
-        .iter()
-        .filter_map(|section| section.get("rows").and_then(Value::as_array))
-        .flatten()
-        .collect::<Vec<_>>();
-    let row = |label: &str| {
-        rows.iter()
-            .find(|row| row["label"].as_str() == Some(label))
-            .and_then(|row| row["value"].as_str())
-    };
+    validate_identity(snapshot, identity)?;
     if snapshot.configuration.enabled() {
         let headers = native_headers(snapshot)?;
         let actual_headers = effective
@@ -89,8 +164,8 @@ pub fn validate(
             ensure!(
                 actual == Some(key.as_str())
                     || actual == Some("[redacted]")
-                    // Shell-only values are absent from get_settings. The private
-                    // status row below must still identify this injected variable.
+                    // Shell-only values are absent from get_settings; initialize
+                    // independently reports the resolved native credential source.
                     || actual.is_none()
                         && matches!(
                             snapshot.credential_source,
@@ -99,26 +174,6 @@ pub fn validate(
                 "Claude Code 原生设置覆盖了当前 Key；未继续使用其他凭据。"
             );
         }
-        let selected = row("Auth token").or_else(|| row("API key"));
-        ensure!(
-            selected == Some(source)
-                || matches!(
-                    snapshot.credential_source,
-                    super::native::CredentialSource::Helper { .. }
-                ) && selected == Some("apiKeyHelper"),
-            "Claude Code 未使用当前原生 API 凭据来源；请检查认证或组织策略冲突。"
-        );
-        ensure!(
-            row("Anthropic base URL") == Some(base_url.as_str()),
-            "Claude Code 的实际接口地址与本次配置不一致。"
-        );
-    } else {
-        ensure!(
-            row("Auth token").is_none_or(|source| source == "CLAUDE_CODE_OAUTH_TOKEN")
-                && row("API key").is_none()
-                && row("Anthropic base URL").is_none(),
-            "Claude Code 官方登录仍被自定义接口或凭据覆盖。"
-        );
     }
     let model = explicit.or_else(|| snapshot.configuration.default_model());
     let expected = match model {
@@ -162,7 +217,7 @@ fn native_headers(snapshot: &CustomApiSnapshot) -> Result<String> {
             .context("Claude Code 原生请求头格式无效，请在原生来源处理。")?;
         if matches!(
             name.trim().to_ascii_lowercase().as_str(),
-            "authorization" | "x-api-key" | "api-key" | "proxy-authorization"
+            "authorization" | "x-api-key" | "api-key"
         ) {
             ensure!(
                 key.as_ref().is_some_and(

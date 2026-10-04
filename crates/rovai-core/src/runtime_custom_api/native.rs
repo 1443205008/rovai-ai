@@ -192,13 +192,10 @@ fn login_evidence(directory: &Path) -> Result<String> {
     ]))
 }
 pub fn record_claude_login(payload: &Value, directory: Option<&Path>) {
-    let status = match (
-        payload["loggedIn"].as_bool(),
-        payload["authMethod"].as_str(),
-    ) {
-        (Some(true), Some("claude.ai" | "oauth_token")) => "signed_in",
-        (Some(false), Some("none")) => "signed_out",
-        _ => return, // An API check does not establish an official login identity.
+    let Some(status) =
+        super::claude_native::Identity::from_auth_status(payload).official_login_status()
+    else {
+        return; // An API check does not establish an official login identity.
     };
     let Some(directory) = directory.or_else(|| payload["configDirectory"].as_str().map(Path::new))
     else {
@@ -268,6 +265,7 @@ pub struct NativeRead {
     pub credential: NativeCredential,
     pub observation: ConnectionObservation,
     pub revision: String,
+    pub connection_revision: String,
     pub source: CredentialSource,
     pub provider_id: String,
     pub catalog_path: Option<PathBuf>,
@@ -279,7 +277,7 @@ impl NativeRead {
             configuration: self.configuration.clone(),
             configured_model_ids: self.configured_model_ids.clone(),
             context: context.clone(),
-            native_revision: self.revision.clone(),
+            native_revision: self.connection_revision.clone(),
             credential_version: self.credential.version.clone(),
             credential_source: self.source.clone(),
             provider_id: self.provider_id.clone(),
@@ -323,6 +321,30 @@ pub fn read_toml(path: &Path) -> Result<toml_edit::DocumentMut> {
     text.parse()
         .map_err(|_| anyhow::anyhow!("原生 TOML 配置无法解析：{}", path.display()))
 }
+// The active profile has the same precedence in reads, startup and compatibility checks.
+pub(super) fn codex_config(context: &NativeContext) -> Result<Value> {
+    let bytes = read_bytes(&context.path())?.unwrap_or_default();
+    let doc: toml::Value = toml::from_str(
+        std::str::from_utf8(&bytes).map_err(|_| anyhow::anyhow!("Codex 配置不是 UTF-8。"))?,
+    )
+    .map_err(|_| anyhow::anyhow!("Codex 原生配置无法解析。"))?;
+    Ok(serde_json::to_value(doc)?)
+}
+pub(super) fn codex_setting<'a>(doc: &'a Value, name: &str) -> &'a Value {
+    doc["profile"]
+        .as_str()
+        .and_then(|profile| doc["profiles"][profile].get(name))
+        .unwrap_or(&doc[name])
+}
+/// `auto` keeps keyring-first resolution inside Codex. This is only its file
+/// fallback, never proof that the file is the selected credential source.
+pub(super) fn codex_auth_file(context: &NativeContext, store: &str) -> Result<Value> {
+    match store {
+        "keyring" | "ephemeral" => Ok(json!({})),
+        "auto" => Ok(read_json(&context.directory.join("auth.json")).unwrap_or_else(|_| json!({}))),
+        _ => read_json(&context.directory.join("auth.json")),
+    }
+}
 fn toml_value(path: &Path, keys: &[String]) -> Result<Option<String>> {
     let doc = read_toml(path)?;
     let mut item = doc.as_item();
@@ -359,8 +381,27 @@ pub fn credential_value(
                 .cloned()
                 .unwrap_or_default(),
         ),
-        // Native managed credentials are deliberately opaque; the native runtime performs authentication.
-        CredentialSource::NativeManaged { directory } => (None, json!(directory)),
+        // Keep selection opaque, but account for auto's real file fallback when
+        // fencing API processes. Never turn a fallback key into an env override.
+        CredentialSource::NativeManaged { directory } => {
+            let config = codex_config(context)?;
+            let store = config["cli_auth_credentials_store"]
+                .as_str()
+                .unwrap_or("file");
+            let auth = codex_auth_file(context, store)?;
+            let file_key = (auth["auth_mode"] != "chatgpt")
+                .then(|| auth["OPENAI_API_KEY"].as_str().filter(|v| !v.is_empty()))
+                .flatten();
+            let account = file_key
+                .is_none()
+                .then(|| auth.pointer("/tokens/account_id"))
+                .flatten();
+            (
+                None,
+                json!({"directory":directory, "store":store, "fileKey":file_key,
+                "account":account}),
+            )
+        }
     };
     let version =
         canonical_json_digest(&json!({"source": source, "value": value, "evidence": evidence}))?;
@@ -547,16 +588,12 @@ pub fn read(context: &NativeContext, selected: Option<ConnectionMode>) -> Result
                 .unwrap_or_default();
         }
         let auth_path = context.directory.join("auth.json");
-        let store = get("cli_auth_credentials_store")
+        let store = doc
+            .get("cli_auth_credentials_store")
             .and_then(toml::Value::as_str)
             .unwrap_or("file");
-        let managed_store = matches!(store, "keyring" | "auto");
-        // A file left by a former storage mode is not the active credential source.
-        let auth = if managed_store {
-            json!({})
-        } else {
-            read_json(&auth_path)?
-        };
+        let managed_store = matches!(store, "keyring" | "auto" | "ephemeral");
+        let auth = codex_auth_file(context, store)?;
         let native_login = provider_id == "openai"
             || provider
                 .and_then(|p| p.get("requires_openai_auth"))
@@ -609,7 +646,10 @@ pub fn read(context: &NativeContext, selected: Option<ConnectionMode>) -> Result
         let has_token = auth["tokens"]["access_token"]
             .as_str()
             .is_some_and(|v| !v.is_empty());
-        let login_status = if has_token {
+        let login_status = if managed_store {
+            // A fallback file alone cannot prove which keyring/file identity Codex selects.
+            "unknown"
+        } else if has_token {
             "signed_in"
         } else if matches!(source, CredentialSource::NativeManaged { .. }) {
             "unknown"
@@ -624,7 +664,7 @@ pub fn read(context: &NativeContext, selected: Option<ConnectionMode>) -> Result
             );
         // An official OAuth login alone is not a reusable API credential. Keep
         // its login status, but never offer it as the key for a newly entered URL.
-        if !native_api && has_token {
+        if !native_api && has_token && !managed_store {
             source = CredentialSource::Missing;
         }
         let default_model = get("model")
@@ -673,7 +713,7 @@ pub fn read(context: &NativeContext, selected: Option<ConnectionMode>) -> Result
             .map(|m| m.row_id.clone());
         let initial = if native_api {
             Some(ConnectionMode::CustomApi)
-        } else if has_token {
+        } else if has_token && !managed_store {
             Some(ConnectionMode::OfficialLogin)
         } else {
             None
@@ -728,6 +768,15 @@ pub fn read(context: &NativeContext, selected: Option<ConnectionMode>) -> Result
     let revision = canonical_json_digest(
         &json!({"configuration":configuration, "credential":credential.version, "native":evidence}),
     )?;
+    let connection_revision = connection_revision(
+        context,
+        &configuration,
+        &source,
+        &credential.version,
+        &provider_id,
+        initial_mode,
+        &evidence,
+    )?;
     Ok(NativeRead {
         configuration,
         credential,
@@ -738,11 +787,85 @@ pub fn read(context: &NativeContext, selected: Option<ConnectionMode>) -> Result
             login_command: context.login_command(None),
         },
         revision,
+        connection_revision,
         source,
         provider_id,
         catalog_path,
         configured_model_ids,
     })
+}
+/// Execution compatibility is deliberately narrower than the whole-file edit CAS.
+/// Only the selected connection participates; unrelated providers, UI, Skills,
+/// MCP and native bookkeeping are owned by their existing runtime mechanisms.
+fn connection_revision(
+    context: &NativeContext,
+    configuration: &CustomApiConfiguration,
+    source: &CredentialSource,
+    credential: &str,
+    provider_id: &str,
+    initial: Option<ConnectionMode>,
+    evidence: &Value,
+) -> Result<String> {
+    let api = configuration.enabled();
+    let native = if context.kind == AdapterKind::CodexCli {
+        let doc = &evidence["config"];
+        let store = doc["cli_auth_credentials_store"].as_str().unwrap_or("file");
+        let mut provider = evidence["config"]["model_providers"][provider_id].clone();
+        if let Some(fields) = provider.as_object_mut() {
+            fields.remove("name");
+            fields.remove("env_key_instructions");
+            if matches!(source, CredentialSource::Environment { .. }) {
+                fields.remove("experimental_bearer_token");
+            }
+        }
+        let header_values = provider["env_http_headers"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(header, variable)| {
+                variable
+                    .as_str()
+                    .map(|name| (header.clone(), context.env(name)))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let managed = !api || matches!(source, CredentialSource::NativeManaged { .. });
+        json!({
+            "provider": if api { provider } else { Value::Null },
+            "headerEnvironment": if api { json!(header_values) } else { Value::Null },
+            "catalog": if api { evidence["catalog"].clone() } else { Value::Null },
+            "officialModel": if !api && initial != Some(ConnectionMode::CustomApi) { codex_setting(doc, "model").clone() } else { Value::Null },
+            "restoresOfficialCatalog": !api && initial == Some(ConnectionMode::CustomApi),
+            "authStore": if managed { json!(store) } else { Value::Null },
+            // Token refresh and unrelated auth.json fields do not change account identity.
+            // Auto/keyring selection remains native-owned, not inferred from a fallback file.
+            "account": if managed && store == "file" { evidence.pointer("/auth/tokens/account_id").cloned().unwrap_or_default() } else { Value::Null },
+            "forcedLogin": doc["forced_login_method"],
+            "forcedWorkspace": doc["forced_chatgpt_workspace_id"],
+        })
+    } else {
+        let env = |name: &str| {
+            evidence["env"][name]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| context.env(name))
+        };
+        let models = match configuration {
+            CustomApiConfiguration::ClaudeCode { models, .. } => models,
+            _ => unreachable!(),
+        };
+        json!({
+            "headers": if api { json!(env("ANTHROPIC_CUSTOM_HEADERS")) } else { Value::Null },
+            "officialToken": if api { Value::Null } else { json!(env("CLAUDE_CODE_OAUTH_TOKEN")) },
+            "officialTokenDescriptor": if api { Value::Null } else { json!(env("CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR")) },
+            "officialModels": if !api && initial != Some(ConnectionMode::CustomApi) { json!(models) } else { Value::Null },
+            "resetsOfficialModel": !api && initial == Some(ConnectionMode::CustomApi) && !models.model.is_empty(),
+            "forcedLogin": evidence["forceLoginMethod"],
+            "forcedOrg": evidence["forceLoginOrgUUID"],
+        })
+    };
+    canonical_json_digest(&json!({"mode": configuration.mode(), "native": native,
+        "api": if api { json!(configuration) } else { Value::Null },
+        "credential": if api { json!(credential) } else { Value::Null }}))
 }
 pub fn row_id(id: &str) -> Result<String> {
     canonical_json_digest(&json!(id))

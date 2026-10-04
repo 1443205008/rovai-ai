@@ -771,8 +771,8 @@ impl ClaudeCodeCliRuntimeAdapter {
                     .context("Claude Code protocol initialization timed out")??;
                 if let Some(api) = &request.runtime.custom_api {
                     let settings = protocol.private_configuration("get_settings").await?;
-                    let status = protocol.private_configuration("get_status").await?;
-                    rovai_core::runtime_custom_api::claude_native::validate(api, &settings, &status,
+                    let identity = protocol.native_identity();
+                    rovai_core::runtime_custom_api::claude_native::validate(api, &settings, &identity,
                         (request.runtime.model.source == "explicit").then_some(request.runtime.model.model_id.as_str()))?;
                 }
                 protocol.send_prompt(&request.prompt).await

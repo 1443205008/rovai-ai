@@ -282,7 +282,14 @@ impl std::fmt::Debug for CustomApiSnapshot {
 }
 impl CustomApiSnapshot {
     pub fn identity(&self) -> Result<String> {
-        canonical_json_digest(&serde_json::to_value(self)?)
+        canonical_json_digest(&json!({
+            "kind": self.configuration.kind(), "mode": self.configuration.mode(),
+            "directory": self.context.directory, "connection": self.native_revision,
+            "api": self.configuration.enabled().then_some(&self.configuration),
+            "credential": self.configuration.enabled().then_some(&self.credential_version),
+            "provider": self.configuration.enabled().then_some(&self.provider_id),
+            "models": self.configured_model_ids,
+        }))
     }
     pub fn key(&self) -> Result<Option<String>> {
         if let Some(key) = &self.draft_key {
@@ -296,7 +303,13 @@ impl CustomApiSnapshot {
         Ok(value)
     }
     pub fn redactor(&self) -> Result<CredentialRedactor> {
-        let mut secrets: Vec<_> = self.key()?.into_iter().collect();
+        let key = if self.configuration.enabled() {
+            self.key()?
+        } else {
+            // Dormant API key rotation must not invalidate an official session.
+            native::credential_value(&self.credential_source, &self.context)?.0
+        };
+        let mut secrets: Vec<_> = key.into_iter().collect();
         if self.context.kind == AdapterKind::ClaudeCodeCli {
             let settings = native::read_json(&self.context.path())?;
             if let Some(token) = settings
@@ -313,7 +326,7 @@ impl CustomApiSnapshot {
     pub fn assert_current(&self) -> Result<()> {
         let current = native::read(&self.context, self.configuration.mode())?;
         ensure!(
-            current.revision == self.native_revision,
+            current.connection_revision == self.native_revision,
             "原生连接已变化，此执行需要重新建立连接；未恢复旧接口。"
         );
         Ok(())

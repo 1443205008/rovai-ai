@@ -659,14 +659,24 @@ async fn claude_code_probe_at(path: &Path) -> ClaudeCodeCapabilityProbe {
     }
 
     let mut auth_command = runtime_command(&canonical, Some(AdapterKind::ClaudeCodeCli));
-    let auth = async {
+    let auth: Result<BoundedCommandOutput> = async {
         if let Some(api) =
             rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::ClaudeCodeCli)?
         {
             rovai_core::runtime_custom_api::claude_native::configure(&api, &mut auth_command)?;
         }
         auth_command.args(["auth", "status"]);
-        bounded_output(&mut auth_command, Duration::from_secs(15)).await
+        let output = bounded_output(&mut auth_command, Duration::from_secs(15)).await?;
+        if output.status.success()
+            && let Some(api) =
+                rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::ClaudeCodeCli)?
+            && let Ok(value) = serde_json::from_slice::<Value>(&output.stdout.bytes)
+        {
+            let identity =
+                rovai_core::runtime_custom_api::claude_native::Identity::from_auth_status(&value);
+            rovai_core::runtime_custom_api::claude_native::validate_identity(&api, &identity)?;
+        }
+        Ok(output)
     }
     .await;
     if let Ok(output) = &auth
@@ -1371,9 +1381,12 @@ async fn claude_code_model_catalog(
                 if let Some(api) = &custom_api {
                     let settings =
                         claude_private_configuration(stdin, lines, "get_settings").await?;
-                    let status = claude_private_configuration(stdin, lines, "get_status").await?;
+                    let identity =
+                        rovai_core::runtime_custom_api::claude_native::Identity::from_initialize(
+                            &response["response"],
+                        );
                     rovai_core::runtime_custom_api::claude_native::validate(
-                        api, &settings, &status, None,
+                        api, &settings, &identity, None,
                     )?;
                 }
                 return Ok(models);

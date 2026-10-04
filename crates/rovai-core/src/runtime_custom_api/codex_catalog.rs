@@ -208,10 +208,14 @@ pub fn execution_provider(snapshot: &CustomApiSnapshot) -> Result<String> {
     if !snapshot.configuration.enabled() {
         return Ok("openai".into());
     }
-    if matches!(
-        snapshot.credential_source,
-        super::native::CredentialSource::NativeManaged { .. }
-    ) {
+    if snapshot.provider_id != "openai"
+        || matches!(
+            snapshot.credential_source,
+            super::native::CredentialSource::NativeManaged { .. }
+        )
+    {
+        // Keep the native provider: query parameters, transport, retry and timeout
+        // settings (including future native fields) must survive execution binding.
         return Ok(snapshot.provider_id.clone());
     }
     let identity = snapshot.identity()?;
@@ -234,28 +238,23 @@ pub async fn configure(snapshot: &CustomApiSnapshot, command: &mut Command) -> R
     else {
         anyhow::bail!("Codex 连接类型不匹配。");
     };
-    let native_config = super::native::read_toml(&snapshot.context.path())?;
-    let managed_store = matches!(
-        native_config
-            .get("cli_auth_credentials_store")
-            .and_then(toml_edit::Item::as_str),
-        Some("keyring" | "auto")
-    );
-    let auth = if managed_store {
-        json!({})
-    } else {
-        super::native::read_json(&snapshot.context.directory.join("auth.json"))?
-    };
-    let forced = native_config
-        .get("forced_login_method")
-        .and_then(toml_edit::Item::as_str);
+    let native_config = super::native::codex_config(&snapshot.context)?;
+    let store = native_config["cli_auth_credentials_store"]
+        .as_str()
+        .unwrap_or("file");
+    let auth = super::native::codex_auth_file(&snapshot.context, store)?;
+    let forced = native_config["forced_login_method"].as_str();
+    let file_api = auth["auth_mode"] != "chatgpt"
+        && auth["OPENAI_API_KEY"]
+            .as_str()
+            .is_some_and(|v| !v.is_empty());
+    let file_oauth = !file_api
+        && auth["tokens"]["access_token"]
+            .as_str()
+            .is_some_and(|v| !v.is_empty());
     ensure!(
-        !(forced == Some("chatgpt")
-            && auth["OPENAI_API_KEY"]
-                .as_str()
-                .is_some_and(|v| !v.is_empty()))
-            && !(forced == Some("api") && auth["tokens"].is_object()),
-        "Codex 登录方式约束与原生凭据冲突；已停止启动以避免原生 CLI 清除凭据，请在原生来源处理。"
+        !(forced == Some("chatgpt") && file_api) && !(forced == Some("api") && file_oauth),
+        "Codex 登录方式约束与原生文件凭据冲突（auto 也可能回退到 auth.json）；已停止启动以避免原生 CLI 清除凭据，请在原生来源处理。"
     );
     let mut overrides = Vec::new();
     let provider = execution_provider(snapshot)?;
@@ -273,11 +272,20 @@ pub async fn configure(snapshot: &CustomApiSnapshot, command: &mut Command) -> R
             snapshot.configure_environment(command)?;
             let (headers, values) = native_headers(snapshot)?;
             command.envs(values);
-            let mut provider_config = json!({"name":"Rovai custom API", "base_url":base_url, "env_key":"ROVAI_CUSTOM_API_KEY", "wire_api":"responses", "requires_openai_auth":false});
-            if !headers.is_empty() {
-                provider_config["env_http_headers"] = json!(headers);
+            // Codex merges native config tables recursively. Overlay only these
+            // fields on the selected provider, preserving query parameters,
+            // transport, timeouts and future fields without copying their values.
+            // Use a table value: -c dotted paths do not parse quoted segments.
+            let mut config = json!({"base_url":base_url, "env_key":"ROVAI_CUSTOM_API_KEY", "wire_api":"responses", "requires_openai_auth":false});
+            if provider != snapshot.provider_id {
+                // Built-in OpenAI cannot be overwritten in its registry. Only
+                // that path needs a new API provider, with no native table to lose.
+                config["name"] = json!("Rovai custom API");
             }
-            overrides.push((format!("model_providers.{provider}"), provider_config));
+            if !headers.is_empty() {
+                config["env_http_headers"] = json!(headers);
+            }
+            overrides.push(("model_providers".into(), json!({ &provider: config })));
         } else if provider == "openai" {
             // Built-in providers do not appear in model_providers; their endpoint
             // override is a root setting, while credentials remain native-owned.
@@ -302,7 +310,7 @@ pub async fn configure(snapshot: &CustomApiSnapshot, command: &mut Command) -> R
     } else {
         // forced_login_method can delete incompatible auth.json. Never invoke it for switching.
         ensure!(
-            auth["OPENAI_API_KEY"].as_str().is_none_or(str::is_empty),
+            store != "file" || !file_api,
             "Codex 原生认证文件仍使用 API Key，此版本无法在不改写该凭据的情况下切到官方登录。请先在原生配置中处理认证来源；Rovai 未删除登录信息。"
         );
         for name in [
@@ -396,20 +404,43 @@ pub fn validate_effective(snapshot: &CustomApiSnapshot, response: &Value) -> Res
             },
             "Codex 原生请求头引用与当前连接不一致。"
         );
-        for name in [
-            "experimental_bearer_token",
-            "http_headers",
-            "api_key",
-            "aws_auth",
-            "gateway",
-        ] {
-            let value = &provider[name];
+        let native = super::native::codex_config(&snapshot.context)?;
+        let original = &native["model_providers"][&snapshot.provider_id];
+        // Compare retained native fields, including query and transport settings.
+        // Diagnostic output may have scrubbed the current credential already.
+        if provider_id == snapshot.provider_id {
+            let redactor = snapshot.redactor()?;
+            for (name, expected) in original.as_object().into_iter().flatten() {
+                if matches!(
+                    name.as_str(),
+                    "base_url"
+                        | "env_key"
+                        | "wire_api"
+                        | "requires_openai_auth"
+                        | "env_http_headers"
+                ) {
+                    continue;
+                }
+                // Unknown native fields may not be projected by config/read on
+                // older versions. They remain in the original provider table.
+                if provider.get(name).is_none() {
+                    continue;
+                }
+                let mut expected = expected.clone();
+                let mut actual = provider[name].clone();
+                redactor.value(&mut expected);
+                redactor.value(&mut actual);
+                ensure!(
+                    actual == expected,
+                    "Codex 原生 provider 的 {} 被其他配置覆盖。",
+                    name
+                );
+            }
+        } else {
             ensure!(
-                value.is_null()
-                    || value.as_str() == Some("")
-                    || value.as_object().is_some_and(|v| v.is_empty()),
-                "Codex 原生连接仍包含优先认证字段 {}，请解决配置冲突。",
-                name
+                provider["experimental_bearer_token"].is_null()
+                    && provider["http_headers"].is_null(),
+                "Codex 当前连接出现其他认证来源，请解决原生配置冲突。"
             );
         }
     }
@@ -433,6 +464,18 @@ fn native_headers(
     else {
         return Ok((headers, environment));
     };
+    // Native skips unset environment headers. Keep those references too: their
+    // presence is valid configuration, not evidence of an extra credential.
+    if let Some(table) = provider
+        .get("env_http_headers")
+        .and_then(toml_edit::Item::as_table_like)
+    {
+        for (name, item) in table.iter() {
+            if let Some(variable) = item.as_str() {
+                headers.insert(name.to_owned(), variable.to_owned());
+            }
+        }
+    }
     let mut values = std::collections::BTreeMap::new();
     for field in ["http_headers", "env_http_headers"] {
         if let Some(table) = provider.get(field).and_then(toml_edit::Item::as_table_like) {
@@ -453,7 +496,7 @@ fn native_headers(
     for (index, (name, value)) in values.into_iter().enumerate() {
         if matches!(
             name.to_ascii_lowercase().as_str(),
-            "authorization" | "x-api-key" | "api-key" | "proxy-authorization"
+            "authorization" | "x-api-key" | "api-key"
         ) {
             ensure!(
                 key.as_ref()
@@ -609,7 +652,7 @@ mod tests {
             configuration: config,
             native_revision: "fixture".into(),
             credential_version: "fixture".into(),
-            provider_id: "native".into(),
+            provider_id: "openai".into(),
             explicit_mode: true,
             draft_key: None,
             preview: false,

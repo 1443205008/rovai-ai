@@ -3,7 +3,8 @@
 
 Build: cargo build -p rovai-core --example custom_api_native_fixture
 Run: python3 scripts/smoke-runtime-custom-api.py --codex /absolute/codex [--claude ...]
-No user endpoint or credential is accepted by this script.
+No user endpoint or key is accepted by this script. --official-roundtrip-root opts into real
+official calls using an existing isolated native login; no daily credentials are copied.
 """
 import argparse
 import http.server
@@ -16,6 +17,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 
 FAKE_KEY = "rovai-isolated-fake-key"
 ROTATED_FAKE_KEY = "rovai-isolated-rotated-key"
@@ -33,7 +35,7 @@ class Api(http.server.BaseHTTPRequestHandler):
         if not authorization and self.headers.get("x-api-key"):
             authorization = "Bearer " + self.headers["x-api-key"]
         version = 1 if authorization == "Bearer " + FAKE_KEY else 2 if authorization == "Bearer " + ROTATED_FAKE_KEY else 0
-        REQUESTS.append({"path": self.path, "model": body.get("model"), "keyMatches": version > 0, "keyVersion": version, "authHeader": auth_header, "nativeHeaderPreserved":self.headers.get("x-rovai-fixture") == "preserved"})
+        REQUESTS.append({"path": self.path, "model": body.get("model"), "keyMatches": version > 0, "keyVersion": version, "authHeader": auth_header, "nativeHeaderPreserved":self.headers.get("x-rovai-fixture") == "preserved", "proxyAuthPreserved":self.headers.get("Proxy-Authorization") == "Basic isolated-proxy-key"})
         model = body.get("model", "fixture")
         route = self.path.split("?", 1)[0]
         if route.endswith("/messages"):
@@ -70,7 +72,7 @@ class Api(http.server.BaseHTTPRequestHandler):
 
 
 class Native:
-    def __init__(self, helper, executable, root, config):
+    def __init__(self, helper, executable, root, config, private=False):
         path = root / "connection.json"
         path.write_text(json.dumps(config))
         (root / ".rovai-custom-api-fixture").touch()
@@ -82,6 +84,7 @@ class Native:
         self.frames = queue.Queue()
         self.errors = []
         self.rid = 0
+        self.private = private
         def read():
             for line in self.child.stdout:
                 try:
@@ -91,7 +94,8 @@ class Native:
             self.frames.put({"fixtureExited": True})
         def stderr():
             for line in self.child.stderr:
-                self.errors.append(line.replace(FAKE_KEY, "<fake-key>").replace(ROTATED_FAKE_KEY, "<rotated-fake-key>"))
+                if not private:
+                    self.errors.append(line.replace(FAKE_KEY, "<fake-key>").replace(ROTATED_FAKE_KEY, "<rotated-fake-key>"))
         threading.Thread(target=read, daemon=True).start()
         threading.Thread(target=stderr, daemon=True).start()
 
@@ -113,7 +117,7 @@ class Native:
         self.rid += 1
         self.send({"jsonrpc": "2.0", "id": self.rid, "method": method, "params": params})
         frame = self.wait(lambda f: f.get("id") == self.rid)
-        assert "error" not in frame, str(frame).replace(FAKE_KEY, "<fake-key>").replace(ROTATED_FAKE_KEY, "<rotated-fake-key>")
+        assert "error" not in frame, "Native request failed" if self.private else str(frame).replace(FAKE_KEY, "<fake-key>").replace(ROTATED_FAKE_KEY, "<rotated-fake-key>")
         return frame.get("result", {})
 
     def control(self, subtype):
@@ -140,12 +144,12 @@ def run(kind, executable, helper, root, base):
     config = {"kind": {"claude": "claude-code-cli", "codex": "codex-cli"}[kind], "mode": "custom_api", "baseUrl": base}
     if kind == "codex":
         (root / "codex").mkdir()
-        (root / "codex/config.toml").write_text('model_provider="relay"\n[model_providers.relay]\nname="Fixture relay"\nbase_url="http://127.0.0.1:1/old"\nwire_api="responses"\n[model_providers.relay.http_headers]\nx-rovai-fixture="preserved"\n')
+        (root / "codex/config.toml").write_text('model_provider="relay.test"\n[model_providers."relay.test"]\nname="Fixture relay"\nbase_url="http://127.0.0.1:1/old"\nwire_api="responses"\nsupports_websockets=true\nrequest_max_retries=0\nstream_max_retries=0\nstream_idle_timeout_ms=15000\nwebsocket_connect_timeout_ms=2000\n[model_providers."relay.test".query_params]\napi-version="fixture-v1"\n[model_providers."relay.test".http_headers]\nProxy-Authorization="Basic isolated-proxy-key"\nx-rovai-fixture="preserved"\n[model_providers."relay.test".env_http_headers]\nx-optional="UNSET_FIXTURE_HEADER"\n')
         config.update(models=[{"rowId":"known", "id": "gpt-6.1-sol", "displayName": "Known"}, {"rowId":"unknown", "id": "rovai-unknown", "displayName": "Unknown"}], defaultModel="rovai-unknown", defaultRowId="unknown")
     elif kind == "claude":
         config["models"] = {"model": "rovai-main", "reasoningModel": "rovai-thinking", "haikuModel": "rovai-haiku", "sonnetModel": "rovai-sonnet", "opusModel": "rovai-opus"}
         (root / "claude").mkdir()
-        (root / "claude/settings.json").write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:1/old", "ANTHROPIC_AUTH_TOKEN": "old-fake-key", "ANTHROPIC_MODEL": "old-model", "ANTHROPIC_CUSTOM_HEADERS":"x-rovai-fixture: preserved"}}))
+        (root / "claude/settings.json").write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:1/old", "ANTHROPIC_AUTH_TOKEN": "old-fake-key", "ANTHROPIC_MODEL": "old-model", "ANTHROPIC_CUSTOM_HEADERS":"x-rovai-fixture: preserved\nProxy-Authorization: Basic isolated-proxy-key"}}))
     start = len(REQUESTS)
     if kind == "codex":
         # Existing native API needs neither an initial save nor a model allowlist.
@@ -171,14 +175,14 @@ def run(kind, executable, helper, root, base):
     native = Native(helper, executable, root, config)
     try:
         if kind == "claude":
-            native.control("initialize")
-            settings, status = native.control("get_settings"), native.control("get_status")
+            identity = native.control("initialize")["account"]
+            settings = native.control("get_settings")
             assert settings["effective"]["env"]["ANTHROPIC_AUTH_TOKEN"] == FAKE_KEY
             assert settings["effective"]["env"]["ANTHROPIC_REASONING_MODEL"] == "rovai-thinking"
             assert settings["applied"]["model"] == "rovai-main"
-            rows = {row["label"]: row["value"] for section in status["sections"] for row in section["rows"]}
-            assert rows["Auth token"] == "ANTHROPIC_AUTH_TOKEN" and rows["Anthropic base URL"] == base
-            native.send({"type": "user", "session_id": rows["Session ID"], "message": {"role": "user", "content": "Reply OK."}, "parent_tool_use_id": None})
+            assert identity["tokenSource"] == "ANTHROPIC_AUTH_TOKEN" and identity["apiProvider"] == "firstParty"
+            assert settings["effective"]["env"]["ANTHROPIC_BASE_URL"] == base
+            native.send({"type": "user", "session_id": str(uuid.uuid4()), "message": {"role": "user", "content": "Reply OK."}, "parent_tool_use_id": None})
             result = native.wait(lambda f: f.get("type") == "result")
             assert not result.get("is_error"), "Claude native result failed: " + json.dumps(result).replace(FAKE_KEY, "<fake-key>").replace(ROTATED_FAKE_KEY, "<rotated-fake-key>")
         elif kind == "codex":
@@ -187,9 +191,12 @@ def run(kind, executable, helper, root, base):
             effective = native.rpc("config/read", {"cwd": str(root), "includeLayers": False})["config"]
             provider_id = effective["model_provider"]
             assert effective["model"] == "rovai-unknown", "native default must match the selected row"
-            assert provider_id.startswith("rovai_custom_")
+            assert provider_id == "relay.test", "execution must retain the native provider"
             provider = effective["model_providers"][provider_id]
+            assert provider["http_headers"]["Proxy-Authorization"] == "Basic isolated-proxy-key", "proxy credentials must remain independent from the model key"
             assert provider["base_url"] == base and provider["env_key"] == "ROVAI_CUSTOM_API_KEY"
+            for field, expected_value in {"query_params":{"api-version":"fixture-v1"}, "supports_websockets":True, "request_max_retries":0, "stream_max_retries":0, "stream_idle_timeout_ms":15000, "websocket_connect_timeout_ms":2000}.items():
+                assert provider[field] == expected_value, "lost native provider field: " + field
             catalog = native.rpc("model/list", {"includeHidden": True, "limit": 100})["data"]
             ids = {m["model"] for m in catalog}
             assert {"gpt-6.1-sol", "rovai-unknown"} <= ids
@@ -220,7 +227,7 @@ def run(kind, executable, helper, root, base):
                 rotated.rpc("initialize", {"clientInfo": {"name": "rovai_fixture", "version": "1"}})
                 rotated.send({"method": "initialized", "params": {}})
                 rotated_provider = rotated.rpc("config/read", {"cwd":str(root),"includeLayers":False})["config"]["model_provider"]
-                assert rotated_provider != provider_id
+                assert rotated_provider == provider_id, "native provider identity is stable; connection fingerprint fences reuse"
                 edited_catalog_path = Path(json.loads((root / "catalog-path.json").read_text()))
                 edited_entry = next(m for m in json.loads(edited_catalog_path.read_text())["models"] if m["slug"] == "rovai-unknown")
                 assert edited_entry == {**existing_entry,"display_name":"Edited existing name"}, "a label edit must retain all native model metadata"
@@ -257,12 +264,11 @@ def run(kind, executable, helper, root, base):
             (root / "shell-credential-fixture").touch()
             shell = Native(helper, executable, root, config)
             try:
-                shell.control("initialize")
-                resolved, status = shell.control("get_settings"), shell.control("get_status")
+                identity = shell.control("initialize")["account"]
+                resolved = shell.control("get_settings")
                 assert "ANTHROPIC_AUTH_TOKEN" not in resolved["effective"]["env"]
-                rows = {row["label"]: row["value"] for section in status["sections"] for row in section["rows"]}
-                assert rows["Auth token"] == "ANTHROPIC_AUTH_TOKEN"
-                shell.send({"type":"user","session_id":rows["Session ID"],"message":{"role":"user","content":"Reply OK."},"parent_tool_use_id":None})
+                assert identity["tokenSource"] == "ANTHROPIC_AUTH_TOKEN"
+                shell.send({"type":"user","session_id":str(uuid.uuid4()),"message":{"role":"user","content":"Reply OK."},"parent_tool_use_id":None})
                 assert not shell.wait(lambda f:f.get("type") == "result").get("is_error")
                 assert FAKE_KEY not in path.read_text(), "shell credentials must not be copied into a file"
             finally:
@@ -278,13 +284,12 @@ def run(kind, executable, helper, root, base):
             boundary = len(REQUESTS)
             rotated_header = Native(helper, executable, root, config)
             try:
-                rotated_header.control("initialize")
-                resolved, status = rotated_header.control("get_settings"), rotated_header.control("get_status")
-                rows = {row["label"]:row["value"] for section in status["sections"] for row in section["rows"]}
-                assert rows["API key"] == "ANTHROPIC_API_KEY"
+                identity = rotated_header.control("initialize")["account"]
+                resolved = rotated_header.control("get_settings")
+                assert identity["apiKeySource"] == "ANTHROPIC_API_KEY"
                 assert resolved["applied"]["model"] == "rovai-main"
                 assert json.loads(path.read_text())["model"] == "rovai-main"
-                rotated_header.send({"type":"user","session_id":rows["Session ID"],"message":{"role":"user","content":"Reply OK."},"parent_tool_use_id":None})
+                rotated_header.send({"type":"user","session_id":str(uuid.uuid4()),"message":{"role":"user","content":"Reply OK."},"parent_tool_use_id":None})
                 assert not rotated_header.wait(lambda f:f.get("type")=="result").get("is_error")
                 assert REQUESTS[boundary:] and all(r["authHeader"] == "x-api-key" for r in REQUESTS[boundary:])
             finally:
@@ -306,13 +311,11 @@ def run(kind, executable, helper, root, base):
                 account = official.rpc("account/read", {"refreshToken":False})
                 assert account["account"] is None, "no native login in the isolated fixture"
             else:
-                official.control("initialize")
-                settings, status = official.control("get_settings"), official.control("get_status")
+                identity = official.control("initialize")["account"]
+                settings = official.control("get_settings")
                 for name in ["ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_API_KEY"]:
                     assert settings["effective"]["env"][name] == ""
-                rows = {row["label"]:row["value"] for section in status["sections"] for row in section["rows"]}
-                assert rows.get("Auth token") == "CLAUDE_CODE_OAUTH_TOKEN", rows
-                assert "API key" not in rows and "Anthropic base URL" not in rows
+                assert identity["tokenSource"] == "CLAUDE_CODE_OAUTH_TOKEN"
             assert config_path.read_bytes() == native_before, "mode selection must not erase dormant API configuration"
         finally:
             official.close()
@@ -325,9 +328,99 @@ def run(kind, executable, helper, root, base):
         expected = {"claude": {"rovai-main"}, "codex": {"gpt-6.1-sol", "rovai-unknown"}}[kind]
         assert expected <= {r["model"] for r in requests}, requests
         assert all(r["nativeHeaderPreserved"] for r in requests)
+        if kind == "claude":
+            assert all(r["proxyAuthPreserved"] for r in requests)
+        # Codex's HTTP stack scopes Proxy-Authorization to proxy traffic; it need
+        # not forward that credential to the origin. config/read above owns retention.
+        if kind == "codex":
+            assert all("api-version=fixture-v1" in r["path"] for r in requests), "native query parameters were lost"
         return {"runtime": kind, "status": "passed", "requests": requests}
     finally:
         native.close()
+
+
+def run_auto_fallback(executable, helper, root, base):
+    root.mkdir(parents=True, exist_ok=False)
+    (root / "codex").mkdir()
+    (root / "reuse-native-fixture").touch()
+    (root / "codex/config.toml").write_text('cli_auth_credentials_store="auto"\nmodel="gpt-6.1-sol"\nopenai_base_url=' + json.dumps(base) + '\n')
+    auth = root / "codex/auth.json"
+    auth.write_text(json.dumps({"OPENAI_API_KEY":FAKE_KEY}))
+    auth.chmod(0o600)
+    before = auth.read_bytes()
+    config = {"kind":"codex-cli","mode":"custom_api","baseUrl":base,"models":[{"rowId":"a","id":"gpt-6.1-sol","displayName":""}],"defaultModel":"gpt-6.1-sol","defaultRowId":"a"}
+    boundary = len(REQUESTS)
+    native = Native(helper, executable, root, config)
+    try:
+        native.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
+        native.send({"method":"initialized","params":{}})
+        assert native.rpc("account/read", {"refreshToken":False})["account"]["type"] == "apiKey"
+        session = native.rpc("thread/start", {"cwd":str(root),"model":"gpt-6.1-sol","approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
+        native.rpc("turn/start", {"threadId":session["thread"]["id"],"input":[{"type":"text","text":"Reply OK."}]})
+        assert native.wait(lambda f:f.get("method")=="turn/completed")["params"]["turn"]["status"] == "completed"
+        assert REQUESTS[boundary:] and all(r["keyMatches"] for r in REQUESTS[boundary:])
+        assert auth.read_bytes() == before, "auto fallback must not migrate/delete file credentials"
+        return {"runtime":"codex","case":"auto-file-fallback","status":"passed"}
+    finally:
+        native.close()
+
+
+def run_official_roundtrip(kind, executable, helper, root, base):
+    """Explicit development acceptance only. No daily credentials are imported.
+
+    User completes native login in root/claude or root/codex first, with HOME=root/home.
+    Real official calls send only a fixed minimal prompt, and may incur usage/fees.
+    The API leg always uses the same fake key and loopback server as the local smoke.
+    """
+    assert root.is_absolute() and (root / ".rovai-official-login-acceptance").is_file(), "isolated official-login marker missing"
+    assert not any((root / marker).exists() for marker in ["official-oauth-fixture", "shell-credential-fixture", "reuse-native-fixture", "rotate-fixture-key"]), "fake-only markers are not valid official evidence"
+    config = {"kind":{"claude":"claude-code-cli","codex":"codex-cli"}[kind],"baseUrl":base}
+    if kind == "claude":
+        config["models"] = {"model":"rovai-roundtrip","reasoningModel":"","haikuModel":"","sonnetModel":"","opusModel":""}
+    else:
+        config.update(models=[{"rowId":"test","id":"gpt-6.1-sol","displayName":""}],defaultModel="gpt-6.1-sol",defaultRowId="test")
+    official_identity = None
+    completed = []
+    for mode in ["official_login", "custom_api", "official_login"]:
+        boundary = len(REQUESTS)
+        native = Native(helper, executable, root, {**config,"mode":mode}, private=True)
+        try:
+            if kind == "claude":
+                account = native.control("initialize")["account"]
+                native.control("get_settings")  # production adapter validates the private response
+                if mode == "official_login":
+                    assert account.get("tokenSource") in ["claude.ai", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"] or ("tokenSource" not in account and "subscriptionType" in account), "complete isolated native Claude official login first"
+                    identity = {k:account.get(k) for k in ["email","organization","tokenSource","subscriptionType"]}
+                    if official_identity is None:
+                        official_identity = identity
+                    assert official_identity == identity, "official identity changed across switching"
+                else:
+                    assert account.get("tokenSource") == "ANTHROPIC_AUTH_TOKEN", "API credential source mismatch"
+                native.send({"type":"user","session_id":str(uuid.uuid4()),"message":{"role":"user","content":"Reply only OK. Do not use tools."},"parent_tool_use_id":None})
+                assert not native.wait(lambda f:f.get("type")=="result", timeout=90).get("is_error"), "native Claude call failed"
+            else:
+                native.rpc("initialize", {"clientInfo":{"name":"rovai_official_acceptance","version":"1"}})
+                native.send({"method":"initialized","params":{}})
+                effective = native.rpc("config/read", {"cwd":str(root),"includeLayers":False})["config"]
+                if mode == "official_login":
+                    account = native.rpc("account/read", {"refreshToken":False}).get("account") or {}
+                    assert account.get("type") == "chatgpt", "complete isolated native ChatGPT login first"
+                    if official_identity is None:
+                        official_identity = account
+                    assert official_identity == account, "official identity changed across switching"
+                    assert effective["model_provider"] == "openai" and effective["openai_base_url"] == "https://chatgpt.com/backend-api/codex"
+                session = native.rpc("thread/start", {"cwd":str(root / "work"),"modelProvider":effective["model_provider"],"approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
+                native.rpc("turn/start", {"threadId":session["thread"]["id"],"input":[{"type":"text","text":"Reply only OK. Do not use tools."}]})
+                assert native.wait(lambda f:f.get("method")=="turn/completed", timeout=90)["params"]["turn"]["status"] == "completed", "native Codex call failed"
+            calls = REQUESTS[boundary:]
+            if mode == "custom_api":
+                assert calls and all(r["keyMatches"] for r in calls), "API leg did not receive the isolated key"
+            else:
+                assert not calls, "official leg still used the API endpoint"
+            completed.append(mode)
+        finally:
+            native.close()
+    return {"runtime":kind,"case":"real-official-api-roundtrip","status":"passed","completed":completed}
 
 
 def main():
@@ -336,6 +429,7 @@ def main():
         parser.add_argument("--" + kind, type=Path)
     parser.add_argument("--helper", type=Path, default=Path("target/debug/examples/custom_api_native_fixture"))
     parser.add_argument("--fixture-root", type=Path, required=True, help="Explicit isolated acceptance directory")
+    parser.add_argument("--official-roundtrip-root", type=Path, help="Opt-in: existing isolated native official logins; sends minimal real official requests")
     args = parser.parse_args()
     helper = args.helper.resolve()
     assert helper.is_file(), "build the native fixture helper first"
@@ -357,6 +451,18 @@ def main():
                 result = {"runtime":kind,"status":"failed","error":traceback.format_exc().replace(FAKE_KEY,"<fake-key>").replace(ROTATED_FAKE_KEY,"<rotated-fake-key>")}
             results.append(result)
             print(json.dumps(result,ensure_ascii=False),flush=True)
+            if kind == "codex" and result["status"] == "passed":
+                auto = run_auto_fallback(executable.resolve(), helper, args.fixture_root.resolve() / "codex-auto", "http://127.0.0.1:" + str(server.server_port) + "/auto/prefix")
+                results.append(auto)
+                print(json.dumps(auto), flush=True)
+            if args.official_roundtrip_root and result["status"] == "passed":
+                try:
+                    official = run_official_roundtrip(kind, executable.resolve(), helper, args.official_roundtrip_root.resolve(), "http://127.0.0.1:" + str(server.server_port) + "/official-switch")
+                except Exception:
+                    # No account metadata, native output or actual credentials in acceptance logs.
+                    official = {"runtime":kind,"case":"real-official-api-roundtrip","status":"failed","error":"Native login or roundtrip call failed; inspect the isolated native CLI."}
+                results.append(official)
+                print(json.dumps(official), flush=True)
     finally:
         server.shutdown()
     assert results and all(result["status"] == "passed" for result in results), "native acceptance failed"

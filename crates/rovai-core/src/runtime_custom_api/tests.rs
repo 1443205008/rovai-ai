@@ -38,6 +38,51 @@ pub(super) fn configuration(kind: AdapterKind) -> CustomApiConfiguration {
 // This parser owner retains the URL/key/closed-schema boundaries from the superseded secret-store draft.
 #[test]
 fn configuration_rejects_ambiguous_connections_and_preserves_optional_models() {
+    use claude_native::Identity;
+    for (account, expected) in [
+        (
+            json!({"subscriptionType":"max","email":"private@example.invalid"}),
+            Identity::Official,
+        ),
+        (json!({"subscriptionType":null}), Identity::Official),
+        (
+            json!({"tokenSource":"CLAUDE_CODE_OAUTH_TOKEN"}),
+            Identity::Official,
+        ),
+        (
+            json!({"tokenSource":"ANTHROPIC_AUTH_TOKEN","subscriptionType":"max"}),
+            Identity::Api("ANTHROPIC_AUTH_TOKEN".into()),
+        ),
+        (
+            json!({"tokenSource":"none","apiKeySource":"ANTHROPIC_API_KEY"}),
+            Identity::Api("ANTHROPIC_API_KEY".into()),
+        ),
+        (
+            json!({"tokenSource":"none","apiKeySource":"/login managed key"}),
+            Identity::Api("/login managed key".into()),
+        ),
+        (
+            json!({"tokenSource":"apiKeyHelper"}),
+            Identity::Api("apiKeyHelper".into()),
+        ),
+        (json!({"tokenSource":"none"}), Identity::SignedOut),
+        (
+            json!({"email":"private@example.invalid"}),
+            Identity::Unknown,
+        ),
+        (json!({"apiProvider":"bedrock"}), Identity::ThirdParty),
+    ] {
+        let response = json!({"account":account,"sections":[{"rows":[{"label":"Auth token","value":"misleading display text"}]}]});
+        assert_eq!(Identity::from_initialize(&response), expected);
+    }
+    for method in ["claude.ai", "oauth_token"] {
+        assert_eq!(
+            Identity::from_auth_status(
+                &json!({"loggedIn":true,"authMethod":method,"apiProvider":"firstParty"})
+            ),
+            Identity::Official
+        );
+    }
     assert_eq!(
         native::login_command("codex", None, None, false),
         "codex login"
@@ -259,6 +304,36 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
         Some("preview-only-key")
     );
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    let codex_directory = context.directory.join("codex-auto-preview");
+    let codex_path = codex_directory.join("config.toml");
+    let codex_bytes =
+        b"cli_auth_credentials_store='auto'\nopenai_base_url='https://native.example'\n";
+    private_storage::atomic_write_private_bytes(&codex_path, codex_bytes).unwrap();
+    let draft = RuntimeStartupConfiguration {
+        custom_api: Some(configuration(AdapterKind::CodexCli)),
+        environment: vec![RuntimeEnvironmentVariable {
+            name: "CODEX_HOME".into(),
+            value: codex_directory.to_string_lossy().into_owned(),
+        }],
+        ..Default::default()
+    };
+    let (draft, _) = runtime_startup::resolve_draft(
+        &db,
+        AdapterKind::CodexCli,
+        draft,
+        ApiKeyChange::Replace {
+            value: "draft-auto-replacement".into(),
+        },
+    )
+    .unwrap();
+    let draft = draft.custom_api_snapshot.unwrap();
+    assert_eq!(
+        draft.key().unwrap().as_deref(),
+        Some("draft-auto-replacement")
+    );
+    assert!(!codex_catalog::requires_account_check(&draft));
+    assert_ne!(codex_catalog::execution_provider(&draft).unwrap(), "openai");
+    assert_eq!(std::fs::read(codex_path).unwrap(), codex_bytes);
     let current = runtime_startup::load(&db, kind).unwrap();
     let change = ApiKeyChange::Replace {
         value: "rollback-only-key".into(),
@@ -318,6 +393,33 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
             && read.credential.can_replace
             && !read.credential.can_clear
     );
+    // Unused provider/auth-file/UI changes still participate in save CAS, but do
+    // not fence the active connection. Active transport or credential changes do.
+    let frozen = read.snapshot(&context, false);
+    let original = std::fs::read(&path).unwrap();
+    let mut unrelated = native::read_toml(&path).unwrap();
+    unrelated["model_providers"]["unused"]["base_url"] = toml_edit::value("https://unused.invalid");
+    unrelated["model_providers"]["relay"]["name"] = toml_edit::value("New label");
+    unrelated["mcp_servers"]["untouched"]["command"] = toml_edit::value("other-fixture");
+    unrelated["tui"]["notifications"] = toml_edit::value(false);
+    std::fs::write(&path, unrelated.to_string()).unwrap();
+    private_storage::atomic_write_private_bytes(
+        &auth,
+        br#"{"tokens":{"access_token":"different-unused-token"},"unknown":false}"#,
+    )
+    .unwrap();
+    let refreshed = native::read(&context, None).unwrap();
+    assert_ne!(read.revision, refreshed.revision);
+    assert_eq!(
+        frozen.identity().unwrap(),
+        refreshed.snapshot(&context, false).identity().unwrap()
+    );
+    frozen.assert_current().unwrap();
+    unrelated["model_providers"]["relay"]["stream_idle_timeout_ms"] = toml_edit::value(1234);
+    std::fs::write(&path, unrelated.to_string()).unwrap();
+    assert!(frozen.assert_current().is_err());
+    std::fs::write(&path, original).unwrap();
+    let read = native::read(&context, None).unwrap();
     let mut desired = read.configuration.clone();
     if let CustomApiConfiguration::Codex { base_url, .. } = &mut desired {
         *base_url = "https://other.example/prefix".into();
@@ -404,6 +506,48 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
             .get_envs()
             .any(|(_, value)| value == Some(std::ffi::OsStr::new("private-routing-tag")))
     );
+    doc["model_providers"]["relay"]["http_headers"]["Proxy-Authorization"] =
+        toml_edit::value("Basic independent-proxy-secret");
+    doc["model_providers"]["relay"]["query_params"]["api-version"] =
+        toml_edit::value("fixture-api-version");
+    doc["model_providers"]["relay"]["supports_websockets"] = toml_edit::value(true);
+    doc["model_providers"]["relay"]["request_max_retries"] = toml_edit::value(2);
+    doc["model_providers"]["relay"]["stream_max_retries"] = toml_edit::value(3);
+    doc["model_providers"]["relay"]["stream_idle_timeout_ms"] = toml_edit::value(5432);
+    doc["model_providers"]["relay"]["websocket_connect_timeout_ms"] = toml_edit::value(2345);
+    std::fs::write(&path, doc.to_string()).unwrap();
+    let snapshot = native::read(&context, None)
+        .unwrap()
+        .snapshot(&context, false);
+    let mut command = tokio::process::Command::new("not-spawned");
+    codex_catalog::configure(&snapshot, &mut command)
+        .await
+        .unwrap();
+    assert_eq!(
+        codex_catalog::execution_provider(&snapshot).unwrap(),
+        "relay"
+    );
+    let arguments = command
+        .as_std()
+        .get_args()
+        .map(|v| v.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert!(arguments.iter().any(|v| v == "model_provider=\"relay\""));
+    assert!(
+        !arguments
+            .iter()
+            .any(|v| v.starts_with("model_providers.\"relay\"="))
+    );
+    for secret in [
+        "replacement-key",
+        "independent-proxy-secret",
+        "fixture-api-version",
+    ] {
+        assert!(
+            !arguments.iter().any(|v| v.contains(secret)),
+            "native values must stay out of argv"
+        );
+    }
     doc["model_providers"]["relay"]["http_headers"]["Authorization"] =
         toml_edit::value("Bearer unrelated-secret");
     std::fs::write(&path, doc.to_string()).unwrap();
@@ -463,6 +607,91 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     );
     assert_eq!(std::fs::read(&path).unwrap(), before);
 
+    std::fs::write(
+        &path,
+        "cli_auth_credentials_store='auto'\nmodel='custom-id'\n",
+    )
+    .unwrap();
+    let auto = native::read(&context, Some(ConnectionMode::OfficialLogin)).unwrap();
+    assert!(matches!(
+        auto.source,
+        native::CredentialSource::NativeManaged { .. }
+    ));
+    assert_eq!(auto.observation.login_status, "unknown");
+    assert!(
+        auto.snapshot(&context, true).key().unwrap().is_none(),
+        "do not promote fallback file over a keyring credential"
+    );
+    let fallback = native::codex_auth_file(&context, "auto").unwrap();
+    assert_eq!(fallback["OPENAI_API_KEY"], "inactive-file-key");
+    assert!(
+        native::codex_auth_file(&context, "keyring")
+            .unwrap()
+            .get("OPENAI_API_KEY")
+            .is_none()
+    );
+    let mut command = tokio::process::Command::new("not-spawned");
+    codex_catalog::configure(&auto.snapshot(&context, true), &mut command)
+        .await
+        .unwrap();
+    assert!(
+        codex_catalog::validate_account(
+            &auto.snapshot(&context, true),
+            &json!({"account":{"type":"apiKey"}})
+        )
+        .is_err()
+    );
+    codex_catalog::validate_account(
+        &auto.snapshot(&context, true),
+        &json!({"account":{"type":"chatgpt"}}),
+    )
+    .unwrap();
+    let auto_api = native::read(&context, Some(ConnectionMode::CustomApi)).unwrap();
+    let frozen_api = auto_api.snapshot(&context, true);
+    let frozen_official = auto.snapshot(&context, true);
+    let mut external = fallback.clone();
+    external["last_refresh"] = json!("unrelated-native-bookkeeping");
+    external["tokens"]["account_id"] = json!("unused-oauth-account");
+    std::fs::write(&auth, serde_json::to_vec(&external).unwrap()).unwrap();
+    frozen_api.assert_current().unwrap();
+    assert!(frozen_api.key().unwrap().is_none());
+    external["OPENAI_API_KEY"] = json!("rotated-fallback-key");
+    std::fs::write(&auth, serde_json::to_vec(&external).unwrap()).unwrap();
+    assert!(frozen_api.assert_current().is_err());
+    assert!(frozen_api.key().is_err());
+    let current_api = native::read(&context, Some(ConnectionMode::CustomApi)).unwrap();
+    assert_ne!(
+        current_api.snapshot(&context, true).identity().unwrap(),
+        frozen_api.identity().unwrap()
+    );
+    assert!(
+        current_api
+            .snapshot(&context, true)
+            .key()
+            .unwrap()
+            .is_none()
+    );
+    frozen_official.assert_current().unwrap();
+    frozen_official.redactor().unwrap();
+    std::fs::write(&auth, serde_json::to_vec(&fallback).unwrap()).unwrap();
+    // A policy conflict must also protect auto mode's real file fallback from native logout.
+    std::fs::write(
+        &path,
+        "cli_auth_credentials_store='auto'\nforced_login_method='chatgpt'\n",
+    )
+    .unwrap();
+    let auto = native::read(&context, Some(ConnectionMode::OfficialLogin)).unwrap();
+    assert!(
+        codex_catalog::configure(
+            &auto.snapshot(&context, true),
+            &mut tokio::process::Command::new("not-spawned")
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("auto")
+    );
+    assert_eq!(native::read_json(&auth).unwrap(), fallback);
     // Explicit clear affects the API field only, retaining official tokens and
     // unrelated native data. The resulting provider cannot fall back to them.
     std::fs::write(
@@ -661,7 +890,7 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
             ("ANTHROPIC_BASE_URL".into(), "https://relay.example".into()),
             (
                 "ANTHROPIC_CUSTOM_HEADERS".into(),
-                "x-routing-tag: private-routing-tag".into(),
+                "x-routing-tag: private-routing-tag\nProxy-Authorization: Basic independent-proxy-secret".into(),
             ),
         ]),
     };
@@ -675,7 +904,7 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
             .as_std()
             .get_envs()
             .any(|(name, value)| name == "ANTHROPIC_CUSTOM_HEADERS"
-                && value == Some(std::ffi::OsStr::new("x-routing-tag: private-routing-tag")))
+                && value == Some(std::ffi::OsStr::new("x-routing-tag: private-routing-tag\nProxy-Authorization: Basic independent-proxy-secret")))
     );
     assert!(
         !snapshot
@@ -684,8 +913,43 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
             .to_string()
             .contains("private-routing-tag")
     );
+    private_storage::atomic_write_private_bytes(
+        &claude.path(),
+        br#"{"permissions":{"allow":["Read"]},"theme":"dark","mcpServers":{"unrelated":{}}}"#,
+    )
+    .unwrap();
+    snapshot.assert_current().unwrap();
+    assert_eq!(
+        snapshot.identity().unwrap(),
+        native::read(&claude, None)
+            .unwrap()
+            .snapshot(&claude, false)
+            .identity()
+            .unwrap()
+    );
+    let official_frozen = native::read(&claude, Some(ConnectionMode::OfficialLogin))
+        .unwrap()
+        .snapshot(&claude, true);
+    private_storage::atomic_write_private_bytes(
+        &claude.path(),
+        br#"{"env":{"ANTHROPIC_AUTH_TOKEN":"new-dormant-api-key"}}"#,
+    )
+    .unwrap();
+    official_frozen.assert_current().unwrap();
+    official_frozen.redactor().unwrap();
+    assert_eq!(
+        official_frozen.identity().unwrap(),
+        native::read(&claude, Some(ConnectionMode::OfficialLogin))
+            .unwrap()
+            .snapshot(&claude, true)
+            .identity()
+            .unwrap()
+    );
+    private_storage::atomic_write_private_bytes(&claude.path(), b"{}").unwrap();
     let mut settings = json!({"effective": snapshot.claude_settings().unwrap()});
-    let status = json!({"sections":[{"rows":[{"label":"Auth token","value":"ANTHROPIC_AUTH_TOKEN"},{"label":"Anthropic base URL","value":"https://relay.example"}]}]});
+    let status = claude_native::Identity::from_initialize(
+        &json!({"account":{"tokenSource":"ANTHROPIC_AUTH_TOKEN","apiProvider":"firstParty"}}),
+    );
     claude_native::validate(&snapshot, &settings, &status, None).unwrap();
     settings["effective"]["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("wrong-shell-key");
     assert!(claude_native::validate(&snapshot, &settings, &status, None).is_err());
@@ -696,7 +960,7 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     if let CustomApiConfiguration::ClaudeCode { models, .. } = &mut official.configuration {
         models.sonnet_model = "dormant-api-sonnet".into();
     }
-    claude_native::validate(&official, &json!({"effective":official.claude_settings().unwrap(),"applied":{"model":"native-sonnet"}}), &json!({"sections":[{"rows":[]}]}), Some("sonnet")).unwrap();
+    claude_native::validate(&official, &json!({"effective":official.claude_settings().unwrap(),"applied":{"model":"native-sonnet"}}), &claude_native::Identity::Official, Some("sonnet")).unwrap();
 
     // Key rotation preserves the effective authentication method, including shell sources.
     for (index, variable) in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
@@ -770,7 +1034,13 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
                     .get_envs()
                     .any(|(name, _)| name == "CLAUDE_CODE_OAUTH_TOKEN")
             );
-            claude_native::validate(&snap,&json!({"effective":snap.claude_settings().unwrap()}),&json!({"sections":[{"rows":[{"label":"Auth token","value":"CLAUDE_CODE_OAUTH_TOKEN"}]}]}),None).unwrap();
+            claude_native::validate(
+                &snap,
+                &json!({"effective":snap.claude_settings().unwrap()}),
+                &claude_native::Identity::Official,
+                None,
+            )
+            .unwrap();
             if let CustomApiConfiguration::ClaudeCode { models, .. } = &mut desired {
                 models.model.clear();
             }

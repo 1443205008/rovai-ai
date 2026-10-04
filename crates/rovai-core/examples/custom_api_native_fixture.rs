@@ -1,5 +1,6 @@
 //! Explicit local smoke helper: fixed fake keys, native config in an isolated fixture only.
-//! Run through scripts/smoke-runtime-custom-api.py. No user credential input is accepted.
+//! Run through scripts/smoke-runtime-custom-api.py. Keys are never accepted as arguments.
+//! An explicit official-acceptance marker allows existing isolated native login only.
 use anyhow::{Context, Result, ensure};
 use rovai_core::{
     agent_profile::AdapterKind,
@@ -7,9 +8,12 @@ use rovai_core::{
         self, ApiKeyChange, ConnectionMode, CustomApiConfiguration, FieldEdit, native, native_edit,
     },
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{collections::BTreeMap, path::PathBuf};
-use tokio::process::Command;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    process::Command,
+};
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = std::env::args_os()
@@ -36,13 +40,21 @@ async fn main() -> Result<()> {
     } else {
         "claude"
     });
+    let fixture_home = if root.join(".rovai-official-login-acceptance").is_file() {
+        root.join("home")
+    } else {
+        root.clone()
+    };
     let mut environment = BTreeMap::from([
         (
             "PATH".into(),
             std::env::var("PATH").context("PATH missing")?,
         ),
-        ("HOME".into(), root.to_string_lossy().into_owned()),
-        ("USERPROFILE".into(), root.to_string_lossy().into_owned()),
+        ("HOME".into(), fixture_home.to_string_lossy().into_owned()),
+        (
+            "USERPROFILE".into(),
+            fixture_home.to_string_lossy().into_owned(),
+        ),
         (
             if kind == AdapterKind::CodexCli {
                 "CODEX_HOME"
@@ -175,12 +187,45 @@ async fn main() -> Result<()> {
             ]);
         }
     }
-    // The Python owner handles the entire dedicated process group, including abnormal exit.
-    let status = command.status().await?;
-    ensure!(
-        status.success(),
-        "native fixture failed: {}",
-        json!(status.to_string())
-    );
+    // Exercise the production private-response validators as well as launch
+    // configuration. Forward protocol bytes only to the isolated smoke owner.
+    let mut child = command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+    let mut input = child.stdin.take().context("native stdin missing")?;
+    let input =
+        tokio::spawn(async move { tokio::io::copy(&mut tokio::io::stdin(), &mut input).await });
+    let mut lines = BufReader::new(child.stdout.take().context("native stdout missing")?).lines();
+    let mut output = tokio::io::stdout();
+    let mut identity = runtime_custom_api::claude_native::Identity::Unknown;
+    while let Some(line) = lines.next_line().await? {
+        if let Ok(frame) = serde_json::from_str::<Value>(&line) {
+            let control = &frame["response"]["response"];
+            if control.get("account").is_some() {
+                identity = runtime_custom_api::claude_native::Identity::from_initialize(control);
+            }
+            if control.get("effective").is_some() {
+                runtime_custom_api::claude_native::validate(&snapshot, control, &identity, None)?;
+            }
+            if frame["result"].get("config").is_some() {
+                runtime_custom_api::codex_catalog::validate_effective(&snapshot, &frame["result"])?;
+            }
+            if frame["result"].get("account").is_some()
+                && (snapshot.configuration.enabled()
+                    || root.join(".rovai-official-login-acceptance").is_file())
+                && runtime_custom_api::codex_catalog::requires_account_check(&snapshot)
+            {
+                runtime_custom_api::codex_catalog::validate_account(&snapshot, &frame["result"])?;
+            }
+        }
+        output.write_all(line.as_bytes()).await?;
+        output.write_all(b"\n").await?;
+        output.flush().await?;
+    }
+    input.abort();
+    let status = child.wait().await?;
+    ensure!(status.success(), "native fixture failed: {}", status);
     Ok(())
 }

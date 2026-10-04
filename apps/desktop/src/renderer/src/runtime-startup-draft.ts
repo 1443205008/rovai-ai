@@ -63,7 +63,7 @@ export function runtimeStartupKey(draft: RuntimeStartupConfiguration): string {
   return JSON.stringify({ ...normalized, environment: [...normalized.environment].sort((a, b) => a.name.localeCompare(b.name)) })
 }
 
-export function runtimeEnvironmentErrors(draft: RuntimeStartupConfiguration, windows: boolean): Record<number, string> {
+export function runtimeEnvironmentErrors(draft: RuntimeStartupConfiguration, windows: boolean, kind: AdapterKind): Record<number, string> {
   const errors: Record<number, string> = {}
   const names = new Map<string, number>()
   draft.environment.forEach(({ name: raw, value }, index) => {
@@ -72,7 +72,7 @@ export function runtimeEnvironmentErrors(draft: RuntimeStartupConfiguration, win
       errors[index] = '变量名需以字母或下划线开头，只含字母、数字、下划线。'
     } else if (name.toUpperCase().startsWith('ROVAI_')) {
       errors[index] = 'ROVAI_ 开头的变量由应用管理。'
-    } else if (['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'].includes(name.toUpperCase())) {
+    } else if ((kind === 'claude-code-cli' ? ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'] : kind === 'codex-cli' ? ['OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'] : []).includes(name.toUpperCase())) {
       errors[index] = '请在原生凭据来源中配置此密钥。'
     } else if (value.includes('\0') || value.length > 65536) {
       errors[index] = '变量值包含空字符或超过长度限制。'

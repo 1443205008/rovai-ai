@@ -13,10 +13,16 @@ describe('startup editor draft contract', () => {
   })
   it('reports invalid and duplicate variable names while allowing valid drafts to save without probing', () => {
     const draft = { programPath: null, environment: [{ name: 'TOKEN', value: '' }, { name: 'token', value: 'value' }] }
-    expect(runtimeEnvironmentErrors(draft, false)).toEqual({})
-    expect(Object.keys(runtimeEnvironmentErrors(draft, true))).toEqual(['0', '1'])
+    expect(runtimeEnvironmentErrors(draft, false, 'pi')).toEqual({})
+    expect(Object.keys(runtimeEnvironmentErrors(draft, true, 'pi'))).toEqual(['0', '1'])
+    for (const name of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY']) {
+      const keyDraft = { ...draft, environment: [{ name, value: 'fixture-key' }] }
+      for (const kind of ['pi', 'kimi-code-cli', 'grok-build'] as const) expect(runtimeEnvironmentErrors(keyDraft, false, kind)).toEqual({})
+      expect(Boolean(runtimeEnvironmentErrors(keyDraft, false, 'claude-code-cli')[0])).toBe(name === 'ANTHROPIC_API_KEY')
+      expect(Boolean(runtimeEnvironmentErrors(keyDraft, false, 'codex-cli')[0])).toBe(name === 'OPENAI_API_KEY')
+    }
     for (const name of ['', '1KEY', 'BAD-KEY', 'ROVAI_CONTEXT']) {
-      expect(runtimeEnvironmentErrors({ ...draft, environment: [{ name, value: '' }] }, false)[0]).toBeTruthy()
+      expect(runtimeEnvironmentErrors({ ...draft, environment: [{ name, value: '' }] }, false, 'pi')[0]).toBeTruthy()
     }
   })
   it('validates a single connection locally without requiring online model verification', () => {

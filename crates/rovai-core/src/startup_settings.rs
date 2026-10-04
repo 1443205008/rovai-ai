@@ -137,7 +137,7 @@ impl Core {
                             saved.revision == revision,
                             "启动设置已被更新，请保留草稿并再次保存。"
                         );
-                        runtime_startup::ordinary_edits(&saved.configuration, &configuration)
+                        runtime_startup::ordinary_edits(kind, &saved.configuration, &configuration)
                     }
                     _ => anyhow::bail!("启动设置保存格式无效。"),
                 };

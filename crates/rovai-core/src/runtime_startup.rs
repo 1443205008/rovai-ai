@@ -194,20 +194,23 @@ pub fn public(mut settings: RuntimeStartupSettings) -> RuntimeStartupSettings {
             _ => None,
         });
     settings.configuration.environment.retain(|entry| {
-        !sensitive_environment(&entry.name) && referenced.as_deref() != Some(entry.name.as_str())
+        !sensitive_environment(settings.runtime_kind, &entry.name)
+            && referenced.as_deref() != Some(entry.name.as_str())
     });
     settings
 }
-pub fn sensitive_environment(name: &str) -> bool {
-    matches!(
-        name.to_ascii_uppercase().as_str(),
-        "ANTHROPIC_API_KEY"
-            | "ANTHROPIC_AUTH_TOKEN"
-            | "CLAUDE_CODE_OAUTH_TOKEN"
-            | "OPENAI_API_KEY"
-            | "CODEX_API_KEY"
-            | "CODEX_ACCESS_TOKEN"
-    )
+pub fn sensitive_environment(kind: AdapterKind, name: &str) -> bool {
+    match kind {
+        AdapterKind::ClaudeCodeCli => matches!(
+            name.to_ascii_uppercase().as_str(),
+            "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN" | "CLAUDE_CODE_OAUTH_TOKEN"
+        ),
+        AdapterKind::CodexCli => matches!(
+            name.to_ascii_uppercase().as_str(),
+            "OPENAI_API_KEY" | "CODEX_API_KEY" | "CODEX_ACCESS_TOKEN"
+        ),
+        _ => false,
+    }
 }
 pub fn load_all(database: &Database) -> Result<BTreeMap<AdapterKind, RuntimeStartupConfiguration>> {
     let mut configurations = BTreeMap::new();
@@ -220,9 +223,12 @@ pub fn load_all(database: &Database) -> Result<BTreeMap<AdapterKind, RuntimeStar
     Ok(configurations)
 }
 
-pub fn editable(configuration: &RuntimeStartupConfiguration) -> serde_json::Value {
+pub fn editable(
+    kind: AdapterKind,
+    configuration: &RuntimeStartupConfiguration,
+) -> serde_json::Value {
     use serde_json::json;
-    let mut value = json!({"programPath":configuration.program_path, "environment":configuration.environment.iter().filter(|e| !sensitive_environment(&e.name)).map(|entry| (entry.name.clone(), json!(entry.value))).collect::<serde_json::Map<_,_>>()});
+    let mut value = json!({"programPath":configuration.program_path, "environment":configuration.environment.iter().filter(|e| !sensitive_environment(kind, &e.name)).map(|entry| (entry.name.clone(), json!(entry.value))).collect::<serde_json::Map<_,_>>()});
     if let Some(api) = &configuration.custom_api {
         value["mode"] = json!(api.mode());
         value["baseUrl"] = json!(api.base_url());
@@ -252,11 +258,12 @@ pub fn editable(configuration: &RuntimeStartupConfiguration) -> serde_json::Valu
 }
 /// Compatibility for callers of the ordinary startup editor. Native connection writes require patches.
 pub fn ordinary_edits(
+    kind: AdapterKind,
     before: &RuntimeStartupConfiguration,
     after: &RuntimeStartupConfiguration,
 ) -> Vec<FieldEdit> {
-    let before = editable(before);
-    let after = editable(after);
+    let before = editable(kind, before);
+    let after = editable(kind, after);
     let mut paths = vec![vec!["programPath".to_owned()]];
     let names = before["environment"]
         .as_object()
@@ -294,7 +301,7 @@ fn allowed_edit(edit: &FieldEdit, kind: AdapterKind) -> bool {
     match p.as_slice() {
         ["programPath"] => true,
         ["environment", name] => {
-            !sensitive_environment(name) && !name.to_ascii_uppercase().starts_with("ROVAI_")
+            !sensitive_environment(kind, name) && !name.to_ascii_uppercase().starts_with("ROVAI_")
         }
         ["mode" | "baseUrl" | "credentialVersion"] => native::supported(kind),
         [
@@ -324,7 +331,7 @@ pub fn prepare_save(
     key.validate()?;
     let current = load(database, kind)?;
     let visible = public(current.clone());
-    let mut value = editable(&visible.configuration);
+    let mut value = editable(kind, &visible.configuration);
     value["credentialVersion"] = serde_json::json!(current.credential.as_ref().map(|c| &c.version));
     let mut conflicts = Vec::new();
     let mut seen = BTreeSet::new();
@@ -686,11 +693,15 @@ pub fn resolve_draft(
     }
     if let ApiKeyChange::Replace { value } = change {
         snapshot.draft_key = Some(value);
-        if kind == AdapterKind::ClaudeCodeCli {
-            snapshot.credential_source = native::CredentialSource::Environment {
-                name: snapshot.credential_source.claude_variable().into(),
-            };
-        }
+        // A replacement in a Codex auto/keyring draft selects this supplied key,
+        // not the previously opaque native account. The value stays in memory.
+        snapshot.credential_source = native::CredentialSource::Environment {
+            name: if kind == AdapterKind::ClaudeCodeCli {
+                snapshot.credential_source.claude_variable().into()
+            } else {
+                "ROVAI_CUSTOM_API_KEY".into()
+            },
+        };
     } else if matches!(change, ApiKeyChange::Clear) {
         snapshot.credential_source = native::CredentialSource::Missing;
         snapshot.credential_version =
@@ -719,6 +730,39 @@ mod tests {
                 })
                 .collect(),
         };
+        for kind in AdapterKind::ALL {
+            for name in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"] {
+                let restricted = (kind == AdapterKind::ClaudeCodeCli
+                    && name == "ANTHROPIC_API_KEY")
+                    || (kind == AdapterKind::CodexCli && name == "OPENAI_API_KEY");
+                let configuration = config(&[name]);
+                let edits = ordinary_edits(
+                    kind,
+                    &RuntimeStartupConfiguration::default(),
+                    &configuration,
+                );
+                assert_eq!(edits.is_empty(), restricted, "{kind:?}/{name}");
+                let edit = FieldEdit {
+                    path: vec!["environment".into(), name.into()],
+                    before: serde_json::Value::Null,
+                    after: serde_json::json!("fixture-key"),
+                    label: String::new(),
+                };
+                assert_eq!(allowed_edit(&edit, kind), !restricted);
+                let public = public(RuntimeStartupSettings {
+                    runtime_kind: kind,
+                    revision: 0,
+                    configuration,
+                    credential: None,
+                    connection_observation: None,
+                    native_revision: None,
+                    connection_read_error: None,
+                    reconnect_required: false,
+                    native_written: false,
+                });
+                assert_eq!(public.configuration.environment.is_empty(), restricted);
+            }
+        }
         let valid = config(&[" HTTP_PROXY ", "_EMPTY"])
             .validated(false)
             .unwrap();
