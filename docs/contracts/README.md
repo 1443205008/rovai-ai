@@ -121,7 +121,9 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Runtime Usage Monitoring v6（历史）](runtime-usage-monitoring-v6.md) | DSH 原生完整调用 total 接通，缓存缺失继续保留未知 |
 | [Runtime Usage Monitoring v5（历史）](runtime-usage-monitoring-v5.md) | 按原生格式准入、去除指标版本门槛；TRAE journal 与 Antigravity step 补采 |
 | [Runtime Usage Monitoring v4（历史）](runtime-usage-monitoring-v4.md) | v3 保留；可选实际档位、observed 优先与未知撤回估价 |
-| [Runtime Execution Metrics v5（当前）](runtime-execution-metrics-v5.md) | Run 完整性投影与已有部分用量入口守卫 |
+| [Runtime Execution Metrics v7（当前）](runtime-execution-metrics-v7.md) | 当前 Session 运行中直接更新、有效实际模型窗口复用、ZCode 事件触发读取 |
+| [Runtime Execution Metrics v6（历史）](runtime-execution-metrics-v6.md) | Claude 运行中最新调用占用、窗口未知时独立保存 used |
+| [Runtime Execution Metrics v5（历史）](runtime-execution-metrics-v5.md) | Run 完整性投影与已有部分用量入口守卫 |
 | [Runtime Execution Metrics v4（历史）](runtime-execution-metrics-v4.md) | Antigravity 原生窗口、TRAE 校准占用、Qoder 数量配对及 Kiro 原生窗口 |
 | [Runtime Execution Metrics v3（历史）](runtime-execution-metrics-v3.md) | ZCode 原生 Session 快照的 used/size 接通，数值专用投递 |
 | [Runtime Execution Metrics v2（历史）](runtime-execution-metrics-v2.md) | Kiro 原生比例、CodeBuddy 最新调用占用；无指标版本白名单 |
@@ -442,7 +444,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Planned Shutdown v4（历史）](planned-shutdown-v4.md) | wire 仍为 protocol 3；先业务结算再 Runtime 清理，未知终态与原 report 保留 |
 | [Planned Shutdown v3（历史）](planned-shutdown-v3.md) | 退出、重启或更新统一取消全部非终态 AgentRun；稳定快照后立即关闭 terminal/route 准入，保留未知效果并使用 v3 report |
 | [Planned Shutdown v2（历史）](planned-shutdown-v2.md) | v1 generation-local reliable terminal 加 durable shutdown cycle、product fence、启动补偿、终态 unknown-effect 保留与 v2 report |
-| [App Update v6（当前）](app-update-v6.md) | 当前版本发布日期随版本绑定元数据离线展示；内置日志与候选版本来源沿用 v5 |
+| [App Update v7（当前）](app-update-v7.md) | 继承 v6；双语发布原文不变，Renderer 按界面语言选择显示副本，安全回退、空段准入与文档级链接/完整脚注 first-wins |
+| [App Update v6（历史）](app-update-v6.md) | 当前版本发布日期随版本绑定元数据离线展示；内置日志与候选版本来源沿用 v5 |
 | [App Update v5（历史）](app-update-v5.md) | Desktop 独立投影与运行版本匹配的内置当前日志；候选日志继续复用更新检查，展示层精确去除重复首标题 |
 | [App Update v4（历史）](app-update-v4.md) | v3 snapshot/API 与 updater-first staging 不变；安装退出保留 Desktop-local Active Camp Composer snapshot，并共同回收 Scheduler/maintenance |
 | [App Update v3（历史）](app-update-v3.md) | v2 snapshot/API 与 updater-first staging 不变；安装接受后只收口已开始的 Renderer-local 操作 |

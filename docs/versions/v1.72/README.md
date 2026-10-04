@@ -110,13 +110,17 @@ Migration 177 从 v1.72/schema 126 升到 schema 127，只在 camp 增加摘要�
 
 ## 并行交付：执行指标
 
+Context 当前按 [Execution Metrics v7](../../contracts/runtime-execution-metrics-v7.md) 与输入确认解绑；当前 Session 原生观测经既有低频 Flush 提交并通知可见面板。同一实际模型及有效配置允许复用已确认窗口，ZCode 增加模型调用结束/压缩事件触发的合并读取。没有新增数据库表、指标定时器或测速；同次 App 证据与限制见[上下文运行中可用性收口](../../research/runtime-monitoring/live-context-usability-2026-10-04.md)。
+
+2026-10-03 的 [Execution Metrics v6](../../contracts/runtime-execution-metrics-v6.md) 首先修复 Claude 最新根调用输入桶齐全时发出 used-only；当时其他 Runtime 的确认/采样限制见[运行中 Context 复核](../../research/runtime-monitoring/live-context-verification-2026-10-03.md)。
+
 2026-10-02 按用户要求移除指标专用 CLI 版本门槛，保留产品最低版本资格；补接 CodeBuddy 最新调用占用、Kiro 原生百分比、TRAE 本地 Usage 与 Antigravity 根 step Usage。OpenCode 1.18.32 真实恢复验证通过，失败占位零不再清空 Context。字段支持、未决项与原始到数据库读回证据见[原生格式兼容验收](../../research/runtime-monitoring/native-format-compatibility-2026-10-02.md)。本切片不改变 schema、模型上下文、测速退役结论或界面布局。
 
-执行面板的可见范围读取、隐藏暂停、终态有限尾读与引用复用已收口；周期 Flush 只为终态迟到数据
-增加落盘后失效提示。生产 Renderer 的 500 Run 动态验收、最低层竞争和字段引用证据见
+执行面板的可见范围读取、隐藏暂停、终态有限尾读与引用复用已收口；2026-10-01 时周期 Flush 只为终态迟到数据
+增加落盘后失效提示，v7 扩展到运行中有效提交。生产 Renderer 的 500 Run 动态验收、最低层竞争和字段引用证据见
 [读取生命周期验收](../../research/runtime-monitoring/execution-metrics-refresh-verification-2026-10-01.md)。
 
-执行台分别呈现每 Run 原生四项用量与当前原生 Session 上下文。2026-10-02 按用户要求移除全部 Runtime 的输出测速，包括 Core 字符计数、临时接口、前端轮询与显示；思考内容仍隔离于公开 Evidence 和 Renderer。用量复用 Monitoring Run summary；Migration 178 增加当前 Session 上下文小投影，把 v1.72/schema 127 升至 schema 128；Migration 179 以原子增量升级现有 schema 128 至 129，保留当前上下文数据并独立承接原生比例，不从比例反推数量；Migration 180 在合入 Thread 命名后收口至 schema 130，保留两条已部署路径的业务数据和冻结证据。没有真实回包的 Runtime 字段维持未验证，不回填历史 Run 的结束上下文。字段与 UI 规则由 [Runtime Execution Metrics v5](../../contracts/runtime-execution-metrics-v5.md) 和 [Camp 会话工作区](../../ui/components/conversation-workspace.md#camp-执行过程) 拥有；最新用量、上下文和 App 核验见[原生边界验收](../../research/runtime-monitoring/native-boundaries-verification-2026-10-01.md)，早期[第二轮记录](../../research/runtime-monitoring/execution-metrics-verification-2026-09-29.md)和[v3 长回合验收](../../research/runtime-monitoring/observable-output-v3-verification-2026-09-30.md)保留各自范围。
+执行台分别呈现每 Run 原生四项用量与当前原生 Session 上下文。2026-10-02 按用户要求移除全部 Runtime 的输出测速，包括 Core 字符计数、临时接口、前端轮询与显示；思考内容仍隔离于公开 Evidence 和 Renderer。用量复用 Monitoring Run summary；Migration 178 增加当前 Session 上下文小投影，把 v1.72/schema 127 升至 schema 128；Migration 179 以原子增量升级现有 schema 128 至 129，保留当前上下文数据并独立承接原生比例，不从比例反推数量；Migration 180 在合入 Thread 命名后收口至 schema 130，保留两条已部署路径的业务数据和冻结证据。没有真实回包的 Runtime 字段维持未验证，不回填历史 Run 的结束上下文。字段与 UI 规则由 [Runtime Execution Metrics v7](../../contracts/runtime-execution-metrics-v7.md) 和 [Camp 会话工作区](../../ui/components/conversation-workspace.md#camp-执行过程) 拥有；最新用量、上下文和 App 核验见[原生边界验收](../../research/runtime-monitoring/native-boundaries-verification-2026-10-01.md)，早期[第二轮记录](../../research/runtime-monitoring/execution-metrics-verification-2026-09-29.md)和[v3 长回合验收](../../research/runtime-monitoring/observable-output-v3-verification-2026-09-30.md)保留各自范围。
 
 ## 并行交付：公开 Composer 队外 Mention
 
@@ -138,7 +142,7 @@ Snapshot 与 SSE，不增加私有 Evidence、文件差异、写操作或新数�
 “关于与更新”当前版本的发布日期改由随包、与版本号绑定的元数据提供。v0.4.0 的值对照正式 GitHub Release
 发布时间写入；Desktop 与 Desktop 托管的 Web 页面均可离线展示。版本提升时，元数据与更新日志必须一起更新，
 桌面构建在打包前拒绝旧版本号或无效日期。元数据缺失或与运行版本不符时仍明确显示日期未知，不借用构建时间或
-新版候选日期。当前字段合同见 [App Update v6](../../contracts/app-update-v6.md)，验证见[实施计划](implementation-plan.md#2026-09-28-当前版本发布日期)。
+新版候选日期。日期来源由 v6 引入，当前合同入口为继承其规则的 [App Update v7](../../contracts/app-update-v7.md)，验证见[实施计划](implementation-plan.md#2026-09-28-当前版本发布日期)。
 
 v0.4.1 发布后补齐候选版本的日期兼容：macOS 合并清单保留日期字符串，Main 同时归一化更新器可能返回的
 日期对象；真实 Provider 解析器覆盖生成端和消费端的回归。见[补充验证](implementation-plan.md#2026-09-29-候选版本发布日期兼容)。
@@ -186,7 +190,7 @@ Claude Code 保留 `--print` 结构化输出，增加 stream-json 输入与 stdi
 | --- | --- | --- |
 | Version lifecycle | 已更新 | v1.71 冻结为 historical；本概览、[实施计划](implementation-plan.md)、[版本决定](decisions.md)与[版本索引](../README.md)建立唯一 current v1.72 |
 | Decisions | 已更新 | [V1.72-D01](decisions.md#v1-72-d01)记录独立 Lark provider；[V1.72-D02](decisions.md#v1-72-d02)记录侧栏摘要与范围读取；[V1.72-D03](decisions.md#v1-72-d03)记录 Lark 入站附件复用与 Host 隔离；[V1.72-D04](decisions.md#v1-72-d04)记录钉钉签名链接与旧排队卡收口；[V1.72-D05](decisions.md#v1-72-d05)记录发送前邀请；[V1.72-D06](decisions.md#v1-72-d06)记录 Claude 原生双向审批，并新增 [V1.72-D07](decisions.md#v1-72-d07) 记录 Thread 命名及旧绑定兼容，均同步当前决定导航 |
-| Contracts | 已更新 | 发布 [Lark Channel v1](../../contracts/lark-channel-v1.md)与 [Feishu Channel v17](../../contracts/feishu-channel-v17.md)，Feishu v16 降为历史；补充 [Navigation Read v1](../../contracts/navigation-read-v1.md)、[Skills Rebuild v2](../../contracts/skills-rebuild-v2.md)、[App Update v6](../../contracts/app-update-v6.md)、[Runtime Launch v46](../../contracts/runtime-launch-and-verification-v46.md)与钉钉出站 [DingTalk Channel v14](../../contracts/dingtalk-channel-v14.md)；Composer 邀请只组合现有成员加入与发送命令，不改变两者合同；公开命名由 [Thread Naming v1](../../contracts/thread-naming-v1.md) 覆盖，新上下文与工具输出分别为 [ContextManifest v32](../../contracts/context-manifest-evidence-v32.md) 和 [Built-in Transport v33](../../contracts/builtin-tool-transport-v33.md) |
+| Contracts | 已更新 | 发布 [Lark Channel v1](../../contracts/lark-channel-v1.md)与 [Feishu Channel v17](../../contracts/feishu-channel-v17.md)，Feishu v16 降为历史；补充 [Navigation Read v1](../../contracts/navigation-read-v1.md)、[Skills Rebuild v2](../../contracts/skills-rebuild-v2.md)、[App Update v7](../../contracts/app-update-v7.md)（继承 v6 日期来源，增加双语发布与 Renderer 显示副本选择）、[Runtime Launch v46](../../contracts/runtime-launch-and-verification-v46.md)与钉钉出站 [DingTalk Channel v14](../../contracts/dingtalk-channel-v14.md)；Composer 邀请只组合现有成员加入与发送命令，不改变两者合同；公开命名由 [Thread Naming v1](../../contracts/thread-naming-v1.md) 覆盖，新上下文与工具输出分别为 [ContextManifest v32](../../contracts/context-manifest-evidence-v32.md) 和 [Built-in Transport v33](../../contracts/builtin-tool-transport-v33.md) |
 | Architecture | 已更新 | 新增 [Lark 渠道架构](../../architecture/lark-channel.md)；[飞书渠道架构](../../architecture/feishu-channel.md)移除 `larksuite.com` 并改指 v17；[侧栏刷新](../../architecture/desktop-navigation-refresh.md)与[Skills 来源](../../architecture/skills.md)说明局部读取及目录缓存；[钉钉渠道架构](../../architecture/dingtalk-channel.md)补齐原生附件出站与重试边界；[Public Camp Composer](../../architecture/camp-composer-draft.md#发送)说明邀请与发布命令边界；[Desktop App Updates](../../architecture/desktop-app-updates.md)补齐随包发布日期来源；[架构导航](../../architecture/README.md) 明确 Thread 命名覆盖与稳定存储边界；[Built-in Tool Runtime](../../architecture/builtin-tool-runtime.md#claude-code-权限审批回调)说明 Claude 权限回调边界 |
 | UI | 已更新 | [渠道设置](../../ui/components/channel-settings.md)增加 Lark 页签、品牌显示与未验收提示，并明确只读网页执行台的历史区、生产组件及重连呈现；[Camp 命名](../../contracts/channel-camp-naming-v1.md)和[统一侧栏](../../ui/components/app-shell-navigation.md)补齐 Lark 来源及范围刷新；[结构化 Mention](../../ui/components/structured-mentions.md#member-typeahead)和[会话工作区](../../ui/components/conversation-workspace.md#camp-composer)说明待邀请反馈；公开英文名称统一为 Thread，中文继续用对话，草稿和导航持久状态兼容旧字段 |
 | Runtime Activity | 确认无需更新 | Canonical Activity、Adapter mapping 与 Registry 的事件语义保持；Thread 只更新公开范围字段及读取投影，原始证据先验摘要 |
@@ -240,3 +244,7 @@ macOS/Web 不增加入口。托盘及第二次启动恢复原窗口，明确退�
 [Pending Camp Activation v4](../../contracts/pending-camp-activation-v4.md)、[Composer Draft v16](../../contracts/camp-composer-draft-v16.md)
 及对应 Architecture/UI/术语/导航已同步；理由见 [V1.72-D11](decisions.md#v1-72-d11)，证据见
 [实施记录](implementation-plan.md#2026-10-03-普通一键新对话草稿恢复)。无模型上下文、发布 Skill、Runtime 兼容轴或根 README 变化。
+
+2026-10-04 [上下文可用性收口](../../research/runtime-monitoring/live-context-usability-2026-10-04.md)
+按 Execution Metrics v7 解除输入确认等待、复用有效实际模型窗口，并接入 ZCode 运行中事件触发读取。
+旧轮次记录保留当时的限制；当前规则以 v7 为准。
