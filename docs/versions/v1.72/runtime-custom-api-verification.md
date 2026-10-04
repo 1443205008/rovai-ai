@@ -156,8 +156,10 @@ Codex 的原生 HTTP 栈未把 Proxy-Authorization 发送到 origin；已验证�
 类型检查、桌面构建、Rust examples 检查、格式检查及三项通用文档门禁通过。最终原生证据在 `final-confirm`：
 Claude 直接入口与 Codex Node 包装入口均通过上述本地调用和正式配置校验，未新增第二个真实 CLI 版本的验收声明。
 
-真实官方登录往返仍为待验收项。新增显式开发验收参数 `--official-roundtrip-root`，要求预先在隔离目录完成原生
-Claude / ChatGPT 登录；顺序为官方最小回复 → loopback 假 Key 回复 → 官方最小回复，核对原身份与实际路由。
+真实官方登录往返按 Runtime 分别验收：Codex 等待隔离目录的原生 ChatGPT 登录；Claude 本次没有可用的官方订阅
+验收凭据，明确记录为未实测，不作为 Codex 验收的前置条件。显式开发验收参数 `--official-roundtrip-root`
+只处理同时传入 `--codex` 或 `--claude` 的对应 Runtime；顺序为官方最小回复 → loopback 假 Key 回复 → 官方最小回复，
+核对原身份与实际路由。
 只发送固定的 `Reply only OK. Do not use tools.`，官方调用可能消耗额度；不复制日常凭据，不输出账号信息或令牌，
 也不在产品中添加认证流程。未完成隔离登录时不得把该项记为通过。
 
