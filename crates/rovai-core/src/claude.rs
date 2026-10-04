@@ -524,26 +524,16 @@ impl ClaudeCodeCliRuntimeAdapter {
         } else {
             None
         };
-        rovai_core::runtime_custom_api::guard_frozen_absence(
-            rovai_core::agent_profile::AdapterKind::ClaudeCodeCli,
-            request.runtime.custom_api.as_ref(),
-        )?;
-        let mut inline_settings = match &request.runtime.custom_api {
-            Some(api) => api.claude_settings()?,
-            None => serde_json::json!({}),
-        };
+        if let Some(api) = &request.runtime.custom_api {
+            api.assert_current()?;
+        }
+        let mut inline_settings = serde_json::json!({});
         rovai_core::camp_fast::merge_claude_inline_settings(&mut inline_settings, fast_override)?;
         let mut command = Command::new(executable);
         rovai_core::runtime_discovery::configure_runtime_command(
             rovai_core::agent_profile::AdapterKind::ClaudeCodeCli,
             &mut command,
         );
-        if let Some(api) = &request.runtime.custom_api {
-            rovai_core::runtime_custom_api::claude_native::configure_environment(
-                api,
-                &mut command,
-            )?;
-        }
         if let Some(config) = &request.builtin_tools {
             config.configure_command(&mut command)?;
         }
@@ -724,8 +714,7 @@ impl ClaudeCodeCliRuntimeAdapter {
             .runtime
             .custom_api
             .as_ref()
-            .map(|api| api.redactor())
-            .transpose()?;
+            .and_then(|api| api.redactor().ok());
         Arc::get_mut(&mut protocol)
             .expect("unshared protocol")
             .set_credential_redactor(redactor);
@@ -769,12 +758,6 @@ impl ClaudeCodeCliRuntimeAdapter {
                 protocol.initialize().await?;
                 tokio::time::timeout(claude_control::INITIALIZE_TIMEOUT, initialized).await
                     .context("Claude Code protocol initialization timed out")??;
-                if let Some(api) = &request.runtime.custom_api {
-                    let settings = protocol.private_configuration("get_settings").await?;
-                    let identity = protocol.native_identity();
-                    rovai_core::runtime_custom_api::claude_native::validate(api, &settings, &identity,
-                        (request.runtime.model.source == "explicit").then_some(request.runtime.model.model_id.as_str()))?;
-                }
                 protocol.send_prompt(&request.prompt).await
                     .context("failed to deliver structured input to Claude Code stdin")
             } => {

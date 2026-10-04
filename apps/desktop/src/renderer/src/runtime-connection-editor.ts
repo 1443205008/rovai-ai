@@ -18,7 +18,7 @@ export function reusableCredential(credential: NativeCredential | undefined): bo
 export function initialConfiguration(settings: RuntimeStartupSettings): RuntimeStartupConfiguration {
   const api = settings.configuration.customApi
   if (!api || !supportsOfficialLogin(api) || api.mode !== null) return settings.configuration
-  // Explicitly saved selection always wins. Key presence is never an input.
+  // The native selected connection owns the baseline. Key presence alone is not a mode.
   return { ...settings.configuration, customApi: { ...api, mode: settings.connectionObservation?.initialMode ?? null } }
 }
 
@@ -74,6 +74,7 @@ export function editedFields(before: EditableSnapshot, after: EditableSnapshot):
   return edits
 }
 export function conflictValue(conflict: FieldConflict, snapshot: EditableSnapshot): string {
+  if (conflict.path[0] === 'nativeRevision') return '当前连接已在外部修改，请确认是否仍切换为官方登录'
   if (conflict.path[0] === 'credentialVersion') return 'API Key 已在外部更新（不显示密钥）'
   if (conflict.path[0] === 'environment') return '该变量的值已在外部更新'
   if (conflict.path[0] === 'defaultRowId') return snapshot.codexModels?.[String(conflict.current)]?.id || '未指定'

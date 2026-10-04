@@ -132,9 +132,21 @@ mod tests {
         launcher.env_remove("UNUSED_CREDENTIAL");
         let context = gui_context.for_command(&launcher);
         assert_eq!(context.env("PATH").as_deref(), Some("/usr/bin:/bin"));
-        let snapshot = crate::runtime_custom_api::native::read(&context, None)
-            .unwrap()
-            .snapshot(&context, false);
+        use crate::runtime_custom_api::{
+            ApiKeyChange, ConnectionMode, CustomApiConfiguration, CustomApiModel, FieldEdit,
+            native, native_edit,
+        };
+        let desired = CustomApiConfiguration::Codex {
+            mode: Some(ConnectionMode::CustomApi),
+            base_url: "https://fixture.invalid".into(),
+            models: vec![CustomApiModel {
+                row_id: "example".into(),
+                id: "example".into(),
+                display_name: "Example".into(),
+            }],
+            default_model: "example".into(),
+            default_row_id: Some("example".into()),
+        };
         let mut paths = Vec::new();
         for resource in ["different-resource-a", "different-resource-b"] {
             let catalog = serde_json::json!({"models":[{"slug":"example","display_name":"Example","context_window":1234,"future_field":resource}]});
@@ -144,8 +156,22 @@ mod tests {
             )
             .unwrap();
             assert_eq!(bundled_catalog(&wrapper, &context).await.unwrap(), catalog);
-            let path = crate::runtime_custom_api::codex_catalog::write_catalog(&snapshot, &catalog)
-                .unwrap();
+            let current = native::read(&context, None).unwrap();
+            native_edit::write(
+                &context,
+                &current,
+                &desired,
+                &[FieldEdit {
+                    path: vec!["codexModels".into()],
+                    before: Value::Null,
+                    after: Value::Null,
+                    label: String::new(),
+                }],
+                &ApiKeyChange::Keep,
+                Some(&catalog),
+            )
+            .unwrap();
+            let path = native::read(&context, None).unwrap().catalog_path.unwrap();
             paths.push(path);
         }
         assert_ne!(

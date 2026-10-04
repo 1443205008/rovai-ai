@@ -164,7 +164,7 @@ def run(kind, executable, helper, root, base):
             inherited.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
             inherited.send({"method":"initialized","params":{}})
             provider = inherited.rpc("config/read", {"cwd":str(root),"includeLayers":False})["config"]["model_provider"]
-            session = inherited.rpc("thread/start", {"cwd":str(root),"model":"rovai-unknown","modelProvider":provider,"approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
+            session = inherited.rpc("thread/start", {"cwd":str(root),"model":"rovai-unknown","approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
             inherited.rpc("turn/start", {"threadId":session["thread"]["id"],"input":[{"type":"text","text":"Reply OK."}]})
             assert inherited.wait(lambda f:f.get("method")=="turn/completed")["params"]["turn"]["status"] == "completed"
             assert path.read_text() == inherited_text, "reading/using native settings must not rewrite them"
@@ -194,7 +194,8 @@ def run(kind, executable, helper, root, base):
             assert provider_id == "relay.test", "execution must retain the native provider"
             provider = effective["model_providers"][provider_id]
             assert provider["http_headers"]["Proxy-Authorization"] == "Basic isolated-proxy-key", "proxy credentials must remain independent from the model key"
-            assert provider["base_url"] == base and provider["env_key"] == "ROVAI_CUSTOM_API_KEY"
+            assert provider["base_url"] == base and provider["experimental_bearer_token"] == FAKE_KEY
+            assert provider.get("env_key") is None, "native writes must not inject a second key environment"
             for field, expected_value in {"query_params":{"api-version":"fixture-v1"}, "supports_websockets":True, "request_max_retries":0, "stream_max_retries":0, "stream_idle_timeout_ms":15000, "websocket_connect_timeout_ms":2000}.items():
                 assert provider[field] == expected_value, "lost native provider field: " + field
             catalog = native.rpc("model/list", {"includeHidden": True, "limit": 100})["data"]
@@ -202,7 +203,7 @@ def run(kind, executable, helper, root, base):
             assert {"gpt-6.1-sol", "rovai-unknown"} <= ids
             sessions = []
             for model in ["gpt-6.1-sol", "rovai-unknown"]:
-                session = native.rpc("thread/start", {"cwd": str(root), "model": model, "modelProvider": provider_id, "approvalPolicy": "never", "sandbox": "read-only", "ephemeral": False})
+                session = native.rpc("thread/start", {"cwd": str(root), "model": model, "approvalPolicy": "never", "sandbox": "read-only", "ephemeral": False})
                 sessions.append(session["thread"]["id"])
                 assert session["modelProvider"] == provider_id and session["model"] == model
                 native.rpc("turn/start", {"threadId": session["thread"]["id"], "input": [{"type": "text", "text": "Reply OK."}]})
@@ -233,7 +234,7 @@ def run(kind, executable, helper, root, base):
                 assert edited_entry == {**existing_entry,"display_name":"Edited existing name"}, "a label edit must retain all native model metadata"
                 assert previous_catalog_path.read_bytes() == previous_catalog_bytes, "old runtime catalog stays immutable"
 
-                fresh = rotated.rpc("thread/start", {"cwd":str(root),"model":"rovai-unknown","modelProvider":rotated_provider,"approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
+                fresh = rotated.rpc("thread/start", {"cwd":str(root),"model":"rovai-unknown","approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
                 boundary = len(REQUESTS)
                 rotated.rpc("turn/start", {"threadId": fresh["thread"]["id"], "input": [{"type":"text","text":"Reply OK."}]})
                 result = rotated.wait(lambda f:f.get("method") == "turn/completed")
@@ -245,7 +246,7 @@ def run(kind, executable, helper, root, base):
                 assert result["params"]["turn"]["status"] == "completed"
                 assert REQUESTS[boundary:] and all(r["keyVersion"] == 1 and not r["path"].startswith("/custom/prefix/rotated/") for r in REQUESTS[boundary:])
                 native.close()  # release the native writer before resuming its persisted thread
-                resumed = rotated.rpc("thread/resume", {"threadId": sessions[-1], "cwd": str(root), "model": "rovai-unknown", "modelProvider": rotated_provider, "approvalPolicy": "never", "sandbox": "read-only"})
+                resumed = rotated.rpc("thread/resume", {"threadId": sessions[-1], "cwd": str(root), "model": "rovai-unknown", "approvalPolicy": "never", "sandbox": "read-only"})
                 assert resumed["modelProvider"] == rotated_provider and resumed["model"] == "rovai-unknown"
                 boundary = len(REQUESTS)
                 rotated.rpc("turn/start", {"threadId":sessions[-1],"input":[{"type":"text","text":"Reply OK."}]})
@@ -296,7 +297,7 @@ def run(kind, executable, helper, root, base):
                 rotated_header.close()
             # Fake official OAuth input only checks native status; no official request is sent.
             (root / "official-oauth-fixture").touch()
-        # Switching modes selects an official route without rewriting the dormant API key.
+        # Explicit Save switches native configuration; launch adds no connection overlay.
         config_path = root / ("claude/settings.json" if kind == "claude" else "codex/config.toml")
         native_before = config_path.read_bytes()
         official = Native(helper, executable, root, {**config, "mode":"official_login"})
@@ -306,7 +307,7 @@ def run(kind, executable, helper, root, base):
                 official.send({"method":"initialized","params":{}})
                 resolved = official.rpc("config/read", {"cwd":str(root),"includeLayers":False})["config"]
                 assert resolved["model_provider"] == "openai"
-                assert resolved["openai_base_url"] == "https://chatgpt.com/backend-api/codex"
+                assert not resolved.get("openai_base_url")
                 assert resolved["model"] != "rovai-unknown"
                 account = official.rpc("account/read", {"refreshToken":False})
                 assert account["account"] is None, "no native login in the isolated fixture"
@@ -314,9 +315,10 @@ def run(kind, executable, helper, root, base):
                 identity = official.control("initialize")["account"]
                 settings = official.control("get_settings")
                 for name in ["ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_API_KEY"]:
-                    assert settings["effective"]["env"][name] == ""
+                    assert not settings["effective"].get("env", {}).get(name)
                 assert identity["tokenSource"] == "CLAUDE_CODE_OAUTH_TOKEN"
-            assert config_path.read_bytes() == native_before, "mode selection must not erase dormant API configuration"
+            assert config_path.read_bytes() != native_before, "official Save must change the actual native selection"
+            assert not (root / "derived").exists(), "normal launch must not generate temporary connection files"
         finally:
             official.close()
         requests = REQUESTS[start:]
@@ -387,7 +389,7 @@ def run_official_roundtrip(kind, executable, helper, root, base):
         try:
             if kind == "claude":
                 account = native.control("initialize")["account"]
-                native.control("get_settings")  # production adapter validates the private response
+                native.control("get_settings")  # acceptance-only observation, not an execution gate
                 if mode == "official_login":
                     assert account.get("tokenSource") in ["claude.ai", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"] or ("tokenSource" not in account and "subscriptionType" in account), "complete isolated native Claude official login first"
                     identity = {k:account.get(k) for k in ["email","organization","tokenSource","subscriptionType"]}
@@ -409,7 +411,7 @@ def run_official_roundtrip(kind, executable, helper, root, base):
                         official_identity = account
                     assert official_identity == account, "official identity changed across switching"
                     assert effective["model_provider"] == "openai" and effective["openai_base_url"] == "https://chatgpt.com/backend-api/codex"
-                session = native.rpc("thread/start", {"cwd":str(root / "work"),"modelProvider":effective["model_provider"],"approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
+                session = native.rpc("thread/start", {"cwd":str(root / "work"),"approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
                 native.rpc("turn/start", {"threadId":session["thread"]["id"],"input":[{"type":"text","text":"Reply only OK. Do not use tools."}]})
                 assert native.wait(lambda f:f.get("method")=="turn/completed", timeout=90)["params"]["turn"]["status"] == "completed", "native Codex call failed"
             calls = REQUESTS[boundary:]

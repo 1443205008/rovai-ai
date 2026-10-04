@@ -660,22 +660,8 @@ async fn claude_code_probe_at(path: &Path) -> ClaudeCodeCapabilityProbe {
 
     let mut auth_command = runtime_command(&canonical, Some(AdapterKind::ClaudeCodeCli));
     let auth: Result<BoundedCommandOutput> = async {
-        if let Some(api) =
-            rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::ClaudeCodeCli)?
-        {
-            rovai_core::runtime_custom_api::claude_native::configure(&api, &mut auth_command)?;
-        }
         auth_command.args(["auth", "status"]);
         let output = bounded_output(&mut auth_command, Duration::from_secs(15)).await?;
-        if output.status.success()
-            && let Some(api) =
-                rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::ClaudeCodeCli)?
-            && let Ok(value) = serde_json::from_slice::<Value>(&output.stdout.bytes)
-        {
-            let identity =
-                rovai_core::runtime_custom_api::claude_native::Identity::from_auth_status(&value);
-            rovai_core::runtime_custom_api::claude_native::validate_identity(&api, &identity)?;
-        }
         Ok(output)
     }
     .await;
@@ -1315,11 +1301,6 @@ async fn claude_code_model_catalog(
     deadline: Duration,
 ) -> Result<Vec<ModelDescriptor>> {
     let mut command = runtime_command(path, Some(AdapterKind::ClaudeCodeCli));
-    let custom_api =
-        rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::ClaudeCodeCli)?;
-    if let Some(api) = &custom_api {
-        rovai_core::runtime_custom_api::claude_native::configure(api, &mut command)?;
-    }
     command.args([
         "--print",
         "--input-format",
@@ -1378,17 +1359,6 @@ async fn claude_code_model_catalog(
                     );
                 }
                 let models = claude_code_models(&response["response"])?;
-                if let Some(api) = &custom_api {
-                    let settings =
-                        claude_private_configuration(stdin, lines, "get_settings").await?;
-                    let identity =
-                        rovai_core::runtime_custom_api::claude_native::Identity::from_initialize(
-                            &response["response"],
-                        );
-                    rovai_core::runtime_custom_api::claude_native::validate(
-                        api, &settings, &identity, None,
-                    )?;
-                }
                 return Ok(models);
             }
             anyhow::bail!("Claude Code exited before returning the initialization model catalog")
@@ -1408,34 +1378,6 @@ async fn claude_code_model_catalog(
         ))),
         Err(error) => Err(error),
     }
-}
-
-async fn claude_private_configuration(
-    stdin: &mut ManagedChildStdin,
-    lines: &mut crate::runtime_probe_process::BoundedLineReader<
-        crate::managed_process::ManagedChildStdout,
-    >,
-    subtype: &str,
-) -> Result<Value> {
-    let id = uuid::Uuid::new_v4().to_string();
-    write_json_line(
-        stdin,
-        &json!({"type":"control_request", "request_id":id, "request":{"subtype":subtype}}),
-    )
-    .await?;
-    while let Some(line) = lines.next_line().await? {
-        let value: Value =
-            serde_json::from_str(&line).context("Claude Code 返回了无效的配置响应。")?;
-        if value["response"]["request_id"].as_str() == Some(&id) {
-            anyhow::ensure!(
-                value["response"]["subtype"] == "success"
-                    && value["response"]["response"].is_object(),
-                "当前 Claude Code 无法报告最终配置，此版本的自定义 API 路径尚不兼容。"
-            );
-            return Ok(value["response"]["response"].clone());
-        }
-    }
-    bail!("Claude Code 未返回最终配置。")
 }
 
 fn claude_code_required_capabilities() -> Vec<String> {
@@ -2770,9 +2712,6 @@ fn classify_acp_probe_failure(detail: &str) -> AgentRuntimeProbeStatus {
 pub async fn codex_model_catalog(path: &Path) -> Result<Value> {
     let mut command = runtime_command(path, Some(AdapterKind::CodexCli));
     let custom_api = rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::CodexCli)?;
-    if let Some(api) = &custom_api {
-        rovai_core::runtime_custom_api::codex_catalog::configure(api, &mut command).await?;
-    }
     command.args(["app-server", "--listen", "stdio://"]);
     let mut process = RuntimeProbeProcess::spawn(
         &mut command,
@@ -2803,15 +2742,6 @@ pub async fn codex_model_catalog(path: &Path) -> Result<Value> {
             read_rpc_result(lines, 1).await?;
             write_json_line(stdin, &json!({"method": "initialized", "params": {}})).await?;
 
-            if let Some(api) = &custom_api {
-                write_json_line(
-                    stdin,
-                    &json!({"method":"config/read","id":1000,"params":{"includeLayers":false}}),
-                )
-                .await?;
-                let config = read_rpc_result(lines, 1000).await?;
-                rovai_core::runtime_custom_api::codex_catalog::validate_effective(api, &config)?;
-            }
             let mut models = Vec::new();
             let mut cursor: Option<String> = None;
             let mut request_id = 2_u64;
@@ -3193,10 +3123,6 @@ async fn codex_runtime_probe_uncached(
 
 async fn probe_initialize_handshake(path: &Path, require_external_provider: bool) -> Result<()> {
     let mut command = runtime_command(path, Some(AdapterKind::CodexCli));
-    let custom_api = rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::CodexCli)?;
-    if let Some(api) = &custom_api {
-        rovai_core::runtime_custom_api::codex_catalog::configure(api, &mut command).await?;
-    }
     command.args(["app-server", "--listen", "stdio://"]);
     let mut process = RuntimeProbeProcess::spawn(
         &mut command,
@@ -3255,17 +3181,6 @@ async fn probe_initialize_handshake(path: &Path, require_external_provider: bool
                     .await?;
                 stdin.write_all(b"\n").await?;
                 stdin.flush().await?;
-                if let Some(api) = &custom_api {
-                    write_json_line(
-                        stdin,
-                        &json!({"method":"config/read","id":3,"params":{"includeLayers":false}}),
-                    )
-                    .await?;
-                    let config = read_rpc_result(lines, 3).await?;
-                    rovai_core::runtime_custom_api::codex_catalog::validate_effective(
-                        api, &config,
-                    )?;
-                }
                 if !require_external_provider {
                     return Ok(());
                 }

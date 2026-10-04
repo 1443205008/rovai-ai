@@ -1,6 +1,6 @@
-import type { RuntimeNativeCredential, RuntimeCustomApiConfiguration } from '@contracts'
+import type { RuntimeNativeCredential, RuntimeCustomApiConfiguration, RuntimeStartupSettings } from '@contracts'
 import { describe, expect, it } from 'vitest'
-import { customApiError, emptyCustomApi, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey } from './runtime-startup-draft'
+import { customApiError, emptyCustomApi, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey, startupEdits, startupSubmission } from './runtime-startup-draft'
 
 describe('startup editor draft contract', () => {
   it('treats returning to the saved values as clean and preserves empty or spaced values', () => {
@@ -49,6 +49,20 @@ describe('startup editor draft contract', () => {
     expect(normalizedStartupConfiguration(renamed).customApi).toMatchObject({ defaultRowId: 'two', defaultModel: 'renamed' })
     for (const baseUrl of ['https://offline.invalid/prefix/', 'https://another.invalid/prefix']) expect(customApiError({ ...draft, customApi: { ...draft.customApi, baseUrl } }, key, credential)).toBeNull()
     expect(customApiError(draft, { action: 'replace', value: 'new-key' }, credential)).toBeNull()
+    const official = { ...draft, customApi: { ...codex, mode: 'official_login' as const, baseUrl: 'invalid', models: [] } }
+    expect(customApiError(official, { action: 'replace', value: 'bad key\n' }, { ...credential, canReplace: false })).toBeNull()
+    const saved: RuntimeStartupSettings = { runtimeKind: 'codex-cli', revision: 1, configuration: draft, credential, nativeRevision: 'native-1', connectionObservation: null, connectionReadError: null, reconnectRequired: false, nativeWritten: false }
+    const keyDraft = { action: 'replace', value: 'memory-only-key' } as const
+    const submission = startupSubmission(saved, official, keyDraft)
+    expect(submission.apiKey).toEqual({ action: 'keep' })
+    expect(submission.edits.map(edit => edit.path[0])).toEqual(['mode', 'nativeRevision'])
+    expect(JSON.stringify(submission)).not.toContain('memory-only-key')
+    // The full editing session still owns hidden changes for retries and conflict rebasing.
+    expect(startupEdits(saved, official, keyDraft).map(edit => edit.path[0])).toContain('baseUrl')
+    expect(startupEdits(saved, official, keyDraft).map(edit => edit.path[0])).toContain('credentialVersion')
+    expect(startupSubmission(saved, { ...draft, customApi: { ...codex, mode: 'official_login' } }, key).edits).toHaveLength(2)
+    expect(startupSubmission(saved, { ...draft, customApi: { ...codex, mode: 'custom_api' } }, key).edits).toEqual([])
+    expect(startupSubmission(saved, renamed, key).edits).toContainEqual({ path: ['mode'], before: 'custom_api', after: 'custom_api', label: '连接方式' })
   })
 
 })

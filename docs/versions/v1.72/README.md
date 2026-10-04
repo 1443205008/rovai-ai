@@ -6,7 +6,7 @@ authority: version-scope-and-status
 design_status: confirmed
 implementation_status: in_progress
 model_context_change: true
-last_updated: 2026-10-03
+last_updated: 2026-10-05
 ---
 
 # Rovai-ai v1.72：Lark 独立渠道
@@ -14,7 +14,8 @@ last_updated: 2026-10-03
 ## 并行实施：Claude Code 与 Codex 原生连接编辑
 
 按用户确认，仅保留两种 Runtime 的简单表单，直接读取并编辑原生连接，不重复持久化 API Key。
-独立保存官方登录／自定义 API 方式，字段级合并保留外部修改；旧进程、凭据和恢复兼容性接入现有路径。
+选项只改内存草稿，点击保存才切换原生配置；字段级合并保留外部修改。正常执行由 CLI 读取连接，
+不再生成临时连接／认证覆盖；保存官方后不承诺保留 API 凭据，进程与恢复兼容性沿用现有路径。
 代码在任务 worktree 中实现；本地 UI 与原生假服务证据和版本限制见[验收记录](runtime-custom-api-verification.md)。
 
 ## 并行修复：HTML 内部诊断 CSP 归因

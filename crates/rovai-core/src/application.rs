@@ -14557,11 +14557,7 @@ impl Core {
                 runtime.validate_explicit_model(model).await?;
                 Some(model)
             }
-            "runtime_default" => execution
-                .runtime
-                .custom_api
-                .as_ref()
-                .and_then(|api| api.configuration.default_model()),
+            "runtime_default" => None,
             _ => anyhow::bail!("Codex model source is invalid"),
         };
         let mut session_bootstrap = {

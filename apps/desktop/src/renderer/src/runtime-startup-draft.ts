@@ -32,13 +32,31 @@ export function startupEdits(saved: RuntimeStartupSettings, draft: RuntimeStartu
   return edits
 }
 
+// The editing session retains the whole draft; only the final selected mode is submitted.
+export function startupSubmission(saved: RuntimeStartupSettings, draft: RuntimeStartupConfiguration, key: RuntimeApiKeyChange): { edits: FieldEdit[]; apiKey: RuntimeApiKeyChange } {
+  const all = startupEdits(saved, draft, key)
+  if (draft.customApi?.mode !== 'official_login') {
+    // An external switch must not silently discard API edits or apply them to official mode.
+    if (draft.customApi?.mode === 'custom_api' && all.some(edit => !['programPath', 'environment'].includes(edit.path[0])) && !all.some(edit => edit.path[0] === 'mode')) {
+      all.push({ path: ['mode'], before: saved.configuration.customApi?.mode ?? null, after: 'custom_api', label: '连接方式' })
+    }
+    return { edits: all, apiKey: key }
+  }
+  const edits = all.filter(edit => ['programPath', 'environment', 'mode'].includes(edit.path[0]))
+  if (edits.some(edit => edit.path[0] === 'mode')) {
+    edits.push({ path: ['nativeRevision'], before: saved.nativeRevision ?? null, after: saved.nativeRevision ?? null, label: '当前连接' })
+  }
+  return { edits, apiKey: { action: 'keep' } }
+}
+
 export function nativeConnectionChange(saved: RuntimeStartupSettings, draft: RuntimeStartupConfiguration, key: RuntimeApiKeyChange): FieldEdit[] | null {
-  const edits = startupEdits(saved, draft, key).filter(edit => !['programPath', 'environment'].includes(edit.path[0]))
+  const edits = startupSubmission(saved, draft, key).edits.filter(edit => !['programPath', 'environment'].includes(edit.path[0]))
   return edits.length ? edits : null
 }
 
 export function customApiError(draft: RuntimeStartupConfiguration, key: RuntimeApiKeyChange, credential: NativeCredential | undefined, requireModelList = true): string | null {
   const api = draft.customApi ? normalizedCustomApi(draft.customApi) : null
+  if (api?.mode === 'official_login') return null
   if (key.action === 'replace' && credential?.canReplace === false) return [credential.sourceLabel, credential.restriction, credential.remedy].filter(Boolean).join('。')
   if (key.action === 'clear' && credential?.canClear === false) return `无法在此清除 ${credential.sourceLabel}。${credential.remedy ?? '请在该原生来源处理。'}`
   if (api && supportsOfficialLogin(api) && api.mode === null) return '请选择官方登录或自定义 API。'

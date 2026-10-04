@@ -122,30 +122,24 @@ impl RuntimeStartupConfiguration {
 fn load_record(
     connection: &rusqlite::Connection,
     runtime_kind: AdapterKind,
-) -> Result<(u64, RuntimeStartupConfiguration, Option<ConnectionMode>)> {
+) -> Result<(u64, RuntimeStartupConfiguration)> {
     let row: Option<(i64, String)> = connection.query_row(
         "SELECT revision, configuration_json FROM runtime_startup_setting WHERE runtime_kind = ?1",
         [runtime_kind.as_str()], |row| Ok((row.get(0)?, row.get(1)?)),
     ).optional()?;
     let Some((revision, json)) = row else {
-        return Ok((0, RuntimeStartupConfiguration::default(), None));
+        return Ok((0, RuntimeStartupConfiguration::default()));
     };
     let mut value: serde_json::Value = serde_json::from_str(&json)?;
-    let mode = value
-        .as_object_mut()
-        .and_then(|value| value.remove("_connectionMode"))
-        .map(serde_json::from_value)
-        .transpose()?
-        .flatten();
-    Ok((
-        u64::try_from(revision)?,
-        serde_json::from_value(value)?,
-        mode,
-    ))
+    // Ignore legacy UI selection; native configuration alone chooses the connection.
+    if let Some(object) = value.as_object_mut() {
+        object.remove("_connectionMode");
+    }
+    Ok((u64::try_from(revision)?, serde_json::from_value(value)?))
 }
 
 fn read_settings(database: &Database, kind: AdapterKind) -> Result<RuntimeStartupSettings> {
-    let (revision, mut configuration, mode) = load_record(database.connection(), kind)?;
+    let (revision, mut configuration) = load_record(database.connection(), kind)?;
     let mut settings = RuntimeStartupSettings {
         runtime_kind: kind,
         revision,
@@ -159,20 +153,17 @@ fn read_settings(database: &Database, kind: AdapterKind) -> Result<RuntimeStartu
     };
     if native::supported(kind) {
         let read = native::NativeContext::resolve(kind, &configuration, database.path())
-            .and_then(|context| native::read(&context, mode).map(|read| (context, read)));
+            .and_then(|context| native::read(&context, None).map(|read| (context, read)));
         match read {
             Ok((context, mut read)) => {
                 read.observation.login_command =
                     context.login_command(configuration.program_path.as_deref());
-                if mode.is_some() || read.configuration.enabled() {
-                    configuration.custom_api_snapshot =
-                        Some(read.snapshot(&context, mode.is_some()));
-                }
+                configuration.custom_api_snapshot = Some(read.snapshot(&context, false));
                 configuration.custom_api = Some(read.configuration);
                 settings.configuration = configuration;
                 settings.credential = Some(read.credential);
                 settings.connection_observation = Some(read.observation);
-                settings.native_revision = Some(read.revision);
+                settings.native_revision = Some(read.connection_revision);
             }
             Err(error) => settings.connection_read_error = Some(error.to_string()),
         }
@@ -303,7 +294,7 @@ fn allowed_edit(edit: &FieldEdit, kind: AdapterKind) -> bool {
         ["environment", name] => {
             !sensitive_environment(kind, name) && !name.to_ascii_uppercase().starts_with("ROVAI_")
         }
-        ["mode" | "baseUrl" | "credentialVersion"] => native::supported(kind),
+        ["mode" | "baseUrl" | "credentialVersion" | "nativeRevision"] => native::supported(kind),
         [
             "claudeModels",
             "model" | "reasoningModel" | "haikuModel" | "sonnetModel" | "opusModel",
@@ -324,15 +315,40 @@ pub struct PreparedSave {
 pub fn prepare_save(
     database: &Database,
     kind: AdapterKind,
-    edits: Vec<FieldEdit>,
+    mut edits: Vec<FieldEdit>,
     key: &ApiKeyChange,
 ) -> Result<PreparedSave> {
     ensure!(edits.len() <= 512, "修改字段过多。");
-    key.validate()?;
     let current = load(database, kind)?;
+    let official = edits
+        .iter()
+        .rev()
+        .find(|e| e.path == ["mode"])
+        .map(|e| e.after == "official_login")
+        .unwrap_or_else(|| {
+            current
+                .configuration
+                .custom_api
+                .as_ref()
+                .is_some_and(|api| api.mode() == Some(ConnectionMode::OfficialLogin))
+        });
+    if official {
+        // Hidden API input never participates in validation, CAS, generation or writes.
+        edits.retain(|e| {
+            e.path.first().is_some_and(|p| {
+                matches!(
+                    p.as_str(),
+                    "programPath" | "environment" | "mode" | "nativeRevision"
+                )
+            })
+        });
+    } else {
+        key.validate()?;
+    }
     let visible = public(current.clone());
     let mut value = editable(kind, &visible.configuration);
     value["credentialVersion"] = serde_json::json!(current.credential.as_ref().map(|c| &c.version));
+    value["nativeRevision"] = serde_json::json!(current.native_revision);
     let mut conflicts = Vec::new();
     let mut seen = BTreeSet::new();
     for edit in &edits {
@@ -341,7 +357,7 @@ pub fn prepare_save(
             "修改字段无效或重复。"
         );
         let now = native_edit::value_at(&value, &edit.path).clone();
-        let credential = edit.path == ["credentialVersion"];
+        let credential = edit.path == ["credentialVersion"] || edit.path == ["nativeRevision"];
         if now != edit.before && (credential || now != edit.after) {
             conflicts.push(FieldConflict {
                 edit: edit.clone(),
@@ -351,7 +367,7 @@ pub fn prepare_save(
         native_edit::set_at(&mut value, &edit.path, edit.after.clone())?;
     }
     ensure!(
-        key.is_keep() == !seen.contains(&vec!["credentialVersion".into()]),
+        official || key.is_keep() == !seen.contains(&vec!["credentialVersion".into()]),
         "API Key 操作缺少凭据版本。"
     );
     let mut configuration = current.configuration.clone();
@@ -443,16 +459,7 @@ pub fn prepare_save(
                     .unwrap_or_default();
             }
         }
-        if native_changed
-            && conflicts.is_empty()
-            && (api.enabled()
-                || edits.iter().any(|e| {
-                    !matches!(
-                        e.path[0].as_str(),
-                        "mode" | "credentialVersion" | "programPath" | "environment"
-                    )
-                }))
-        {
+        if native_changed && conflicts.is_empty() && api.enabled() {
             let list_edited = edits
                 .iter()
                 .any(|e| matches!(e.path[0].as_str(), "codexModels" | "defaultRowId"));
@@ -479,7 +486,7 @@ pub fn save(
     configuration: RuntimeStartupConfiguration,
     search_generation: u64,
 ) -> Result<RuntimeStartupSettings> {
-    let (revision, previous, mode) = load_record(database.connection(), kind)?;
+    let (revision, previous) = load_record(database.connection(), kind)?;
     if revision > 0 && previous == configuration {
         return load(database, kind);
     }
@@ -489,7 +496,6 @@ pub fn save(
         expected_revision,
         configuration,
         search_generation,
-        mode,
     )?;
     load(database, kind)
 }
@@ -502,6 +508,16 @@ pub fn commit_save(
     generated_catalog: Option<&serde_json::Value>,
 ) -> Result<RuntimeStartupSettings> {
     ensure!(prepared.conflicts.is_empty(), "请先处理字段冲突。");
+    let key = if prepared
+        .configuration
+        .custom_api
+        .as_ref()
+        .is_some_and(|api| api.mode() == Some(ConnectionMode::OfficialLogin))
+    {
+        ApiKeyChange::Keep
+    } else {
+        key
+    };
     let current = load_record(database.connection(), kind)?;
     ensure!(
         current.0 == prepared.current.revision,
@@ -516,17 +532,9 @@ pub fn commit_save(
     {
         let context =
             native::NativeContext::resolve(kind, &prepared.configuration, database.path())?;
-        let read = native::read(
-            &context,
-            prepared
-                .current
-                .configuration
-                .custom_api
-                .as_ref()
-                .and_then(CustomApiConfiguration::mode),
-        )?;
+        let read = native::read(&context, None)?;
         ensure!(
-            Some(&read.revision) == prepared.current.native_revision.as_ref(),
+            Some(&read.connection_revision) == prepared.current.native_revision.as_ref(),
             "原生连接在保存期间变化，草稿已保留，请再次保存。"
         );
         let desired = prepared
@@ -535,7 +543,12 @@ pub fn commit_save(
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("缺少连接配置。"))?;
         let before = native::read_bytes(&context.path())?;
-        let credential_before = if matches!(key, ApiKeyChange::Clear) {
+        let credential_before = if desired.mode() == Some(ConnectionMode::OfficialLogin)
+            && kind == AdapterKind::CodexCli
+        {
+            let path = context.directory.join("auth.json");
+            Some((path.clone(), native::read_bytes(&path)?))
+        } else if matches!(key, ApiKeyChange::Clear) {
             match &read.source {
                 native::CredentialSource::Json { path, .. } if path != &context.path() => {
                     Some((path.clone(), native::read_bytes(path)?))
@@ -561,22 +574,12 @@ pub fn commit_save(
             }
         }
     }
-    let mode = if prepared.edits.iter().any(|e| e.path == ["mode"]) {
-        prepared
-            .configuration
-            .custom_api
-            .as_ref()
-            .and_then(CustomApiConfiguration::mode)
-    } else {
-        current.2
-    };
     if let Err(error) = persist(
         database,
         kind,
         prepared.current.revision,
         prepared.configuration,
         search_generation,
-        mode,
     ) {
         for (path, before, after) in native_rollback {
             if native::read_bytes(&path).ok() == Some(after) {
@@ -609,14 +612,11 @@ fn persist(
     expected_revision: u64,
     mut configuration: RuntimeStartupConfiguration,
     search_generation: u64,
-    mode: Option<ConnectionMode>,
 ) -> Result<()> {
     configuration = configuration.validated(cfg!(windows))?;
-    let (current, previous, previous_mode) = load_record(database.connection(), kind)?;
+    let (current, _) = load_record(database.connection(), kind)?;
     configuration.custom_api = None;
     configuration.custom_api_snapshot = None;
-    if current > 0 && previous == configuration && previous_mode == mode { /* native-only saves still invalidate qualifications */
-    }
     ensure!(
         current == expected_revision,
         "启动设置已被更新，请保留草稿并再次保存。"
@@ -624,8 +624,7 @@ fn persist(
     let revision = current
         .checked_add(1)
         .ok_or_else(|| anyhow::anyhow!("启动设置版本超出范围。"))?;
-    let mut stored = serde_json::to_value(&configuration)?;
-    stored["_connectionMode"] = serde_json::json!(mode);
+    let stored = serde_json::to_value(&configuration)?;
     let transaction = database.connection_mut().transaction()?;
     transaction.execute("INSERT INTO runtime_startup_setting(runtime_kind, revision, configuration_json, updated_at) VALUES (?1, ?2, ?3, datetime('now')) ON CONFLICT(runtime_kind) DO UPDATE SET revision=excluded.revision, configuration_json=excluded.configuration_json, updated_at=excluded.updated_at", params![kind.as_str(), i64::try_from(revision)?, serde_json::to_string(&stored)?])?;
     transaction.execute("UPDATE adapter_capability_snapshot SET stale_at=COALESCE(stale_at, datetime('now')), authentication_status='unknown', probe_status='installed_unverified', last_error='runtime_startup_configuration_changed' WHERE installation_id IN (SELECT id FROM adapter_installation WHERE adapter_kind=?1 AND installation_class='managed_default')", [kind.as_str()])?;
@@ -641,74 +640,38 @@ pub(crate) fn snapshot_from_connection(
     if !native::supported(kind) {
         return Ok(None);
     }
-    let (_, configuration, mode) = load_record(connection, kind)?;
-    let context = native::NativeContext::resolve(
-        kind,
-        &configuration,
-        Path::new(
-            connection
-                .path()
-                .ok_or_else(|| anyhow::anyhow!("本机数据目录不可用。"))?,
-        ),
-    )?;
-    let read = native::read(&context, mode)?;
-    Ok((mode.is_some() || read.configuration.enabled())
-        .then(|| read.snapshot(&context, mode.is_some())))
+    let (_, configuration) = load_record(connection, kind)?;
+    let Some(database_path) = connection.path() else {
+        return Ok(None);
+    };
+    Ok(
+        native::NativeContext::resolve(kind, &configuration, Path::new(database_path))
+            .and_then(|context| {
+                native::read(&context, None).map(|read| read.snapshot(&context, false))
+            })
+            .ok(),
+    )
 }
-/// No credential file or retained secret store is created for a preview.
-pub struct DraftCredential;
+/// Only ordinary startup fields participate in a preview; API drafts are not executed.
 pub fn resolve_draft(
     database: &Database,
     kind: AdapterKind,
     mut configuration: RuntimeStartupConfiguration,
-    change: ApiKeyChange,
-) -> Result<(RuntimeStartupConfiguration, Option<DraftCredential>)> {
+    _change: ApiKeyChange,
+) -> Result<RuntimeStartupConfiguration> {
     configuration = configuration.validated(cfg!(windows))?;
-    change.validate()?;
-    if !native::supported(kind) {
-        ensure!(change.is_keep(), "此智能体没有连接编辑入口。");
-        return Ok((configuration, None));
-    }
-    let context = native::NativeContext::resolve(kind, &configuration, database.path())?;
-    let mode = configuration
-        .custom_api
-        .as_ref()
-        .and_then(CustomApiConfiguration::mode);
-    let read = native::read(&context, mode)?;
-    let mut snapshot = read.snapshot(&context, mode.is_some());
-    snapshot.preview = true;
-    if let Some(mut api) = configuration.custom_api.clone() {
-        let list_edited =
-            crate::runtime_custom_api::codex_catalog::models_changed(&read.configuration, &api);
-        api.validate_model_list(
-            kind,
-            list_edited || read.observation.initial_mode != Some(ConnectionMode::CustomApi),
-        )?;
-        if crate::runtime_custom_api::codex_catalog::model_ids_changed(&read.configuration, &api) {
-            if let CustomApiConfiguration::Codex { models, .. } = &api {
-                snapshot.configured_model_ids = Some(models.iter().map(|m| m.id.clone()).collect());
-            }
+    // Existing startup checks use the saved native connection, never hidden API drafts.
+    configuration.custom_api = None;
+    configuration.custom_api_snapshot = None;
+    if native::supported(kind) {
+        let read = native::NativeContext::resolve(kind, &configuration, database.path())
+            .and_then(|context| native::read(&context, None).map(|read| (context, read)));
+        if let Ok((context, read)) = read {
+            configuration.custom_api_snapshot = Some(read.snapshot(&context, false));
+            configuration.custom_api = Some(read.configuration);
         }
-        snapshot.configuration = api;
     }
-    if let ApiKeyChange::Replace { value } = change {
-        snapshot.draft_key = Some(value);
-        // A replacement in a Codex auto/keyring draft selects this supplied key,
-        // not the previously opaque native account. The value stays in memory.
-        snapshot.credential_source = native::CredentialSource::Environment {
-            name: if kind == AdapterKind::ClaudeCodeCli {
-                snapshot.credential_source.claude_variable().into()
-            } else {
-                "ROVAI_CUSTOM_API_KEY".into()
-            },
-        };
-    } else if matches!(change, ApiKeyChange::Clear) {
-        snapshot.credential_source = native::CredentialSource::Missing;
-        snapshot.credential_version =
-            native::credential_value(&snapshot.credential_source, &context)?.1;
-    }
-    configuration.custom_api_snapshot = Some(snapshot);
-    Ok((configuration, None))
+    Ok(configuration)
 }
 
 #[cfg(test)]

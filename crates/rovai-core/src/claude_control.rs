@@ -28,7 +28,6 @@ struct PendingPermission {
 #[derive(Default)]
 struct ControlState {
     initialized: bool,
-    native_identity: rovai_core::runtime_custom_api::claude_native::Identity,
     prompt_sent: bool,
     closed: bool,
     closing: bool,
@@ -71,7 +70,6 @@ pub(crate) struct ClaudeControl {
     permission_mode: String,
     initialize_id: String,
     initialization: Mutex<Option<oneshot::Sender<std::result::Result<(), String>>>>,
-    private_requests: Mutex<HashMap<String, oneshot::Sender<Result<Value>>>>,
     state: Mutex<ControlState>,
     writer: mpsc::UnboundedSender<ControlWrite>,
     changed: Notify,
@@ -96,7 +94,6 @@ impl ClaudeControl {
             permission_mode,
             initialize_id: format!("rovai-initialize-{}", uuid::Uuid::new_v4()),
             initialization: Mutex::new(Some(initialized)),
-            private_requests: Mutex::new(HashMap::new()),
             state: Mutex::new(ControlState::default()),
             writer,
             changed: Notify::new(),
@@ -109,12 +106,6 @@ impl ClaudeControl {
                 .map_err(anyhow::Error::msg)
         };
         (control, ready, receiver)
-    }
-
-    pub(crate) fn native_identity(
-        &self,
-    ) -> rovai_core::runtime_custom_api::claude_native::Identity {
-        self.state.lock().unwrap().native_identity.clone()
     }
 
     pub(crate) fn set_credential_redactor(
@@ -179,30 +170,6 @@ impl ClaudeControl {
         .await
     }
 
-    /// Responses may contain credentials. They are consumed here, never emitted as events.
-    pub(crate) async fn private_configuration(&self, subtype: &str) -> Result<Value> {
-        let id = format!("rovai-config-{}", uuid::Uuid::new_v4());
-        let (sent, received) = oneshot::channel();
-        self.private_requests
-            .lock()
-            .unwrap()
-            .insert(id.clone(), sent);
-        let result = async {
-            self.write(
-                json!({"type":"control_request", "request_id":id, "request":{"subtype":subtype}}),
-                None,
-            )
-            .await?;
-            tokio::time::timeout(INITIALIZE_TIMEOUT, received)
-                .await
-                .context("Claude Code 最终配置读取超时。")?
-                .context("Claude Code 配置读取已中断。")?
-        }
-        .await;
-        self.private_requests.lock().unwrap().remove(&id);
-        result
-    }
-
     async fn write(&self, frame: Value, permission_request_id: Option<String>) -> Result<()> {
         let (acknowledged, received) = oneshot::channel();
         self.writer
@@ -255,21 +222,6 @@ impl ClaudeControl {
                 let response = frame
                     .get("response")
                     .context("Claude control response has no response")?;
-                if let Some(id) = response.get("request_id").and_then(Value::as_str)
-                    && let Some(sender) = self.private_requests.lock().unwrap().remove(id)
-                {
-                    let value = if response["subtype"] == "success"
-                        && response["response"].is_object()
-                    {
-                        Ok(response["response"].clone())
-                    } else {
-                        Err(anyhow::anyhow!(
-                            "当前 Claude Code 无法读取最终配置；此版本的自定义 API 路径尚不兼容。"
-                        ))
-                    };
-                    let _ = sender.send(value);
-                    return Ok(true);
-                }
                 if response.get("request_id").and_then(Value::as_str) != Some(&self.initialize_id) {
                     bail!("Claude Code returned an unknown control response ID");
                 }
@@ -290,7 +242,6 @@ impl ClaudeControl {
                     } else {
                         let mut state = self.state.lock().unwrap();
                         state.initialized = true;
-                        state.native_identity = rovai_core::runtime_custom_api::claude_native::Identity::from_initialize(&response["response"]);
                         Ok(())
                     }
                 } else {
@@ -503,7 +454,6 @@ impl ClaudeControl {
     }
 
     pub(crate) fn disconnect(&self) {
-        self.private_requests.lock().unwrap().clear();
         let ids = {
             let mut state = self.state.lock().unwrap();
             state.closed = true;

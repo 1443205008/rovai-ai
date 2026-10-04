@@ -3,180 +3,100 @@ document_type: implementation-verification
 version: v1.72
 source_version: v1.72
 status: implemented
-last_updated: 2026-10-04
+last_updated: 2026-10-05
 ---
 
 # Claude Code / Codex 原生连接编辑验收
 
-范围仅包含两种 Runtime。当前合同为 [Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md)，
-选择理由为 [V1.72-D12](decisions.md#v1-72-d12)。界面沿用既有启动设置，不引入探活或模型能力认证。
+当前实现以 [Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md) 和
+[V1.72-D13](decisions.md#v1-72-d13) 为准：Rovai 只在保存时编辑原生连接；正常执行由原生 CLI 读取配置、认证及发送请求。
+先前为永久保留两套连接引入的启动覆盖、临时 provider 和额外身份核对已退出，历史验收不能代表当前行为。
+范围仅包含 Claude Code、Codex；不增加表单字段、账户系统、探活、能力认证或版本白名单。
 
-## 实施
+## 实施结果
 
-- `runtime_custom_api/native` 读取实际配置目录、环境、原生凭据引用及模型投影；不复制 Key。
-- `native_edit` 只更新被编辑的连接和模型字段，保留无关字段和 TOML 注释，以原子文件替换安装。
-- `runtime_startup` 保存独立模式，用字段补丁合并并发修改，连接身份进入原有 Host／binding digest。
-- Renderer 使用独立行 ID 保持 Codex 默认项和输入焦点，保留草稿及字段冲突处理；没有常驻重新读取。
-- 官方登录操作说明使用“本机”，未登录／未确认与连接方式分开显示。
+- `native` 读取实际配置目录、环境与原生凭据引用，只回显地址、模型和凭据状态；打开页面不写文件，也不复制 Key。
+  本地原生配置决定当前连接方式，旧 `_connectionMode` 不再控制运行或界面。官方方式与是否已登录分别展示。
+- Renderer 保留完整编辑草稿，单选项往返没有请求或写入；新 Key 仅在当前编辑会话内存中保留。
+  没有其他修改时返回原选项即恢复干净状态；放弃更改恢复基线并丢弃新 Key。
+- 保存提交按最终选项投影。官方选项只提交普通启动字段和必要的模式／连接修订保护；隐藏的地址、模型和 Key
+  不进入校验、目录生成或写入。失败和冲突保留完整草稿；成功后重新读取原生结果并清理未提交的敏感输入。
+- API 保存合并用户实际编辑的字段。已有原生模型条目、provider 查询参数、传输／重试／超时配置及未知字段保留；
+  Codex 默认项绑定稳定行 ID，默认项变化不重建目录，名称修改不覆盖模型能力。继承默认模型不产生允许名单。
+- 官方保存停用当前 API 路径。Claude 移除相关原生 API 字段，并按原生 `settings.env` 语义停用继承的 API 环境覆盖；
+  官方 OAuth 令牌和其他设置保留，请求头只过滤 Authorization／X-Api-Key，保留跟踪及独立代理认证。Codex 在当前 profile／根配置选择内置 OpenAI，移除当前 API 默认模型和目录引用；
+  只清理文件认证中的 API Key 字段及 API 选择标记，保留 OAuth token、未知字段和无关 provider。不承诺 API 凭据可恢复。
+- 普通 Rovai 数据库不保存 Key 或第二份连接选择。Key 保持原生来源；用户替换才更新当前连接对应的原生来源。
+  Claude 静态 Key 保持 X-Api-Key／Bearer 方式。Codex `auto` 仍由原生选择钥匙串及文件回退，不提升文件 Key 的优先级。
+- 正常启动、原有检查与恢复不再生成同一连接的配置覆盖，也不增加 `get_settings`、`config/read` 或身份读取门槛。
+  队员显式模型、推理强度、工作目录、工具、审批和沙箱保持既有集成；“运行时默认”交给原生配置。
+- 当前连接及凭据摘要继续参与进程复用／恢复兼容性，未使用 provider 和无关 UI/MCP 内容不构成连接冲突。
+  辅助读取失败不单独禁止执行；正常原生错误仍反馈。保存后的共享文件可能影响外部会话，不承诺热切换。
+- 保留共享原生配置的影响范围说明；没有新增保存提示、确认弹窗、常驻重新读取或后台轮询。
 
-## 已执行证据
+## 本轮验证（2026-10-04／05）
 
-实测平台：macOS arm64；实际二进制 Claude Code **2.1.280**、Codex **0.159.2**。
-自动验收目录为 `/tmp/rovai-native-api-accept-20261004-01`，独立 `user-data`、
-`user-data/managed-skill-library` 与原生 Home。只使用固定假 Key 和 loopback HTTP 服务；没有真实中转凭据或计费调用。
+自动验收在 macOS arm64。实际原生版本：Claude Code **2.1.280**、Codex **0.159.2**。
+初轮原生夹具根目录 `/private/tmp/rovai-native-save-acceptance-20261004`，最终确认目录 `/private/tmp/rovai-native-save-final-20261005`。
+隔离 HOME、配置、工作目录，固定假 Key 与 loopback 服务。
+Electron 界面 owner 使用独立 `user-data` 和 `managed-skill-library`，以内存 RPC 夹具挂载正式 React 组件，不启动 Core。
+没有读取或修改日常 Rovai 数据，没有发送真实中转或官方模型请求。
 
-| owner / 命令 | 验证内容 |
+| owner / 命令 | 本轮覆盖 |
 | --- | --- |
-| `cargo test -p rovai-core --features extended-tests --lib runtime_custom_api` | URL/闭集、读取不写入、首次零保存、字段合并和真实冲突、无密钥回读/普通持久化、静态 Key 与地址变化、不可写 env 引用替换、原生未知字段/注释、版本摘要、旧快照拒绝及草稿内存凭据 |
-| `cargo test -p rovai-core --features extended-tests --lib runtime_startup` | 普通启动环境校验、并发 Runtime overlay、父进程环境不被改写 |
-| `cargo test -p rovai-core --features slow-tests --lib application::runtime_check_environment::tests` | 草稿/正式检查共享环境、保存与旧探针竞争、读取失败不发布旧环境；3 项通过 |
-| `cargo test -p rovai-core --features slow-tests --lib profile_and_installation_commands_are_idempotent_and_explicit` | 冻结连接身份、Key 修订和来源变化参与复用/恢复判断；保留旧快照及冻结时无覆盖的状态 |
-| `vitest run .../runtime-startup-draft.test.ts .../interface-language-catalog.test.ts` | 模型 ID／默认项、保留/替换/清除、本地校验、英文目录；5 项通过 |
-| `node --test scripts/lib/runtime-custom-api-ui.test.mjs` | 正式 React 组件的首次回显、空 Key、眼睛、失败保留、字段级冲突、外部变化合并、ID 清空重输/焦点/默认项、删除默认项、读取失败重试、日夜主题和窄屏 |
-| `scripts/smoke-runtime-custom-api.py` + `custom_api_native_fixture` | 实际原生进程、本地 Responses/Messages SSE、原生目录加载、真实收到的路径/模型/认证头，以及新旧进程和会话恢复 |
+| `cargo test -p rovai-core --features slow-tests --lib runtime_custom_api::` | 原生读取不写入、字段合并／冲突、隐藏 API 输入隔离、官方保存、原生／数据库失败回退、OAuth 保留、无 Key 副本、连接修订、元数据保留与包装入口；既有 5 项 |
+| `cargo test -p rovai-core --features slow-tests --lib runtime_startup::` | 普通启动环境规则、并发 overlay 与父进程环境隔离；既有 2 项 |
+| `cargo test -p rovai-core --features slow-tests --lib application::runtime_check_environment::tests` | 草稿和正式检查环境、保存与旧检查竞争、读取失败不发布旧环境；既有 3 项 |
+| `cargo test -p rovai-core --features slow-tests --lib profile_and_installation_commands_are_idempotent_and_explicit` | 冻结连接摘要与绑定兼容性，旧 UI 模式不接管原生执行；既有 1 项 |
+| `vitest run .../runtime-startup-draft.test.ts` | 最终选项投影、隐藏无效输入、模式往返、稳定默认行、API 编辑遇到外部模式变更的保护；既有 3 项 |
+| `node --test scripts/lib/runtime-custom-api-ui.test.mjs` | 正式组件的草稿往返、Key 内存／隐藏状态、放弃更改、失败／冲突保留、成功重置、原生读取失败重试、模型行、日夜主题及窄屏 |
+| `scripts/smoke-runtime-custom-api.py` + `custom_api_native_fixture` | 保存后实际 CLI 直接读取原生连接，原生目录／配置加载、路径／模型／认证头、新旧进程、恢复及官方保存 |
 
-原生服务端记录：Claude 收到 `/custom/prefix/v1/messages?beta=true`、`rovai-main`、指定 Bearer Key。
-Codex 精确模型 `gpt-6.1-sol` 与未知模型 `rovai-unknown` 都进入目录并完成最小回复；随后新进程使用
-`/custom/prefix/rotated/responses` 和新 Key，旧进程继续原地址和原 Key。新进程恢复持久线程后仍使用新连接。
-记录只包含 keyMatches/keyVersion，不输出 Key；提示词固定为 `Reply OK.`，工作目录没有项目代码。
-Claude 另以 shell-only Key 完成最小回复，确认不把环境凭据复制到文件。两种 CLI 都保留既有非认证请求头。
-官方模式检查确认 API 地址、凭据和自定义模型覆盖停用，原生 API 配置字节保持不变；隔离环境没有账号，
-不把此项作为真实 OAuth 登录成功证据。数据库提交失败的定向用例确认原生文件回退，不留下替换了一半的连接。
+默认 Rust workspace、完整 `pnpm test`、类型检查、桌面构建、格式及三项通用文档门禁均按仓库路由执行。
+默认 Rust：455 passed／1 既有 ignored；JavaScript：237 个 Vitest 文件／2587 项、Node 334 passed／2 平台 skipped。
+完整 suite 后的收尾变更再次运行对应 owner；没有把“0 tests”当成通过。
 
-仓库门禁：`pnpm typecheck`、完整 `pnpm test`（236 个 Vitest 文件／2528 项，Node 328 passed／2 平台 skipped）、
-`pnpm build:desktop`、默认 `pnpm test:rust:pr`（455 passed，1 既有 ignored）及
-`pnpm docs:test`、`pnpm docs:check`、带基线的 `pnpm docs:check:ci` 已通过。
-验收命令不向默认 workspace 强加 `CODEX_HOME` 或 `CLAUDE_CONFIG_DIR`，各 owner 使用自己的隔离目录；
-统一覆盖会干扰原生 Skills 目录优先级用例，已恢复测试原有夹具边界。
+### 原生调用结果
 
-重跑原生验收先构建 helper，并使用一个新的绝对隔离目录：
+- Claude 实际收到 `/custom/prefix/v1/messages?beta=true` 和 `rovai-main`。Bearer、X-Api-Key 替换以及只在环境中的 Key 均成功，
+  路径前缀、原生附加请求头与模型设置保留。官方保存后原生 API 字段已移除或停用，假 OAuth 输入仍在；不是实际订阅调用。
+- Codex 模型 `gpt-6.1-sol` 与未知 ID `rovai-unknown` 均能由完整原生目录加载并调用。首次继承默认 A 不阻止显式 B。
+  已有条目的 8192 上下文、纯文本输入、关闭 reasoning summary 与未知字段，在名称编辑后保留。
+- Codex 原生 provider 的 `api-version=fixture-v1` 查询参数、传输／重试／超时字段保留。地址／Key 轮换后新进程使用
+  `/custom/prefix/rotated/responses` 和新 Key，旧进程仍持原连接；新进程恢复线程时使用新原生连接。
+  运行参数不再传入重建的 provider 或目录覆盖，也没有生成临时连接文件。
+- Codex `auto` 文件回退实际完成 Responses 回复，未复制文件 Key。官方保存选择内置 provider，保留其余 provider／OAuth。
+- 记录使用 `keyMatches`、`keyVersion` 而不打印 Key，固定提示词 `Reply OK.`，工作目录不含项目代码。
+
+重跑须使用新的绝对隔离目录：
 
 ```bash
 cargo build -p rovai-core --example custom_api_native_fixture
 python3 scripts/smoke-runtime-custom-api.py --claude /absolute/claude --codex /absolute/codex --fixture-root /absolute/isolated-fixture
 ```
 
-## 证据边界与限制
+## 可用性与证据边界
 
-- 上述为实际 CLI 对本地假服务的配置交付实测，不是对真实中转的能力、工具或账号有效性证明。
-- `ANTHROPIC_REASONING_MODEL` 的保存与进程注入可验证；目标 Claude 是否真正识别它不能由此推出。
-- Codex 优先经实际启动入口读取 `debug models --bundled`，兼容包装入口；不再有资源 SHA 或版本号白名单。
-  已有完整条目的简单编辑不依赖二进制读取。未知模型采用 adapter 中有来源标注的原生兼容默认值，
-  当前 fallback 来源仍是 0.159.2 原生实现，不表示所有未来 schema 或真实接口能力已验证。
-- 未使用真实 OAuth 账号测试登录／刷新。原生账号路径和冲突隔离通过本地元数据处理，不新增 OAuth 生命周期。
-  Codex auth.json 只存 API Key 而无法无损选择 OAuth 的情况明确拒绝切换，保留凭据。
-- Claude 原生系统凭据未提供可靠身份时显示“由原生 CLI 管理，尚未确认”，不把没有 Key 显示为已登录。
-  已有 auth status 返回官方身份时可短时回显；未新增钥匙串扫描或认证探活。
-- 原生辅助凭据／系统钥匙串继续交给 CLI 消费；未做真实系统凭据或刷新实测。API Key 与既有认证请求头冲突时
-  明确报出原生来源，停止该连接，不自动改写请求头或尝试其他账号。非认证请求头按原配置保留。
-- 只有官方 OAuth 登录不算已有 API Key。Codex 内置 provider 的系统凭据类型尚不能离线确定时，
-  已有连接继续交给原生 CLI 使用；更换接口地址须输入新 Key 或先在原生配置绑定该地址，避免向新接口发送官方 token。
-  普通文件／环境静态 Key 不受此限制，未改地址的模型编辑也不要求复制系统凭据。
-- Windows、Linux 与其他 CLI 版本尚无此次新连接表单的真实运行验收；既有 Runtime 平台资格不构成此路径验证。
-- 原生共享文件可能影响外部会话。保存成功不是热切换成功；来源变化后旧冻结执行重建／恢复明确要求重新连接。
+- 以上证明配置交付正确，不证明真实中转或模型所有能力。没有保存前／执行前的额外 HTTP 检查。
+- 真实官方往返、OAuth 刷新、Claude 官方订阅、真实钥匙串及其他平台未实测，不作为禁用入口或版本封禁的依据。
+  前一轮本机 `codex login status` 只读确认 ChatGPT 已登录，未复制凭据或请求模型；无需用户重新登录或购买 Claude 订阅。
+- Codex 常见包装入口通过实际启动入口的本地 `debug models --bundled` 读取；无资源 SHA 或版本号白名单。
+  已有完整目录的小改不依赖重新扫描程序。未知模型的兼容默认值来自原生实现，不标为真实能力验证。
+- `ANTHROPIC_REASONING_MODEL` 可保存、清空并由原生配置进入进程；不能据此宣称目标 Claude 实际识别了该兼容字段。
+- 若 Codex 当前进程环境中仍有会抢占官方路径的 `OPENAI_API_KEY`、`CODEX_API_KEY` 或 `OPENAI_BASE_URL`，
+  保存官方选择会指出来源及移除覆盖的处理办法，保留草稿；不在每次启动屏蔽变量，也不退出账号。
+  已知强制 API 登录策略同样在保存时报告，未绕过组织策略；原生未知身份不新增运行门槛。
+- 原生系统凭据继续由 CLI 消费。不可见来源的状态不等于已登录；普通环境引用可通过输入新 Key 替换连接，
+  不强制迁移原来源。Codex 不明类型系统凭据切到新地址时需绑定该地址或输入新 Key，避免发送官方 token 到未知接口。
+- Codex 的原生 HTTP 栈没有把 Proxy-Authorization 发到 origin；验证的是代理凭据配置保留与不误拦截，未声称真实代理认证成功。
+- 保存成功只表示原生写回完成，相关 Rovai 实例按既有机制重连；对共享原生配置的外部会话不承诺无影响。
 
 ## 测试准入与退役
 
-`runtime_custom_api` 是原生配置/凭据边界 owner；扩展层使用隔离 SQLite 验证发布和兼容摘要，纯 parser 无法证明这一 seam。
-同一修改退出四 Runtime 私存草稿及 Key GC 合同，对应旧测试由原生读取/字段写回/无副本测试替代；
-URL 闭集、掩码、输出脱敏、权限、路径逃逸和不可变文件的有效边界保留。Kimi/Grok 新表单测试退出，原有 Adapter 测试保留。
-原有原生 Smoke owner 收敛到两种 Runtime 并覆盖新来源，不增加在线服务的用户准入门槛。
+本轮没有新增独立 Rust test。`runtime_custom_api` 的 5 个 owner 保持不变：配置／身份 parser、SQLite 发布、
+原生文件来源、目录转换、本地程序入口。SQLite owner 扩展保存时切换、隐藏草稿、真实字段冲突和跨文件回退；
+纯 parser 不能证明原生文件与数据库发布之间的失败边界。Renderer 草稿和 Electron 测试分别拥有状态投影与真实组件事件。
 
-## PR #632 兼容回归修正
-
-按源码审查修复继承默认模型形成允许名单、简单编辑重建已有元数据、资源指纹硬限制及包装入口读取失败。
-Claude 静态 Key 替换保留认证变量，官方 OAuth 环境令牌保留且在私有输出边界脱敏；补齐顶层主模型来源和登录命令。
-主线更新基线为 `b2c9c976`；原有草稿、字段合并、清除语义和两个简单表单保留。
-
-定向单测扩展既有配置 parser、原生来源/写回及目录 patch owner，覆盖默认项不重写目录、名称/ID 修改保留完整条目、
-原生默认不限制成员模型、静态 Key 两种认证方式（文件/环境）、顶层模型清空、官方 OAuth 和原生身份提示。
-新增的 `selected_wrapper_reads_local_catalog_without_resource_fingerprints` 独立拥有子进程入口和输出解析合同；
-原纯目录转换测试无法证明实际启动了包装器并保留 `--bundled`。它使用隔离 shell 夹具，不启动真实 Runtime 或请求网络。
-最低成本命令仍为 `cargo test -p rovai-core --features extended-tests --lib runtime_custom_api`。
-
-本轮隔离目录为 `/private/tmp/rovai-api-review-20261004-02`，生产界面夹具使用 `ui/user-data` 与
-`ui/user-data/managed-skill-library`，不运行 Core；原生夹具位于 `final-native`。结果：
-
-- 默认 Rust workspace：455 passed／1 既有 ignored；原生连接 owner 5 项、启动设置 2 项、运行检查竞争 3 项、
-  profile/binding 1 项均通过。目录资源改变使用新的内容修订文件，旧文件保持不变。
-- 完整 `pnpm test`：237 个 Vitest 文件／2587 项，Node 334 passed／2 平台 skipped；`pnpm typecheck`、
-  `pnpm build:desktop`、格式检查与三项通用文档门禁通过。
-- Electron 生产组件：原有草稿/冲突/密钥/稳定行/日夜主题/窄屏场景通过；增加自定义登录命令、明确的未知登录状态、
-  复制成功/失败和窄窗口换行。剪贴板在隔离夹具中模拟，不覆盖本机剪贴板；未把它当作系统剪贴板兼容实测。
-- macOS arm64：Claude Code 2.1.280 对 loopback 假服务验证 Bearer 与 X-Api-Key 替换、顶层主模型写回、原生请求头，
-  并用固定假 OAuth 环境令牌验证官方路径保留输入及原生状态（不向官方发模型请求，不证明 token 有效）。
-- Codex 0.159.2 经 shell 包装入口读取完整本地目录；首次继承默认 A 时、未保存即成功执行另一个未知 ID；
-  保存模型名称时保留外部目录的 8192 上下文、纯文本输入、关闭 reasoning summary 及未知字段，并成功加载/执行。
-  默认模型、地址和 Key 轮换、新旧进程、会话恢复及官方目录恢复均通过。资源内容变化的单测无 SHA 白名单，
-  不是对第二个真实 Codex 版本的实测。
-
-同步主线后，完整 Node 测试发现 `create-configured-camp` 夹具仍期待旧 `camps.*` RPC；已同步为现行
-`threads.*`／`thread.messages.send`，保留原 Composer 与回执断言，未修改协作执行代码。
-真实中转、真实 OAuth 登录/刷新、真实钥匙串、其他平台及其他实际 CLI 版本仍未实测；这些边界不会变成版本封禁。
-
-本地目录子进程随后收敛为复用实际启动命令的环境（含桌面 Shell 发现后的 PATH）。定向 owner 的包装器 case
-覆盖宿主 PATH 缺少依赖、启动 PATH 可解析依赖的场景；原生连接 5 项和运行检查竞争 3 项再次通过。
-另在 `node-wrapper-native` 使用 `/usr/bin/env node` 包装同一 Codex 0.159.2 完整重跑上述 Codex 原生流程并通过。
-这验证 Node 包装入口及环境传递，未声称测试了所有 npm 安装布局。
-
-## PR #632 连接保留与认证语义修正
-
-本轮不增加界面字段、探活或版本白名单。Codex 执行沿用已选原生 provider，以局部原生表覆盖连接字段，
-保留 `query_params`、WebSocket 声明、请求/流重试、流空闲及 WebSocket 连接超时。原生 CLI 的 `-c` 路径不解析
-带引号的段，因此覆盖采用 TOML 表值，支持名称含点的 provider；未把查询参数和原生请求头值复制到 argv。
-未设置的可选环境请求头继续按原生语义忽略。两种 Runtime 均允许代理认证独立于模型 Key。
-
-新增的密钥变量限制按智能体分别应用，其他 Runtime 的普通环境读取、编辑和保存语义不变。保存并发修订继续
-包含完整原生内容；执行摘要仅包含当前使用的连接、凭据、目录及相关策略，忽略未使用 provider、无关 UI/MCP/Skills
-设置和未使用认证文件。官方模式下，停用 API Key 的轮换不阻断恢复。
-
-Claude 正式执行与既有检查使用同一 `Identity` 语义，读取初始化 `account` 和 `auth status` 的明确字段，
-不再读取 `get_status` 的展示行。官方订阅、OAuth 环境令牌、API Key、helper、未登录与未知身份分别处理；
-只有邮箱或字段缺失不证明已登录，也不会单独形成新版本门槛。
-
-Codex `auto` 保持原生钥匙串优先、不可用或缺失时回退文件；回退文件不被提升为覆盖钥匙串的环境 Key，
-原生账号信息只作状态及选择冲突依据，认证可用性由原生调用反馈。相关强制登录策略可能导致原生注销文件凭据时，明确报告具体冲突。
-已验证钥匙串缺失时的文件回退；未用真实钥匙串账号验证双来源同时存在的情况。
-API 模式的摘要包含可回退文件中的有效凭据版本，忽略刷新时间及被 API Key 遮蔽的旧 OAuth 信息；
-原生系统凭据保持不可见，未建立账号扫描或同步。草稿中输入替换 Key 时明确使用本次输入，不再沿用旧的
-`auto` / keyring 来源，也不在检查过程中持久化新 Key。
-
-自动验收目录为 `/private/tmp/rovai-api-compat-20261004-03`。只启动隔离原生 CLI，不启动日常 App/Core。
-同一 Claude Code 2.1.280 / Codex 0.159.2 已通过本地假服务实测：原生参数保留、独立代理认证配置、模型目录、
-新旧进程凭据、新连接恢复，以及 `auto` 使用文件 Key 完成 Responses 调用且不迁移或删除原文件。
-Smoke helper 还把实际私有响应交给正式 `validate_effective` / Claude `validate`，不只断言注入变量。
-Codex 的原生 HTTP 栈未把 Proxy-Authorization 发送到 origin；已验证配置保留与不误拦截，未把它冒充真实代理认证成功。
-
-测试扩展既有 owner，没有新增平行 Rust 测试：原生来源 owner 覆盖连接摘要与保存修订的区别、代理认证和文件回退；
-启动环境 owner 按全部 Runtime kind 覆盖显示/编辑/拒绝规则；身份 parser 覆盖字段优先级和误导展示文案。
-实际原生过程的不同失败边界继续由独立 Smoke 拥有。
-
-本轮定向原生连接 5 项、启动设置 2 项、运行检查竞争 3 项及冻结 binding 1 项通过；默认 Rust workspace
-455 passed / 1 既有 ignored。完整 `pnpm test` 为 237 个 Vitest 文件 / 2587 项、Node 334 passed / 2 平台 skipped；
-类型检查、桌面构建、Rust examples 检查、格式检查及三项通用文档门禁通过。最终原生证据在 `final-confirm`：
-Claude 直接入口与 Codex Node 包装入口均通过上述本地调用和正式配置校验，未新增第二个真实 CLI 版本的验收声明。
-
-真实官方登录往返尚未实测，不再要求用户重新登录隔离目录作为本期交付前置；Claude 本次也没有可用的官方订阅
-验收凭据。显式开发验收参数 `--official-roundtrip-root` 保留为有条件时可单独运行的开发验收入口，
-只处理同时传入 `--codex` 或 `--claude` 的对应 Runtime；顺序为官方最小回复 → loopback 假 Key 回复 → 官方最小回复，
-核对原身份与实际路由。
-只发送固定的 `Reply only OK. Do not use tools.`，官方调用可能消耗额度；不复制日常凭据，不输出账号信息或令牌，
-也不在产品中添加认证流程。没有执行真实请求时不得把该项记为通过。
-
-目录应为绝对路径并显式包含 `.rovai-official-login-acceptance` 标记；原生登录使用该目录的 `home`、`claude`、
-`codex` 子目录。现有 helper 和脚本的普通运行仍只使用假 Key；真实验收需额外传入该参数。
-
-### 登录状态与执行边界
-
-本机已有 Codex 经原生 `codex login status` 只读确认返回 `Logged in using ChatGPT`，退出码为 0。
-没有要求重新登录、复制凭据或发送模型请求；这证明原生登录状态可回显，不证明订阅额度或真实请求成功。
-不再以隔离目录没有登录为理由阻塞本期交付。Claude 官方订阅及两种 Runtime 的真实官方往返仍明确记为未实测。
-
-Codex API 执行不再增加账号可用性预检；官方模式的原生账号观察只拒绝明确的 API Key 路径冲突，缺失／未知字段
-或观察失败交给正常原生流程处理。Claude 的未登录和未知身份同样不作为本功能新增的执行门槛；明确的连接／凭据
-冲突仍报错。已有 Runtime 认证、协议检查和组织策略保持原有职责，不把状态展示或开发验收结果变成第二套认证系统。
-
-扩展既有原生来源 owner 覆盖空账号、未来身份类型、Claude 未登录／未知及明确选择冲突，不新增平行测试。
-本轮自动回归使用 `/private/tmp/rovai-api-native-status-20261004-04`，与上面的日常状态只读检查分开记录。
-原生连接 owner 5 项、既有 Codex 原生认证 owner 1 项、默认 Rust workspace 455 passed / 1 既有 ignored，
-以及两种 CLI 的隔离假服务调用（含 Codex `auto` 文件回退）均通过。格式及三项通用文档门禁通过。
+同一改动中删除运行时连接覆盖、额外私有配置／身份验证生产路径及其断言，后继合同由原生写回 owner 和 CLI Smoke 负责；
+未把这些退出的行为改成 ignored 测试。恢复兼容、未知模型、原生参数、权限、Key 脱敏、路径及不可变目录等仍有效的边界保留。
+现有检查、协作、审批、取消和其他 Runtime 的 owner 没有退役。

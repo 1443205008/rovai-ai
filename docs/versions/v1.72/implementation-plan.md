@@ -3,7 +3,7 @@ document_type: implementation-plan
 version: v1.72
 authority: version-implementation-and-acceptance
 status: in_progress
-last_updated: 2026-10-03
+last_updated: 2026-10-05
 ---
 
 # v1.72 实施与验收
@@ -706,7 +706,8 @@ User 于 2026-10-03 明确豁免本次真实任务 Gate；其余本地检查、�
 ## Claude Code 与 Codex 原生连接编辑
 
 User 已确认原生配置复用、共享影响范围、两张简单表单及字段级冲突交互，并要求 worktree 实施后推送分支。
-不重复保存 Key，不新增探活。实施与验证统一见[验收记录](runtime-custom-api-verification.md)，
+不重复保存 Key，不新增探活。按 [D13](decisions.md#v1-72-d13) 收窄为保存时原生切换、完整内存草稿与直接原生执行。
+实施与验证统一见[验收记录](runtime-custom-api-verification.md)，
 字段以 [Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md) 为准。
 ### 2026-10-04 Context 运行中可用性
 

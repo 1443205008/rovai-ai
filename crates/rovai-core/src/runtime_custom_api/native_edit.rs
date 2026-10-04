@@ -1,6 +1,6 @@
 //! Narrow native edits. A catalog is staged first; the one authoritative config is replaced last.
 use super::{
-    ApiKeyChange, CustomApiConfiguration, FieldEdit,
+    ApiKeyChange, ConnectionMode, CustomApiConfiguration, FieldEdit,
     native::{self, CredentialSource, NativeContext, NativeRead},
 };
 use anyhow::{Result, ensure};
@@ -14,13 +14,16 @@ pub fn write(
     key: &ApiKeyChange,
     generated_catalog: Option<&Value>,
 ) -> Result<bool> {
+    let official = desired.mode() == Some(ConnectionMode::OfficialLogin);
+    let key = if official { &ApiKeyChange::Keep } else { key };
     key.validate()?;
     let changed = |name: &str| {
         edits
             .iter()
             .any(|e| e.path.first().is_some_and(|p| p == name))
     };
-    if !changed("baseUrl")
+    if !changed("mode")
+        && !changed("baseUrl")
         && !changed("claudeModels")
         && !changed("codexModels")
         && !changed("defaultRowId")
@@ -42,209 +45,214 @@ pub fn write(
         "原生配置是符号链接，请在实际来源编辑，避免替换链接。"
     );
     let mut credential_patch: Option<(std::path::PathBuf, Option<Vec<u8>>, Vec<u8>)> = None;
-    let bytes = match desired {
-        CustomApiConfiguration::ClaudeCode {
-            base_url, models, ..
-        } => {
-            let mut doc = native::read_json(&path)?;
-            if doc.get("env").is_none() {
-                doc["env"] = json!({});
-            }
-            ensure!(doc["env"].is_object(), "Claude Code 的 env 必须是对象。");
-            if changed("baseUrl") {
-                doc["env"]["ANTHROPIC_BASE_URL"] = json!(base_url);
-            }
-            let names = [
-                "model",
-                "reasoningModel",
-                "haikuModel",
-                "sonnetModel",
-                "opusModel",
-            ];
-            for ((env, value), name) in native::claude_models(models).into_iter().zip(names) {
-                if edits.iter().any(|e| e.path == ["claudeModels", name]) {
-                    let env_model = doc["env"][env]
-                        .as_str()
-                        .map(str::to_owned)
-                        .or_else(|| context.env(env))
-                        .unwrap_or_default();
-                    if name == "model" && env_model.is_empty() && doc["model"].is_string() {
-                        if value.is_empty() {
-                            doc.as_object_mut().unwrap().remove("model");
+    let bytes = if official {
+        official_configuration(context, current, &mut credential_patch)?
+    } else {
+        match desired {
+            CustomApiConfiguration::ClaudeCode {
+                base_url, models, ..
+            } => {
+                let mut doc = native::read_json(&path)?;
+                if doc.get("env").is_none() {
+                    doc["env"] = json!({});
+                }
+                ensure!(doc["env"].is_object(), "Claude Code 的 env 必须是对象。");
+                if changed("baseUrl") {
+                    doc["env"]["ANTHROPIC_BASE_URL"] = json!(base_url);
+                }
+                let names = [
+                    "model",
+                    "reasoningModel",
+                    "haikuModel",
+                    "sonnetModel",
+                    "opusModel",
+                ];
+                for ((env, value), name) in native::claude_models(models).into_iter().zip(names) {
+                    if edits.iter().any(|e| e.path == ["claudeModels", name]) {
+                        let env_model = doc["env"][env]
+                            .as_str()
+                            .map(str::to_owned)
+                            .or_else(|| context.env(env))
+                            .unwrap_or_default();
+                        if name == "model" && env_model.is_empty() && doc["model"].is_string() {
+                            if value.is_empty() {
+                                doc.as_object_mut().unwrap().remove("model");
+                            } else {
+                                doc["model"] = json!(value);
+                            }
                         } else {
-                            doc["model"] = json!(value);
-                        }
-                    } else {
-                        doc["env"][env] = json!(value);
-                        // Clearing the effective primary model must not resurrect a shadowed one.
-                        if name == "model" && value.is_empty() {
-                            doc.as_object_mut().unwrap().remove("model");
-                        }
-                    }
-                }
-            }
-            match key {
-                ApiKeyChange::Keep => {}
-                ApiKeyChange::Replace { value } => {
-                    let variable = current.source.claude_variable();
-                    doc["env"][variable] = json!(value);
-                    let other = if variable == "ANTHROPIC_API_KEY" {
-                        "ANTHROPIC_AUTH_TOKEN"
-                    } else {
-                        "ANTHROPIC_API_KEY"
-                    };
-                    doc["env"][other] = json!("");
-                    doc["apiKeyHelper"] = json!("");
-                }
-                ApiKeyChange::Clear => {
-                    ensure!(
-                        current.credential.can_clear,
-                        "{} 无法在此清除；请在该来源处理，或输入新 Key 替换连接。",
-                        current.credential.source_label
-                    );
-                    doc["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("");
-                    doc["env"]["ANTHROPIC_API_KEY"] = json!("");
-                    doc["apiKeyHelper"] = json!("");
-                }
-            }
-            let mut bytes = serde_json::to_vec_pretty(&doc)?;
-            bytes.push(b'\n');
-            bytes
-        }
-        CustomApiConfiguration::Codex {
-            base_url,
-            default_model,
-            ..
-        } => {
-            let mut doc = native::read_toml(&path)?;
-            let profile = doc
-                .get("profile")
-                .and_then(toml_edit::Item::as_str)
-                .map(str::to_owned);
-            let provider_id = if current.provider_id == "openai" {
-                "rovai_custom"
-            } else {
-                current.provider_id.as_str()
-            };
-            let provider_path = ["model_providers", provider_id];
-            let provider = table(&mut doc, &provider_path)?;
-            if current.provider_id == "openai" {
-                set(provider, "name", toml_edit::value("Rovai custom API"));
-            }
-            if changed("baseUrl") || current.provider_id == "openai" {
-                set(provider, "base_url", toml_edit::value(base_url));
-            }
-            set(provider, "wire_api", toml_edit::value("responses"));
-            match key {
-                ApiKeyChange::Keep => {
-                    // An existing auth.json/keyring source stays runtime-owned. Never copy its value.
-                    if current.provider_id == "openai" {
-                        match &current.source {
-                            CredentialSource::Environment { name } => {
-                                set(provider, "env_key", toml_edit::value(name));
-                                set(provider, "requires_openai_auth", toml_edit::value(false));
-                            }
-                            CredentialSource::Missing => {
-                                set(
-                                    provider,
-                                    "env_key",
-                                    toml_edit::value("ROVAI_UNCONFIGURED_API_KEY"),
-                                );
-                                set(provider, "requires_openai_auth", toml_edit::value(false));
-                            }
-                            CredentialSource::NativeManaged { .. } => {
-                                ensure!(
-                                    !changed("baseUrl")
-                                        || desired.base_url() == current.configuration.base_url(),
-                                    "当前凭据由 Codex 原生系统管理，尚无法确认其为 API Key；更换接口地址时请填写新 Key，或先在原生配置中绑定该接口。已有连接仍可直接复用。"
-                                );
-                                set(provider, "requires_openai_auth", toml_edit::value(true));
-                            }
-                            _ => {
-                                set(provider, "requires_openai_auth", toml_edit::value(true));
+                            doc["env"][env] = json!(value);
+                            // Clearing the effective primary model must not resurrect a shadowed one.
+                            if name == "model" && value.is_empty() {
+                                doc.as_object_mut().unwrap().remove("model");
                             }
                         }
                     }
                 }
-                ApiKeyChange::Replace { value } => {
-                    // Native inline bearer is a supported provider source; no shell or auth.json mutation.
-                    provider.remove("env_key");
-                    set(
-                        provider,
-                        "experimental_bearer_token",
-                        toml_edit::value(value),
-                    );
-                    set(provider, "requires_openai_auth", toml_edit::value(false));
-                }
-                ApiKeyChange::Clear => {
-                    ensure!(
-                        current.credential.can_clear,
-                        "此凭据由原生认证管理；请在原生来源清除，或输入新 Key 替换当前连接。"
-                    );
-                    if let CredentialSource::Json {
-                        path: auth_path,
-                        pointer,
-                        ..
-                    } = &current.source
-                    {
-                        ensure!(pointer == "/OPENAI_API_KEY", "此原生凭据字段无法安全清除。");
-                        let original = native::read_bytes(auth_path)?;
-                        let mut auth = native::read_json(auth_path)?;
-                        auth.as_object_mut()
-                            .ok_or_else(|| anyhow::anyhow!("原生认证文件格式无效。"))?
-                            .remove("OPENAI_API_KEY");
-                        let mut updated = serde_json::to_vec_pretty(&auth)?;
-                        updated.push(b'\n');
-                        credential_patch = Some((auth_path.clone(), original, updated));
+                match key {
+                    ApiKeyChange::Keep => {}
+                    ApiKeyChange::Replace { value } => {
+                        let variable = current.source.claude_variable();
+                        doc["env"][variable] = json!(value);
+                        let other = if variable == "ANTHROPIC_API_KEY" {
+                            "ANTHROPIC_AUTH_TOKEN"
+                        } else {
+                            "ANTHROPIC_API_KEY"
+                        };
+                        doc["env"][other] = json!("");
+                        doc["apiKeyHelper"] = json!("");
                     }
-                    provider.remove("experimental_bearer_token");
-                    // A required, unset reference prevents falling back to a saved official account.
-                    set(
-                        provider,
-                        "env_key",
-                        toml_edit::value("ROVAI_UNCONFIGURED_API_KEY"),
-                    );
-                    set(provider, "requires_openai_auth", toml_edit::value(false));
+                    ApiKeyChange::Clear => {
+                        ensure!(
+                            current.credential.can_clear,
+                            "{} 无法在此清除；请在该来源处理，或输入新 Key 替换连接。",
+                            current.credential.source_label
+                        );
+                        doc["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("");
+                        doc["env"]["ANTHROPIC_API_KEY"] = json!("");
+                        doc["apiKeyHelper"] = json!("");
+                    }
                 }
+                let mut bytes = serde_json::to_vec_pretty(&doc)?;
+                bytes.push(b'\n');
+                bytes
             }
-            // Select within the active profile where native precedence requires it.
-            let target = if let Some(profile) = &profile {
-                table(&mut doc, &["profiles", profile])?
-            } else {
-                doc.as_table_mut()
-            };
-            set(target, "model_provider", toml_edit::value(provider_id));
-            if changed("codexModels") {
-                let catalog = generated_catalog
-                    .ok_or_else(|| anyhow::anyhow!("模型目录尚未生成，原配置未被修改。"))?;
-                let hash = crate::command::canonical_json_digest(catalog)?;
-                // Native config references a key-free catalog in the native config directory.
-                let catalog_path = context
-                    .directory
-                    .join("rovai-model-catalogs")
-                    .join(format!("{}.json", hash.trim_start_matches("sha256:")));
-                let contents = serde_json::to_vec(catalog)?;
-                if catalog_path.exists() {
-                    ensure!(
-                        std::fs::read(&catalog_path)? == contents,
-                        "模型目录修订内容已变化，拒绝覆盖。"
-                    );
+            CustomApiConfiguration::Codex {
+                base_url,
+                default_model,
+                ..
+            } => {
+                let mut doc = native::read_toml(&path)?;
+                let profile = doc
+                    .get("profile")
+                    .and_then(toml_edit::Item::as_str)
+                    .map(str::to_owned);
+                let provider_id = if current.provider_id == "openai" {
+                    "rovai_custom"
                 } else {
-                    crate::platform::private_storage::atomic_write_private_bytes(
-                        &catalog_path,
-                        &contents,
-                    )?;
+                    current.provider_id.as_str()
+                };
+                let provider_path = ["model_providers", provider_id];
+                let provider = table(&mut doc, &provider_path)?;
+                if current.provider_id == "openai" {
+                    set(provider, "name", toml_edit::value("Rovai custom API"));
                 }
-                set(
-                    target,
-                    "model_catalog_json",
-                    toml_edit::value(catalog_path.to_string_lossy().as_ref()),
-                );
+                if changed("baseUrl") || current.provider_id == "openai" {
+                    set(provider, "base_url", toml_edit::value(base_url));
+                }
+                set(provider, "wire_api", toml_edit::value("responses"));
+                match key {
+                    ApiKeyChange::Keep => {
+                        // An existing auth.json/keyring source stays runtime-owned. Never copy its value.
+                        if current.provider_id == "openai" {
+                            match &current.source {
+                                CredentialSource::Environment { name } => {
+                                    set(provider, "env_key", toml_edit::value(name));
+                                    set(provider, "requires_openai_auth", toml_edit::value(false));
+                                }
+                                CredentialSource::Missing => {
+                                    set(
+                                        provider,
+                                        "env_key",
+                                        toml_edit::value("ROVAI_UNCONFIGURED_API_KEY"),
+                                    );
+                                    set(provider, "requires_openai_auth", toml_edit::value(false));
+                                }
+                                CredentialSource::NativeManaged { .. } => {
+                                    ensure!(
+                                        !changed("baseUrl")
+                                            || desired.base_url()
+                                                == current.configuration.base_url(),
+                                        "当前凭据由 Codex 原生系统管理，尚无法确认其为 API Key；更换接口地址时请填写新 Key，或先在原生配置中绑定该接口。已有连接仍可直接复用。"
+                                    );
+                                    set(provider, "requires_openai_auth", toml_edit::value(true));
+                                }
+                                _ => {
+                                    set(provider, "requires_openai_auth", toml_edit::value(true));
+                                }
+                            }
+                        }
+                    }
+                    ApiKeyChange::Replace { value } => {
+                        // Native inline bearer is a supported provider source; no shell or auth.json mutation.
+                        provider.remove("env_key");
+                        set(
+                            provider,
+                            "experimental_bearer_token",
+                            toml_edit::value(value),
+                        );
+                        set(provider, "requires_openai_auth", toml_edit::value(false));
+                    }
+                    ApiKeyChange::Clear => {
+                        ensure!(
+                            current.credential.can_clear,
+                            "此凭据由原生认证管理；请在原生来源清除，或输入新 Key 替换当前连接。"
+                        );
+                        if let CredentialSource::Json {
+                            path: auth_path,
+                            pointer,
+                            ..
+                        } = &current.source
+                        {
+                            ensure!(pointer == "/OPENAI_API_KEY", "此原生凭据字段无法安全清除。");
+                            let original = native::read_bytes(auth_path)?;
+                            let mut auth = native::read_json(auth_path)?;
+                            auth.as_object_mut()
+                                .ok_or_else(|| anyhow::anyhow!("原生认证文件格式无效。"))?
+                                .remove("OPENAI_API_KEY");
+                            let mut updated = serde_json::to_vec_pretty(&auth)?;
+                            updated.push(b'\n');
+                            credential_patch = Some((auth_path.clone(), original, updated));
+                        }
+                        provider.remove("experimental_bearer_token");
+                        // A required, unset reference prevents falling back to a saved official account.
+                        set(
+                            provider,
+                            "env_key",
+                            toml_edit::value("ROVAI_UNCONFIGURED_API_KEY"),
+                        );
+                        set(provider, "requires_openai_auth", toml_edit::value(false));
+                    }
+                }
+                // Select within the active profile where native precedence requires it.
+                let target = if let Some(profile) = &profile {
+                    table(&mut doc, &["profiles", profile])?
+                } else {
+                    doc.as_table_mut()
+                };
+                set(target, "model_provider", toml_edit::value(provider_id));
+                if changed("codexModels") {
+                    let catalog = generated_catalog
+                        .ok_or_else(|| anyhow::anyhow!("模型目录尚未生成，原配置未被修改。"))?;
+                    let hash = crate::command::canonical_json_digest(catalog)?;
+                    // Native config references a key-free catalog in the native config directory.
+                    let catalog_path = context
+                        .directory
+                        .join("rovai-model-catalogs")
+                        .join(format!("{}.json", hash.trim_start_matches("sha256:")));
+                    let contents = serde_json::to_vec(catalog)?;
+                    if catalog_path.exists() {
+                        ensure!(
+                            std::fs::read(&catalog_path)? == contents,
+                            "模型目录修订内容已变化，拒绝覆盖。"
+                        );
+                    } else {
+                        crate::platform::private_storage::atomic_write_private_bytes(
+                            &catalog_path,
+                            &contents,
+                        )?;
+                    }
+                    set(
+                        target,
+                        "model_catalog_json",
+                        toml_edit::value(catalog_path.to_string_lossy().as_ref()),
+                    );
+                }
+                if changed("codexModels") || changed("defaultRowId") {
+                    set(target, "model", toml_edit::value(default_model));
+                }
+                doc.to_string().into_bytes()
             }
-            if changed("codexModels") || changed("defaultRowId") {
-                set(target, "model", toml_edit::value(default_model));
-            }
-            doc.to_string().into_bytes()
         }
     };
     ensure!(
@@ -280,6 +288,147 @@ pub fn write(
         );
     }
     Ok(true)
+}
+
+type CredentialPatch = Option<(std::path::PathBuf, Option<Vec<u8>>, Vec<u8>)>;
+
+/// Change the native selection once, on Save. Dormant providers and OAuth stay native-owned.
+fn official_configuration(
+    context: &NativeContext,
+    current: &NativeRead,
+    credential_patch: &mut CredentialPatch,
+) -> Result<Vec<u8>> {
+    if context.kind == crate::agent_profile::AdapterKind::ClaudeCodeCli {
+        let mut doc = native::read_json(&context.path())?;
+        ensure!(
+            doc["forceLoginMethod"] != "console",
+            "原生 forceLoginMethod 要求 API 登录；请在该策略来源调整后再保存。"
+        );
+        if current.configuration.enabled() {
+            if doc.get("env").is_none() {
+                doc["env"] = json!({});
+            }
+            let headers = doc["env"]["ANTHROPIC_CUSTOM_HEADERS"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| context.env("ANTHROPIC_CUSTOM_HEADERS"))
+                .unwrap_or_default();
+            let retained_headers = headers
+                .lines()
+                .filter(|line| {
+                    line.split_once(':').is_none_or(|(name, _)| {
+                        !matches!(
+                            name.trim().to_ascii_lowercase().as_str(),
+                            "authorization" | "x-api-key"
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let env = doc["env"]
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("Claude Code 的 env 必须是对象。"))?;
+            for name in [
+                "ANTHROPIC_BASE_URL",
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_AUTH_TOKEN",
+                "ANTHROPIC_MODEL",
+                "ANTHROPIC_REASONING_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "ANTHROPIC_PROFILE",
+                "ANTHROPIC_FEDERATION_RULE_ID",
+                "ANTHROPIC_ORGANIZATION_ID",
+                "CLAUDE_CODE_USE_BEDROCK",
+                "CLAUDE_CODE_USE_VERTEX",
+                "CLAUDE_CODE_USE_FOUNDRY",
+            ] {
+                // Native settings.env can mask an inherited shell value. This is
+                // a saved native setting, never a per-execution environment patch.
+                if context.env(name).is_some_and(|v| !v.is_empty()) {
+                    env.insert(name.into(), json!(""));
+                } else {
+                    env.remove(name);
+                }
+            }
+            if retained_headers != headers {
+                // Remove only model authentication headers; tracing and proxy auth remain native-owned.
+                env.insert("ANTHROPIC_CUSTOM_HEADERS".into(), json!(retained_headers));
+            }
+            let fields = doc.as_object_mut().unwrap();
+            fields.remove("apiKeyHelper");
+            fields.remove("model");
+        }
+        let mut bytes = serde_json::to_vec_pretty(&doc)?;
+        bytes.push(b'\n');
+        return Ok(bytes);
+    }
+    let mut doc = native::read_toml(&context.path())?;
+    ensure!(
+        doc.get("forced_login_method")
+            .and_then(toml_edit::Item::as_str)
+            != Some("api"),
+        "原生 forced_login_method 要求 API 登录；请在该策略来源调整后再保存。"
+    );
+    for name in ["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"] {
+        ensure!(
+            !context.env(name).is_some_and(|v| !v.is_empty()),
+            "当前连接使用环境变量 {}，无法通过原生配置文件停用；请在启动该程序的环境中移除该覆盖后重试。草稿已保留。",
+            name
+        );
+    }
+    let profile = doc
+        .get("profile")
+        .and_then(toml_edit::Item::as_str)
+        .map(str::to_owned);
+    let target = if let Some(profile) = &profile {
+        table(&mut doc, &["profiles", profile])?
+    } else {
+        doc.as_table_mut()
+    };
+    set(target, "model_provider", toml_edit::value("openai"));
+    target.remove("openai_base_url");
+    if current.configuration.enabled() {
+        target.remove("model");
+        target.remove("model_catalog_json");
+        // Root defaults also participate in the selected profile's fallback.
+        doc.as_table_mut().remove("model");
+        doc.as_table_mut().remove("model_catalog_json");
+    }
+    doc.as_table_mut().remove("openai_base_url");
+    let store = doc
+        .get("cli_auth_credentials_store")
+        .and_then(toml_edit::Item::as_str)
+        .unwrap_or("file");
+    if matches!(store, "file" | "auto") {
+        let auth_path = context.directory.join("auth.json");
+        let before = native::read_bytes(&auth_path)?;
+        let mut auth = native::read_json(&auth_path)?;
+        if (auth["auth_mode"] != "chatgpt" && auth.get("OPENAI_API_KEY").is_some())
+            || auth["auth_mode"] == "apikey"
+        {
+            let oauth = auth
+                .pointer("/tokens/access_token")
+                .and_then(Value::as_str)
+                .is_some_and(|v| !v.is_empty());
+            let fields = auth
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("Codex 原生认证文件格式无效。"))?;
+            fields.remove("OPENAI_API_KEY");
+            if fields.get("auth_mode").is_some_and(|v| v == "apikey") {
+                if oauth {
+                    fields.insert("auth_mode".into(), json!("chatgpt"));
+                } else {
+                    fields.remove("auth_mode");
+                }
+            }
+            let mut bytes = serde_json::to_vec_pretty(&auth)?;
+            bytes.push(b'\n');
+            *credential_patch = Some((auth_path, before, bytes));
+        }
+    }
+    Ok(doc.to_string().into_bytes())
 }
 fn table<'a>(
     document: &'a mut toml_edit::DocumentMut,

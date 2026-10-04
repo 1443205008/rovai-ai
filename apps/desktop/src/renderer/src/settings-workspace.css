@@ -1755,7 +1755,6 @@
 .runtime-native-credential-note.is-warning { color: var(--attention); }
 .runtime-native-credential-row .quiet-button { min-height: 28px; padding: 3px 0; font-size: 12px; }
 .runtime-native-credential-row .danger-text { color: var(--danger); }
-.runtime-native-save-notice { margin: 20px 0 0; color: var(--muted); font-size: 12px; }
 .runtime-api-protocol { margin: -7px 0 0; padding-left: 170px; color: var(--muted); font-size: 12px; }
 .runtime-connection-help { color: var(--muted); font-size: 12px; line-height: 1.65; }
 .runtime-connection-help summary { width: fit-content; padding: 5px 0; cursor: pointer; color: var(--ink); }

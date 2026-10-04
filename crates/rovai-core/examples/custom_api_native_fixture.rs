@@ -33,7 +33,9 @@ async fn main() -> Result<()> {
     );
     let mut configuration: CustomApiConfiguration =
         serde_json::from_slice(&std::fs::read(config)?)?;
-    configuration.validate(configuration.kind())?;
+    if configuration.enabled() {
+        configuration.validate(configuration.kind())?;
+    }
     let kind = configuration.kind();
     let directory = root.join(if kind == AdapterKind::CodexCli {
         "codex"
@@ -146,6 +148,21 @@ async fn main() -> Result<()> {
             catalog.as_ref(),
         )?;
     }
+    if configuration.mode() == Some(ConnectionMode::OfficialLogin) {
+        native_edit::write(
+            &context,
+            &before,
+            &configuration,
+            &[FieldEdit {
+                path: vec!["mode".into()],
+                before: Value::Null,
+                after: Value::Null,
+                label: String::new(),
+            }],
+            &ApiKeyChange::Keep,
+            None,
+        )?;
+    }
     let read = native::read(&context, configuration.mode())?;
     // Expose only the parsed catalog path to the isolated smoke owner. No second
     // TOML parser or credential projection is needed in the Python fixture.
@@ -169,11 +186,9 @@ async fn main() -> Result<()> {
         .current_dir(root);
     match &snapshot.configuration {
         CustomApiConfiguration::Codex { .. } => {
-            runtime_custom_api::codex_catalog::configure(&snapshot, &mut command).await?;
             command.args(["app-server", "--listen", "stdio://"]);
         }
         CustomApiConfiguration::ClaudeCode { .. } => {
-            runtime_custom_api::claude_native::configure(&snapshot, &mut command)?;
             command.args([
                 "--print",
                 "--input-format",
@@ -187,8 +202,8 @@ async fn main() -> Result<()> {
             ]);
         }
     }
-    // Exercise the production private-response validators as well as launch
-    // configuration. Forward protocol bytes only to the isolated smoke owner.
+    // Launch with only the saved native connection. The smoke owner observes
+    // native protocol results, without production connection/auth preflights.
     let mut child = command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -199,26 +214,7 @@ async fn main() -> Result<()> {
         tokio::spawn(async move { tokio::io::copy(&mut tokio::io::stdin(), &mut input).await });
     let mut lines = BufReader::new(child.stdout.take().context("native stdout missing")?).lines();
     let mut output = tokio::io::stdout();
-    let mut identity = runtime_custom_api::claude_native::Identity::Unknown;
     while let Some(line) = lines.next_line().await? {
-        if let Ok(frame) = serde_json::from_str::<Value>(&line) {
-            let control = &frame["response"]["response"];
-            if control.get("account").is_some() {
-                identity = runtime_custom_api::claude_native::Identity::from_initialize(control);
-            }
-            if control.get("effective").is_some() {
-                runtime_custom_api::claude_native::validate(&snapshot, control, &identity, None)?;
-            }
-            if frame["result"].get("config").is_some() {
-                runtime_custom_api::codex_catalog::validate_effective(&snapshot, &frame["result"])?;
-            }
-            if frame["result"].get("account").is_some() && !snapshot.configuration.enabled() {
-                runtime_custom_api::codex_catalog::validate_account_selection(
-                    &snapshot,
-                    &frame["result"],
-                )?;
-            }
-        }
         output.write_all(line.as_bytes()).await?;
         output.write_all(b"\n").await?;
         output.flush().await?;

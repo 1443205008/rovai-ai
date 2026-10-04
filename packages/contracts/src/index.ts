@@ -394,6 +394,7 @@ export interface RuntimeStartupSettings {
   configuration: RuntimeStartupConfiguration
   credential: RuntimeNativeCredential | null
   connectionObservation: RuntimeConnectionObservation | null
+  /** Effective connection digest; excludes unrelated native fields. Guards destructive mode switching. */
   nativeRevision: string | null
   connectionReadError: string | null
   reconnectRequired: boolean

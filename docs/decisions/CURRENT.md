@@ -1,7 +1,7 @@
 ---
 document_type: current-decision-navigation
 authority: current-authority-and-rationale-routing
-last_updated: 2026-10-03
+last_updated: 2026-10-05
 ---
 
 # 当前规范与决定理由导航
@@ -244,4 +244,4 @@ User 命名与旧 Session 恢复：当前规范为 [User Naming v1](../contracts
 - 当前规范：[Member Creation Flow v1](../contracts/member-creation-flow-v1.md)、[Pending Camp Activation v4](../contracts/pending-camp-activation-v4.md)、[Camp Activation](../architecture/camp-activation-lifecycle.md#ai-队员创建)、[队员身份与图像](../ui/components/member-identity.md#添加队员与名册排序)。
 - 独立静态回执及窗口内草稿的取舍：[V1.72-D09](../versions/v1.72/decisions.md#v1-72-d09)。
 
-自定义 API 的当前边界见 [Runtime Launch v47](../contracts/runtime-launch-and-verification-v47.md)；原生来源权威与无凭据副本的取舍见 [V1.72-D12](../versions/v1.72/decisions.md#v1-72-d12)。
+自定义 API 的当前边界见 [Runtime Launch v47](../contracts/runtime-launch-and-verification-v47.md)；原生来源权威与无凭据副本的取舍见 [V1.72-D12](../versions/v1.72/decisions.md#v1-72-d12)，保存切换及移除运行覆盖的取舍见 [V1.72-D13](../versions/v1.72/decisions.md#v1-72-d13)。

@@ -19,13 +19,19 @@ const client={platform:'darwin',selectRuntimeExecutable:async()=>null,request:as
   const saved=state.startup[params.runtimeKind]
   if(method==='runtime.startup.get')return clone(saved)
   if(method==='runtime.startup.save'){
-    let current=editableSnapshot(saved.configuration);current.credentialVersion=saved.credential.version
+    let current=editableSnapshot(saved.configuration);current.credentialVersion=saved.credential.version;current.nativeRevision=saved.nativeRevision
     const conflicts=params.edits.filter(edit=>JSON.stringify(snapshotValue(current,edit.path))!==JSON.stringify(edit.before)&&JSON.stringify(snapshotValue(current,edit.path))!==JSON.stringify(edit.after)).map(edit=>({...edit,current:snapshotValue(current,edit.path)}))
     if(conflicts.length)return {status:'conflict',latest:clone(saved),conflicts}
     for(const edit of params.edits)current=withSnapshotValue(current,edit.path,edit.after)
     saved.configuration=configurationFromSnapshot(saved.configuration,current)
+    if(current.mode==='official_login'){
+      saved.configuration.customApi.baseUrl=''
+      if(params.runtimeKind==='claude-code-cli')saved.configuration.customApi.models={model:'',reasoningModel:'',haikuModel:'',sonnetModel:'',opusModel:''}
+      else Object.assign(saved.configuration.customApi,{models:[],defaultModel:'',defaultRowId:null})
+      saved.credential.status='missing'
+    }
     if(params.apiKey.action!=='keep'){saved.credential.version+='-next';saved.credential.status=params.apiKey.action==='clear'?'missing':'available'}
-    saved.revision++;saved.reconnectRequired=true;saved.nativeWritten=params.edits.some(edit=>!['environment','programPath','mode'].includes(edit.path[0]))
+    saved.revision++;saved.nativeRevision+='-next';saved.reconnectRequired=true;saved.nativeWritten=params.edits.some(edit=>!['environment','programPath'].includes(edit.path[0]))
     return clone(saved)
   }
   if(method==='runtime.startup.inspect')return{status:'recognized',executablePath:'/fixture/runtime',reportedVersion:'fixture'}
@@ -33,6 +39,6 @@ const client={platform:'darwin',selectRuntimeExecutable:async()=>null,request:as
 }}
 let navigate
 function App(){const[kind,setKind]=useState(null);navigate=(kind=null)=>setKind(kind);return <ThreadClientProvider client={client}><main className="content settings-content" style={{height:'100vh'}}><section className="settings-workbench"><div className="settings-panel">{kind?<RuntimeStartupSettings key={kind} runtimeKind={kind} health={null} onBack={()=>setKind(null)} onReload={async()=>{}}/>:<div>{Object.entries({'claude-code-cli':'Claude Code','codex-cli':'Codex'}).map(([kind,label])=><button key={kind} onClick={()=>setKind(kind)}>{label}</button>)}</div>}</div></section></main></ThreadClientProvider>}
-window.settingsTest={state,requests,navigate:(...args)=>navigate(...args),settle:()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(resolve,25))))}
+window.settingsTest={state,requests,reset:kind=>{state.startup[kind]=settings(kind)},navigate:(...args)=>navigate(...args),settle:()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(resolve,25))))}
 document.documentElement.dataset.theme='day'
 createRoot(document.getElementById('root')).render(<App/> )

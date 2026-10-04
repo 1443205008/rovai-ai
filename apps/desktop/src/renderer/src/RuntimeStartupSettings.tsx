@@ -6,7 +6,7 @@ import type { AdapterKind, HealthStatus, RuntimeApiKeyChange, RuntimeStartupInsp
 import { configurationFromSnapshot, conflictValue, editableSnapshot, initialConfiguration, withSnapshotValue, type FieldConflict, type RuntimeStartupConfiguration, type RuntimeStartupSettings as StartupSettings } from './runtime-connection-editor'
 import { AppDialogContent, AppDialogFooter, AppDialogHeader, DialogControlIcon } from './AppDialog'
 import { adapterLabel, PRODUCT_RUNTIME_LOGOS } from './runtime-products'
-import { customApiError, emptyCustomApi, nativeConnectionChange, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey, startupEdits } from './runtime-startup-draft'
+import { customApiError, emptyCustomApi, nativeConnectionChange, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey, startupEdits, startupSubmission } from './runtime-startup-draft'
 import { RuntimeCustomApiFields } from './RuntimeCustomApiFields'
 import { readErrorMessage } from './error-message'
 import { UiText, uiAttribute } from './interface-language'
@@ -34,7 +34,6 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   const [errors, setErrors] = useState<Record<number, string>>({})
   const [inspection, setInspection] = useState<RuntimeStartupInspection | null>(null)
   const [confirmAction, setConfirmAction] = useState<'back' | null>(null)
-  const [saveNotice, setSaveNotice] = useState<string | null>(null)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const sequence = useRef(0)
   const loaded = useRef(false)
@@ -65,7 +64,6 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     setBusy('load')
     setError(null)
     setLoadError(null)
-    setSaveNotice(null)
     void client.request<StartupSettings>('runtime.startup.get', { runtimeKind }).then((settings) => {
       if (active) { applySaved(settings); loaded.current = true }
     }).catch((nextError) => { if (active) setLoadError(readErrorMessage(nextError)) })
@@ -90,7 +88,6 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     setDraft(next)
     setInspection(null)
     setError(null)
-    setSaveNotice(null)
     setErrors({})
   }
 
@@ -106,14 +103,16 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   }
 
   const inspect = async (next: RuntimeStartupConfiguration, deep = false): Promise<void> => {
-    if (!validate(next)) return
+    const nextErrors = runtimeEnvironmentErrors(next, health?.hostPlatform === 'windows-x64', runtimeKind)
+    setErrors(nextErrors)
+    if (Object.keys(nextErrors).length) return
     const request = ++sequence.current
     setBusy(deep ? 'check' : 'inspect')
     setError(null)
     setInspection(null)
     try {
       const result = await client.request<RuntimeStartupInspection>(deep ? 'runtime.startup.check' : 'runtime.startup.inspect', {
-        runtimeKind, configuration: normalizedStartupConfiguration(next), apiKey
+        runtimeKind, configuration: normalizedStartupConfiguration({ programPath: next.programPath, environment: next.environment })
       })
       if (sequence.current === request) setInspection(result)
     } catch (nextError) {
@@ -144,13 +143,15 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     setError(null)
     try {
       const edits = startupEdits(saved, next, apiKey)
+      const submission = startupSubmission(saved, next, apiKey)
       const settings = await client.request<StartupSettings | { status: 'conflict'; latest: StartupSettings; conflicts: FieldConflict[] }>('runtime.startup.save', {
-        runtimeKind, edits, apiKey
+        runtimeKind, ...submission
       })
       if ('status' in settings && settings.status === 'conflict') {
         // Rebase untouched fields from the new read, preserving every local edit and the write-only Key input.
         let merged = editableSnapshot(initialConfiguration(settings.latest))
         for (const edit of edits) if (edit.path[0] !== 'credentialVersion') merged = withSnapshotValue(merged, edit.path, edit.after)
+        for (const edit of submission.edits) if (edit.path[0] === 'mode') merged = withSnapshotValue(merged, edit.path, edit.after)
         const rebased = configurationFromSnapshot(next, merged)
         setSaved(settings.latest)
         setDraft(rebased)
@@ -160,7 +161,6 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
       }
       if ('status' in settings) return
       applySaved(settings)
-      setSaveNotice(settings.reconnectRequired ? settings.nativeWritten ? '已写入原生配置。运行中的实例需重新连接。' : '连接方式已保存。运行中的实例需重新连接。' : '已保存。')
       try { await onReload() } catch { setError(uiAttribute('已保存，列表刷新失败。')) }
     } catch (nextError) { setError(readErrorMessage(nextError)) }
     finally { setBusy(null) }
@@ -172,7 +172,6 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     applySaved(saved)
     setInspection(null)
     setError(null)
-    setSaveNotice(null)
   }
 
   const retryRead = (): void => {
@@ -183,6 +182,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   const resolveConflict = (conflict: FieldConflict, keepMine: boolean): void => {
     if (!keepMine) {
       if (conflict.path[0] === 'credentialVersion') setApiKey({ action: 'keep' })
+      else if (conflict.path[0] === 'nativeRevision') setDraft(current => ({ ...current, customApi: current.customApi ? { ...current.customApi, mode: saved?.configuration.customApi?.mode ?? null } : undefined }))
       else setDraft(current => configurationFromSnapshot(current, withSnapshotValue(editableSnapshot(current), conflict.path, conflict.current)))
     }
     setConflicts(current => current.filter(item => item !== conflict))
@@ -261,7 +261,6 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
           <button className="quiet-button runtime-conflict-use-external" type="button" disabled={locked} onClick={() => resolveConflict(conflict, false)}><UiText zh={"采用外部修改"} /></button>
         </div>
       </div>)}
-      {saveNotice && <p className="runtime-native-save-notice" role="status">{uiAttribute(saveNotice)}</p>}
       <footer className="runtime-startup-actions">
         <button className="quiet-button" type="button" disabled={!dirty || locked} onClick={discard}><UiText zh={"放弃更改"} /></button>
         <button className="quiet-button member-editor-save" type="submit" disabled={!canSave || locked}><DialogControlIcon name="save" />{busy === 'save' ? uiAttribute("正在保存…") : uiAttribute("保存")}</button>

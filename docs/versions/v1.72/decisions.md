@@ -3,7 +3,7 @@ document_type: version-decisions
 version: v1.72
 authority: decision-rationale
 lifecycle: current
-last_updated: 2026-10-03
+last_updated: 2026-10-05
 ---
 
 # v1.72 版本决定
@@ -285,3 +285,22 @@ AI 创建队员的专项窗口内生命周期继续由 D09 对应合同约束。
 编辑共享文件可能影响外部 CLI，必须在设置页说明；无法无损切换的原生版本／来源组合须明确报错。
 保留凭据副本可使旧快照更易重放，却会创造迁移、同步和清理责任，故拒绝该方案。复制整个 Home 会影响
 Skills、MCP 和会话，亦不采用。字段级合并及原生文件原子写入是必要边界，不扩成通用供应商平台。
+
+<a id="v1-72-d13"></a>
+## V1.72-D13：保存切换原生连接，撤回双路径保留与启动覆盖
+
+- 状态：accepted
+- 日期：2026-10-04
+- 当前权威：[Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md)、[Runtime Catalog](../../architecture/runtime-catalog-boundaries.md#claude-code-与-codex-原生连接编辑)与[启动设置 UI](../../ui/components/app-shell-navigation.md#原生连接设置)
+
+### 背景与选择
+
+D12 的原生来源权威继续保留；用户进一步撤回“保存官方后仍须保留另一套 API”的承诺。选择只在用户保存时
+修改原生配置，未保存的完整表单与新 Key 仅留在编辑会话内。正常执行交给 CLI 自己读取连接和认证，不再持久化
+独立模式或启动时重建 provider、临时文件与认证屏蔽。已有队员参数、权限、协作及恢复兼容性继续沿用。
+
+### 后果与替代方案
+
+保存官方后，再用 API 可能需要重新填写，这换取了单一原生配置权威和更少的版本／认证兼容分支。OAuth 不删除，
+共享配置影响如实说明；无法写回的已知有效覆盖在保存时报告。拒绝继续保留两条路径及运行时覆盖，也不采用
+启动前写文件、退出后还原的方案，避免并发进程互相改变配置。前端保存前往返切换必须无损，失败保留全部草稿。

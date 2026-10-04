@@ -4270,18 +4270,6 @@ fn resolve_frozen_runtime_binding_with_snapshot(
             crate::runtime_startup::snapshot_from_connection(transaction, binding.adapter_kind)?
         }
     };
-    if is_rebound
-        && custom_api.is_none()
-        && crate::runtime_startup::snapshot_from_connection(transaction, binding.adapter_kind)?
-            .is_some()
-    {
-        return Ok(Err(runtime_blocker(
-            "runtime_connection_changed",
-            json!({
-                "detail":"此执行冻结时没有连接覆盖，当前原生连接已切换；请重新建立执行，未沿用新凭据恢复旧会话。"
-            }),
-        )));
-    }
     if let (Some(api), ModelSelection::Explicit { model_id, .. }) = (&custom_api, &binding.model)
         && !api.model_is_configured(model_id)
     {
@@ -4446,17 +4434,10 @@ fn resolve_frozen_runtime_binding_with_snapshot(
 
     let models: Vec<ModelDescriptor> =
         serde_json::from_str(&effective_models_json).context("invalid Adapter model catalog")?;
-    let mut model = match resolve_model_selection(adapter_kind, &models, &binding.model)? {
+    let model = match resolve_model_selection(adapter_kind, &models, &binding.model)? {
         Ok(model) => model,
         Err(blocker) => return Ok(Err(blocker)),
     };
-    if model.source == "runtime_default"
-        && let Some(id) = custom_api
-            .as_ref()
-            .and_then(|api| api.configuration.default_model())
-    {
-        model.model_id = id.to_owned();
-    }
     let mut capabilities: Vec<String> =
         serde_json::from_str(&capabilities_json).context("invalid Adapter capabilities")?;
     capabilities.sort();
@@ -6699,8 +6680,6 @@ mod slow_tests {
             credential_version: uuid::Uuid::new_v4().to_string(),
             provider_id: "relay".into(),
             explicit_mode: true,
-            draft_key: None,
-            preview: false,
             credential_source: crate::runtime_custom_api::native::CredentialSource::Missing,
             context: crate::runtime_custom_api::native::NativeContext {
                 kind: AdapterKind::CodexCli,
@@ -6763,9 +6742,9 @@ mod slow_tests {
                 Some(frozen.custom_api.clone())
             )
             .unwrap()
-            .unwrap_err()
-            .code,
-            "runtime_connection_changed"
+            .unwrap()
+            .custom_api,
+            frozen.custom_api
         );
         drop(transaction);
         let verified_identity = service

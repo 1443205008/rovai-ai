@@ -6,10 +6,9 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     path::{Path, PathBuf},
 };
-use tokio::process::Command;
 
 pub mod claude_native;
 pub mod codex_catalog;
@@ -265,12 +264,9 @@ pub struct CustomApiSnapshot {
     pub credential_version: String,
     pub credential_source: native::CredentialSource,
     pub provider_id: String,
+    /// Compatibility for already-frozen records; never used to select a connection.
+    #[serde(default, skip_serializing)]
     pub explicit_mode: bool,
-    /// Preview-only memory. This value cannot enter SQLite or a generated file.
-    #[serde(skip)]
-    pub draft_key: Option<String>,
-    #[serde(skip)]
-    pub preview: bool,
 }
 impl std::fmt::Debug for CustomApiSnapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -292,9 +288,6 @@ impl CustomApiSnapshot {
         }))
     }
     pub fn key(&self) -> Result<Option<String>> {
-        if let Some(key) = &self.draft_key {
-            return Ok(Some(key.clone()));
-        }
         let (value, version) = native::credential_value(&self.credential_source, &self.context)?;
         ensure!(
             version == self.credential_version,
@@ -303,12 +296,7 @@ impl CustomApiSnapshot {
         Ok(value)
     }
     pub fn redactor(&self) -> Result<CredentialRedactor> {
-        let key = if self.configuration.enabled() {
-            self.key()?
-        } else {
-            // Dormant API key rotation must not invalidate an official session.
-            native::credential_value(&self.credential_source, &self.context)?.0
-        };
+        let key = native::credential_value(&self.credential_source, &self.context)?.0;
         let mut secrets: Vec<_> = key.into_iter().collect();
         if self.context.kind == AdapterKind::ClaudeCodeCli {
             let settings = native::read_json(&self.context.path())?;
@@ -324,7 +312,9 @@ impl CustomApiSnapshot {
         Ok(CredentialRedactor(secrets))
     }
     pub fn assert_current(&self) -> Result<()> {
-        let current = native::read(&self.context, self.configuration.mode())?;
+        let Ok(current) = native::read(&self.context, None) else {
+            return Ok(());
+        };
         ensure!(
             current.connection_revision == self.native_revision,
             "原生连接已变化，此执行需要重新建立连接；未恢复旧接口。"
@@ -360,108 +350,6 @@ impl CustomApiSnapshot {
                 .configured_model_ids
                 .as_ref()
                 .is_none_or(|ids| ids.iter().any(|value| value == id))
-    }
-    pub fn environment(&self) -> Result<BTreeMap<String, String>> {
-        let mut values = BTreeMap::new();
-        if !self.configuration.enabled() {
-            return Ok(values);
-        }
-        if self.configuration.enabled() {
-            ensure!(
-                !matches!(self.credential_source, native::CredentialSource::Missing)
-                    || self.draft_key.is_some(),
-                "当前 API 连接缺少可复用凭据，请填写 Key 或修复原生来源。"
-            );
-        }
-        if let Some(key) = self.key()? {
-            let name = if self.configuration.kind() == AdapterKind::CodexCli {
-                "ROVAI_CUSTOM_API_KEY"
-            } else {
-                self.credential_source.claude_variable()
-            };
-            values.insert(name.to_owned(), key);
-        }
-        Ok(values)
-    }
-    pub fn configure_environment(&self, command: &mut Command) -> Result<()> {
-        command.envs(self.environment()?);
-        Ok(())
-    }
-    pub fn claude_settings(&self) -> Result<Value> {
-        let CustomApiConfiguration::ClaudeCode {
-            models, base_url, ..
-        } = &self.configuration
-        else {
-            anyhow::bail!("连接类型不匹配。")
-        };
-        let mut environment = BTreeMap::<String, String>::new();
-        let inherited_api = !self.configuration.enabled()
-            && native::read(&self.context, None)?.configuration.enabled();
-        for name in [
-            "CLAUDE_CODE_USE_BEDROCK",
-            "CLAUDE_CODE_USE_VERTEX",
-            "CLAUDE_CODE_USE_FOUNDRY",
-        ] {
-            environment.insert(name.into(), String::new());
-        }
-        if self.configuration.enabled() {
-            environment.insert("ANTHROPIC_BASE_URL".into(), base_url.clone());
-            environment.insert("CLAUDE_CODE_OAUTH_TOKEN".into(), String::new());
-            for (name, value) in native::claude_models(models) {
-                if !value.is_empty() {
-                    environment.insert(name.into(), value.to_owned());
-                }
-            }
-            // No Key is written to --settings, argv, or a managed file.
-            for name in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
-                if name != self.credential_source.claude_variable() {
-                    environment.insert(name.into(), String::new());
-                }
-            }
-        } else {
-            for name in [
-                "ANTHROPIC_BASE_URL",
-                "ANTHROPIC_CUSTOM_HEADERS",
-                "ANTHROPIC_AUTH_TOKEN",
-                "ANTHROPIC_API_KEY",
-                "ANTHROPIC_MODEL",
-                "ANTHROPIC_REASONING_MODEL",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                "ANTHROPIC_PROFILE",
-                "ANTHROPIC_FEDERATION_RULE_ID",
-                "ANTHROPIC_ORGANIZATION_ID",
-            ] {
-                if !inherited_api
-                    && matches!(
-                        name,
-                        "ANTHROPIC_MODEL"
-                            | "ANTHROPIC_REASONING_MODEL"
-                            | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
-                            | "ANTHROPIC_DEFAULT_SONNET_MODEL"
-                            | "ANTHROPIC_DEFAULT_OPUS_MODEL"
-                    )
-                {
-                    continue;
-                }
-                environment.insert(name.into(), String::new());
-            }
-        }
-        let mut settings = json!({"env": environment});
-        if inherited_api && !models.model.is_empty() {
-            // A top-level native model can also belong to the dormant API connection.
-            settings["model"] = json!("default");
-        }
-        if !self.configuration.enabled()
-            || !matches!(
-                self.credential_source,
-                native::CredentialSource::Helper { .. }
-            )
-        {
-            settings["apiKeyHelper"] = json!("");
-        }
-        Ok(settings)
     }
 }
 /// Exact scrubbing at private native output boundaries; secrets never enter Debug or serialized state.
@@ -499,16 +387,5 @@ pub fn storage_root(database_path: &Path, kind: AdapterKind) -> Result<PathBuf> 
         .join("artifacts"))
 }
 
-/// A pre-existing execution without a connection snapshot cannot adopt a newly
-/// selected connection just because its native process needs to be rebuilt.
-pub fn guard_frozen_absence(kind: AdapterKind, snapshot: Option<&CustomApiSnapshot>) -> Result<()> {
-    if snapshot.is_none() {
-        ensure!(
-            crate::runtime_discovery::custom_api_snapshot(kind)?.is_none(),
-            "此执行冻结后连接方式已变化，请重新建立执行；未使用新凭据恢复旧会话。"
-        );
-    }
-    Ok(())
-}
 #[cfg(test)]
 mod tests;

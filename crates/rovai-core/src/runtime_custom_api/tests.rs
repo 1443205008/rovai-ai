@@ -1,5 +1,8 @@
 use super::*;
-use crate::runtime_startup::{self, RuntimeEnvironmentVariable, RuntimeStartupConfiguration};
+use crate::runtime_startup::RuntimeStartupConfiguration;
+#[cfg(feature = "extended-tests")]
+use crate::runtime_startup::{self, RuntimeEnvironmentVariable};
+use std::collections::BTreeMap;
 pub(super) fn configuration(kind: AdapterKind) -> CustomApiConfiguration {
     let base_url = "https://relay.example/prefix".into();
     match kind {
@@ -253,13 +256,6 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
             .unwrap()
             .contains("isolated-new-key")
     );
-    assert!(
-        !snapshot
-            .claude_settings()
-            .unwrap()
-            .to_string()
-            .contains("isolated-new-key")
-    );
     let artifact = snapshot.write_artifact("immutable.json", b"old").unwrap();
     assert!(
         snapshot
@@ -285,7 +281,7 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
         value: context.directory.to_string_lossy().into_owned(),
     });
     let bytes = std::fs::read(&path).unwrap();
-    let (preview, _) = runtime_startup::resolve_draft(
+    let preview = runtime_startup::resolve_draft(
         &db,
         kind,
         preview,
@@ -301,7 +297,7 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
             .key()
             .unwrap()
             .as_deref(),
-        Some("preview-only-key")
+        Some("isolated-new-key")
     );
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
     let codex_directory = context.directory.join("codex-auto-preview");
@@ -317,7 +313,7 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
         }],
         ..Default::default()
     };
-    let (draft, _) = runtime_startup::resolve_draft(
+    let draft = runtime_startup::resolve_draft(
         &db,
         AdapterKind::CodexCli,
         draft,
@@ -327,15 +323,12 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
     )
     .unwrap();
     let draft = draft.custom_api_snapshot.unwrap();
-    assert_eq!(
-        draft.key().unwrap().as_deref(),
-        Some("draft-auto-replacement")
-    );
+    assert!(draft.key().unwrap().is_none());
     assert!(matches!(
         draft.credential_source,
-        native::CredentialSource::Environment { .. }
+        native::CredentialSource::NativeManaged { .. }
     ));
-    assert_ne!(codex_catalog::execution_provider(&draft).unwrap(), "openai");
+    assert_eq!(draft.configuration.base_url(), "https://native.example");
     assert_eq!(std::fs::read(codex_path).unwrap(), codex_bytes);
     let current = runtime_startup::load(&db, kind).unwrap();
     let change = ApiKeyChange::Replace {
@@ -358,6 +351,219 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
     assert_eq!(
         runtime_startup::load(&db, kind).unwrap().revision,
         current.revision
+    );
+    db.connection()
+        .execute_batch("DROP TRIGGER reject_startup_update;")
+        .unwrap();
+
+    // Same transaction owner: switching on Save must ignore all hidden API input,
+    // preserve OAuth, merge unrelated external fields and invalidate old sessions.
+    for kind in [AdapterKind::ClaudeCodeCli, AdapterKind::CodexCli] {
+        let context = native::NativeContext::resolve(
+            kind,
+            &RuntimeStartupConfiguration::default(),
+            db.path(),
+        )
+        .unwrap();
+        let auth_path = context.directory.join("auth.json");
+        if kind == AdapterKind::ClaudeCodeCli {
+            private_storage::atomic_write_private_bytes(&context.path(), br#"{"env":{"ANTHROPIC_AUTH_TOKEN":"active-api-key","ANTHROPIC_BASE_URL":"https://old.example","ANTHROPIC_MODEL":"old-model","CLAUDE_CODE_OAUTH_TOKEN":"official-oauth","ANTHROPIC_CUSTOM_HEADERS":"Authorization: Bearer header-key\nX-Api-Key: header-api-key\nX-Trace: preserved\nProxy-Authorization: independent-proxy"},"unknown":true}"#).unwrap();
+        } else {
+            private_storage::atomic_write_private_bytes(&context.path(), b"model_provider='relay'\nmodel='api-model'\n[model_providers.relay]\nbase_url='https://old.example'\nexperimental_bearer_token='active-api-key'\n[model_providers.unrelated]\nbase_url='https://unrelated.example'\nexperimental_bearer_token='unrelated-key'\n").unwrap();
+            private_storage::atomic_write_private_bytes(&auth_path, br#"{"auth_mode":"apikey","OPENAI_API_KEY":"fallback-api-key","tokens":{"access_token":"official-oauth","refresh_token":"official-refresh"},"unknown":true}"#).unwrap();
+        }
+        let saved = runtime_startup::load(&db, kind).unwrap();
+        let before = std::fs::read(context.path()).unwrap();
+        let before_auth = native::read_bytes(&auth_path).unwrap();
+        let frozen = saved.configuration.custom_api_snapshot.as_ref().unwrap();
+        let mut edits = vec![
+            FieldEdit {
+                path: vec!["mode".into()],
+                before: json!("custom_api"),
+                after: json!("official_login"),
+                label: "连接方式".into(),
+            },
+            FieldEdit {
+                path: vec!["nativeRevision".into()],
+                before: json!(saved.native_revision),
+                after: json!(saved.native_revision),
+                label: "当前连接".into(),
+            },
+            FieldEdit {
+                path: vec!["baseUrl".into()],
+                before: json!("stale"),
+                after: json!("not a url"),
+                label: "隐藏地址".into(),
+            },
+            FieldEdit {
+                path: vec!["credentialVersion".into()],
+                before: json!("stale"),
+                after: json!("replace"),
+                label: "隐藏 Key".into(),
+            },
+        ];
+        edits.push(FieldEdit {
+            path: vec![
+                if kind == AdapterKind::CodexCli {
+                    "codexModels"
+                } else {
+                    "claudeModels"
+                }
+                .into(),
+            ],
+            before: Value::Null,
+            after: json!(["invalid hidden model draft"]),
+            label: "隐藏模型".into(),
+        });
+        let key = || ApiKeyChange::Replace {
+            value: "hidden-invalid key\nnever-write".into(),
+        };
+        let prepared = runtime_startup::prepare_save(&db, kind, edits.clone(), &key()).unwrap();
+        assert!(prepared.conflicts.is_empty());
+        assert_eq!(prepared.edits.len(), 2);
+        assert_eq!(
+            std::fs::read(context.path()).unwrap(),
+            before,
+            "preparing a draft is read-only"
+        );
+        db.connection().execute_batch("CREATE TRIGGER reject_native_switch BEFORE INSERT ON runtime_startup_setting BEGIN SELECT RAISE(FAIL, 'isolated switch failure'); END;").unwrap();
+        assert!(runtime_startup::commit_save(&mut db, kind, prepared, 4, key(), None).is_err());
+        assert_eq!(std::fs::read(context.path()).unwrap(), before);
+        assert_eq!(native::read_bytes(&auth_path).unwrap(), before_auth);
+        db.connection()
+            .execute_batch("DROP TRIGGER reject_native_switch;")
+            .unwrap();
+        // External unrelated content is merged, and does not conflict with a mode switch.
+        if kind == AdapterKind::ClaudeCodeCli {
+            let mut doc = native::read_json(&context.path()).unwrap();
+            doc["external"] = json!("preserved");
+            std::fs::write(context.path(), serde_json::to_vec(&doc).unwrap()).unwrap();
+        } else {
+            let mut doc = native::read_toml(&context.path()).unwrap();
+            doc["model_providers"]["unrelated"]["name"] = toml_edit::value("external");
+            std::fs::write(context.path(), doc.to_string()).unwrap();
+        }
+        let prepared = runtime_startup::prepare_save(&db, kind, edits, &key()).unwrap();
+        assert!(prepared.conflicts.is_empty());
+        let result = runtime_startup::commit_save(&mut db, kind, prepared, 5, key(), None).unwrap();
+        assert!(result.native_written && result.reconnect_required);
+        assert_eq!(
+            result.configuration.custom_api.as_ref().unwrap().mode(),
+            Some(ConnectionMode::OfficialLogin)
+        );
+        assert!(frozen.assert_current().is_err());
+        assert!(
+            !std::fs::read_to_string(context.path())
+                .unwrap()
+                .contains("never-write")
+        );
+        if kind == AdapterKind::ClaudeCodeCli {
+            let doc = native::read_json(&context.path()).unwrap();
+            assert_eq!(doc["env"]["CLAUDE_CODE_OAUTH_TOKEN"], "official-oauth");
+            assert!(doc["env"].get("ANTHROPIC_AUTH_TOKEN").is_none());
+            assert_eq!(
+                doc["env"]["ANTHROPIC_CUSTOM_HEADERS"],
+                "X-Trace: preserved\nProxy-Authorization: independent-proxy"
+            );
+            assert_eq!(doc["external"], "preserved");
+        } else {
+            let doc = native::read_toml(&context.path()).unwrap();
+            assert_eq!(doc["model_provider"].as_str(), Some("openai"));
+            assert!(doc.get("model").is_none());
+            assert_eq!(
+                doc["model_providers"]["unrelated"]["experimental_bearer_token"].as_str(),
+                Some("unrelated-key")
+            );
+            let auth = native::read_json(&auth_path).unwrap();
+            assert!(auth.get("OPENAI_API_KEY").is_none());
+            assert_eq!(auth["auth_mode"], "chatgpt");
+            assert_eq!(auth["tokens"]["refresh_token"], "official-refresh");
+            assert_eq!(auth["unknown"], true);
+        }
+        // An external official switch conflicts with API edits, rather than silently dropping them.
+        let conflict = runtime_startup::prepare_save(
+            &db,
+            kind,
+            vec![
+                FieldEdit {
+                    path: vec!["mode".into()],
+                    before: json!("custom_api"),
+                    after: json!("custom_api"),
+                    label: String::new(),
+                },
+                FieldEdit {
+                    path: vec!["baseUrl".into()],
+                    before: json!("https://old.example"),
+                    after: json!("https://new.example"),
+                    label: String::new(),
+                },
+            ],
+            &ApiKeyChange::Keep,
+        )
+        .unwrap();
+        assert!(conflict.conflicts.iter().any(|e| e.edit.path == ["mode"]));
+        // Changing native configuration elsewhere overrides legacy UI metadata,
+        // including values which the current native editor does not recognize.
+        db.connection()
+            .execute(
+                "UPDATE runtime_startup_setting SET configuration_json=?1 WHERE runtime_kind=?2",
+                rusqlite::params![
+                    r#"{"programPath":null,"environment":[],"_connectionMode":"retired-value"}"#,
+                    kind.as_str()
+                ],
+            )
+            .unwrap();
+        std::fs::write(context.path(), before).unwrap();
+        assert!(
+            runtime_startup::load(&db, kind)
+                .unwrap()
+                .configuration
+                .custom_api
+                .unwrap()
+                .enabled()
+        );
+        let conflicted = runtime_startup::prepare_save(
+            &db,
+            kind,
+            vec![
+                FieldEdit {
+                    path: vec!["mode".into()],
+                    before: json!("custom_api"),
+                    after: json!("official_login"),
+                    label: String::new(),
+                },
+                FieldEdit {
+                    path: vec!["nativeRevision".into()],
+                    before: json!(result.native_revision),
+                    after: json!(result.native_revision),
+                    label: String::new(),
+                },
+            ],
+            &ApiKeyChange::Keep,
+        )
+        .unwrap();
+        assert!(
+            conflicted
+                .conflicts
+                .iter()
+                .any(|e| e.edit.path == ["nativeRevision"])
+        );
+    }
+    // Optional native observation cannot turn an unreadable source into a new execution gate.
+    db.connection().execute(
+        "UPDATE runtime_startup_setting SET configuration_json=?1 WHERE runtime_kind='codex-cli'",
+        [r#"{"programPath":null,"environment":[{"name":"CODEX_HOME","value":"relative-native-directory"}]}"#],
+    ).unwrap();
+    assert!(
+        runtime_startup::load(&db, AdapterKind::CodexCli)
+            .unwrap()
+            .connection_read_error
+            .is_some()
+    );
+    assert!(
+        runtime_startup::snapshot_from_connection(db.connection(), AdapterKind::CodexCli)
+            .unwrap()
+            .is_none()
     );
 }
 
@@ -470,20 +676,10 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     );
     let read = native::read(&context, None).unwrap();
     let snapshot = read.snapshot(&context, false);
-    let mut command = tokio::process::Command::new("not-spawned");
-    codex_catalog::configure(&snapshot, &mut command)
-        .await
-        .unwrap();
+    assert_eq!(snapshot.key().unwrap().as_deref(), Some("replacement-key"));
     assert!(
-        !format!("{:?}", command.as_std().get_args().collect::<Vec<_>>())
-            .contains("replacement-key")
-    );
-    assert!(
-        command
-            .as_std()
-            .get_envs()
-            .any(|(name, value)| name == "ROVAI_CUSTOM_API_KEY"
-                && value == Some(std::ffi::OsStr::new("replacement-key")))
+        !context.artifact_root.exists(),
+        "reading native configuration creates no launch overlay"
     );
     let before = std::fs::read(&path).unwrap();
     std::fs::write(&path, b"bad = \"replacement-key\n").unwrap();
@@ -494,21 +690,6 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     doc["model_providers"]["relay"]["http_headers"]["x-routing-tag"] =
         toml_edit::value("private-routing-tag");
     std::fs::write(&path, doc.to_string()).unwrap();
-    let read = native::read(&context, None).unwrap();
-    let mut command = tokio::process::Command::new("not-spawned");
-    codex_catalog::configure(&read.snapshot(&context, false), &mut command)
-        .await
-        .unwrap();
-    assert!(
-        !format!("{:?}", command.as_std().get_args().collect::<Vec<_>>())
-            .contains("private-routing-tag")
-    );
-    assert!(
-        command
-            .as_std()
-            .get_envs()
-            .any(|(_, value)| value == Some(std::ffi::OsStr::new("private-routing-tag")))
-    );
     doc["model_providers"]["relay"]["http_headers"]["Proxy-Authorization"] =
         toml_edit::value("Basic independent-proxy-secret");
     doc["model_providers"]["relay"]["query_params"]["api-version"] =
@@ -519,50 +700,31 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     doc["model_providers"]["relay"]["stream_idle_timeout_ms"] = toml_edit::value(5432);
     doc["model_providers"]["relay"]["websocket_connect_timeout_ms"] = toml_edit::value(2345);
     std::fs::write(&path, doc.to_string()).unwrap();
-    let snapshot = native::read(&context, None)
-        .unwrap()
-        .snapshot(&context, false);
-    let mut command = tokio::process::Command::new("not-spawned");
-    codex_catalog::configure(&snapshot, &mut command)
-        .await
-        .unwrap();
-    assert_eq!(
-        codex_catalog::execution_provider(&snapshot).unwrap(),
-        "relay"
-    );
-    let arguments = command
-        .as_std()
-        .get_args()
-        .map(|v| v.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    assert!(arguments.iter().any(|v| v == "model_provider=\"relay\""));
-    assert!(
-        !arguments
-            .iter()
-            .any(|v| v.starts_with("model_providers.\"relay\"="))
-    );
-    for secret in [
-        "replacement-key",
-        "independent-proxy-secret",
-        "fixture-api-version",
-    ] {
-        assert!(
-            !arguments.iter().any(|v| v.contains(secret)),
-            "native values must stay out of argv"
-        );
-    }
-    doc["model_providers"]["relay"]["http_headers"]["Authorization"] =
-        toml_edit::value("Bearer unrelated-secret");
-    std::fs::write(&path, doc.to_string()).unwrap();
     let read = native::read(&context, None).unwrap();
-    let error = codex_catalog::configure(
-        &read.snapshot(&context, false),
-        &mut tokio::process::Command::new("not-spawned"),
+    let provider_before = doc["model_providers"]["relay"].clone();
+    let mut desired = read.configuration.clone();
+    if let CustomApiConfiguration::Codex { default_model, .. } = &mut desired {
+        *default_model = "different-default".into();
+    }
+    native_edit::write(
+        &context,
+        &read,
+        &desired,
+        &[FieldEdit {
+            path: vec!["defaultRowId".into()],
+            before: Value::Null,
+            after: Value::Null,
+            label: String::new(),
+        }],
+        &ApiKeyChange::Keep,
+        None,
     )
-    .await
-    .unwrap_err()
-    .to_string();
-    assert!(error.contains("认证请求头") && !error.contains("unrelated-secret"));
+    .unwrap();
+    assert_eq!(
+        native::read_toml(&path).unwrap()["model_providers"]["relay"].to_string(),
+        provider_before.to_string(),
+        "model edits preserve transport, proxy auth, query parameters and timeouts"
+    );
 
     // An unrelated login file must never supply credentials to a provider which
     // does not opt into native OpenAI authentication.
@@ -580,11 +742,6 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         native::CredentialSource::NativeManaged { .. }
     ));
     assert!(read.snapshot(&context, false).key().unwrap().is_none());
-    codex_catalog::validate_effective(
-        &read.snapshot(&context, false),
-        &json!({"config":{"model_provider":"openai","openai_base_url":"https://relay.example"}}),
-    )
-    .unwrap();
     let mut changed = read.configuration.clone();
     if let CustomApiConfiguration::Codex { base_url, .. } = &mut changed {
         *base_url = "https://new-api.example".into();
@@ -633,33 +790,7 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
             .get("OPENAI_API_KEY")
             .is_none()
     );
-    let mut command = tokio::process::Command::new("not-spawned");
-    codex_catalog::configure(&auto.snapshot(&context, true), &mut command)
-        .await
-        .unwrap();
-    assert!(
-        codex_catalog::validate_account_selection(
-            &auto.snapshot(&context, true),
-            &json!({"account":{"type":"apiKey"}})
-        )
-        .is_err()
-    );
-    codex_catalog::validate_account_selection(
-        &auto.snapshot(&context, true),
-        &json!({"account":{"type":"chatgpt"}}),
-    )
-    .unwrap();
-    let auto_api = native::read(&context, Some(ConnectionMode::CustomApi)).unwrap();
-    for account in [
-        json!({"account":null}),
-        json!({}),
-        json!({"account":{"type":"future-native-identity"}}),
-    ] {
-        codex_catalog::validate_account_selection(&auto.snapshot(&context, true), &account)
-            .unwrap();
-        codex_catalog::validate_account_selection(&auto_api.snapshot(&context, true), &account)
-            .unwrap();
-    }
+    let auto_api = native::read(&context, None).unwrap();
     let frozen_api = auto_api.snapshot(&context, true);
     let frozen_official = auto.snapshot(&context, true);
     let mut external = fallback.clone();
@@ -684,27 +815,14 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
             .unwrap()
             .is_none()
     );
-    frozen_official.assert_current().unwrap();
+    assert!(
+        frozen_official.assert_current().is_err(),
+        "a stale display mode cannot hide native changes"
+    );
     frozen_official.redactor().unwrap();
     std::fs::write(&auth, serde_json::to_vec(&fallback).unwrap()).unwrap();
-    // A policy conflict must also protect auto mode's real file fallback from native logout.
-    std::fs::write(
-        &path,
-        "cli_auth_credentials_store='auto'\nforced_login_method='chatgpt'\n",
-    )
-    .unwrap();
-    let auto = native::read(&context, Some(ConnectionMode::OfficialLogin)).unwrap();
-    assert!(
-        codex_catalog::configure(
-            &auto.snapshot(&context, true),
-            &mut tokio::process::Command::new("not-spawned")
-        )
-        .await
-        .unwrap_err()
-        .to_string()
-        .contains("auto")
-    );
-    assert_eq!(native::read_json(&auth).unwrap(), fallback);
+    // Auto uses the native file fallback without promoting it over a possible keyring identity.
+    assert!(auto.configuration.enabled());
     // Explicit clear affects the API field only, retaining official tokens and
     // unrelated native data. The resulting provider cannot fall back to them.
     std::fs::write(
@@ -910,20 +1028,13 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     let snapshot = native::read(&claude, None)
         .unwrap()
         .snapshot(&claude, false);
-    let mut command = tokio::process::Command::new("not-spawned");
-    claude_native::configure(&snapshot, &mut command).unwrap();
-    assert!(
-        command
-            .as_std()
-            .get_envs()
-            .any(|(name, value)| name == "ANTHROPIC_CUSTOM_HEADERS"
-                && value == Some(std::ffi::OsStr::new("x-routing-tag: private-routing-tag\nProxy-Authorization: Basic independent-proxy-secret")))
+    assert_eq!(
+        snapshot.credential_source.claude_variable(),
+        "ANTHROPIC_AUTH_TOKEN"
     );
     assert!(
-        !snapshot
-            .claude_settings()
+        !serde_json::to_string(&snapshot)
             .unwrap()
-            .to_string()
             .contains("private-routing-tag")
     );
     private_storage::atomic_write_private_bytes(
@@ -940,51 +1051,13 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
             .identity()
             .unwrap()
     );
-    let official_frozen = native::read(&claude, Some(ConnectionMode::OfficialLogin))
-        .unwrap()
-        .snapshot(&claude, true);
-    private_storage::atomic_write_private_bytes(
-        &claude.path(),
-        br#"{"env":{"ANTHROPIC_AUTH_TOKEN":"new-dormant-api-key"}}"#,
-    )
-    .unwrap();
-    official_frozen.assert_current().unwrap();
-    official_frozen.redactor().unwrap();
-    assert_eq!(
-        official_frozen.identity().unwrap(),
+    // A requested display mode does not alter which native configuration is active.
+    assert!(
         native::read(&claude, Some(ConnectionMode::OfficialLogin))
             .unwrap()
-            .snapshot(&claude, true)
-            .identity()
-            .unwrap()
+            .configuration
+            .enabled()
     );
-    private_storage::atomic_write_private_bytes(&claude.path(), b"{}").unwrap();
-    let mut settings = json!({"effective": snapshot.claude_settings().unwrap()});
-    let status = claude_native::Identity::from_initialize(
-        &json!({"account":{"tokenSource":"ANTHROPIC_AUTH_TOKEN","apiProvider":"firstParty"}}),
-    );
-    claude_native::validate(&snapshot, &settings, &status, None).unwrap();
-    settings["effective"]["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("wrong-shell-key");
-    assert!(claude_native::validate(&snapshot, &settings, &status, None).is_err());
-    let mut official = snapshot.clone();
-    official
-        .configuration
-        .set_mode(Some(ConnectionMode::OfficialLogin));
-    for identity in [
-        claude_native::Identity::Unknown,
-        claude_native::Identity::SignedOut,
-    ] {
-        claude_native::validate_identity(&snapshot, &identity).unwrap();
-        claude_native::validate_identity(&official, &identity).unwrap();
-    }
-    assert!(
-        claude_native::validate_identity(&snapshot, &claude_native::Identity::Official).is_err()
-    );
-    assert!(claude_native::validate_identity(&official, &status).is_err());
-    if let CustomApiConfiguration::ClaudeCode { models, .. } = &mut official.configuration {
-        models.sonnet_model = "dormant-api-sonnet".into();
-    }
-    claude_native::validate(&official, &json!({"effective":official.claude_settings().unwrap(),"applied":{"model":"native-sonnet"}}), &claude_native::Identity::Official, Some("sonnet")).unwrap();
 
     // Key rotation preserves the effective authentication method, including shell sources.
     for (index, variable) in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
@@ -1044,27 +1117,6 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
             assert!(!doc.to_string().contains("fake-official-oauth"));
             let read = native::read(&context, Some(ConnectionMode::OfficialLogin)).unwrap();
             assert_eq!(read.observation.login_status, "signed_in");
-            let snap = read.snapshot(&context, true);
-            assert!(
-                snap.claude_settings().unwrap()["env"]
-                    .get("CLAUDE_CODE_OAUTH_TOKEN")
-                    .is_none()
-            );
-            let mut command = Command::new("not-spawned");
-            claude_native::configure_environment(&snap, &mut command).unwrap();
-            assert!(
-                !command
-                    .as_std()
-                    .get_envs()
-                    .any(|(name, _)| name == "CLAUDE_CODE_OAUTH_TOKEN")
-            );
-            claude_native::validate(
-                &snap,
-                &json!({"effective":snap.claude_settings().unwrap()}),
-                &claude_native::Identity::Official,
-                None,
-            )
-            .unwrap();
             if let CustomApiConfiguration::ClaudeCode { models, .. } = &mut desired {
                 models.model.clear();
             }

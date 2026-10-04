@@ -18,7 +18,6 @@ use tokio::sync::{Mutex, oneshot};
 pub(crate) struct StartupPreview {
     pub configuration: RuntimeStartupConfiguration,
     pub result: Mutex<Option<Value>>,
-    _credential: Option<runtime_startup::DraftCredential>,
 }
 
 #[derive(Deserialize)]
@@ -96,14 +95,14 @@ impl Core {
             "runtime.startup.inspect" | "runtime.startup.check" => {
                 let params: DraftParams = serde_json::from_value(params)
                     .map_err(|_| anyhow::anyhow!("启动设置输入格式无效。"))?;
-                let (configuration, credential) = runtime_startup::resolve_draft(
+                let configuration = runtime_startup::resolve_draft(
                     &*self.database.lock().await,
                     params.runtime_kind,
                     params.configuration,
                     params.api_key,
                 )?;
                 if method == "runtime.startup.check" {
-                    self.check_runtime_startup(params.runtime_kind, configuration, credential)
+                    self.check_runtime_startup(params.runtime_kind, configuration)
                         .await
                 } else {
                     self.inspect_runtime_startup(params.runtime_kind, configuration, false)
@@ -358,12 +357,10 @@ impl Core {
         &self,
         kind: AdapterKind,
         configuration: RuntimeStartupConfiguration,
-        credential: Option<runtime_startup::DraftCredential>,
     ) -> Result<Value> {
         let preview = Arc::new(StartupPreview {
             configuration,
             result: Mutex::new(None),
-            _credential: credential,
         });
         let (acknowledged, acknowledgement) = oneshot::channel();
         let (completed, completion) = oneshot::channel();

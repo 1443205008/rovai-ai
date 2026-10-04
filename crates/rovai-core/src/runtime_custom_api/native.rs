@@ -282,8 +282,6 @@ impl NativeRead {
             credential_source: self.source.clone(),
             provider_id: self.provider_id.clone(),
             explicit_mode,
-            draft_key: None,
-            preview: false,
         }
     }
 }
@@ -460,289 +458,298 @@ fn credential(context: &NativeContext, source: &CredentialSource) -> Result<Nati
             .then(|| "可输入新 Key 并保存到原生连接；清除原有引用请在该来源操作。".into()),
     })
 }
-pub fn read(context: &NativeContext, selected: Option<ConnectionMode>) -> Result<NativeRead> {
+pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Result<NativeRead> {
     ensure!(supported(context.kind), "此智能体没有原生连接编辑入口。");
     let path = context.path();
-    let (
-        mut configuration,
-        source,
-        initial_mode,
-        login_status,
-        provider_id,
-        catalog_path,
-        evidence,
-    ) = if context.kind == AdapterKind::ClaudeCodeCli {
-        let settings = read_json(&path)?;
-        ensure!(
-            settings.is_object(),
-            "Claude Code 原生设置必须是 JSON 对象。"
-        );
-        let get = |name: &str| {
-            settings
-                .get("env")
-                .and_then(|e| e.get(name))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .or_else(|| context.env(name))
-                .unwrap_or_default()
-        };
-        let mut source = CredentialSource::Missing;
-        for name in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
-            if !get(name).is_empty() {
-                source = if settings.get("env").and_then(|e| e.get(name)).is_some() {
-                    CredentialSource::Json {
-                        path: path.clone(),
-                        pointer: format!("/env/{name}"),
-                        variable: name.into(),
-                    }
-                } else {
-                    CredentialSource::Environment { name: name.into() }
-                };
-                break;
+    let (configuration, source, initial_mode, login_status, provider_id, catalog_path, evidence) =
+        if context.kind == AdapterKind::ClaudeCodeCli {
+            let settings = read_json(&path)?;
+            ensure!(
+                settings.is_object(),
+                "Claude Code 原生设置必须是 JSON 对象。"
+            );
+            let get = |name: &str| {
+                settings
+                    .get("env")
+                    .and_then(|e| e.get(name))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .or_else(|| context.env(name))
+                    .unwrap_or_default()
+            };
+            let mut source = CredentialSource::Missing;
+            for name in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
+                if !get(name).is_empty() {
+                    source = if settings.get("env").and_then(|e| e.get(name)).is_some() {
+                        CredentialSource::Json {
+                            path: path.clone(),
+                            pointer: format!("/env/{name}"),
+                            variable: name.into(),
+                        }
+                    } else {
+                        CredentialSource::Environment { name: name.into() }
+                    };
+                    break;
+                }
             }
-        }
-        if matches!(source, CredentialSource::Missing)
-            && settings["apiKeyHelper"]
-                .as_str()
-                .is_some_and(|v| !v.is_empty())
-        {
-            source = CredentialSource::Helper { path: path.clone() };
-        }
-        let base_url = get("ANTHROPIC_BASE_URL");
-        let native_api = !base_url.is_empty() || !matches!(source, CredentialSource::Missing);
-        let login = read_json(&context.directory.join(".credentials.json"))?;
-        let observed_login = observed_claude_login(&context.directory);
-        let login_status = if !get("CLAUDE_CODE_OAUTH_TOKEN").is_empty()
-            || login["claudeAiOauth"]["accessToken"]
-                .as_str()
-                .is_some_and(|v| !v.is_empty())
-        {
-            "signed_in"
-        } else {
-            observed_login.as_deref().unwrap_or("unknown")
-        };
-        let models = ClaudeApiModels {
-            model: {
-                let model = get("ANTHROPIC_MODEL");
-                if model.is_empty() {
-                    settings["model"].as_str().unwrap_or_default().into()
-                } else {
-                    model
-                }
-            },
-            reasoning_model: get("ANTHROPIC_REASONING_MODEL"),
-            haiku_model: get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
-            sonnet_model: get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
-            opus_model: get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
-        };
-        let initial = native_api
-            .then_some(ConnectionMode::CustomApi)
-            .or_else(|| (login_status == "signed_in").then_some(ConnectionMode::OfficialLogin));
-        let config = CustomApiConfiguration::ClaudeCode {
-            mode: selected.or(initial),
-            base_url: if native_api && base_url.is_empty() {
-                "https://api.anthropic.com".into()
-            } else {
-                base_url
-            },
-            models,
-        };
-        (
-            config,
-            source,
-            initial,
-            login_status.to_owned(),
-            String::new(),
-            None,
-            settings,
-        )
-    } else {
-        let text = read_bytes(&path)?.unwrap_or_default();
-        let doc: toml::Value = toml::from_str(
-            std::str::from_utf8(&text).map_err(|_| anyhow::anyhow!("Codex 配置不是 UTF-8。"))?,
-        )
-        .map_err(|_| anyhow::anyhow!("Codex 原生配置无法解析。"))?;
-        let profile = doc
-            .get("profile")
-            .and_then(toml::Value::as_str)
-            .and_then(|name| doc.get("profiles").and_then(|v| v.get(name)));
-        let get = |name: &str| profile.and_then(|p| p.get(name)).or_else(|| doc.get(name));
-        let provider_id = get("model_provider")
-            .and_then(toml::Value::as_str)
-            .unwrap_or("openai")
-            .to_owned();
-        let provider = doc.get("model_providers").and_then(|p| p.get(&provider_id));
-        let ps = |name: &str| {
-            provider
-                .and_then(|p| p.get(name))
-                .and_then(toml::Value::as_str)
-                .unwrap_or("")
-                .to_owned()
-        };
-        let mut base_url = ps("base_url");
-        if provider_id == "openai" {
-            base_url = get("openai_base_url")
-                .and_then(toml::Value::as_str)
-                .map(str::to_owned)
-                .or_else(|| context.env("OPENAI_BASE_URL"))
-                .unwrap_or_default();
-        }
-        let auth_path = context.directory.join("auth.json");
-        let store = doc
-            .get("cli_auth_credentials_store")
-            .and_then(toml::Value::as_str)
-            .unwrap_or("file");
-        let managed_store = matches!(store, "keyring" | "auto" | "ephemeral");
-        let auth = codex_auth_file(context, store)?;
-        let native_login = provider_id == "openai"
-            || provider
-                .and_then(|p| p.get("requires_openai_auth"))
-                .and_then(toml::Value::as_bool)
-                == Some(true);
-        let mut source = CredentialSource::Missing;
-        if !ps("env_key").is_empty() {
-            source = if ps("env_key") == "ROVAI_UNCONFIGURED_API_KEY" {
-                CredentialSource::Missing
-            } else {
-                CredentialSource::Environment {
-                    name: ps("env_key"),
-                }
-            };
-        } else if !ps("experimental_bearer_token").is_empty() {
-            source = CredentialSource::Toml {
-                path: path.clone(),
-                keys: vec![
-                    "model_providers".into(),
-                    provider_id.clone(),
-                    "experimental_bearer_token".into(),
-                ],
-            };
-        } else if native_login && context.env("OPENAI_API_KEY").is_some_and(|v| !v.is_empty()) {
-            source = CredentialSource::Environment {
-                name: "OPENAI_API_KEY".into(),
-            };
-        } else if native_login
-            && !managed_store
-            && auth["auth_mode"] != "chatgpt"
-            && auth["OPENAI_API_KEY"]
-                .as_str()
-                .is_some_and(|v| !v.is_empty())
-        {
-            source = CredentialSource::Json {
-                path: auth_path,
-                pointer: "/OPENAI_API_KEY".into(),
-                variable: "OPENAI_API_KEY".into(),
-            };
-        } else if native_login
-            && (managed_store
-                || auth["tokens"]["access_token"]
+            if matches!(source, CredentialSource::Missing)
+                && settings["apiKeyHelper"]
                     .as_str()
-                    .is_some_and(|v| !v.is_empty()))
-        {
-            source = CredentialSource::NativeManaged {
-                directory: context.directory.clone(),
+                    .is_some_and(|v| !v.is_empty())
+            {
+                source = CredentialSource::Helper { path: path.clone() };
+            }
+            let base_url = get("ANTHROPIC_BASE_URL");
+            let native_api = !base_url.is_empty()
+                || !matches!(source, CredentialSource::Missing)
+                || [
+                    "CLAUDE_CODE_USE_BEDROCK",
+                    "CLAUDE_CODE_USE_VERTEX",
+                    "CLAUDE_CODE_USE_FOUNDRY",
+                ]
+                .iter()
+                .any(|name| matches!(get(name).as_str(), "1" | "true"));
+            let login = read_json(&context.directory.join(".credentials.json"))?;
+            let observed_login = observed_claude_login(&context.directory);
+            let login_status = if !get("CLAUDE_CODE_OAUTH_TOKEN").is_empty()
+                || login["claudeAiOauth"]["accessToken"]
+                    .as_str()
+                    .is_some_and(|v| !v.is_empty())
+            {
+                "signed_in"
+            } else {
+                observed_login.as_deref().unwrap_or("unknown")
             };
-        }
-        let has_token = auth["tokens"]["access_token"]
-            .as_str()
-            .is_some_and(|v| !v.is_empty());
-        let login_status = if managed_store {
-            // A fallback file alone cannot prove which keyring/file identity Codex selects.
-            "unknown"
-        } else if has_token {
-            "signed_in"
-        } else if matches!(source, CredentialSource::NativeManaged { .. }) {
-            "unknown"
-        } else {
-            "signed_out"
-        };
-        let native_api = provider_id != "openai"
-            || !base_url.is_empty()
-            || !matches!(
-                source,
-                CredentialSource::Missing | CredentialSource::NativeManaged { .. }
-            );
-        // An official OAuth login alone is not a reusable API credential. Keep
-        // its login status, but never offer it as the key for a newly entered URL.
-        if !native_api && has_token && !managed_store {
-            source = CredentialSource::Missing;
-        }
-        let default_model = get("model")
-            .and_then(toml::Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        let catalog_path = get("model_catalog_json")
-            .and_then(toml::Value::as_str)
-            .map(PathBuf::from)
-            .map(|p| {
-                if p.is_absolute() {
-                    p
-                } else {
-                    context.directory.join(p)
-                }
+            let models = ClaudeApiModels {
+                model: {
+                    let model = get("ANTHROPIC_MODEL");
+                    if model.is_empty() {
+                        settings["model"].as_str().unwrap_or_default().into()
+                    } else {
+                        model
+                    }
+                },
+                reasoning_model: get("ANTHROPIC_REASONING_MODEL"),
+                haiku_model: get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+                sonnet_model: get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
+                opus_model: get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
+            };
+            // Connection selection and authenticated identity are separate observations.
+            let initial = Some(if native_api {
+                ConnectionMode::CustomApi
+            } else {
+                ConnectionMode::OfficialLogin
             });
-        let mut models = Vec::new();
-        let catalog = catalog_path.as_ref().map(|p| read_json(p)).transpose()?;
-        if let Some(catalog) = &catalog {
-            let entries = catalog["models"]
-                .as_array()
-                .ok_or_else(|| anyhow::anyhow!("Codex model_catalog_json 不是完整原生目录。"))?;
-            for entry in entries.iter().filter(|e| e["visibility"] == "list") {
-                if let Some(id) = entry["slug"].as_str() {
-                    models.push(CustomApiModel {
-                        row_id: row_id(id)?,
-                        id: id.into(),
-                        display_name: entry["display_name"].as_str().unwrap_or_default().into(),
-                    });
+            let config = CustomApiConfiguration::ClaudeCode {
+                mode: initial,
+                base_url: if native_api && base_url.is_empty() {
+                    "https://api.anthropic.com".into()
+                } else {
+                    base_url
+                },
+                models,
+            };
+            (
+                config,
+                source,
+                initial,
+                login_status.to_owned(),
+                String::new(),
+                None,
+                settings,
+            )
+        } else {
+            let text = read_bytes(&path)?.unwrap_or_default();
+            let doc: toml::Value = toml::from_str(
+                std::str::from_utf8(&text)
+                    .map_err(|_| anyhow::anyhow!("Codex 配置不是 UTF-8。"))?,
+            )
+            .map_err(|_| anyhow::anyhow!("Codex 原生配置无法解析。"))?;
+            let profile = doc
+                .get("profile")
+                .and_then(toml::Value::as_str)
+                .and_then(|name| doc.get("profiles").and_then(|v| v.get(name)));
+            let get = |name: &str| profile.and_then(|p| p.get(name)).or_else(|| doc.get(name));
+            let provider_id = get("model_provider")
+                .and_then(toml::Value::as_str)
+                .unwrap_or("openai")
+                .to_owned();
+            // Built-in OpenAI is selected from the native registry, not an identically
+            // named user table that Codex does not use.
+            let provider = (provider_id != "openai")
+                .then(|| doc.get("model_providers").and_then(|p| p.get(&provider_id)))
+                .flatten();
+            let ps = |name: &str| {
+                provider
+                    .and_then(|p| p.get(name))
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or("")
+                    .to_owned()
+            };
+            let mut base_url = ps("base_url");
+            if provider_id == "openai" {
+                base_url = get("openai_base_url")
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_owned)
+                    .or_else(|| context.env("OPENAI_BASE_URL"))
+                    .unwrap_or_default();
+            }
+            let auth_path = context.directory.join("auth.json");
+            let store = doc
+                .get("cli_auth_credentials_store")
+                .and_then(toml::Value::as_str)
+                .unwrap_or("file");
+            let managed_store = matches!(store, "keyring" | "auto" | "ephemeral");
+            let auth = codex_auth_file(context, store)?;
+            let native_login = provider_id == "openai"
+                || provider
+                    .and_then(|p| p.get("requires_openai_auth"))
+                    .and_then(toml::Value::as_bool)
+                    == Some(true);
+            let mut source = CredentialSource::Missing;
+            if !ps("env_key").is_empty() {
+                source = if ps("env_key") == "ROVAI_UNCONFIGURED_API_KEY" {
+                    CredentialSource::Missing
+                } else {
+                    CredentialSource::Environment {
+                        name: ps("env_key"),
+                    }
+                };
+            } else if !ps("experimental_bearer_token").is_empty() {
+                source = CredentialSource::Toml {
+                    path: path.clone(),
+                    keys: vec![
+                        "model_providers".into(),
+                        provider_id.clone(),
+                        "experimental_bearer_token".into(),
+                    ],
+                };
+            } else if native_login && context.env("OPENAI_API_KEY").is_some_and(|v| !v.is_empty()) {
+                source = CredentialSource::Environment {
+                    name: "OPENAI_API_KEY".into(),
+                };
+            } else if native_login
+                && !managed_store
+                && auth["auth_mode"] != "chatgpt"
+                && auth["OPENAI_API_KEY"]
+                    .as_str()
+                    .is_some_and(|v| !v.is_empty())
+            {
+                source = CredentialSource::Json {
+                    path: auth_path,
+                    pointer: "/OPENAI_API_KEY".into(),
+                    variable: "OPENAI_API_KEY".into(),
+                };
+            } else if native_login
+                && (managed_store
+                    || auth["tokens"]["access_token"]
+                        .as_str()
+                        .is_some_and(|v| !v.is_empty()))
+            {
+                source = CredentialSource::NativeManaged {
+                    directory: context.directory.clone(),
+                };
+            }
+            let has_token = auth["tokens"]["access_token"]
+                .as_str()
+                .is_some_and(|v| !v.is_empty());
+            let login_status = if managed_store {
+                // A fallback file alone cannot prove which keyring/file identity Codex selects.
+                "unknown"
+            } else if has_token {
+                "signed_in"
+            } else if matches!(source, CredentialSource::NativeManaged { .. }) {
+                "unknown"
+            } else {
+                "signed_out"
+            };
+            let native_api = provider_id != "openai"
+                || !base_url.is_empty()
+                || (store == "auto"
+                    && auth["auth_mode"] != "chatgpt"
+                    && auth["OPENAI_API_KEY"]
+                        .as_str()
+                        .is_some_and(|v| !v.is_empty()))
+                || !matches!(
+                    source,
+                    CredentialSource::Missing | CredentialSource::NativeManaged { .. }
+                );
+            // An official OAuth login alone is not a reusable API credential. Keep
+            // its login status, but never offer it as the key for a newly entered URL.
+            if !native_api && has_token && !managed_store {
+                source = CredentialSource::Missing;
+            }
+            let default_model = get("model")
+                .and_then(toml::Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let catalog_path = get("model_catalog_json")
+                .and_then(toml::Value::as_str)
+                .map(PathBuf::from)
+                .map(|p| {
+                    if p.is_absolute() {
+                        p
+                    } else {
+                        context.directory.join(p)
+                    }
+                });
+            let mut models = Vec::new();
+            let catalog = catalog_path.as_ref().map(|p| read_json(p)).transpose()?;
+            if let Some(catalog) = &catalog {
+                let entries = catalog["models"].as_array().ok_or_else(|| {
+                    anyhow::anyhow!("Codex model_catalog_json 不是完整原生目录。")
+                })?;
+                for entry in entries.iter().filter(|e| e["visibility"] == "list") {
+                    if let Some(id) = entry["slug"].as_str() {
+                        models.push(CustomApiModel {
+                            row_id: row_id(id)?,
+                            id: id.into(),
+                            display_name: entry["display_name"].as_str().unwrap_or_default().into(),
+                        });
+                    }
                 }
             }
-        }
-        if !default_model.is_empty() && !models.iter().any(|m| m.id == default_model) {
-            models.insert(
-                0,
-                CustomApiModel {
-                    row_id: row_id(&default_model)?,
-                    id: default_model.clone(),
-                    display_name: String::new(),
-                },
-            );
-        }
-        let default_row_id = models
-            .iter()
-            .find(|m| m.id == default_model)
-            .map(|m| m.row_id.clone());
-        let initial = if native_api {
-            Some(ConnectionMode::CustomApi)
-        } else if has_token && !managed_store {
-            Some(ConnectionMode::OfficialLogin)
-        } else {
-            None
-        };
-        let configuration = CustomApiConfiguration::Codex {
-            mode: selected.or(initial),
-            base_url: if native_api && base_url.is_empty() {
-                "https://api.openai.com/v1".into()
+            if !default_model.is_empty() && !models.iter().any(|m| m.id == default_model) {
+                models.insert(
+                    0,
+                    CustomApiModel {
+                        row_id: row_id(&default_model)?,
+                        id: default_model.clone(),
+                        display_name: String::new(),
+                    },
+                );
+            }
+            let default_row_id = models
+                .iter()
+                .find(|m| m.id == default_model)
+                .map(|m| m.row_id.clone());
+            let initial = if native_api {
+                Some(ConnectionMode::CustomApi)
             } else {
-                base_url
-            },
-            models,
-            default_model,
-            default_row_id,
+                Some(ConnectionMode::OfficialLogin)
+            };
+            let configuration = CustomApiConfiguration::Codex {
+                mode: initial,
+                base_url: if native_api && base_url.is_empty() {
+                    "https://api.openai.com/v1".into()
+                } else {
+                    base_url
+                },
+                models,
+                default_model,
+                default_row_id,
+            };
+            (
+                configuration,
+                source,
+                initial,
+                login_status.to_owned(),
+                provider_id,
+                catalog_path,
+                json!({"config": doc, "catalog": catalog, "auth": auth}),
+            )
         };
-        (
-            configuration,
-            source,
-            initial,
-            login_status.to_owned(),
-            provider_id,
-            catalog_path,
-            json!({"config": doc, "catalog": catalog, "auth": auth}),
-        )
-    };
-    // Mode is metadata, independent of credentials. No read writes files or imports a key.
-    if let Some(mode) = selected {
-        configuration.set_mode(Some(mode));
-    }
+    // No read writes files or imports a key; stale Rovai mode metadata is ignored.
     if let Ok(url) = url::Url::parse(configuration.base_url()) {
         ensure!(
             url.username().is_empty() && url.password().is_none(),

@@ -746,14 +746,11 @@ pub fn custom_api_snapshot(
     let Some(snapshot) = configuration.custom_api_snapshot else {
         return Ok(None);
     };
-    if snapshot.preview {
-        return Ok(Some(snapshot));
-    }
-    let current =
-        crate::runtime_custom_api::native::read(&snapshot.context, snapshot.configuration.mode())?;
-    Ok(Some(
-        current.snapshot(&snapshot.context, snapshot.explicit_mode),
-    ))
+    Ok(
+        crate::runtime_custom_api::native::read(&snapshot.context, None)
+            .ok()
+            .map(|current| current.snapshot(&snapshot.context, false)),
+    )
 }
 
 fn configured_environment_variable(kind: AdapterKind, key: &str) -> Option<OsString> {
