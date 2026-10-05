@@ -353,7 +353,10 @@ async fn fresh_formal_and_draft_checks_preserve_program_selection_and_private_st
         health["discovery"]["executablePath"],
         preview["executablePath"]
     );
-    assert_eq!(health["reportedVersion"], "codex-cli 4.0.0");
+    assert!(
+        health["reportedVersion"].is_null(),
+        "saving an entry discovers it without a version process"
+    );
     assert_eq!(
         fixture
             .core

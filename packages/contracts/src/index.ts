@@ -191,6 +191,8 @@ export interface AdapterInstallation {
   pathState: 'valid' | 'path_missing'
   version: number
   referencedProfileCount: number
+  /** Static Adapter permission vocabulary, available before diagnostics. */
+  permissionOptions?: PermissionOptionDescriptor[]
   snapshot: AdapterCapabilitySnapshot | null
   modelCatalog: RuntimeModelCatalogCache
   memberRuntimeDefaults: MemberRuntimeConfiguration | null
@@ -1867,6 +1869,27 @@ export interface AgentRunView {
     | 'planned_shutdown_failed'
     | 'planned_shutdown_cancelled'
     | 'runtime_interrupted'
+    | 'agent_unavailable'
+    | 'member_away'
+    | 'member_removed'
+    | 'runtime_not_configured'
+    | 'runtime_configuration_invalid'
+    | 'runtime_configuration_adapter_mismatch'
+    | 'conversation_runtime_override_unsupported'
+    | 'adapter_installation_missing'
+    | 'adapter_installation_disabled'
+    | 'runtime_permission_adapter_mismatch'
+    | 'runtime_permission_schema_mismatch'
+    | 'runtime_permission_values_invalid'
+    | 'runtime_permission_option_unknown'
+    | 'runtime_permission_option_unsupported'
+    | 'runtime_permission_value_invalid'
+    | 'runtime_permission_value_required'
+    | 'runtime_model_options_invalid'
+    | 'runtime_model_unavailable'
+    | 'runtime_model_option_unknown'
+    | 'runtime_model_option_invalid'
+    | 'runtime_adapter_not_implemented'
     | null
   failure: RuntimeFailureView | null
   runtimeModel: { modelId: string | null } | null

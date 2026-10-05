@@ -1,6 +1,6 @@
 import { newCommandId } from '../../shared/command-id'
 import { useThreadClient } from './camp-client'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { AdapterInstallation, AgentProfile, ThreadMemberFastView, ThreadSnapshot, StoredCommandResult } from '@contracts'
 import { runtimeEditorInstallation } from './MemberRuntimeParameters'
 import { readErrorMessage } from './error-message'
@@ -9,11 +9,11 @@ type FastEntry = {
   scope: string
   projection: string
   value: ThreadMemberFastView | null | undefined
-  failed: boolean
 }
 
 export type ThreadMemberFastControls = {
   get(agentId: string): { value: ThreadMemberFastView | null | undefined; pending: boolean } | undefined
+  check(agentId: string): Promise<void>
   save(agentId: string, fastOverride: boolean): Promise<void>
 }
 
@@ -23,7 +23,6 @@ export function useThreadMemberFast(
   snapshot: ThreadSnapshot,
   profiles: Map<string, AgentProfile>,
   installations: AdapterInstallation[],
-  retrySurface: string | null,
   onNotify: (message: string) => void
 ): ThreadMemberFastControls {
   const client = useThreadClient()
@@ -32,7 +31,6 @@ export function useThreadMemberFast(
   const checks = useRef(new Set<string>())
   const saves = useRef(new Set<string>())
   const mounted = useRef(false)
-  const previousSurface = useRef(retrySurface)
   const targets = new Map(snapshot.members.flatMap(member => {
     const profile = profiles.get(member.agentId)
     const runtime = profile?.runtimeConfiguration
@@ -67,30 +65,29 @@ export function useThreadMemberFast(
         // Profile refresh can arrive before the Thread projection. Never reuse the old
         // projection for a changed binding merely because the same object is still present.
         value: previous && previous.scope !== target.scope && previous.projection === target.projection
-          ? undefined : target.value,
-        failed: false
+          ? undefined : target.value
       })
     }
   })
-  useEffect(() => {
-    const retry = retrySurface !== null && retrySurface !== previousSurface.current
-    previousSurface.current = retrySurface
-    for (const [agentId, entry] of entries.current) {
-      if (retry && entry.failed) { entry.value = undefined; entry.failed = false }
-      const key = requestKey(agentId)
-      if (entry.value !== undefined || checks.current.has(key)) continue
-      checks.current.add(key)
-      void client.request<ThreadMemberFastView | null>('threads.members.fast.check', {
+  const check: ThreadMemberFastControls['check'] = async agentId => {
+    const entry = entries.current.get(agentId)
+    const key = requestKey(agentId)
+    if (!entry || checks.current.has(key)) return
+    checks.current.add(key)
+    changed()
+    try {
+      const value = await client.request<ThreadMemberFastView | null>('threads.members.fast.check', {
         threadId: snapshot.thread.id, agentId
-      }).then(value => {
-        if (entries.current.get(agentId) === entry) entry.value = value
-      }).catch(() => {
-        if (entries.current.get(agentId) !== entry) return
-        entry.value = null
-        entry.failed = true
-      }).finally(() => { checks.current.delete(key); changed() })
-    }
-  })
+      })
+      if (!mounted.current || entries.current.get(agentId) !== entry) return
+      entry.value = value
+      if (!value) onNotify('当前未确认 Fast 资格，可继续使用默认响应模式。')
+    } catch (error) {
+      if (mounted.current && entries.current.get(agentId) === entry) {
+        onNotify(readErrorMessage(error, 'Fast 资格检查失败，可再次尝试。'))
+      }
+    } finally { checks.current.delete(key); changed() }
+  }
   const get: ThreadMemberFastControls['get'] = agentId => {
     const target = targets.get(agentId)
     if (!target) return undefined
@@ -99,7 +96,7 @@ export function useThreadMemberFast(
       ? entry.value
       : entry && entry.scope !== target.scope && entry.projection === target.projection
         ? undefined : target.value
-    return { value, pending: saves.current.has(requestKey(agentId)) }
+    return { value, pending: saves.current.has(requestKey(agentId)) || checks.current.has(requestKey(agentId)) }
   }
   const save: ThreadMemberFastControls['save'] = async (agentId, fastOverride) => {
     const value = get(agentId)?.value
@@ -122,5 +119,5 @@ export function useThreadMemberFast(
       }
     } finally { saves.current.delete(key); changed() }
   }
-  return { get, save }
+  return { get, check, save }
 }

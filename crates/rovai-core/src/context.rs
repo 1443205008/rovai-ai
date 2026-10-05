@@ -2631,6 +2631,12 @@ fn acknowledge_input_delivery_transaction(
     // A late acceptance is evidence only. It cannot move the current
     // conversation's boundary or overwrite a successor's Native Binding.
     if current_execution {
+        transaction.execute(
+            "UPDATE agent_run SET wait_reason = NULL, updated_at = ?3
+             WHERE id = ?1 AND execution_epoch = ?2 AND status = 'running'
+               AND wait_reason = 'runtime_initializing'",
+            params![row.agent_run_id, row.execution_epoch, now],
+        )?;
         let marker_updated = transaction.execute(
             r#"
             UPDATE conversation
@@ -9787,7 +9793,7 @@ mod slow_tests {
                         permissions: AdapterPermissionConfig {
                             adapter_kind: AdapterKind::CodexCli,
                             schema_version: 1,
-                            values: json!({}),
+                            values: json!({"sandbox_mode":"workspace-write", "approval_policy":"on-request"}),
                         },
                     },
                 },
@@ -14253,7 +14259,7 @@ mod slow_tests {
             - Follow current user instructions and Core permissions. Prefer current evidence to Memory, history, or cached context.\n\
             - Preserve existing user work.\n\
             - Use rovai thread read only when needed Thread context is missing. A history boundary is a reference point, not a read or completion marker.\n\
-            - When you cannot make further progress without another agent's reply, end this run instead of polling Thread history. Resume when you receive the reply.";
+            - When you cannot make further progress without another agent's reply, end this run instead of polling Thread history or execution status. Resume when you receive the reply.";
         assert_eq!(
             charter.split("\n\nRovai Built-in CLI Contract").next(),
             Some(expected_intro)
@@ -14304,7 +14310,7 @@ mod slow_tests {
         assert!(BUILTIN_CLI_CHARTER.len() <= 2_560);
         assert_eq!(
             BUILTIN_CLI_CHARTER,
-            "Rovai Built-in CLI Contract\n\n- Use the local `rovai` CLI for the complete built-in operation catalog: `rovai send`; `rovai member create`; `rovai task create|get|list|update`; `rovai thread list|search|read`; `rovai history search`; `rovai memory view|search|read|write`; and `rovai mission list|get|update|status`.\n- Use `rovai --help` to choose an operation and its exact `--help` for syntax. Reuse help already available in the current Native Session.\n- Commands accept exactly one input source: direct flags, one JSON object from stdin/heredoc, or `--input-file <path>`. Do not merge sources.\n- `rovai send` always publishes one public Thread message. When the current responsibility has a Thread-visible answer, result, status, or summary, successfully call it before ending; Runtime narration and Runtime final responses are not Thread messages.\n- Use `--public-only` when the message must not wake an Agent.\n- Without `--public-only`, `--to` may schedule work. Agent addressing is not CC; use it only for a concrete new action or blocking question, never for acknowledgement, agreement, thanks, closure, standby, no-new-information, or repeated conclusions. Member calls do not require courtesy replies.\n- Ordinary Thread messages are visible to the User. Use `--to-user` only for a new decision, answer or action needed from them, or an explicitly requested important-result notification.\n- A successful `rovai send` proves only that its message and effects were committed; it does not prove that recipient work has started or completed.\n"
+            "Rovai Built-in CLI Contract\n\n- Use the local `rovai` CLI for the complete built-in operation catalog: `rovai send`; `rovai member create`; `rovai task create|get|list|update`; `rovai thread list|search|read|runs`; `rovai history search`; `rovai memory view|search|read|write`; and `rovai mission list|get|update|status`.\n- Use `rovai --help` to choose an operation and its exact `--help` for syntax. Reuse help already available in the current Native Session.\n- Commands accept exactly one input source: direct flags, one JSON object from stdin/heredoc, or `--input-file <path>`. Do not merge sources.\n- `rovai send` always publishes one public Thread message. When the current responsibility has a Thread-visible answer, result, status, or summary, successfully call it before ending; Runtime narration and Runtime final responses are not Thread messages.\n- Use `--public-only` when the message must not wake an Agent.\n- Without `--public-only`, `--to` may schedule work. Agent addressing is not CC; use it only for a concrete new action or blocking question, never for acknowledgement, agreement, thanks, closure, standby, no-new-information, or repeated conclusions. Member calls do not require courtesy replies.\n- Ordinary Thread messages are visible to the User. Use `--to-user` only for a new decision, answer or action needed from them, or an explicitly requested important-result notification.\n- A successful `rovai send` proves only that its message and effects were committed; it does not prove that recipient work has started or completed.\n"
         );
         assert!(!BUILTIN_CLI_CHARTER.contains("inline Agent addressing"));
         assert!(

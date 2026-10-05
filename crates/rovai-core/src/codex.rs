@@ -742,24 +742,7 @@ struct CodexTurnDiffSnapshot {
     diff: String,
 }
 
-#[derive(Debug)]
-pub(crate) struct CodexLiveModelValidationError {
-    pub code: &'static str,
-    model_id: String,
-    detail: String,
-}
-
-impl std::fmt::Display for CodexLiveModelValidationError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "{} for explicit model {}: {}",
-            self.code, self.model_id, self.detail
-        )
-    }
-}
-
-impl std::error::Error for CodexLiveModelValidationError {}
+pub(crate) use rovai_core::agent_runtime_adapter::LiveModelValidationError as CodexLiveModelValidationError;
 
 struct CodexThreadStartOptions<'a> {
     developer_instructions: Option<&'a str>,
@@ -851,7 +834,15 @@ impl CodexRuntime {
         native_mcp_server_names_from_config_read(&response)
     }
 
-    pub async fn validate_explicit_model(&self, model_id: &str) -> Result<()> {
+    pub async fn authentication_available(&self) -> Result<bool> {
+        let account = self
+            .rpc("account/read", json!({"refreshToken": false}))
+            .await?;
+        Ok(account.get("account").is_some_and(Value::is_object)
+            || account.get("requiresOpenaiAuth").and_then(Value::as_bool) == Some(false))
+    }
+
+    pub async fn validate_explicit_model(&self, model_id: &str, options: &Value) -> Result<()> {
         let mut cursor: Option<String> = None;
         let mut pages = 0_u8;
         loop {
@@ -889,6 +880,10 @@ impl CodexRuntime {
                         .and_then(Value::as_bool)
                         .unwrap_or(false)
             }) {
+                let catalog = rovai_core::agent_runtime_adapter::codex_models(&response)?;
+                rovai_core::agent_runtime_adapter::validate_live_model_selection(
+                    &catalog, model_id, options,
+                )?;
                 return Ok(());
             }
             cursor = response
@@ -2609,48 +2604,143 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn real_host_catalog_rejects_a_missing_explicit_model_without_fallback() {
-        let root = std::env::temp_dir().join(format!(
-            "rovai-codex-live-model-validation-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let executable = root.join("codex");
-        make_test_executable(
-            &executable,
-            r#"#!/bin/sh
-IFS= read -r initialize || exit 1
-printf '%s\n' '{"id":1,"result":{}}'
-IFS= read -r initialized || exit 1
-IFS= read -r model_list || exit 1
-printf '%s\n' '{"id":2,"result":{"data":[{"id":"gpt-current","hidden":false}],"nextCursor":null}}'
-while IFS= read -r ignored; do :; done
-"#,
-        );
-        let (incoming, _receiver) = mpsc::unbounded_channel();
-        let host = CodexHost::spawn_with_executable(&executable, &root, incoming, None)
-            .await
-            .unwrap();
-        let runtime = CodexRuntime::from_host(
-            CodexRuntimeOwner::AgentRun {
-                agent_run_id: "run-live-model-validation".to_string(),
-                execution_epoch: 1,
-            },
-            Some("camp-live-model-validation".to_string()),
-            host.clone(),
-        );
-
-        let error = runtime
-            .validate_explicit_model("claude-opus-5")
-            .await
-            .expect_err("a model absent from the real host catalog must fail closed");
-        let validation = error
-            .downcast_ref::<CodexLiveModelValidationError>()
-            .expect("the launch layer needs a typed model failure");
-        assert_eq!(validation.code, "runtime_model_unavailable");
-
-        host.shutdown().await;
-        std::fs::remove_dir_all(root).unwrap();
+    async fn real_host_validates_before_input_and_executes_in_the_same_process() {
+        for scenario in [
+            "default",
+            "explicit",
+            "missing",
+            "invalid_option",
+            "unknown_option",
+            "auth_required",
+            "init_failure",
+        ] {
+            let root = std::env::temp_dir()
+                .join(format!("rovai-codex-live-launch-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            let executable = root.join("codex");
+            make_test_executable(&executable, &r#"#!/usr/bin/python3
+import json, os, sys, time
+root = os.path.dirname(__file__)
+scenario = '__SCENARIO__'
+with open(os.path.join(root, 'starts'), 'a') as log: log.write('start\n')
+if '--version' in sys.argv:
+    time.sleep(30)
+    sys.exit(1)
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request['method']
+    with open(os.path.join(root, 'requests'), 'a') as log: log.write(method + '\n')
+    if 'id' not in request: continue
+    response = {'id': request['id'], 'result': {}}
+    if method == 'initialize' and scenario == 'init_failure':
+        response = {'id': request['id'], 'error': {'code': -32600, 'message': 'protocol incompatible'}}
+    elif method == 'account/read':
+        response['result'] = {'account': None, 'requiresOpenaiAuth': scenario == 'auth_required'}
+    elif method == 'model/list':
+        response['result'] = {'data': [{'id': 'selected', 'supportedReasoningEfforts': [{'reasoningEffort': 'low'}]}]}
+    elif method == 'thread/start': response['result'] = {'thread': {'id': 'thread-fixture'}}
+    elif method == 'turn/start': response['result'] = {'turn': {'id': 'turn-fixture'}}
+    print(json.dumps(response), flush=True)
+"#.replace("__SCENARIO__", scenario));
+            // Default launches must also work after discarding the entire Host,
+            // without a version check or historical protocol evidence.
+            let attempts = if scenario == "default" { 2 } else { 1 };
+            for attempt in 0..attempts {
+                let (incoming, _receiver) = mpsc::unbounded_channel();
+                let result =
+                    CodexHost::spawn_with_executable(&executable, &root, incoming, None).await;
+                if scenario == "init_failure" {
+                    assert!(result.is_err());
+                } else {
+                    let host = result.unwrap();
+                    let runtime = CodexRuntime::from_host(
+                        CodexRuntimeOwner::AgentRun {
+                            agent_run_id: format!("launch-fixture-{attempt}"),
+                            execution_epoch: 1,
+                        },
+                        None,
+                        host.clone(),
+                    );
+                    let authenticated = runtime.authentication_available().await.unwrap();
+                    assert_eq!(authenticated, scenario != "auth_required");
+                    let options = match scenario {
+                        "invalid_option" => json!({"reasoning_effort":"high"}),
+                        "unknown_option" => json!({"unadvertised":"low"}),
+                        _ => json!({"reasoning_effort":"low"}),
+                    };
+                    let validation = if authenticated && scenario != "default" {
+                        runtime
+                            .validate_explicit_model(
+                                if scenario == "missing" {
+                                    "gone"
+                                } else {
+                                    "selected"
+                                },
+                                &options,
+                            )
+                            .await
+                    } else {
+                        Ok(())
+                    };
+                    let expected_error = match scenario {
+                        "missing" => Some("runtime_model_unavailable"),
+                        "invalid_option" => Some("runtime_model_option_invalid"),
+                        "unknown_option" => Some("runtime_model_option_unknown"),
+                        _ => None,
+                    };
+                    assert_eq!(
+                        validation
+                            .as_ref()
+                            .err()
+                            .and_then(|error| error.downcast_ref::<CodexLiveModelValidationError>())
+                            .map(|error| error.code),
+                        expected_error
+                    );
+                    if authenticated && validation.is_ok() {
+                        runtime
+                            .start_or_resume_thread_with_config(
+                                &root,
+                                None,
+                                CodexThreadStartOptions {
+                                    developer_instructions: None,
+                                    sandbox: "workspace-write",
+                                    approval_policy: "on-request",
+                                    model: None,
+                                    config: None,
+                                    runtime_workspace_roots: None,
+                                    ephemeral: true,
+                                },
+                            )
+                            .await
+                            .unwrap();
+                        runtime
+                            .start_turn_with_config("task-body", None, None, None)
+                            .await
+                            .unwrap();
+                    }
+                    host.shutdown().await;
+                }
+            }
+            let requests = std::fs::read_to_string(root.join("requests")).unwrap();
+            assert_eq!(
+                std::fs::read_to_string(root.join("starts"))
+                    .unwrap()
+                    .lines()
+                    .count(),
+                attempts
+            );
+            assert_eq!(
+                requests
+                    .lines()
+                    .filter(|method| *method == "turn/start")
+                    .count(),
+                attempts * usize::from(matches!(scenario, "default" | "explicit"))
+            );
+            if scenario == "default" {
+                assert!(!requests.contains("model/list"));
+            }
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[tokio::test]

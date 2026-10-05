@@ -13,7 +13,7 @@ last_updated: 2026-10-03
 
 - 状态：accepted
 - 日期：2026-09-30
-- 当前权威：[Runtime Launch and Verification v46](../../contracts/runtime-launch-and-verification-v46.md) 与 [Built-in Tool Runtime](../../architecture/builtin-tool-runtime.md#claude-code-权限审批回调)
+- 当前权威：[Runtime Launch and Verification v47](../../contracts/runtime-launch-and-verification-v47.md) 与 [Built-in Tool Runtime](../../architecture/builtin-tool-runtime.md#claude-code-权限审批回调)
 
 ### 背景
 
@@ -266,3 +266,27 @@ User 要求恢复一键新对话在消息模型重构前的草稿行为，并明
 跨客户端只能隔离导航，不提供内容同步或冲突合并。拒绝重建旧 Core Draft、revision 和编辑租约体系：它会逆转
 已完成的公开消息边界重构并引入不必要的多客户端协调。仅保留 Renderer map 也无法满足刷新和重启恢复。
 AI 创建队员的专项窗口内生命周期继续由 D09 对应合同约束。
+
+<a id="v1-72-d12"></a>
+## V1.72-D12：安装发现与真实启动验证解耦
+
+- 状态：accepted
+- 日期：2026-10-05
+- 当前权威：[Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md)、[Runtime 边界](../../architecture/runtime-catalog-boundaries.md)、[Camp Member Fast v2](../../contracts/camp-member-fast-v2.md)
+
+### 背景
+
+版本展示和历史探测状态进入配置冻结、队列及派发门禁，CLI 实际可启动时也可能等待手动检测。
+独立 Probe 成功并不能保证下一进程可执行，却增加冷启动成本和两个状态来源。
+
+### 选择
+
+发现只保存安装入口及安全身份；协议、模型与权限在实际执行 Host 的正文屏障内验证。
+保留 Adapter 无法在正文前握手时的最小特例及主动诊断，不以历史健康结果授权运行。
+
+### 后果与替代方案
+
+保留现有字段和快照便于诊断，无 schema 迁移；旧 Ready 不再是调度通行证。
+取消必须覆盖初始化等待，配置失败也须产生可见 Run，模型选择延迟到真实 Host 确认。
+未选择 LKG、额外健康快照、重试调度或后台轮询，因为它们保留双重准入并增加状态复杂度；
+也不直接删除门禁后发送正文，实际初始化验证必须先于输入。

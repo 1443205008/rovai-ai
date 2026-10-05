@@ -68,7 +68,7 @@ pub(crate) struct ClaudeControl {
     session_id: String,
     permission_mode: String,
     initialize_id: String,
-    initialization: Mutex<Option<oneshot::Sender<std::result::Result<(), String>>>>,
+    initialization: Mutex<Option<oneshot::Sender<std::result::Result<Value, String>>>>,
     state: Mutex<ControlState>,
     writer: mpsc::UnboundedSender<ControlWrite>,
     changed: Notify,
@@ -82,7 +82,7 @@ impl ClaudeControl {
         events: Option<mpsc::UnboundedSender<ClaudeCodeRuntimeEvent>>,
     ) -> (
         Arc<Self>,
-        impl std::future::Future<Output = Result<()>>,
+        impl std::future::Future<Output = Result<Value>>,
         mpsc::UnboundedReceiver<ControlWrite>,
     ) {
         let (writer, receiver) = mpsc::unbounded_channel();
@@ -215,7 +215,7 @@ impl ClaudeControl {
                         Err("Claude Code initialized with a different permission mode".to_string())
                     } else {
                         self.state.lock().unwrap().initialized = true;
-                        Ok(())
+                        Ok(response["response"].clone())
                     }
                 } else {
                     Err("Claude Code rejected protocol initialization".to_string())

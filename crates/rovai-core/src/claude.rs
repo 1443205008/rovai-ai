@@ -509,7 +509,12 @@ impl ClaudeCodeCliRuntimeAdapter {
             } else {
                 uuid::Uuid::new_v4().to_string()
             };
-        let fast_override = if let Some(fast) = &request.runtime.camp_fast {
+        let fast_override = if let Some(fast) = request
+            .runtime
+            .camp_fast
+            .as_ref()
+            .filter(|fast| fast.fast_override.is_some())
+        {
             let eligibility =
                 crate::health::claude_fast_eligibility(&request.runtime, request.workspace.path())
                     .await
@@ -745,8 +750,14 @@ impl ClaudeCodeCliRuntimeAdapter {
             _ = &mut interrupted => anyhow::bail!("Claude Code process was interrupted during stdin delivery"),
             delivered = async {
                 protocol.initialize().await?;
-                tokio::time::timeout(claude_control::INITIALIZE_TIMEOUT, initialized).await
+                let initialize = tokio::time::timeout(claude_control::INITIALIZE_TIMEOUT, initialized).await
                     .context("Claude Code protocol initialization timed out")??;
+                if request.runtime.model.source == "explicit" {
+                    let models = rovai_core::agent_runtime_adapter::claude_code_models(&initialize)?;
+                    rovai_core::agent_runtime_adapter::validate_live_model_selection(
+                        &models, &request.runtime.model.model_id, &request.runtime.model.options,
+                    )?;
+                }
                 protocol.send_prompt(&request.prompt).await
                     .context("failed to deliver structured input to Claude Code stdin")
             } => {
@@ -3277,7 +3288,7 @@ mod tests {
     printf '%s\n' "$@" > "$0.argv"
     IFS= read -r init
     init_id=$(printf '%s' "$init" | /usr/bin/sed -E 's/.*"request_id":"([^"]+)".*/\1/')
-    printf '%s\n' "{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"$init_id\",\"response\":{{}}}}}}"
+    printf '%s\n' "{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"$init_id\",\"response\":{{\"models\":[{{\"value\":\"provider/custom[extended]\",\"displayName\":\"Custom\",\"supportedEffortLevels\":[\"future-level\"]}}]}}}}}}"
     IFS= read -r prompt
     printf '%s\n' '{{"type":"stream_event","session_id":"{session_id}","event":{{"type":"message_start"}}}}'
     printf '%s\n' '{{"type":"result","subtype":"error","is_error":true,"result":"API Error: 529 overloaded; api_key=private-key","session_id":"{session_id}"}}'

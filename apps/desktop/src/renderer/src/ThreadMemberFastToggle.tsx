@@ -33,3 +33,15 @@ export function ThreadMemberFastToggle({
     </button>
   </span>
 }
+
+export function ThreadMemberFastCheck({ displayName, pending, onCheck }: {
+  displayName: string
+  pending: boolean
+  onCheck(): void
+}): React.JSX.Element {
+  return <span className="camp-fast-control"><button type="button" className="camp-fast-toggle camp-fast-check"
+    aria-label={uiAttribute('检查 {0} 的 Fast 资格', displayName)} aria-busy={pending}
+    disabled={pending} onClick={onCheck}>
+    <span className="camp-fast-pill">{uiAttribute(pending ? '检查中…' : '检查 Fast')}</span>
+  </button></span>
+}

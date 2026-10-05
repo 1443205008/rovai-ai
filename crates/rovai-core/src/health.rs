@@ -229,7 +229,7 @@ pub async fn claude_code_capability_probe_at(path: &Path) -> ClaudeCodeCapabilit
 }
 
 pub async fn antigravity_capability_probe_at(path: &Path) -> AntigravityCapabilityProbe {
-    antigravity_probe_at(path).await
+    antigravity_probe_at(path, true).await
 }
 
 /// Only the existing verified snapshot authorizes omitting full checks. Session
@@ -764,7 +764,13 @@ async fn claude_code_probe_at(path: &Path) -> ClaudeCodeCapabilityProbe {
     }
 }
 
-async fn antigravity_probe_at(path: &Path) -> AntigravityCapabilityProbe {
+/// Antigravity sends input in argv and cannot initialize without it. Its launch
+/// exception checks CLI flags and account/model access, never the display version.
+pub async fn antigravity_launch_preflight_at(path: &Path) -> AntigravityCapabilityProbe {
+    antigravity_probe_at(path, false).await
+}
+
+async fn antigravity_probe_at(path: &Path, include_version: bool) -> AntigravityCapabilityProbe {
     let probed_at = chrono::Utc::now().to_rfc3339();
     let path_text = path.to_string_lossy().to_string();
     if !path.is_file() {
@@ -790,61 +796,65 @@ async fn antigravity_probe_at(path: &Path) -> AntigravityCapabilityProbe {
     }
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let fingerprint = executable_fingerprint_async(canonical.clone()).await;
-    let mut version_command = runtime_command(&canonical, Some(AdapterKind::AntigravityApp));
-    version_command.arg("--version");
-    let version = bounded_output(&mut version_command, Duration::from_secs(15)).await;
-    let reported_version = match version {
-        Ok(output) if output.status.success() => {
-            first_nonempty_line(&output.stdout.bytes, &output.stderr.bytes)
+    let reported_version = if include_version {
+        let mut version_command = runtime_command(&canonical, Some(AdapterKind::AntigravityApp));
+        version_command.arg("--version");
+        let version = bounded_output(&mut version_command, Duration::from_secs(15)).await;
+        match version {
+            Ok(output) if output.status.success() => {
+                first_nonempty_line(&output.stdout.bytes, &output.stderr.bytes)
+            }
+            Ok(output) => {
+                let raw_detail = bounded_probe_text(&output.stdout.bytes, &output.stderr.bytes);
+                let failure = public_probe_failure(
+                    AdapterKind::AntigravityApp,
+                    RuntimeFailureOrigin::Runtime,
+                    RuntimeFailurePhase::Execution,
+                    "runtime_process_failed",
+                    "Antigravity 版本检查失败",
+                    &raw_detail,
+                    &canonical,
+                    true,
+                );
+                return antigravity_probe_failure(
+                    path_text,
+                    fingerprint,
+                    None,
+                    AgentRuntimeProbeStatus::ProbeFailed,
+                    format!(
+                        "Antigravity companion version check failed with {} (outputDigest={})",
+                        output.status,
+                        probe_output_digest(&output.stdout.bytes, &output.stderr.bytes)
+                    ),
+                    failure,
+                    probed_at,
+                );
+            }
+            Err(error) => {
+                let raw_detail = error.to_string();
+                let failure = public_probe_failure(
+                    AdapterKind::AntigravityApp,
+                    RuntimeFailureOrigin::Environment,
+                    RuntimeFailurePhase::Spawn,
+                    "runtime_spawn_failed",
+                    "无法启动 Antigravity 检查",
+                    &raw_detail,
+                    &canonical,
+                    true,
+                );
+                return antigravity_probe_failure(
+                    path_text,
+                    fingerprint,
+                    None,
+                    AgentRuntimeProbeStatus::ProbeFailed,
+                    format!("failed to inspect Antigravity companion CLI: {error}"),
+                    failure,
+                    probed_at,
+                );
+            }
         }
-        Ok(output) => {
-            let raw_detail = bounded_probe_text(&output.stdout.bytes, &output.stderr.bytes);
-            let failure = public_probe_failure(
-                AdapterKind::AntigravityApp,
-                RuntimeFailureOrigin::Runtime,
-                RuntimeFailurePhase::Execution,
-                "runtime_process_failed",
-                "Antigravity 版本检查失败",
-                &raw_detail,
-                &canonical,
-                true,
-            );
-            return antigravity_probe_failure(
-                path_text,
-                fingerprint,
-                None,
-                AgentRuntimeProbeStatus::ProbeFailed,
-                format!(
-                    "Antigravity companion version check failed with {} (outputDigest={})",
-                    output.status,
-                    probe_output_digest(&output.stdout.bytes, &output.stderr.bytes)
-                ),
-                failure,
-                probed_at,
-            );
-        }
-        Err(error) => {
-            let raw_detail = error.to_string();
-            let failure = public_probe_failure(
-                AdapterKind::AntigravityApp,
-                RuntimeFailureOrigin::Environment,
-                RuntimeFailurePhase::Spawn,
-                "runtime_spawn_failed",
-                "无法启动 Antigravity 检查",
-                &raw_detail,
-                &canonical,
-                true,
-            );
-            return antigravity_probe_failure(
-                path_text,
-                fingerprint,
-                None,
-                AgentRuntimeProbeStatus::ProbeFailed,
-                format!("failed to inspect Antigravity companion CLI: {error}"),
-                failure,
-                probed_at,
-            );
-        }
+    } else {
+        None
     };
 
     let mut help_command = runtime_command(&canonical, Some(AdapterKind::AntigravityApp));
@@ -2751,9 +2761,25 @@ pub async fn claude_fast_eligibility(
     cwd: &Path,
 ) -> Result<rovai_core::camp_fast::NativeFastEligibility> {
     use rovai_core::camp_fast::{NativeFastEligibility, claude_fast_version_supported};
-    if !claude_fast_version_supported(runtime.reported_version.as_deref())
-        || custom_fast_environment(AdapterKind::ClaudeCodeCli)
-    {
+    if custom_fast_environment(AdapterKind::ClaudeCodeCli) {
+        return Ok(NativeFastEligibility::default());
+    }
+    let version = if let Some(version) = &runtime.reported_version {
+        Some(version.clone())
+    } else {
+        // Only an explicit Fast request needs this compatibility version.
+        let mut command = runtime_command(
+            Path::new(&runtime.executable_path),
+            Some(AdapterKind::ClaudeCodeCli),
+        );
+        command.arg("--version").current_dir(cwd);
+        bounded_output(&mut command, Duration::from_secs(5))
+            .await
+            .ok()
+            .filter(|output| output.status.success() && !output.stdout.truncated)
+            .map(|output| output.stdout.lossy_text())
+    };
+    if !claude_fast_version_supported(version.as_deref()) {
         return Ok(NativeFastEligibility::default());
     }
     claude_fast_auth(Path::new(&runtime.executable_path), cwd).await
@@ -2801,12 +2827,9 @@ pub async fn codex_fast_eligibility(
     runtime: &rovai_core::agent_profile::FrozenAgentRuntimeConfig,
     cwd: &Path,
 ) -> Result<rovai_core::camp_fast::NativeFastEligibility> {
-    use rovai_core::camp_fast::{CODEX_FAST_TURN_CAPABILITY, NativeFastEligibility};
-    if !runtime
-        .capabilities
-        .iter()
-        .any(|capability| capability == CODEX_FAST_TURN_CAPABILITY)
-        || custom_fast_environment(AdapterKind::CodexCli)
+    use rovai_core::camp_fast::NativeFastEligibility;
+    if custom_fast_environment(AdapterKind::CodexCli)
+        || !codex_fast_turn_supported(Path::new(&runtime.executable_path)).await
     {
         return Ok(NativeFastEligibility::default());
     }
@@ -2816,6 +2839,18 @@ pub async fn codex_fast_eligibility(
         (runtime.model.source == "explicit").then_some(runtime.model.model_id.as_str()),
     )
     .await
+}
+
+// The protocol has no capability query for this optional per-turn field. Only
+// explicit Fast checks/overrides need this schema export; ordinary Runs do not.
+pub async fn codex_fast_turn_supported(path: &Path) -> bool {
+    probe_schema_capabilities(path)
+        .await
+        .is_ok_and(|(capabilities, _)| {
+            capabilities
+                .iter()
+                .any(|value| value == rovai_core::camp_fast::CODEX_FAST_TURN_CAPABILITY)
+        })
 }
 
 async fn codex_fast_metadata(

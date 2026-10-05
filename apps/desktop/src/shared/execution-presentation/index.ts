@@ -226,12 +226,29 @@ export function agentRunPresentation(
   if (run.status === 'running' && run.failure?.code === 'runtime_network_interrupted') {
     return { label: '正在恢复', tone: 'attention' }
   }
+  if (run.status === 'running' && run.waitReason === 'runtime_initializing') {
+    return { label: '正在初始化 Runtime', tone: 'info' }
+  }
   if (run.status === 'running') return { label: '执行中', tone: 'info' }
   if (run.status === 'succeeded') return { label: '已完成', tone: 'success' }
   if (run.terminalReasonCode === 'runtime_interrupted') {
     return { label: '执行已中断', tone: 'neutral' }
   }
-  if (run.status === 'failed') return { label: '失败', tone: 'danger' }
+  if (run.status === 'failed') {
+    const reasons: Record<string, string> = {
+      runtime_not_configured: '尚未配置 Runtime',
+      runtime_configuration_invalid: 'Runtime 配置不完整',
+      adapter_installation_missing: '未找到所选 Runtime 安装',
+      adapter_installation_disabled: '所选 Runtime 已停用',
+      runtime_configuration_adapter_mismatch: 'Runtime 与权限配置不匹配',
+      runtime_permission_adapter_mismatch: 'Runtime 与权限配置不匹配',
+      conversation_runtime_override_unsupported: '当前会话的 Runtime 覆盖配置不受支持',
+      runtime_adapter_not_implemented: '当前平台尚不支持所选 Runtime'
+    }
+    const code = run.terminalReasonCode ?? ''
+    return { label: reasons[code] ?? (code.startsWith('runtime_permission_')
+      ? 'Runtime 权限配置无效' : code.startsWith('runtime_model_') ? 'Runtime 模型配置无效' : '失败'), tone: 'danger' }
+  }
   if (run.status === 'cancelled') {
     return run.terminalReasonCode === 'planned_shutdown_cancelled'
       ? { label: '已停止', tone: 'neutral' }
@@ -265,6 +282,9 @@ export function agentRunStateTag(
   }
   if (run.status === 'running' && run.failure?.code === 'runtime_network_interrupted') {
     return { tag: 'RECOVERING', tone: 'attention' }
+  }
+  if (run.status === 'running' && run.waitReason === 'runtime_initializing') {
+    return { tag: 'STARTING', tone: 'brand' }
   }
   if (run.status === 'running') return { tag: 'RUNNING', tone: 'brand' }
   if (run.status === 'queued') return { tag: 'QUEUED', tone: 'neutral' }

@@ -122,3 +122,11 @@ brief 只拥有具体 surface 的信息优先级和构图；它不能覆盖全�
 历史会话事件样例已移入
 [prototype archive](https://github.com/murray17/rovai-ai/blob/0de773a75231038e384c03cd761fea56344a6e4f/docs/prototypes/archive/arctic-dawn/README.md)，明确不具有生产权威。理解版本演进请从
 [版本索引](../versions/README.md)进入；历史文档不能覆盖本索引或当前生产事实。
+
+## Runtime 安装与执行状态
+
+入口存在显示“已检测到”，成员配置显示“可尝试运行”；不暗示认证或协议已验证。
+正在启动的 Run 显示“正在初始化 Runtime”，配置及启动失败显示具体可操作原因，修复后正常重试。
+未知 Fast 资格通过主动“检查 Fast”入口读取；页面、浮层及 Runtime 切换不自动深检。
+行为由 [Runtime Launch v47](../contracts/runtime-launch-and-verification-v47.md)与
+[Camp Member Fast v2](../contracts/camp-member-fast-v2.md)拥有。

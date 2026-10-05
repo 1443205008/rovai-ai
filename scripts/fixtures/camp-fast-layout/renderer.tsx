@@ -40,6 +40,7 @@ if (modelReview) {
 const values = new Map<string, ThreadMemberFastView>(agents.filter((_, index) => index !== 2 && index !== 3).map(agent => [agent.agentId, {
   runtimeBindingRevision: `binding-${agent.agentId}`, fastOverride: null, runtimeDefaultFast: null
 }]))
+let clearNotice: () => void
 let updateSnapshot: (snapshot: ThreadSnapshot | ((current: ThreadSnapshot) => ThreadSnapshot)) => void
 let updateAgents: (agents: AgentProfile[]) => void
 let sendSequence = 0
@@ -131,7 +132,7 @@ Object.assign(window, { rovai: {
         ?? { pendingInputId: id, state: 'missing', threadTurnId: null, addressedAgentIds: [] })}
     if (method === 'camp.composerDraft.get') return draft
     if (method === 'camp.composerDraft.save') { draft = { ...draft, ...params, revision: draft.revision + 1 }; return draft }
-    if (method === 'camps.members.fast.check') {
+    if (method === 'threads.members.fast.check') {
       const agentId = params!.agentId as string
       const count = (checksInFlight.get(agentId) ?? 0) + 1
       checksInFlight.set(agentId, count)
@@ -145,7 +146,7 @@ Object.assign(window, { rovai: {
         return value
       } finally { checksInFlight.set(agentId, count - 1) }
     }
-    if (method === 'camps.members.fast.set') {
+    if (method === 'threads.members.fast.set') {
       if (failNext) { failNext = false; throw new Error('fixture offline') }
       const command = params!.command
       const prior = values.get(command.agentId)!
@@ -168,6 +169,7 @@ function Fixture(): React.JSX.Element {
   const [tab, setTab] = useState<ThreadInspectorTab>('members')
   const [entryHost, setEntryHost] = useState<HTMLElement | null>(null)
   const [notice, setNotice] = useState('')
+  clearNotice = () => setNotice('')
   updateSnapshot = setSnapshot
   updateAgents = setProfiles
   return <MobileLayoutProvider value={mobile}><div className="app-shell app-shell-camp">
@@ -262,7 +264,7 @@ Object.assign(window, { fastTest: {
   publishQueued: (deferProjection = false) => { queuedPublication?.(deferProjection); queuedPublication = null },
   projectPublishedRun: () => { deferredProjection?.(); deferredProjection = null },
   settle: async () => { await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))) },
-  bookmark: () => { bookmarkedButton = element('.camp-fast-toggle') },
+  bookmark: () => { bookmarkedButton = element('.camp-fast-toggle[aria-pressed]') },
   legacyObservation: (state: 'fast' | 'standard' | 'cooldown') => {
     // Even an old cached projection carrying retired fields cannot influence the preference control.
     const value = { ...values.get('agent-0')!, observedFastState: state, unavailableReason: 'Fast 暂时不可用，本次按标准速度执行' }
@@ -303,6 +305,7 @@ Object.assign(window, { fastTest: {
       contentBlobId: null, contentByteCount: 0, isTruncated: false, occurredAt: now
     }))}))
   },
+  clearNotice: () => clearNotice(),
   failNext: () => { failNext = true },
   holdCheck: (agentId: string) => {
     const wait = new Promise<void>(resolve => { releaseCheck = resolve })
@@ -324,7 +327,7 @@ Object.assign(window, { fastTest: {
   },
   snapshot: () => {
     const panel = element('.camp-detail-popover')
-    const button = element('.camp-fast-toggle')
+    const button = element('.camp-fast-toggle[aria-pressed]')
     const composer = element('.conversation-controls .composer-box')
     const send = element('.conversation-controls .composer-primary-action')
     const scroll = element('.camp-members-panel')
@@ -336,20 +339,20 @@ Object.assign(window, { fastTest: {
       sameNode: button === bookmarkedButton, focused: document.activeElement === button,
       scrollable: scroll?.scrollHeight > scroll?.clientHeight,
       sendHit: Boolean(sendRect && document.elementFromPoint(sendRect.x + sendRect.width / 2, sendRect.y + sendRect.height / 2)?.closest('.composer-primary-action')),
-      toggles: document.querySelectorAll('.camp-fast-toggle').length,
+      toggles: document.querySelectorAll('.camp-fast-toggle[aria-pressed]').length,
       pageOverflow: document.documentElement.scrollWidth > innerWidth,
       pillHeight: element('.camp-fast-pill')?.getBoundingClientRect().height,
       fontSize: button ? getComputedStyle(element('.camp-fast-pill')).fontSize : null,
       notice: element('[data-fixture-notice]')?.textContent,
-      requests: requests.filter(request => request.method.startsWith('camps.members.fast.')),
-      checks: requests.filter(request => request.method === 'camps.members.fast.check').map(request => request.params),
-      saves: requests.filter(request => request.method === 'camps.members.fast.set'),
+      requests: requests.filter(request => request.method.startsWith('threads.members.fast.')),
+      checks: requests.filter(request => request.method === 'threads.members.fast.check').map(request => request.params),
+      saves: requests.filter(request => request.method === 'threads.members.fast.set'),
       maxChecksPerMember,
       memberStates: Array.from(document.querySelectorAll('.camp-inspector-member-row')).map((row, index) => {
-        const button = row.querySelector('.camp-fast-toggle'); return {agentId: agents[index].agentId,
+        const button = row.querySelector('.camp-fast-toggle[aria-pressed]'); return {agentId: agents[index].agentId,
           pending: button?.getAttribute('aria-busy'), pressed: button?.getAttribute('aria-pressed'), opacity: button ? getComputedStyle(button).opacity : null}
       }),
-      memberFast: Object.fromEntries(Array.from(document.querySelectorAll('.camp-inspector-member-row')).map((row, index) => [agents[index].agentId, Boolean(row.querySelector('.camp-fast-toggle'))])),
+      memberFast: Object.fromEntries(Array.from(document.querySelectorAll('.camp-inspector-member-row')).map((row, index) => [agents[index].agentId, Boolean(row.querySelector('.camp-fast-toggle[aria-pressed]'))])),
       checkingText: /检测响应模式|正在检测响应模式|响应模式检测完成|恢复默认响应模式/.test(document.body.textContent ?? ''),
       saved: values.get('agent-0') }
   }
