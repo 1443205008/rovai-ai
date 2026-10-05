@@ -2642,78 +2642,84 @@ for line in sys.stdin:
     elif method == 'turn/start': response['result'] = {'turn': {'id': 'turn-fixture'}}
     print(json.dumps(response), flush=True)
 "#.replace("__SCENARIO__", scenario));
-            let (incoming, _receiver) = mpsc::unbounded_channel();
-            let result = CodexHost::spawn_with_executable(&executable, &root, incoming, None).await;
-            if scenario == "init_failure" {
-                assert!(result.is_err());
-            } else {
-                let host = result.unwrap();
-                let runtime = CodexRuntime::from_host(
-                    CodexRuntimeOwner::AgentRun {
-                        agent_run_id: "launch-fixture".to_string(),
-                        execution_epoch: 1,
-                    },
-                    None,
-                    host.clone(),
-                );
-                let authenticated = runtime.authentication_available().await.unwrap();
-                assert_eq!(authenticated, scenario != "auth_required");
-                let options = match scenario {
-                    "invalid_option" => json!({"reasoning_effort":"high"}),
-                    "unknown_option" => json!({"unadvertised":"low"}),
-                    _ => json!({"reasoning_effort":"low"}),
-                };
-                let validation = if authenticated && scenario != "default" {
-                    runtime
-                        .validate_explicit_model(
-                            if scenario == "missing" {
-                                "gone"
-                            } else {
-                                "selected"
-                            },
-                            &options,
-                        )
-                        .await
+            // Default launches must also work after discarding the entire Host,
+            // without a version check or historical protocol evidence.
+            let attempts = if scenario == "default" { 2 } else { 1 };
+            for attempt in 0..attempts {
+                let (incoming, _receiver) = mpsc::unbounded_channel();
+                let result =
+                    CodexHost::spawn_with_executable(&executable, &root, incoming, None).await;
+                if scenario == "init_failure" {
+                    assert!(result.is_err());
                 } else {
-                    Ok(())
-                };
-                let expected_error = match scenario {
-                    "missing" => Some("runtime_model_unavailable"),
-                    "invalid_option" => Some("runtime_model_option_invalid"),
-                    "unknown_option" => Some("runtime_model_option_unknown"),
-                    _ => None,
-                };
-                assert_eq!(
-                    validation
-                        .as_ref()
-                        .err()
-                        .and_then(|error| error.downcast_ref::<CodexLiveModelValidationError>())
-                        .map(|error| error.code),
-                    expected_error
-                );
-                if authenticated && validation.is_ok() {
-                    runtime
-                        .start_or_resume_thread_with_config(
-                            &root,
-                            None,
-                            CodexThreadStartOptions {
-                                developer_instructions: None,
-                                sandbox: "workspace-write",
-                                approval_policy: "on-request",
-                                model: None,
-                                config: None,
-                                runtime_workspace_roots: None,
-                                ephemeral: true,
-                            },
-                        )
-                        .await
-                        .unwrap();
-                    runtime
-                        .start_turn_with_config("task-body", None, None, None)
-                        .await
-                        .unwrap();
+                    let host = result.unwrap();
+                    let runtime = CodexRuntime::from_host(
+                        CodexRuntimeOwner::AgentRun {
+                            agent_run_id: format!("launch-fixture-{attempt}"),
+                            execution_epoch: 1,
+                        },
+                        None,
+                        host.clone(),
+                    );
+                    let authenticated = runtime.authentication_available().await.unwrap();
+                    assert_eq!(authenticated, scenario != "auth_required");
+                    let options = match scenario {
+                        "invalid_option" => json!({"reasoning_effort":"high"}),
+                        "unknown_option" => json!({"unadvertised":"low"}),
+                        _ => json!({"reasoning_effort":"low"}),
+                    };
+                    let validation = if authenticated && scenario != "default" {
+                        runtime
+                            .validate_explicit_model(
+                                if scenario == "missing" {
+                                    "gone"
+                                } else {
+                                    "selected"
+                                },
+                                &options,
+                            )
+                            .await
+                    } else {
+                        Ok(())
+                    };
+                    let expected_error = match scenario {
+                        "missing" => Some("runtime_model_unavailable"),
+                        "invalid_option" => Some("runtime_model_option_invalid"),
+                        "unknown_option" => Some("runtime_model_option_unknown"),
+                        _ => None,
+                    };
+                    assert_eq!(
+                        validation
+                            .as_ref()
+                            .err()
+                            .and_then(|error| error.downcast_ref::<CodexLiveModelValidationError>())
+                            .map(|error| error.code),
+                        expected_error
+                    );
+                    if authenticated && validation.is_ok() {
+                        runtime
+                            .start_or_resume_thread_with_config(
+                                &root,
+                                None,
+                                CodexThreadStartOptions {
+                                    developer_instructions: None,
+                                    sandbox: "workspace-write",
+                                    approval_policy: "on-request",
+                                    model: None,
+                                    config: None,
+                                    runtime_workspace_roots: None,
+                                    ephemeral: true,
+                                },
+                            )
+                            .await
+                            .unwrap();
+                        runtime
+                            .start_turn_with_config("task-body", None, None, None)
+                            .await
+                            .unwrap();
+                    }
+                    host.shutdown().await;
                 }
-                host.shutdown().await;
             }
             let requests = std::fs::read_to_string(root.join("requests")).unwrap();
             assert_eq!(
@@ -2721,14 +2727,14 @@ for line in sys.stdin:
                     .unwrap()
                     .lines()
                     .count(),
-                1
+                attempts
             );
             assert_eq!(
                 requests
                     .lines()
                     .filter(|method| *method == "turn/start")
                     .count(),
-                usize::from(matches!(scenario, "default" | "explicit"))
+                attempts * usize::from(matches!(scenario, "default" | "explicit"))
             );
             if scenario == "default" {
                 assert!(!requests.contains("model/list"));

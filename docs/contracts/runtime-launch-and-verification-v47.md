@@ -4,7 +4,7 @@ name: Runtime Launch and Verification
 version: v47
 status: accepted
 source_version: v1.72
-last_updated: 2026-10-05
+last_updated: 2026-10-06
 ---
 
 # Runtime Launch and Verification v47
@@ -41,6 +41,13 @@ Core 先检查平台、工作区授权、执行目标及文件完整性，再启
 已有 IdleWarm、Run/epoch/lease、工作区隔离、恢复兼容与身份摘要保持；不跨任务并行共享会话。
 CLI 更新允许同一逻辑 Installation 有界重新解析及原子 rebind，然后接受本次 Host 验证，不先启动独立深检 Host。
 fingerprint 与轻量文件身份必须来自同次稳定内容验证，不能把新元数据登记为旧 hash 的证明。
+读取现有文件身份只按 Installation、当前路径及请求的 fingerprint 绑定，不依赖健康快照是否存在或新旧。
+普通可执行文件的元数据未变时继续使用现有快速路径。保存的 Windows locator 是重新解析入口的线索，
+须与当前 Installation 路径匹配；健康快照缺失或文件身份失效不应隐藏它，实际 shim/解释器/目标依赖仍须重新校验。
+
+发现及入口重绑定的文件读取、完整哈希和 locator 依赖复核统一在 `spawn_blocking` 中完成，且先于获取 Core 数据库锁。
+提交只接收不可自行构造的文件验证结果，锁内保留 Installation 身份/代次处理与 SQL 写入；不重新读文件、计算哈希或启动进程。
+搜索环境的既有代次和更新围栏保持，提交的元数据来自刚才完成的内容验证，不能用提交时的新元数据替换它。
 
 ## 单次状态与失败
 

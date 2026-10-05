@@ -795,3 +795,27 @@ cargo test -p rovai-core --features slow-tests --lib -- \
   `threads.members.fast.*` 后，复现相同 `.open` 失败。本次 Fast 定向模式通过不代表整套历史布局/Stop 验收通过。
 
 未执行真实 CLI/账户、发布包或 Windows 实体验收。没有变更数据库 schema、提高权限或替换日常 App。
+
+### 2026-10-06：身份读取与文件校验锁边界收尾
+
+按 PR #642 的两项 P2 审查修复 `ff573057` 中残留的健康快照读取依赖和持锁同步哈希。
+`verified_executable_identity` 仅绑定 Installation/路径/请求指纹；locator 保留当前安装的重新解析线索，
+健康快照缺失、旧指纹或文件身份失效都不隐藏保存的 shim 路径，实际入口依赖仍须复核。
+静态发现和 dispatch rebind 共用锁外 blocking worker，文件身份与指纹一致后才取数据库锁提交；
+SQL 层只接收私有字段的验证结果。保留搜索环境代次、原子 Installation 更新及真实 Host 输入前验证。
+
+针对性回归使用现有 owner 与隔离 fixture：48 项通过，覆盖新安装、旧快照升级、身份/路径拒绝、
+Core 重开、静态扫描不启动 Runtime 和诊断重绑定。新增唯一 Core 锁边界 owner 通过阻塞线程池屏障验证
+等待文件校验时仍能执行并行 SQL，不用大文件或 wall-clock 阈值推断性能。Codex 原真实 Host owner
+另补并通过销毁 Host 后再次默认执行的场景，`--version` 挂起不影响两次实际协议初始化，且无模型目录请求。
+这些是 Core 持久化/重新初始化与合成协议的分层证据，不是发布 App 或真实账户的重启验收。
+
+Windows 既有 shim owner 在 `slow-tests` 下增加目标内容更新、npm platform package 从 hoisted 搬至 nested、
+无快照/无文件身份下读取旧 locator 并重新解析的场景。本机不能执行 Windows 测试；尝试
+`cargo check -p rovai-core --target x86_64-pc-windows-msvc --all-targets --features slow-tests`
+停在 `ring` C 依赖缺少 Windows `assert.h`，未计为编译或测试通过。待 Windows 的最小验证命令为
+`cargo test -p rovai-core --features slow-tests --lib runtime_discovery::windows_tests::resolved_npm_shim_content_change_invalidates_locator_identity_and_snapshot_key`。
+
+`cargo check --workspace --all-targets --features slow-tests`、文档两道门禁和格式检查通过。
+本轮重新执行 `pnpm test:rust:pr`：453 通过、0 失败、1 项原有人工 Runtime smoke 忽略。
+Clippy 与首轮基线比较仍是原有 10 项错误，本切片没有新增 lint、抑制规则或全局健康机制。

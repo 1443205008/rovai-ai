@@ -3600,9 +3600,7 @@ impl Core {
         let source = observation
             .source
             .context("light Runtime discovery did not include source")?;
-        let mut database = self.database.lock().await;
-        AgentProfileService::default().commit_discovered_runtime_entry(
-            &mut database,
+        self.persist_discovered_runtime_entry(
             rovai_core::agent_profile::DiscoveredRuntimeEntry {
                 adapter_kind: observation.runtime_kind,
                 executable_path: executable_path.to_string(),
@@ -3611,8 +3609,25 @@ impl Core {
                 entrypoint_locator_identity: observation.entrypoint_locator_identity.clone(),
             },
             None,
-        )?;
+        )
+        .await?;
         Ok(())
+    }
+
+    async fn persist_discovered_runtime_entry(
+        &self,
+        entry: rovai_core::agent_profile::DiscoveredRuntimeEntry,
+        existing_installation_id: Option<&str>,
+    ) -> Result<String> {
+        let verified = tokio::task::spawn_blocking(move || entry.verify())
+            .await
+            .context("Runtime entry verification worker failed")??;
+        let mut database = self.database.lock().await;
+        AgentProfileService::default().commit_discovered_runtime_entry(
+            &mut database,
+            verified,
+            existing_installation_id,
+        )
     }
 
     async fn commit_rebound_runtime_candidate(
@@ -14076,9 +14091,7 @@ impl Core {
                     let executable_fingerprint = observation
                         .executable_fingerprint
                         .context("Runtime entry fingerprint missing")?;
-                    let mut database = self.database.lock().await;
-                    AgentProfileService::default().commit_discovered_runtime_entry(
-                        &mut database,
+                    self.persist_discovered_runtime_entry(
                         rovai_core::agent_profile::DiscoveredRuntimeEntry {
                             adapter_kind: kind,
                             executable_path,
@@ -14087,7 +14100,8 @@ impl Core {
                             entrypoint_locator_identity: observation.entrypoint_locator_identity,
                         },
                         Some(&installation.id),
-                    )?;
+                    )
+                    .await?;
                     return Ok::<(), anyhow::Error>(());
                 }
                 if attempt == 0 {
@@ -26340,6 +26354,124 @@ done
         let _ = manager.await;
         drop(core);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(all(target_os = "macos", feature = "slow-tests"))]
+    #[test]
+    fn discovered_runtime_verification_keeps_database_available_and_identity_after_restart() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap()
+            .block_on(async {
+                let root = std::env::temp_dir().join(format!(
+                    "rovai-runtime-discovery-lock-{}",
+                    uuid::Uuid::new_v4()
+                ));
+                std::fs::create_dir_all(&root).unwrap();
+                let root = root.canonicalize().unwrap();
+                let executable = root.join("codex");
+                write_runtime_resolution_executable(
+                    &executable,
+                    "#!/bin/sh\nif [ \"$1\" = --version ]; then /bin/sleep 60; fi\nexit 1\n",
+                );
+                let search = RuntimeSearchEnvironment::for_test_paths(1, Vec::new())
+                    .with_startup_configuration(
+                        AdapterKind::CodexCli,
+                        rovai_core::runtime_startup::RuntimeStartupConfiguration {
+                            program_path: Some(executable.to_string_lossy().into_owned()),
+                            environment: Vec::new(),
+                        },
+                    );
+                let observation =
+                    rovai_core::runtime_discovery::discover_runtime_path_with_manual_candidates(
+                        AdapterKind::CodexCli,
+                        &search,
+                        [executable.clone()],
+                    );
+                assert_eq!(observation.discovery_status, RuntimeDiscoveryStatus::Found);
+                let core = runtime_resolution_test_core(&root).unwrap();
+
+                // Hold the sole blocking worker at a deterministic barrier. The
+                // real persistence future must queue its file work without
+                // taking the database lock or blocking the async executor.
+                let (started_tx, started_rx) = oneshot::channel();
+                let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+                let worker = tokio::task::spawn_blocking(move || {
+                    let _ = started_tx.send(());
+                    let _ = release_rx.recv();
+                });
+                started_rx.await.unwrap();
+                let mut persistence = Box::pin(core.persist_runtime_entry(&observation));
+                std::future::poll_fn(|context| {
+                    assert!(
+                        persistence.as_mut().poll(context).is_pending(),
+                        "executable verification must run in the blocked worker, not synchronously"
+                    );
+                    std::task::Poll::Ready(())
+                })
+                .await;
+                {
+                    let database = core.database.try_lock().expect(
+                        "queued file verification must leave the global database available",
+                    );
+                    assert_eq!(
+                        database
+                            .connection()
+                            .query_row("SELECT 1", [], |row| row.get::<_, i64>(0))
+                            .unwrap(),
+                        1
+                    );
+                }
+                release_tx.send(()).unwrap();
+                worker.await.unwrap();
+                persistence.await.unwrap();
+
+                let service = AgentProfileService::default();
+                let mut core = core;
+                let mut installation_id = None;
+                // Reopen the actual isolated Core database between ordinary
+                // launch checks. No diagnostic or discovery refresh may be
+                // needed to recover the metadata fast path after restart.
+                for restarted in [false, true] {
+                    if restarted {
+                        drop(core);
+                        core = runtime_resolution_test_core(&root).unwrap();
+                    }
+                    let database = core.database.lock().await;
+                    let installation = service
+                        .managed_installation(&database, AdapterKind::CodexCli, "default")
+                        .unwrap()
+                        .unwrap();
+                    assert!(installation.snapshot.is_none());
+                    if let Some(id) = &installation_id {
+                        assert_eq!(id, &installation.id);
+                    } else {
+                        installation_id = Some(installation.id.clone());
+                    }
+                    let fingerprint = observation.executable_fingerprint.as_deref().unwrap();
+                    let identity = service
+                        .verified_executable_identity(
+                            &database,
+                            &installation.id,
+                            &installation.executable_path,
+                            fingerprint,
+                        )
+                        .unwrap()
+                        .expect(
+                            "persisted identity must survive a restart without health evidence",
+                        );
+                    drop(database);
+                    assert!(matches!(
+                        verify_executable_integrity(&executable, Some(&identity), fingerprint,)
+                            .unwrap(),
+                        ExecutableIntegrityStatus::Unchanged
+                    ));
+                }
+                drop(core);
+                std::fs::remove_dir_all(root).unwrap();
+            });
     }
 
     #[cfg(all(target_os = "macos", feature = "slow-tests"))]

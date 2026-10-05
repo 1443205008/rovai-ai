@@ -1009,6 +1009,42 @@ pub struct DiscoveredRuntimeEntry {
     pub entrypoint_locator_identity: Option<RuntimeEntrypointLocatorIdentity>,
 }
 
+/// A consistent file identity and fingerprint, not Runtime health evidence.
+/// Private fields keep the SQL commit from accepting unverified metadata.
+#[derive(Debug)]
+pub struct VerifiedDiscoveredRuntimeEntry {
+    entry: DiscoveredRuntimeEntry,
+    identity: ExecutableFileIdentity,
+}
+
+impl DiscoveredRuntimeEntry {
+    /// Reads the executable and entrypoint dependencies. Async callers must run
+    /// this in a blocking worker before acquiring the database lock.
+    pub fn verify(self) -> Result<VerifiedDiscoveredRuntimeEntry> {
+        validate_installation(&self.executable_path, "default")?;
+        let identity = match crate::agent_runtime_adapter::verify_executable_integrity(
+            Path::new(&self.executable_path),
+            None,
+            &self.executable_fingerprint,
+        )? {
+            crate::agent_runtime_adapter::ExecutableIntegrityStatus::Reverified(identity) => {
+                identity
+            }
+            _ => anyhow::bail!("Runtime entry changed during installation discovery"),
+        };
+        anyhow::ensure!(
+            crate::runtime_discovery::entrypoint_locator_identity_is_current(
+                self.entrypoint_locator_identity.as_ref()
+            ),
+            "Runtime entrypoint locator changed during installation discovery"
+        );
+        Ok(VerifiedDiscoveredRuntimeEntry {
+            entry: self,
+            identity,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DiscoveredManagedInstallation {
     pub adapter_kind: AdapterKind,
@@ -1349,13 +1385,10 @@ impl AgentProfileService {
                 FROM runtime_executable_identity AS identity
                 JOIN adapter_installation AS installation
                   ON installation.id = identity.installation_id
-                JOIN adapter_capability_snapshot AS snapshot
-                  ON snapshot.installation_id = installation.id
                 WHERE identity.installation_id = ?1
                   AND identity.executable_path = ?2
                   AND identity.executable_fingerprint = ?3
                   AND installation.executable_path = ?2
-                  AND snapshot.executable_fingerprint = ?3
                 "#,
                 params![installation_id, executable_path, executable_fingerprint],
                 |row| {
@@ -1382,6 +1415,9 @@ impl AgentProfileService {
         database: &Database,
         installation_id: &str,
     ) -> Result<Option<RuntimeEntrypointLocatorIdentity>> {
+        // This is the saved route for re-resolution, not launch authorization.
+        // Keep it readable when integrity invalidation removed file identity;
+        // discovery rechecks the shim, interpreter and resolved target off-lock.
         database
             .connection()
             .query_row(
@@ -1396,11 +1432,8 @@ impl AgentProfileService {
                 FROM runtime_entrypoint_locator_identity AS locator
                 JOIN adapter_installation AS installation
                   ON installation.id = locator.installation_id
-                JOIN adapter_capability_snapshot AS snapshot
-                  ON snapshot.installation_id = installation.id
                 WHERE locator.installation_id = ?1
                   AND locator.resolved_target_path = installation.executable_path
-                  AND locator.resolved_target_fingerprint = snapshot.executable_fingerprint
                 "#,
                 [installation_id],
                 |row| {
@@ -1843,26 +1876,10 @@ impl AgentProfileService {
     pub fn commit_discovered_runtime_entry(
         &self,
         database: &mut Database,
-        entry: DiscoveredRuntimeEntry,
+        verified: VerifiedDiscoveredRuntimeEntry,
         existing_installation_id: Option<&str>,
     ) -> Result<String> {
-        validate_installation(&entry.executable_path, "default")?;
-        let identity = match crate::agent_runtime_adapter::verify_executable_integrity(
-            Path::new(&entry.executable_path),
-            None,
-            &entry.executable_fingerprint,
-        )? {
-            crate::agent_runtime_adapter::ExecutableIntegrityStatus::Reverified(identity) => {
-                identity
-            }
-            _ => anyhow::bail!("Runtime entry changed during installation discovery"),
-        };
-        anyhow::ensure!(
-            crate::runtime_discovery::entrypoint_locator_identity_is_current(
-                entry.entrypoint_locator_identity.as_ref()
-            ),
-            "Runtime entrypoint locator changed during installation discovery"
-        );
+        let VerifiedDiscoveredRuntimeEntry { entry, identity } = verified;
         let transaction = database.connection_mut().transaction()?;
         let existing = transaction.query_row(
             "SELECT installation.id, installation.executable_path,
@@ -7021,19 +7038,15 @@ mod slow_tests {
                 crate::agent_runtime_adapter::executable_fingerprint(&executable_path).unwrap();
             std::fs::write(&executable_path, b"changed-between-discovery-and-commit").unwrap();
             assert!(
-                service
-                    .commit_discovered_runtime_entry(
-                        &mut database,
-                        DiscoveredRuntimeEntry {
-                            adapter_kind: kind,
-                            executable_path: executable_path.to_string_lossy().into_owned(),
-                            executable_fingerprint: fingerprint.clone(),
-                            source: InstallationSource::InheritedPath,
-                            entrypoint_locator_identity: None,
-                        },
-                        None,
-                    )
-                    .is_err(),
+                DiscoveredRuntimeEntry {
+                    adapter_kind: kind,
+                    executable_path: executable_path.to_string_lossy().into_owned(),
+                    executable_fingerprint: fingerprint.clone(),
+                    source: InstallationSource::InheritedPath,
+                    entrypoint_locator_identity: None,
+                }
+                .verify()
+                .is_err(),
                 "a newer file identity cannot certify an older content fingerprint"
             );
             std::fs::write(&executable_path, b"entry-only-fixture").unwrap();
@@ -7046,7 +7059,9 @@ mod slow_tests {
                         executable_fingerprint: fingerprint.clone(),
                         source: InstallationSource::InheritedPath,
                         entrypoint_locator_identity: None,
-                    },
+                    }
+                    .verify()
+                    .unwrap(),
                     None,
                 )
                 .unwrap();
@@ -7100,6 +7115,123 @@ mod slow_tests {
                     .unwrap()
                     .is_none()
             );
+            let identity = service
+                .verified_executable_identity(
+                    &database,
+                    &frozen.installation_id,
+                    &frozen.executable_path,
+                    &frozen.executable_fingerprint,
+                )
+                .unwrap()
+                .expect("a new installation needs no health snapshot to reuse file identity");
+            assert!(matches!(
+                crate::agent_runtime_adapter::verify_executable_integrity(
+                    &executable_path,
+                    Some(&identity),
+                    &fingerprint,
+                )
+                .unwrap(),
+                crate::agent_runtime_adapter::ExecutableIntegrityStatus::Unchanged
+            ));
+
+            if kind == AdapterKind::CodexCli {
+                // An upgrade leaves the old diagnostic intact; its fingerprint
+                // cannot turn every later Run into another full-file read.
+                let mut old_snapshot = ready_codex_snapshot();
+                old_snapshot.executable_fingerprint = Some(fingerprint.clone());
+                service
+                    .commit_verified_managed_installation(
+                        &mut database,
+                        VerifiedManagedInstallation {
+                            adapter_kind: kind,
+                            executable_path: frozen.executable_path.clone(),
+                            command_name: kind.command_name().into(),
+                            source: InstallationSource::InheritedPath,
+                            auth_scope: "default".into(),
+                            snapshot: old_snapshot,
+                            entrypoint_locator_identity: None,
+                        },
+                    )
+                    .unwrap();
+                std::fs::write(&executable_path, b"upgraded-entry-only-fixture").unwrap();
+                let upgraded =
+                    crate::agent_runtime_adapter::executable_fingerprint(&executable_path).unwrap();
+                service
+                    .commit_discovered_runtime_entry(
+                        &mut database,
+                        DiscoveredRuntimeEntry {
+                            adapter_kind: kind,
+                            executable_path: frozen.executable_path.clone(),
+                            executable_fingerprint: upgraded.clone(),
+                            source: InstallationSource::InheritedPath,
+                            entrypoint_locator_identity: None,
+                        }
+                        .verify()
+                        .unwrap(),
+                        Some(&frozen.installation_id),
+                    )
+                    .unwrap();
+                let installation = service
+                    .managed_installation(&database, kind, "default")
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    installation.snapshot.unwrap().executable_fingerprint,
+                    Some(fingerprint.clone())
+                );
+                let identity = service
+                    .verified_executable_identity(
+                        &database,
+                        &frozen.installation_id,
+                        &frozen.executable_path,
+                        &upgraded,
+                    )
+                    .unwrap()
+                    .expect("old diagnostics must not hide the upgraded identity");
+                assert!(matches!(
+                    crate::agent_runtime_adapter::verify_executable_integrity(
+                        &executable_path,
+                        Some(&identity),
+                        &upgraded,
+                    )
+                    .unwrap(),
+                    crate::agent_runtime_adapter::ExecutableIntegrityStatus::Unchanged
+                ));
+                assert!(
+                    service
+                        .verified_executable_identity(
+                            &database,
+                            &frozen.installation_id,
+                            &frozen.executable_path,
+                            &fingerprint,
+                        )
+                        .unwrap()
+                        .is_none(),
+                    "an obsolete frozen fingerprint is still fenced"
+                );
+                database
+                    .connection()
+                    .execute(
+                        "UPDATE adapter_installation SET executable_path = ?2 WHERE id = ?1",
+                        params![
+                            frozen.installation_id,
+                            directory.join("other-entry").to_string_lossy()
+                        ],
+                    )
+                    .unwrap();
+                assert!(
+                    service
+                        .verified_executable_identity(
+                            &database,
+                            &frozen.installation_id,
+                            &frozen.executable_path,
+                            &upgraded,
+                        )
+                        .unwrap()
+                        .is_none(),
+                    "identity must remain bound to the current installation path"
+                );
+            }
             drop(database);
             std::fs::remove_dir_all(directory).unwrap();
         }
@@ -8076,8 +8208,47 @@ mod slow_tests {
             service
                 .runtime_entrypoint_locator_identity(&database, &installation_id)
                 .unwrap(),
-            Some(first_locator)
+            Some(first_locator.clone())
         );
+
+        database
+            .connection()
+            .execute_batch("SAVEPOINT locator_without_health")
+            .unwrap();
+        for sql in [
+            "UPDATE adapter_capability_snapshot SET executable_fingerprint = 'sha256:old-diagnostic'",
+            "DELETE FROM adapter_capability_snapshot",
+            "DELETE FROM runtime_executable_identity",
+        ] {
+            database.connection().execute(sql, []).unwrap();
+            assert_eq!(
+                service
+                    .runtime_entrypoint_locator_identity(&database, &installation_id)
+                    .unwrap(),
+                Some(first_locator.clone()),
+                "re-resolution must retain its saved locator without diagnostics or after file identity invalidation"
+            );
+        }
+        database
+            .connection()
+            .execute(
+                "UPDATE adapter_installation SET executable_path = ?1 WHERE id = ?2",
+                params![
+                    directory.join("another-target").to_string_lossy(),
+                    installation_id
+                ],
+            )
+            .unwrap();
+        assert!(
+            service
+                .runtime_entrypoint_locator_identity(&database, &installation_id)
+                .unwrap()
+                .is_none()
+        );
+        database
+            .connection()
+            .execute_batch("ROLLBACK TO locator_without_health; RELEASE locator_without_health")
+            .unwrap();
 
         let second_locator = locator("two");
         let mut light = ready;
