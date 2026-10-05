@@ -36,23 +36,14 @@ impl Identity {
         }
     }
 }
-type Hints = BTreeMap<PathBuf, (String, Identity)>;
+type Hints = BTreeMap<PathBuf, (String, Identity, Identity)>;
 static HINTS: OnceLock<Mutex<Hints>> = OnceLock::new();
 fn evidence(context: &NativeContext) -> Result<String> {
-    let configuration = native::codex_config(context)?;
-    let fallback = if configuration["cli_auth_credentials_store"] == "auto" {
-        native::read_bytes(&context.directory.join("auth.json"))
-            .ok()
-            .flatten()
-    } else {
-        None
-    };
+    let read = native::read(context, None)?;
     crate::command::canonical_json_digest(&json!([
-        configuration,
-        fallback,
-        context.env("OPENAI_API_KEY"),
-        context.env("CODEX_API_KEY"),
-        context.env("CODEX_ACCESS_TOKEN")
+        read.edit_revision,
+        context.launcher,
+        context.codex_source.as_ref().map(|s| &s.launcher_identity)
     ]))
 }
 pub fn needs_observation(context: &NativeContext) -> bool {
@@ -75,17 +66,25 @@ pub fn observed(context: &NativeContext) -> Identity {
         .and_then(|hints| {
             hints
                 .get(&context.directory)
-                .filter(|(before, _)| *before == evidence)
-                .map(|(_, identity)| *identity)
+                .filter(|(before, _, _)| *before == evidence)
+                .map(|(_, identity, _)| *identity)
         })
         .unwrap_or(Identity::Unknown)
 }
-pub(crate) fn observed_api(context: &NativeContext) -> bool {
-    context.kind == crate::agent_profile::AdapterKind::CodexCli
-        && observed(context) == Identity::Api
-        && native::codex_config(context)
-            .ok()
-            .is_some_and(|doc| doc["forced_login_method"] != "chatgpt")
+fn last_identity(context: &NativeContext) -> Identity {
+    let Ok(evidence) = evidence(context) else {
+        return Identity::Unknown;
+    };
+    HINTS
+        .get_or_init(Default::default)
+        .lock()
+        .ok()
+        .and_then(|h| {
+            h.get(&context.directory)
+                .filter(|(before, _, _)| *before == evidence)
+                .map(|(_, _, last)| *last)
+        })
+        .unwrap_or(Identity::Unknown)
 }
 pub fn forget(context: &NativeContext) {
     if let Ok(mut hints) = HINTS.get_or_init(Default::default).lock() {
@@ -94,18 +93,33 @@ pub fn forget(context: &NativeContext) {
 }
 fn record(context: &NativeContext, before: &str, identity: Identity) {
     if let Ok(mut hints) = HINTS.get_or_init(Default::default).lock() {
-        hints.remove(&context.directory);
+        let last = hints
+            .remove(&context.directory)
+            .filter(|(value, _, _)| value == before)
+            .map(|(_, _, last)| last)
+            .unwrap_or(Identity::Unknown);
         if evidence(context).ok().as_deref() == Some(before) {
             if hints.len() >= 64 {
                 hints.clear();
             }
-            hints.insert(context.directory.clone(), (before.into(), identity));
+            hints.insert(
+                context.directory.clone(),
+                (
+                    before.into(),
+                    identity,
+                    if identity == Identity::Unknown {
+                        last
+                    } else {
+                        identity
+                    },
+                ),
+            );
         }
     }
 }
 pub fn project(
     context: &NativeContext,
-    configuration: &mut CustomApiConfiguration,
+    configuration: &CustomApiConfiguration,
     credential: &mut NativeCredential,
     observation: &mut ConnectionObservation,
 ) {
@@ -120,41 +134,34 @@ pub fn project(
     }
     .into();
     if configuration.mode().is_none() {
-        let mode = match identity {
+        let mode = match last_identity(context) {
             Identity::Api => Some(ConnectionMode::CustomApi),
             Identity::Official | Identity::SignedOut => Some(ConnectionMode::OfficialLogin),
             Identity::Unknown => None,
         };
-        configuration.set_mode(mode);
         observation.initial_mode = mode;
-        if identity == Identity::Api {
-            if let CustomApiConfiguration::Codex { base_url, .. } = configuration {
-                if base_url.is_empty() {
-                    *base_url = "https://api.openai.com/v1".into();
-                }
-            }
-        }
     }
-    credential.status = match identity {
-        Identity::Api if configuration.enabled() => "available",
+    credential.status = match last_identity(context) {
+        Identity::Api if configuration.mode() != Some(ConnectionMode::OfficialLogin) => "available",
         Identity::Unknown => "unknown",
         _ => "missing",
     }
     .into();
+    if identity == Identity::Unknown && last_identity(context) == Identity::Api {
+        credential.source_label = "Codex 原生凭据管理（上次确认）".into();
+    }
     if configuration.mode() == Some(ConnectionMode::OfficialLogin) && identity == Identity::Api {
         // Older/native policy-conflicted installations must not be labelled as a
         // completed ChatGPT switch merely because a setting was written.
         observation.conflict =
             Some("Codex 仍报告 API 认证，请运行下方原生登录命令完成 ChatGPT 登录。".into());
-        configuration.set_mode(None);
-        observation.initial_mode = None;
+        // This is an observation, not a file edit or a reason to undo the user's selection.
     }
 }
 
-/// Called on settings entry/save only. All failures become unknown display state;
+/// Called on settings entry only. All failures become unknown display state;
 /// normal runtime authentication remains the CLI's responsibility.
 pub async fn refresh(executable: &Path, context: &NativeContext) {
-    forget(context);
     let Ok(before) = evidence(context) else {
         return;
     };
@@ -164,13 +171,32 @@ pub async fn refresh(executable: &Path, context: &NativeContext) {
     record(context, &before, identity);
 }
 async fn read_account(executable: &Path, context: &NativeContext) -> Result<Identity> {
+    request(
+        executable,
+        context,
+        "account/read",
+        json!({"refreshToken":false}),
+    )
+    .await
+    .map(|value| Identity::from_account(&value))
+}
+pub(super) async fn request(
+    executable: &Path,
+    context: &NativeContext,
+    method: &str,
+    params: Value,
+) -> Result<Value> {
     let mut command = tokio::process::Command::new(executable);
     if !context.environment.is_empty() {
         command.env_clear().envs(&context.environment);
     }
     command
         .env("CODEX_HOME", &context.directory)
-        .current_dir(&context.directory)
+        .current_dir(if context.native_home().is_dir() {
+            context.native_home()
+        } else {
+            context.directory.parent().unwrap_or(Path::new("/"))
+        })
         .args(["app-server", "--listen", "stdio://"]);
     let mut process = RuntimeProbeProcess::spawn(
         &mut command,
@@ -187,7 +213,7 @@ async fn read_account(executable: &Path, context: &NativeContext) -> Result<Iden
                 "initialize",
                 json!({"clientInfo":{"name":"rovai_settings","version":env!("CARGO_PKG_VERSION")}}),
             ),
-            (2, "account/read", json!({"refreshToken":false})),
+            (2, method, params),
         ] {
             let request = serde_json::to_vec(&json!({"id":id,"method":method,"params":params}))?;
             stdin.write_all(&request).await?;
@@ -209,7 +235,7 @@ async fn read_account(executable: &Path, context: &NativeContext) -> Result<Iden
                     "native account read unavailable"
                 );
                 if id == 2 {
-                    return Ok(Identity::from_account(&message["result"]));
+                    return Ok(message["result"].clone());
                 }
                 stdin
                     .write_all(b"{\"method\":\"initialized\",\"params\":{}}\n")
@@ -218,10 +244,15 @@ async fn read_account(executable: &Path, context: &NativeContext) -> Result<Iden
                 break;
             }
         }
-        Ok(Identity::Unknown)
+        Ok(Value::Null)
     })
     .await;
     // Never include native stderr, account details or a raw RPC error in settings/logs.
     let _ = process.finish().await;
     result.map_err(|_| anyhow::anyhow!("native account read timed out"))?
+}
+
+#[cfg(all(test, feature = "extended-tests"))]
+pub(super) fn observe_fixture(context: &NativeContext, identity: Identity) {
+    record(context, &evidence(context).unwrap(), identity);
 }

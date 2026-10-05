@@ -21,6 +21,10 @@ pub struct NativeContext {
     pub kind: AdapterKind,
     pub directory: PathBuf,
     pub artifact_root: PathBuf,
+    #[serde(default)]
+    pub launcher: Option<String>,
+    #[serde(default)]
+    pub codex_source: Option<super::codex_source::Source>,
     #[serde(skip)]
     pub environment: BTreeMap<String, String>,
 }
@@ -78,14 +82,29 @@ impl NativeContext {
             "原生配置目录必须是绝对路径，请检查 {}。",
             name
         );
-        Ok(Self {
+        let mut context = Self {
             kind,
             directory,
             artifact_root: super::storage_root(database, kind)?,
+            launcher: configuration.program_path.clone(),
+            codex_source: None,
             environment,
-        })
+        };
+        if kind == AdapterKind::CodexCli {
+            context.codex_source = super::codex_source::resolve(&context);
+        }
+        Ok(context)
+    }
+    pub fn native_home(&self) -> &Path {
+        self.codex_source
+            .as_ref()
+            .and_then(|s| s.base.parent())
+            .unwrap_or(&self.directory)
     }
     pub fn path(&self) -> PathBuf {
+        if let Some(source) = &self.codex_source {
+            return source.profile.as_ref().unwrap_or(&source.base).clone();
+        }
         self.directory
             .join(if self.kind == AdapterKind::ClaudeCodeCli {
                 "settings.json"
@@ -275,6 +294,8 @@ pub struct NativeRead {
     pub observation: ConnectionObservation,
     pub revision: String,
     pub connection_revision: String,
+    pub edit_revision: String,
+    pub catalog_revision: Option<String>,
     pub source: CredentialSource,
     pub provider_id: String,
     pub catalog_path: Option<PathBuf>,
@@ -323,33 +344,27 @@ pub fn read_json(path: &Path) -> Result<Value> {
 }
 pub fn read_toml(path: &Path) -> Result<toml_edit::DocumentMut> {
     let bytes = read_bytes(path)?.unwrap_or_default();
-    let text =
-        std::str::from_utf8(&bytes).map_err(|_| anyhow::anyhow!("原生 TOML 配置不是 UTF-8。"))?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| anyhow::anyhow!("原生 TOML 配置不是 UTF-8：{}", path.display()))?;
     text.parse()
         .map_err(|_| anyhow::anyhow!("原生 TOML 配置无法解析：{}", path.display()))
 }
-// The active profile has the same precedence in reads, startup and compatibility checks.
+// The selected launch source owns precedence; a historical selector is not proof.
 pub(super) fn codex_config(context: &NativeContext) -> Result<Value> {
-    let bytes = read_bytes(&context.path())?.unwrap_or_default();
-    let doc: toml::Value = toml::from_str(
-        std::str::from_utf8(&bytes).map_err(|_| anyhow::anyhow!("Codex 配置不是 UTF-8。"))?,
-    )
-    .map_err(|_| anyhow::anyhow!("Codex 原生配置无法解析。"))?;
-    Ok(serde_json::to_value(doc)?)
+    super::codex_source::read(context)
 }
 pub(super) fn codex_setting<'a>(doc: &'a Value, name: &str) -> &'a Value {
-    doc["profile"]
-        .as_str()
-        .and_then(|profile| doc["profiles"][profile].get(name))
-        .unwrap_or(&doc[name])
+    &doc[name]
 }
 /// `auto` keeps keyring-first resolution inside Codex. This is only its file
 /// fallback, never proof that the file is the selected credential source.
 pub(super) fn codex_auth_file(context: &NativeContext, store: &str) -> Result<Value> {
     match store {
         "keyring" | "ephemeral" => Ok(json!({})),
-        "auto" => Ok(read_json(&context.directory.join("auth.json")).unwrap_or_else(|_| json!({}))),
-        _ => read_json(&context.directory.join("auth.json")),
+        "auto" => {
+            Ok(read_json(&context.native_home().join("auth.json")).unwrap_or_else(|_| json!({})))
+        }
+        _ => read_json(&context.native_home().join("auth.json")),
     }
 }
 fn toml_value(path: &Path, keys: &[String]) -> Result<Option<String>> {
@@ -628,17 +643,8 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
                 settings,
             )
         } else {
-            let text = read_bytes(&path)?.unwrap_or_default();
-            let doc: toml::Value = toml::from_str(
-                std::str::from_utf8(&text)
-                    .map_err(|_| anyhow::anyhow!("Codex 配置不是 UTF-8。"))?,
-            )
-            .map_err(|_| anyhow::anyhow!("Codex 原生配置无法解析。"))?;
-            let profile = doc
-                .get("profile")
-                .and_then(toml::Value::as_str)
-                .and_then(|name| doc.get("profiles").and_then(|v| v.get(name)));
-            let get = |name: &str| profile.and_then(|p| p.get(name)).or_else(|| doc.get(name));
+            let doc: toml::Value = serde_json::from_value(codex_config(context)?)?;
+            let get = |name: &str| doc.get(name);
             let provider_id = get("model_provider")
                 .and_then(toml::Value::as_str)
                 .unwrap_or("openai")
@@ -663,7 +669,7 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
                     .or_else(|| context.env("OPENAI_BASE_URL"))
                     .unwrap_or_default();
             }
-            let auth_path = context.directory.join("auth.json");
+            let auth_path = context.native_home().join("auth.json");
             let store = doc
                 .get("cli_auth_credentials_store")
                 .and_then(toml::Value::as_str)
@@ -683,13 +689,19 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
                 .is_some_and(|v| !v.trim().is_empty())
             {
                 source = CredentialSource::CodexProvider {
-                    path: path.clone(),
+                    path: super::codex_source::field_file(
+                        context,
+                        &["model_providers", &provider_id],
+                    ),
                     provider: provider_id.clone(),
                     mechanism: "auth".into(),
                 };
             } else if provider.and_then(|p| p.get("aws")).is_some() {
                 source = CredentialSource::CodexProvider {
-                    path: path.clone(),
+                    path: super::codex_source::field_file(
+                        context,
+                        &["model_providers", &provider_id],
+                    ),
                     provider: provider_id.clone(),
                     mechanism: "aws".into(),
                 };
@@ -703,7 +715,10 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
                 };
             } else if !ps("experimental_bearer_token").is_empty() {
                 source = CredentialSource::Toml {
-                    path: path.clone(),
+                    path: super::codex_source::field_file(
+                        context,
+                        &["model_providers", &provider_id, "experimental_bearer_token"],
+                    ),
                     keys: vec![
                         "model_providers".into(),
                         provider_id.clone(),
@@ -776,7 +791,10 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
                     if p.is_absolute() {
                         p
                     } else {
-                        context.directory.join(p)
+                        super::codex_source::field_file(context, &["model_catalog_json"])
+                            .parent()
+                            .unwrap_or(context.native_home())
+                            .join(p)
                     }
                 });
             let mut models = Vec::new();
@@ -785,7 +803,12 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
                 let entries = catalog["models"].as_array().ok_or_else(|| {
                     anyhow::anyhow!("Codex model_catalog_json 不是完整原生目录。")
                 })?;
-                for entry in entries.iter().filter(|e| e["visibility"] == "list") {
+                for entry in entries.iter().filter(|e| {
+                    catalog["rovai_model_ids"]
+                        .as_array()
+                        .map(|ids| ids.contains(&e["slug"]))
+                        .unwrap_or_else(|| e["visibility"] == "list")
+                }) {
                     if let Some(id) = entry["slug"].as_str() {
                         models.push(CustomApiModel {
                             row_id: row_id(id)?,
@@ -809,7 +832,9 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
                 .iter()
                 .find(|m| m.id == default_model)
                 .map(|m| m.row_id.clone());
-            let initial = if native_api {
+            let initial = if native_api
+                || get("forced_login_method").and_then(toml::Value::as_str) == Some("api")
+            {
                 Some(ConnectionMode::CustomApi)
             } else if managed_store
                 && doc.get("forced_login_method").and_then(toml::Value::as_str) != Some("chatgpt")
@@ -820,7 +845,7 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
             };
             let configuration = CustomApiConfiguration::Codex {
                 mode: initial,
-                base_url: if native_api && base_url.is_empty() {
+                base_url: if initial == Some(ConnectionMode::CustomApi) && base_url.is_empty() {
                     "https://api.openai.com/v1".into()
                 } else {
                     base_url
@@ -866,7 +891,7 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
         &json!({"configuration":configuration, "credential":credential.version, "native":evidence,
             "target":super::native_file::target(&path)?}),
     )?;
-    let connection_revision = connection_revision(
+    let connection_revision = connection_digest(
         context,
         &configuration,
         &source,
@@ -874,18 +899,52 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
         &provider_id,
         initial_mode,
         &evidence,
+        true,
     )?;
+    let edit_revision = connection_digest(
+        context,
+        &configuration,
+        &source,
+        &credential.version,
+        &provider_id,
+        initial_mode,
+        &evidence,
+        false,
+    )?;
+    let catalog_revision = catalog_path
+        .as_ref()
+        .map(|path| {
+            canonical_json_digest(&json!([
+                super::native_file::target(path)?,
+                evidence["catalog"]
+            ]))
+        })
+        .transpose()?;
     Ok(NativeRead {
         configuration,
         credential,
         observation: ConnectionObservation {
             initial_mode,
             login_status: login_status.into(),
-            conflict: None,
+            conflict: if context
+                .codex_source
+                .as_ref()
+                .is_some_and(|s| s.rejected_selector)
+                && evidence.pointer("/config/profile").is_some()
+            {
+                Some(
+                    "原生配置包含已停用的 profile 选择字段；保存连接时会移除，其他旧配置内容保留。"
+                        .into(),
+                )
+            } else {
+                None
+            },
             login_command: context.login_command(None),
         },
         revision,
         connection_revision,
+        edit_revision,
+        catalog_revision,
         source,
         provider_id,
         catalog_path,
@@ -895,7 +954,7 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
 /// Execution compatibility is deliberately narrower than the whole-file edit CAS.
 /// Only the selected connection participates; unrelated providers, UI, Skills,
 /// MCP and native bookkeeping are owned by their existing runtime mechanisms.
-fn connection_revision(
+fn connection_digest(
     context: &NativeContext,
     configuration: &CustomApiConfiguration,
     source: &CredentialSource,
@@ -903,6 +962,7 @@ fn connection_revision(
     provider_id: &str,
     initial: Option<ConnectionMode>,
     evidence: &Value,
+    execution: bool,
 ) -> Result<String> {
     let api = configuration.enabled();
     let native = if context.kind == AdapterKind::CodexCli {
@@ -930,13 +990,14 @@ fn connection_revision(
         json!({
             "provider": if api { provider } else { Value::Null },
             "headerEnvironment": if api { json!(header_values) } else { Value::Null },
-            "catalog": evidence["catalog"],
-            "officialModel": if !api && initial != Some(ConnectionMode::CustomApi) { codex_setting(doc, "model").clone() } else { Value::Null },
+            "catalog": if execution { execution_catalog(&evidence["catalog"]) } else { Value::Null },
+            "officialModel": if execution && !api && initial != Some(ConnectionMode::CustomApi) { codex_setting(doc, "model").clone() } else { Value::Null },
             "restoresOfficialCatalog": !api && initial == Some(ConnectionMode::CustomApi),
             "authStore": if managed { json!(store) } else { Value::Null },
             // Token refresh and unrelated auth.json fields do not change account identity.
             // Auto/keyring selection remains native-owned, not inferred from a fallback file.
             "account": if managed && store == "file" { evidence.pointer("/auth/tokens/account_id").cloned().unwrap_or_default() } else { Value::Null },
+            "legacySelector": doc["profile"],
             "forcedLogin": doc["forced_login_method"],
             "forcedWorkspace": doc["forced_chatgpt_workspace_id"],
         })
@@ -956,16 +1017,51 @@ fn connection_revision(
             "headers": if api { json!(env("ANTHROPIC_CUSTOM_HEADERS")) } else { Value::Null },
             "officialToken": if api { Value::Null } else { json!(env("CLAUDE_CODE_OAUTH_TOKEN")) },
             "officialTokenDescriptor": if api { Value::Null } else { json!(env("CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR")) },
-            "officialModels": if !api && initial != Some(ConnectionMode::CustomApi) { json!(models) } else { Value::Null },
-            "resetsOfficialModel": !api && initial == Some(ConnectionMode::CustomApi) && !models.model.is_empty(),
+            "officialModels": if execution && !api && initial != Some(ConnectionMode::CustomApi) { json!(models) } else { Value::Null },
+            "resetsOfficialModel": execution && !api && initial == Some(ConnectionMode::CustomApi) && !models.model.is_empty(),
             "forcedLogin": evidence["forceLoginMethod"],
             "forcedOrg": evidence["forceLoginOrgUUID"],
         })
     };
+    let api_fields = if execution {
+        execution_configuration(configuration)
+    } else {
+        json!({"baseUrl":configuration.base_url()})
+    };
     canonical_json_digest(&json!({"mode": configuration.mode(), "native": native,
-        "api": if api { json!(configuration) } else { Value::Null },
+        "target": super::native_file::target(&context.path())?,
+        "baseTarget": if context.kind == AdapterKind::CodexCli { Some(super::native_file::target(&context.codex_source.as_ref().map(|s| s.base.clone()).unwrap_or_else(|| context.path()))?) } else { None },
+        "api": if api { api_fields } else { Value::Null },
         "credential": if api || configuration.mode().is_none() && matches!(source, CredentialSource::NativeManaged { .. }) { json!(credential) } else { Value::Null }}))
 }
 pub fn row_id(id: &str) -> Result<String> {
     canonical_json_digest(&json!(id))
+}
+
+/// Labels and stable editor row IDs cannot change an execution's connection identity.
+pub(super) fn execution_configuration(configuration: &CustomApiConfiguration) -> Value {
+    let mut value = json!(configuration);
+    if let CustomApiConfiguration::Codex { models, .. } = configuration {
+        value["models"] = json!(models.iter().map(|m| &m.id).collect::<Vec<_>>());
+        value.as_object_mut().unwrap().remove("defaultRowId");
+    }
+    value
+}
+fn execution_catalog(catalog: &Value) -> Value {
+    let mut catalog = catalog.clone();
+    if let Some(fields) = catalog.as_object_mut() {
+        // Editor ownership is tracked separately by configured_model_ids; a
+        // label save adding this marker cannot change the native connection.
+        fields.remove("rovai_managed_model_list");
+        fields.remove("rovai_model_ids");
+    }
+    if let Some(models) = catalog.get_mut("models").and_then(Value::as_array_mut) {
+        for entry in models {
+            if let Some(fields) = entry.as_object_mut() {
+                fields.remove("display_name");
+                fields.remove("description");
+            }
+        }
+    }
+    catalog
 }

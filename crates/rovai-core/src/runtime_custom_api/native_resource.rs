@@ -116,6 +116,8 @@ mod tests {
             kind: crate::agent_profile::AdapterKind::CodexCli,
             directory: root.clone(),
             artifact_root: root.join("artifacts"),
+            launcher: None,
+            codex_source: None,
             environment: std::collections::BTreeMap::from([
                 ("PATH".into(), "/usr/bin:/bin".into()),
                 ("HOME".into(), root.to_string_lossy().into_owned()),

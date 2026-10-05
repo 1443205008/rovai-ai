@@ -179,6 +179,52 @@ Rust 默认 workspace 455 passed／1 既有 ignored，定向原生 owner 5 passe
 账号投影参考 [Codex app-server](https://learn.chatgpt.com/docs/app-server)，云路由参考
 [Claude 原生环境变量](https://code.claude.com/docs/en/env-vars)。这些是开发证据，不成为产品的固定版本限制。
 
+## 配置来源、身份观察与模型可选性收尾（2026-10-05）
+
+以 PR #632 的 `52ba759` 为修复基线，先固定普通入口误读旧 profile、身份变化产生伪模式修改、
+`supported_in_api=false` 模型被过滤的失败输入，再扩展既有 owner。保持两张表单、保存时原生编辑和正常原生执行。
+
+| 工作项 | 实现与验收 |
+| --- | --- |
+| A：实际来源 | 普通入口读取基础 `config.toml`，不从遗留 selector 猜当前层。包装入口按需用本地 `config/read(includeLayers:true)` 确认 User 文件，缓存只含来源引用；版本只用于解释旧格式，不作准入名单 |
+| A：保存目标 | 目标层、provider、目录引用和相对路径按实际来源处理；保存才移除目标版本拒绝的旧 selector，未启用的旧表保持原处。独立 profile 的有效值合并、继承默认值清理、凭据替换与目标保护由隔离文件 fixture 覆盖 |
+| A：并发与失败 | 符号链接目标和基础文件参与写入保护；目录生成期间外部修改完整元数据时返回冲突，重试合并新内容。跨文件失败只回退本次写入，保留无关内容与后续外部修改 |
+| B：保存独立 | 原生模式基线不再被账号观察改写。账号读取失败保留同来源的上次显示信息，状态为暂未确认；只改名称不提交模式，也不要求新 Key。保存前后不再无条件调用账号接口 |
+| B：真正的冲突 | 身份未知、OAuth 刷新、无关 provider 或名称变化不制造连接冲突；实际 provider、凭据来源、目标文件或被编辑字段变化仍受保护。目录生成后的晚到字段变化不会被旧准备结果覆盖 |
+| B：进程复用 | 仅名称变化不改变执行摘要、运行搜索 generation 或原有资格。真实地址、凭据、模型变化继续触发既有重连判断；替换历史启动环境 Key 同步移除废弃私有项，不重新暴露到普通环境列表 |
+| C：原生可选 | 明确添加、重启用或改名的 API 条目设置 `visibility=list` 和 `supported_in_api=true`。完整能力字段、未编辑内部条目与默认模型语义保留；隐藏 ID、交换及连续改名仍保持唯一 ID |
+
+纯配置／模拟证据：既有 5 个 `runtime_custom_api` owner 覆盖以上路径及此前命令／AWS 认证、云路由、
+OAuth、内联表、符号链接、失败回退。SQLite owner 覆盖身份 API → Unknown 后仍能保存名称、真实 provider 冲突，
+以及目录生成期间外部元数据变化。原生文件 owner 使用真正的目录生成结果断言名称修改不改变执行兼容性。
+Renderer 草稿 3 项及正式 Electron 组件覆盖账号结果在输入期间变为未知、不覆盖选项／草稿、只发送一次保存；
+原有模式往返、隐藏 Key、冲突处理、日夜主题及窄屏保留。
+Electron 证据目录为 `/private/tmp/rovai-api-abc-ui-20261005-final`，独立 user-data 与 Skill Library，无 Core。
+
+实际 CLI 对本地假服务：平台 **macOS arm64**，Codex **0.159.2**、Claude Code **2.1.280**。
+完整运行证据位于 `/private/tmp/rovai-api-abc-native-lfkpzy9s/verified`；包装入口专项位于其 `wrapper-confirmation`。
+收尾重跑使用同一根目录的 `closing-mvRuUr` 子目录。固定假 Key、固定最小提示词，无项目代码及真实中转请求。
+
+- Codex 原生 `model/list(includeHidden:false)` 可列出配置模型，包括由原先 `supported_in_api=false` 的隐藏条目改名得到的模型；
+  未知 ID 也能列出并实际完成 Responses 调用。目录元数据保留，默认模型不变成唯一允许集合。
+- 包装入口改写 `CODEX_HOME` 后，回显和保存均采用原生返回的实际文件，不创建未使用的默认配置；
+  下一次 `thread/start` 不传模型覆盖，实际采用保存的默认模型，收到的请求路径、Key、模型一致。
+- 普通根配置的旧 selector 保存后解除，未启用旧表不抢占。原生查询参数、传输和超时、新进程／恢复连接、
+  auto 文件回退、命令／AWS 转静态 Key、file／auto 官方选择、Claude 三种云路由转换均保留回归。
+
+原生边界必须与代码支持区分：本机 **0.159.2 的 app-server 明确拒绝 `--profile`**，Rovai 普通启动也没有该参数。
+独立 profile 层只有在实际原生入口明确报告时才使用；该分支本轮由模拟层响应／隔离文件验证，
+**没有宣称 0.159.2 app-server 支持 profile 或完成了真实 profile 执行**。
+当前程序拒绝的是旧顶层 selector，独立的旧 `profiles` 表可保留；未批量迁移或启用无关 profile。
+配置来源读取与账号读取均不构成每次执行的新增门槛，也不因此禁用某个版本。
+
+真实 OAuth／官方订阅、真实系统 keyring、第三方中转和其他平台仍未实测，不能以本地假服务结果代替。
+最终完整回归：Rust workspace 455 passed／1 既有 ignored，定向原生 owner 5 passed；完整 `pnpm test`
+通过（237 个 Vitest 文件／2587 项，Node 334 passed／2 平台 skipped）。Core 编译、类型检查、桌面构建、
+格式与通用文档门禁通过；未因本轮修改新增独立 Rust 测试函数或屏蔽原有失败场景。
+配置语义参考 [Codex 高级配置](https://learn.chatgpt.com/docs/config-file/config-advanced) 与
+[Codex app-server](https://learn.chatgpt.com/docs/app-server)，实际运行命令的参数支持以目标程序结果为准。
+
 ## 测试准入与退役
 
 本轮没有新增独立 Rust test。`runtime_custom_api` 的 5 个 owner 保持不变：配置／身份 parser、SQLite 发布、

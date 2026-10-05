@@ -68,6 +68,8 @@ pub struct RuntimeStartupSettings {
     pub credential: Option<NativeCredential>,
     pub connection_observation: Option<ConnectionObservation>,
     pub native_revision: Option<String>,
+    #[serde(skip)]
+    pub native_catalog_revision: Option<String>,
     pub connection_read_error: Option<String>,
     pub reconnect_required: bool,
     pub native_written: bool,
@@ -128,7 +130,23 @@ fn load_record(
         [runtime_kind.as_str()], |row| Ok((row.get(0)?, row.get(1)?)),
     ).optional()?;
     let Some((revision, json)) = row else {
-        return Ok((0, RuntimeStartupConfiguration::default()));
+        let mut configuration = RuntimeStartupConfiguration::default();
+        if native::supported(runtime_kind) {
+            // Share the actual legacy custom entrypoint with reads, saves and
+            // execution snapshots, not only the settings page's display fallback.
+            configuration.program_path = connection.query_row(
+                "SELECT COALESCE(locator.canonical_shim_path, installation.executable_path)
+                 FROM adapter_installation AS installation
+                 LEFT JOIN adapter_capability_snapshot AS snapshot ON snapshot.installation_id=installation.id
+                 LEFT JOIN runtime_entrypoint_locator_identity AS locator ON locator.installation_id=installation.id
+                    AND locator.resolved_target_path=installation.executable_path
+                    AND locator.resolved_target_fingerprint=snapshot.executable_fingerprint
+                 WHERE installation.adapter_kind=?1 AND installation.auth_scope='default'
+                    AND installation.installation_class='managed_default' AND installation.source IN ('custom','manual')",
+                [runtime_kind.as_str()], |row| row.get(0),
+            ).optional()?;
+        }
+        return Ok((0, configuration));
     };
     let mut value: serde_json::Value = serde_json::from_str(&json)?;
     // Ignore legacy UI selection; native configuration alone chooses the connection.
@@ -139,7 +157,7 @@ fn load_record(
 }
 
 fn read_settings(database: &Database, kind: AdapterKind) -> Result<RuntimeStartupSettings> {
-    let (revision, mut configuration) = load_record(database.connection(), kind)?;
+    let (revision, configuration) = load_record(database.connection(), kind)?;
     let mut settings = RuntimeStartupSettings {
         runtime_kind: kind,
         revision,
@@ -147,50 +165,52 @@ fn read_settings(database: &Database, kind: AdapterKind) -> Result<RuntimeStartu
         credential: None,
         connection_observation: None,
         native_revision: None,
+        native_catalog_revision: None,
         connection_read_error: None,
         reconnect_required: false,
         native_written: false,
     };
-    if native::supported(kind) {
-        let read = native::NativeContext::resolve(kind, &configuration, database.path())
-            .and_then(|context| native::read(&context, None).map(|read| (context, read)));
-        match read {
-            Ok((context, mut read)) => {
-                read.observation.login_command =
-                    context.login_command(configuration.program_path.as_deref());
-                configuration.custom_api_snapshot = Some(read.snapshot(&context, false));
-                configuration.custom_api = Some(read.configuration);
-                settings.configuration = configuration;
-                settings.credential = Some(read.credential);
-                settings.connection_observation = Some(read.observation);
-                settings.native_revision = Some(read.connection_revision);
-            }
-            Err(error) => settings.connection_read_error = Some(error.to_string()),
-        }
-    }
-    project_native_identity(&mut settings);
+    reload_native(&mut settings, database.path());
     Ok(settings)
 }
 
-// Account observation affects the editor only. The snapshot above retains the
-// native connection's stable configuration, independent of an optional status read.
-fn project_native_identity(settings: &mut RuntimeStartupSettings) {
-    if let (Some(snapshot), Some(api), Some(credential), Some(observation)) = (
-        &settings.configuration.custom_api_snapshot,
-        &mut settings.configuration.custom_api,
-        &mut settings.credential,
-        &mut settings.connection_observation,
-    ) {
-        if matches!(
-            snapshot.credential_source,
-            native::CredentialSource::NativeManaged { .. }
-        ) {
-            crate::runtime_custom_api::codex_native::project(
-                &snapshot.context,
-                api,
-                credential,
-                observation,
-            );
+/// Reproject only native file data. Optional identity hints live in observation,
+/// never in the editable file baseline or execution snapshot.
+pub fn reload_native(settings: &mut RuntimeStartupSettings, database: &Path) {
+    let kind = settings.runtime_kind;
+    if !native::supported(kind) {
+        return;
+    }
+    settings.connection_read_error = None;
+    let read = native::NativeContext::resolve(kind, &settings.configuration, database)
+        .and_then(|context| native::read(&context, None).map(|read| (context, read)));
+    match read {
+        Ok((context, mut read)) => {
+            read.observation.login_command =
+                context.login_command(settings.configuration.program_path.as_deref());
+            settings.configuration.custom_api_snapshot = Some(read.snapshot(&context, false));
+            if matches!(read.source, native::CredentialSource::NativeManaged { .. }) {
+                crate::runtime_custom_api::codex_native::project(
+                    &context,
+                    &read.configuration,
+                    &mut read.credential,
+                    &mut read.observation,
+                );
+            }
+            settings.configuration.custom_api = Some(read.configuration);
+            settings.credential = Some(read.credential);
+            settings.connection_observation = Some(read.observation);
+            settings.native_revision = Some(read.edit_revision);
+            settings.native_catalog_revision = read.catalog_revision;
+        }
+        Err(error) => {
+            settings.configuration.custom_api = None;
+            settings.configuration.custom_api_snapshot = None;
+            settings.credential = None;
+            settings.connection_observation = None;
+            settings.native_revision = None;
+            settings.native_catalog_revision = None;
+            settings.connection_read_error = Some(error.to_string());
         }
     }
 }
@@ -483,21 +503,43 @@ pub fn prepare_save(
                     .unwrap_or_default();
             }
         }
-        if native_changed && conflicts.is_empty() && api.enabled() {
+        if native_changed && conflicts.is_empty() && !official {
             let list_edited = edits
                 .iter()
                 .any(|e| matches!(e.path[0].as_str(), "codexModels" | "defaultRowId"));
             let inherited_api = current
-                .connection_observation
+                .configuration
+                .custom_api
                 .as_ref()
-                .is_some_and(|o| o.initial_mode == Some(ConnectionMode::CustomApi));
+                .is_some_and(|c| c.mode() != Some(ConnectionMode::OfficialLogin));
             let keep_cloud_route = current
                 .credential
                 .as_ref()
                 .is_some_and(|c| c.source == "native_cloud")
                 && key.is_keep()
                 && !edits.iter().any(|e| e.path == ["baseUrl"]);
-            api.validate_edit(kind, list_edited || !inherited_api, !keep_cloud_route)?;
+            api.validate_edit(
+                kind,
+                list_edited || !inherited_api,
+                !keep_cloud_route
+                    && (edits.iter().any(|e| {
+                        matches!(e.path[0].as_str(), "baseUrl" | "mode" | "credentialVersion")
+                    })),
+            )?;
+        }
+    }
+    // Retired legacy startup secrets must not become ordinary visible variables
+    // once a replacement no longer references them from the native provider.
+    if !official && !key.is_keep() {
+        if let Some(native::CredentialSource::Environment { name }) = current
+            .configuration
+            .custom_api_snapshot
+            .as_ref()
+            .map(|s| &s.credential_source)
+        {
+            configuration
+                .environment
+                .retain(|entry| &entry.name != name);
         }
     }
     if official && edits.iter().any(|e| e.path == ["mode"]) {
@@ -552,6 +594,7 @@ pub fn save(
         expected_revision,
         configuration,
         search_generation,
+        true,
     )?;
     load(database, kind)
 }
@@ -588,25 +631,42 @@ pub fn commit_save(
     {
         let future_context =
             native::NativeContext::resolve(kind, &prepared.configuration, database.path())?;
-        let official = prepared
-            .configuration
-            .custom_api
-            .as_ref()
-            .is_some_and(|api| api.mode() == Some(ConnectionMode::OfficialLogin));
-        let context = if official {
-            native::NativeContext::resolve(kind, &prepared.current.configuration, database.path())?
-        } else {
-            future_context.clone()
-        };
+        let context =
+            native::NativeContext::resolve(kind, &prepared.current.configuration, database.path())?;
         ensure!(
             context.path() == future_context.path(),
             "原生配置目录已变化，请先保存目录再编辑连接。草稿已保留。"
         );
         let read = native::read(&context, None)?;
         ensure!(
-            Some(&read.connection_revision) == prepared.current.native_revision.as_ref(),
+            Some(&read.edit_revision) == prepared.current.native_revision.as_ref(),
             "原生连接在保存期间变化，草稿已保留，请再次保存。"
         );
+        // Local catalog generation may await the selected executable. Recheck
+        // exactly its source plus edited fields, not unrelated native contents.
+        if generated_catalog.is_some() {
+            ensure!(
+                read.catalog_revision == prepared.current.native_catalog_revision,
+                "模型目录在生成期间变化，草稿已保留；请再次保存以合并最新内容。"
+            );
+        }
+        let baseline = editable(kind, &prepared.current.configuration);
+        let mut observed = prepared.current.configuration.clone();
+        observed.custom_api = Some(read.configuration.clone());
+        let observed = editable(kind, &observed);
+        for edit in &prepared.edits {
+            if matches!(
+                edit.path[0].as_str(),
+                "programPath" | "environment" | "credentialVersion" | "nativeRevision"
+            ) {
+                continue;
+            }
+            let now = native_edit::value_at(&observed, &edit.path);
+            ensure!(
+                now == native_edit::value_at(&baseline, &edit.path) || now == &edit.after,
+                "正在编辑的原生字段在保存期间变化，草稿已保留；请再次保存以合并最新内容。"
+            );
+        }
         let desired = prepared
             .configuration
             .custom_api
@@ -623,21 +683,41 @@ pub fn commit_save(
         )?;
         native_written = !native_rollback.is_empty();
     }
+    let ordinary_changed = prepared.edits.iter().any(|e| {
+        matches!(e.path[0].as_str(), "programPath" | "environment") && e.before != e.after
+    });
+    let connection_changed = if native_written {
+        native::NativeContext::resolve(kind, &prepared.configuration, database.path())
+            .and_then(|context| native::read(&context, None))
+            .map(|read| {
+                prepared
+                    .current
+                    .configuration
+                    .custom_api_snapshot
+                    .as_ref()
+                    .is_none_or(|old| old.native_revision != read.connection_revision)
+            })
+            .unwrap_or(true)
+    } else {
+        false
+    };
+    let reconnect_required = ordinary_changed || connection_changed;
     if let Err(error) = persist(
         database,
         kind,
         prepared.current.revision,
         prepared.configuration,
         search_generation,
+        reconnect_required,
     ) {
-        for (file, after) in native_rollback {
-            file.restore(&after)?;
+        for (file, after) in native_rollback.iter().rev() {
+            file.restore(after)?;
         }
         return Err(error);
     }
     let mut saved = load(database, kind)?;
     saved.native_written = native_written;
-    saved.reconnect_required = !prepared.edits.is_empty();
+    saved.reconnect_required = reconnect_required;
     Ok(saved)
 }
 fn persist(
@@ -646,6 +726,7 @@ fn persist(
     expected_revision: u64,
     mut configuration: RuntimeStartupConfiguration,
     search_generation: u64,
+    invalidate: bool,
 ) -> Result<()> {
     configuration = configuration.validated(cfg!(windows))?;
     let (current, _) = load_record(database.connection(), kind)?;
@@ -661,9 +742,11 @@ fn persist(
     let stored = serde_json::to_value(&configuration)?;
     let transaction = database.connection_mut().transaction()?;
     transaction.execute("INSERT INTO runtime_startup_setting(runtime_kind, revision, configuration_json, updated_at) VALUES (?1, ?2, ?3, datetime('now')) ON CONFLICT(runtime_kind) DO UPDATE SET revision=excluded.revision, configuration_json=excluded.configuration_json, updated_at=excluded.updated_at", params![kind.as_str(), i64::try_from(revision)?, serde_json::to_string(&stored)?])?;
-    transaction.execute("UPDATE adapter_capability_snapshot SET stale_at=COALESCE(stale_at, datetime('now')), authentication_status='unknown', probe_status='installed_unverified', last_error='runtime_startup_configuration_changed' WHERE installation_id IN (SELECT id FROM adapter_installation WHERE adapter_kind=?1 AND installation_class='managed_default')", [kind.as_str()])?;
-    transaction.execute("UPDATE adapter_installation SET generation=generation+1, version=version+1, updated_at=datetime('now') WHERE adapter_kind=?1 AND installation_class='managed_default'", [kind.as_str()])?;
-    transaction.execute("INSERT INTO runtime_search_environment_state(singleton, generation, captured_at) VALUES(1, ?1, datetime('now')) ON CONFLICT(singleton) DO UPDATE SET generation=excluded.generation, captured_at=excluded.captured_at", [i64::try_from(search_generation)?])?;
+    if invalidate {
+        transaction.execute("UPDATE adapter_capability_snapshot SET stale_at=COALESCE(stale_at, datetime('now')), authentication_status='unknown', probe_status='installed_unverified', last_error='runtime_startup_configuration_changed' WHERE installation_id IN (SELECT id FROM adapter_installation WHERE adapter_kind=?1 AND installation_class='managed_default')", [kind.as_str()])?;
+        transaction.execute("UPDATE adapter_installation SET generation=generation+1, version=version+1, updated_at=datetime('now') WHERE adapter_kind=?1 AND installation_class='managed_default'", [kind.as_str()])?;
+        transaction.execute("INSERT INTO runtime_search_environment_state(singleton, generation, captured_at) VALUES(1, ?1, datetime('now')) ON CONFLICT(singleton) DO UPDATE SET generation=excluded.generation, captured_at=excluded.captured_at", [i64::try_from(search_generation)?])?;
+    }
     transaction.commit()?;
     Ok(())
 }
@@ -753,6 +836,7 @@ mod tests {
                     credential: None,
                     connection_observation: None,
                     native_revision: None,
+                    native_catalog_revision: None,
                     connection_read_error: None,
                     reconnect_required: false,
                     native_written: false,

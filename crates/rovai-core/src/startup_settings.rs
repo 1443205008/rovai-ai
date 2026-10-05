@@ -62,7 +62,7 @@ impl Core {
                 let mut settings = runtime_startup::load(&database, params.runtime_kind)?;
                 // Present legacy explicit installations as the current preference until
                 // the first edit. Restoring automatic discovery then becomes explicit.
-                if settings.revision == 0 {
+                if settings.revision == 0 && settings.configuration.program_path.is_none() {
                     let service = AgentProfileService::default();
                     if let Some(installation) = service
                         .managed_installation(&database, params.runtime_kind, "default")?
@@ -91,6 +91,7 @@ impl Core {
                         context.login_command(settings.configuration.program_path.as_deref());
                 }
                 drop(database);
+                self.refresh_startup_source(&mut settings).await;
                 self.refresh_startup_account(&mut settings).await;
                 Ok(serde_json::to_value(runtime_startup::public(settings))?)
             }
@@ -143,14 +144,24 @@ impl Core {
                     _ => anyhow::bail!("启动设置保存格式无效。"),
                 };
                 if kind == AdapterKind::CodexCli
-                    && edits.iter().any(|e| {
-                        e.path.first().is_some_and(|field| {
+                    && edits.iter().any(|edit| {
+                        edit.path.first().is_some_and(|field| {
                             !matches!(field.as_str(), "programPath" | "environment")
                         })
                     })
                 {
                     let mut current = runtime_startup::load(&*self.database.lock().await, kind)?;
-                    self.refresh_startup_account(&mut current).await;
+                    let context = {
+                        let database = self.database.lock().await;
+                        rovai_core::runtime_custom_api::native::NativeContext::resolve(
+                            kind,
+                            &current.configuration,
+                            database.path(),
+                        )?
+                    };
+                    if rovai_core::runtime_custom_api::codex_source::needs_refresh(&context) {
+                        self.refresh_startup_source(&mut current).await;
+                    }
                 }
                 let prepared = runtime_startup::prepare_save(
                     &*self.database.lock().await,
@@ -237,7 +248,7 @@ impl Core {
                 } else {
                     None
                 };
-                let mut settings = {
+                let settings = {
                     let mut database = self.database.lock().await;
                     runtime_startup::commit_save(
                         &mut database,
@@ -248,19 +259,70 @@ impl Core {
                         generated_catalog.as_ref(),
                     )?
                 };
-                self.refresh_startup_account(&mut settings).await;
-                let search =
-                    search.with_startup_configuration(kind, settings.configuration.clone());
+                let search = if settings.reconnect_required {
+                    search
+                } else {
+                    search
+                        .with_generation(self.runtime_search_environment.read().await.generation())
+                }
+                .with_startup_configuration(kind, settings.configuration.clone());
                 search.activate_for_runtime_commands();
                 *self.runtime_search_environment.write().await = Arc::new(search);
-                self.native_skill_discovery.invalidate_cache();
+                if settings.reconnect_required {
+                    self.native_skill_discovery.invalidate_cache();
+                }
                 // No fleet invalidation: a live host retains its captured process environment.
                 drop(_update);
-                self.run_runtime_discovery().await;
+                if settings.reconnect_required {
+                    self.run_runtime_discovery().await;
+                }
                 Ok(serde_json::to_value(runtime_startup::public(settings))?)
             }
             _ => anyhow::bail!("Unknown startup settings method"),
         }
+    }
+
+    async fn refresh_startup_source(&self, settings: &mut runtime_startup::RuntimeStartupSettings) {
+        if settings.runtime_kind != AdapterKind::CodexCli {
+            return;
+        }
+        use rovai_core::runtime_custom_api::{codex_source, native::NativeContext};
+        let context = {
+            let database = self.database.lock().await;
+            NativeContext::resolve(
+                settings.runtime_kind,
+                &settings.configuration,
+                database.path(),
+            )
+        };
+        let Ok(context) = context else {
+            return;
+        };
+        let search = self
+            .runtime_search_environment
+            .read()
+            .await
+            .as_ref()
+            .clone()
+            .with_startup_configuration(settings.runtime_kind, settings.configuration.clone());
+        let discovery = search.clone();
+        if let Ok(observation) = tokio::task::spawn_blocking(move || {
+            discover_runtime_path(AdapterKind::CodexCli, &discovery)
+        })
+        .await
+        {
+            if let Some(path) = observation.executable_path {
+                let mut command = tokio::process::Command::new(&path);
+                search.configure_tokio_command(AdapterKind::CodexCli, &mut command);
+                codex_source::refresh(
+                    std::path::Path::new(&path),
+                    &context,
+                    &context.for_command(&command),
+                )
+                .await;
+            }
+        }
+        runtime_startup::reload_native(settings, self.database.lock().await.path());
     }
 
     async fn refresh_startup_account(
@@ -279,7 +341,6 @@ impl Core {
             return;
         }
         let context = snapshot.context.clone();
-        codex_native::forget(&context);
         let kind = settings.runtime_kind;
         let search = self
             .runtime_search_environment
@@ -299,20 +360,8 @@ impl Core {
                     .await;
             }
         }
-        // A missing executable also clears a previous identity hint. Reloading
-        // is display-only; failure never becomes an execution prerequisite.
-        if let Ok(mut latest) = runtime_startup::load(&*self.database.lock().await, kind) {
-            if latest.revision == 0 {
-                latest.configuration.program_path = settings.configuration.program_path.clone();
-            }
-            latest.native_written = settings.native_written;
-            latest.reconnect_required = settings.reconnect_required;
-            if let Some(observation) = &mut latest.connection_observation {
-                observation.login_command =
-                    context.login_command(latest.configuration.program_path.as_deref());
-            }
-            *settings = latest;
-        }
+        // Reload is display-only; failures never become execution admission.
+        runtime_startup::reload_native(settings, self.database.lock().await.path());
     }
 
     pub(crate) async fn inspect_runtime_startup(

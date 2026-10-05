@@ -72,7 +72,12 @@ describe('startup editor draft contract', () => {
     expect(startupEdits(saved, official, keyDraft).map(edit => edit.path[0])).toContain('credentialVersion')
     expect(startupSubmission(saved, { ...draft, customApi: { ...codex, mode: 'official_login' } }, key).edits).toHaveLength(2)
     expect(startupSubmission(saved, { ...draft, customApi: { ...codex, mode: 'custom_api' } }, key).edits).toEqual([])
-    expect(startupSubmission(saved, renamed, key).edits).toContainEqual({ path: ['mode'], before: 'custom_api', after: 'custom_api', label: '连接方式' })
+    expect(startupSubmission(saved, renamed, key).edits.some(edit => edit.path[0] === 'mode')).toBe(false)
+    const opaque = { ...saved, configuration: { ...draft, customApi: { ...codex, mode: null, baseUrl: '' } }, connectionObservation: { initialMode: 'custom_api' as const, loginStatus: 'unknown' as const, conflict: null, loginCommand: 'codex login' } }
+    const opaqueDraft = { ...renamed, customApi: { ...renamed.customApi, baseUrl: 'https://api.openai.com/v1' } }
+    expect(startupSubmission(opaque, opaqueDraft, key).edits.map(edit => edit.path[0])).toEqual(['codexModels', 'nativeRevision'])
+    expect(startupSubmission(opaque, official, key).edits.find(edit => edit.path[0] === 'mode')?.before).toBeNull()
+    expect(customApiError({ ...draft, customApi: { ...codex, mode: null, baseUrl: '' } }, key, { ...credential, status: 'unknown' }, true, false, false)).toBeNull()
   })
 
 })

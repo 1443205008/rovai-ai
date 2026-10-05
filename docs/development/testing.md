@@ -125,6 +125,16 @@ Open API grant 兑换、独立 CDN 请求无 token、取消与丢失 grant 的 s
 飞书下载测试继续覆盖。Host 既有 fixture 扩展文件成功、folder 明确失败和 receiving Bot 选择，不运行真实模型
 或使用日常账号凭据。真实租户收发与权限验收仍须单独记录。
 
+## 原生连接编辑收尾
+
+继续扩展 `runtime_custom_api` 的五个既有 owner，不新增独立 Rust fixture：文件 owner 增加普通启动忽略历史 selector、
+确认旧格式／独立层读写、来源文件相对路径、继承凭据替换及包装入口解析；SQLite owner 增加身份成功后失败仍能保存名称、
+真实 provider 变更冲突及名称不触发重连；目录 owner 增加 API 可见性并保留内部条目。
+失败输入分别为旧 profile 取错根模型、身份推断模式造成伪冲突、`supported_in_api=false` 模型被原生过滤。
+纯目录与投影不建立数据库；文件到配置发布的状态转换由既有隔离 SQLite owner 负责。最小命令：
+`cargo test -p rovai-core --features slow-tests --lib runtime_custom_api::`。
+真实 CLI 使用 `scripts/smoke-runtime-custom-api.py` 的固定假 Key／本地服务入口，不混入普通单元测试。
+
 ## 测试层级
 
 ### DeepSeek Harness ACP

@@ -28,6 +28,8 @@ function normalizedCustomApi(api: RuntimeCustomApiConfiguration): RuntimeCustomA
 // Produce only the fields edited in this form, never an old native-file copy.
 export function startupEdits(saved: RuntimeStartupSettings, draft: RuntimeStartupConfiguration, key: RuntimeApiKeyChange): FieldEdit[] {
   const edits = editedFields(editableSnapshot(normalizedStartupConfiguration(initialConfiguration(saved))), editableSnapshot(normalizedStartupConfiguration(draft)))
+  // Observation may initialize the radio; its value is never a file CAS baseline.
+  for (const edit of edits) if (edit.path[0] === 'mode') edit.before = saved.configuration.customApi?.mode ?? null
   if (key.action !== 'keep') edits.push({ path: ['credentialVersion'], before: saved.credential?.version ?? null, after: key.action, label: 'API Key' })
   return edits
 }
@@ -37,9 +39,8 @@ export function startupSubmission(saved: RuntimeStartupSettings, draft: RuntimeS
   if (key.action === 'replace') key = { action: 'replace', value: key.value.trim() }
   const all = startupEdits(saved, draft, key)
   if (draft.customApi?.mode !== 'official_login') {
-    // An external switch must not silently discard API edits or apply them to official mode.
-    if (draft.customApi?.mode === 'custom_api' && all.some(edit => !['programPath', 'environment'].includes(edit.path[0])) && !all.some(edit => edit.path[0] === 'mode')) {
-      all.push({ path: ['mode'], before: saved.configuration.customApi?.mode ?? null, after: 'custom_api', label: '连接方式' })
+    if (all.some(edit => !['programPath', 'environment'].includes(edit.path[0]))) {
+      all.push({ path: ['nativeRevision'], before: saved.nativeRevision ?? null, after: saved.nativeRevision ?? null, label: '当前连接' })
     }
     return { edits: all, apiKey: key }
   }
@@ -60,8 +61,8 @@ export function customApiError(draft: RuntimeStartupConfiguration, key: RuntimeA
   if (api?.mode === 'official_login') return null
   if (key.action === 'replace' && credential?.canReplace === false) return [credential.sourceLabel, credential.restriction, credential.remedy].filter(Boolean).join('。')
   if (key.action === 'clear' && credential?.canClear === false) return `无法在此清除 ${credential.sourceLabel}。${credential.remedy ?? '请在该原生来源处理。'}`
-  if (api && supportsOfficialLogin(api) && api.mode === null) return '请选择官方登录或自定义 API。'
-  if (!api || !usesCustomApi(api)) return null
+  if (api && supportsOfficialLogin(api) && api.mode === null && (requireCredential || requireAddress)) return '请选择官方登录或自定义 API。'
+  if (!api) return null
   if (requireAddress) try {
     const url = new URL(api.baseUrl)
     if (!['https:', 'http:'].includes(url.protocol) || !url.hostname || url.username || url.password || url.hash) throw new Error()

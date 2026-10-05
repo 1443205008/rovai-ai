@@ -13,6 +13,7 @@ use std::{
 pub mod claude_native;
 pub mod codex_catalog;
 pub mod codex_native;
+pub mod codex_source;
 pub mod native;
 pub mod native_edit;
 pub(crate) mod native_file;
@@ -118,7 +119,7 @@ impl CustomApiConfiguration {
         require_address: bool,
     ) -> Result<()> {
         ensure!(self.kind() == kind, "连接类型与当前智能体不一致。");
-        let enabled = self.enabled();
+        let enabled = self.enabled() || self.mode().is_none() && require_model_list;
         let base_url = match self {
             Self::ClaudeCode { base_url, .. } | Self::Codex { base_url, .. } => base_url,
         };
@@ -292,7 +293,7 @@ impl CustomApiSnapshot {
         canonical_json_digest(&json!({
             "kind": self.configuration.kind(), "mode": self.configuration.mode(),
             "directory": self.context.directory, "connection": self.native_revision,
-            "api": self.configuration.enabled().then_some(&self.configuration),
+            "api": self.configuration.enabled().then(|| native::execution_configuration(&self.configuration)),
             "credential": self.configuration.enabled().then_some(&self.credential_version),
             "provider": self.configuration.enabled().then_some(&self.provider_id),
             "models": self.configured_model_ids,

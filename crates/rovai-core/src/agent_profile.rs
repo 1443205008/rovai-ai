@@ -6685,6 +6685,8 @@ mod slow_tests {
                 kind: AdapterKind::CodexCli,
                 directory: executable_path.parent().unwrap().join("native"),
                 artifact_root: executable_path.parent().unwrap().join("artifacts"),
+                launcher: None,
+                codex_source: None,
                 environment: Default::default(),
             },
         };

@@ -86,12 +86,18 @@ async fn main() -> Result<()> {
             "fake-official-oauth-token".into(),
         );
     }
-    let context = native::NativeContext {
+    let mut context = native::NativeContext {
         kind,
         directory,
         artifact_root: root.join("derived"),
+        launcher: Some(executable.to_string_lossy().into_owned()),
+        codex_source: None,
         environment,
     };
+    if kind == AdapterKind::CodexCli {
+        runtime_custom_api::codex_source::refresh(executable, &context, &context).await;
+        context.codex_source = runtime_custom_api::codex_source::resolve(&context);
+    }
     if runtime_custom_api::codex_native::needs_observation(&context) {
         runtime_custom_api::codex_native::refresh(executable, &context).await;
     }

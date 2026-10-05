@@ -383,6 +383,7 @@ export interface RuntimeNativeCredential {
   remedy: string | null
 }
 export interface RuntimeConnectionObservation {
+  /** Display initialization only; never a native-file CAS baseline or execution gate. */
   initialMode: RuntimeConnectionMode | null
   loginStatus: 'signed_in' | 'signed_out' | 'unknown'
   conflict: string | null
@@ -394,7 +395,7 @@ export interface RuntimeStartupSettings {
   configuration: RuntimeStartupConfiguration
   credential: RuntimeNativeCredential | null
   connectionObservation: RuntimeConnectionObservation | null
-  /** Effective connection digest; excludes unrelated native fields. Guards destructive mode switching. */
+  /** Selected source/connection digest; excludes identity observations and model labels. Native edits use it with per-field comparisons. */
   nativeRevision: string | null
   connectionReadError: string | null
   reconnectRequired: boolean

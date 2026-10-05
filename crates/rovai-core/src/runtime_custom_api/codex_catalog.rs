@@ -68,13 +68,6 @@ fn adapt_catalog(
         catalog["rovai_managed_model_list"] == true || model_ids_changed(current, desired);
     let native = catalog["models"].as_array_mut().unwrap();
     let original = native.clone();
-    // A generated first catalog contains bundled internal entries as well. Keep
-    // them, while the explicitly edited list owns what appears in the picker.
-    if !inherited_catalog && managed_list {
-        for item in native.iter_mut() {
-            item["visibility"] = json!("hide");
-        }
-    }
     for row in previous
         .iter()
         .filter(|old| !selected_ids.contains(old.id.as_str()))
@@ -101,7 +94,11 @@ fn adapt_catalog(
             })
             .unwrap_or_else(|| fallback_model(&model.id));
         item["slug"] = json!(model.id);
-        item["visibility"] = json!("list");
+        if !inherited_catalog || previous_row.is_none_or(|old| old.id != model.id) {
+            // Explicit API selection, not a claim about service-side capabilities.
+            item["visibility"] = json!("list");
+            item["supported_in_api"] = json!(true);
+        }
         if previous_row.is_none_or(|old| old.display_name != model.display_name)
             || old_id != model.id
             || !inherited_catalog
@@ -122,6 +119,9 @@ fn adapt_catalog(
         }
     }
     catalog["rovai_managed_model_list"] = json!(managed_list);
+    if managed_list {
+        catalog["rovai_model_ids"] = json!(models.iter().map(|m| &m.id).collect::<Vec<_>>());
+    }
     super::native_resource::validate_catalog(&catalog)?;
     Ok(catalog)
 }
@@ -225,6 +225,7 @@ mod tests {
         let mut known = fallback_model("known");
         known["context_window"] = json!(123456);
         known["supports_search_tool"] = json!(true);
+        known["supported_in_api"] = json!(false);
         let native = json!({"models":[known, fallback_model("native-internal")]});
         let mut inherited = config.clone();
         if let CustomApiConfiguration::Codex { models, .. } = &mut inherited {
@@ -235,8 +236,12 @@ mod tests {
         assert_eq!(models.len(), 3);
         assert_eq!(models[0]["context_window"], 123456);
         assert_eq!(models[0]["display_name"], "Developer");
+        assert_eq!(
+            models[0]["supported_in_api"], true,
+            "an explicitly added API model is selectable natively"
+        );
         assert_eq!(models[1]["slug"], "native-internal");
-        assert_eq!(models[1]["visibility"], "hide");
+        assert_eq!(models[1]["visibility"], "none");
         assert_eq!(models[2]["supports_search_tool"], false);
         assert_eq!(models[2]["context_window"], 272000);
         assert_eq!(models[2]["priority"], 99);
@@ -268,6 +273,7 @@ mod tests {
         }
         let updated = adapt_catalog(original.clone(), &config, &renamed, None, true).unwrap();
         expected["models"][0]["slug"] = json!("custom-renamed-id");
+        expected["rovai_model_ids"][0] = json!("custom-renamed-id");
         assert_eq!(
             updated, expected,
             "row identity retains native metadata when its ID changes"

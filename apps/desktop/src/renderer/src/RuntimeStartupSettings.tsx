@@ -97,9 +97,10 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     const connectionChanged = saved ? nativeConnectionChange(saved, next, apiKey) !== null : false
     const connectionEdits = saved ? nativeConnectionChange(saved, next, apiKey) : null
     const requireModelList = saved?.connectionObservation?.initialMode !== 'custom_api' || Boolean(connectionEdits?.some(edit => ['codexModels', 'defaultRowId'].includes(edit.path[0])))
-    const requireCredential = saved?.configuration.customApi?.mode !== 'custom_api'
+    const requireCredential = saved?.configuration.customApi?.mode === 'official_login' && Boolean(connectionEdits?.some(edit => ['mode', 'baseUrl', 'credentialVersion'].includes(edit.path[0])))
+    const addressEdited = Boolean(connectionEdits?.some(edit => ['baseUrl', 'mode', 'credentialVersion'].includes(edit.path[0])))
     const keepCloudRoute = saved?.credential?.source === 'native_cloud' && apiKey.action === 'keep' && !connectionEdits?.some(edit => edit.path[0] === 'baseUrl')
-    const apiError = connectionChanged ? customApiError(next, apiKey, saved?.credential ?? undefined, requireModelList, requireCredential, !keepCloudRoute) : null
+    const apiError = connectionChanged ? customApiError(next, apiKey, saved?.credential ?? undefined, requireModelList, requireCredential, !keepCloudRoute && addressEdited) : null
     setError(apiError ? uiAttribute(apiError) : null)
     return Object.keys(nextErrors).length === 0 && !apiError
   }
@@ -154,6 +155,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
         let merged = editableSnapshot(initialConfiguration(settings.latest))
         for (const edit of edits) if (edit.path[0] !== 'credentialVersion') merged = withSnapshotValue(merged, edit.path, edit.after)
         for (const edit of submission.edits) if (edit.path[0] === 'mode') merged = withSnapshotValue(merged, edit.path, edit.after)
+        merged.mode = next.customApi?.mode ?? merged.mode
         const rebased = configurationFromSnapshot(next, merged)
         setSaved(settings.latest)
         setDraft(rebased)
@@ -184,7 +186,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   const resolveConflict = (conflict: FieldConflict, keepMine: boolean): void => {
     if (!keepMine) {
       if (conflict.path[0] === 'credentialVersion') setApiKey({ action: 'keep' })
-      else if (conflict.path[0] === 'nativeRevision') setDraft(current => ({ ...current, customApi: current.customApi ? { ...current.customApi, mode: saved?.configuration.customApi?.mode ?? null } : undefined }))
+      else if (conflict.path[0] === 'nativeRevision') { setDraft(current => ({ ...current, customApi: saved ? initialConfiguration(saved).customApi : current.customApi })); setApiKey({ action: 'keep' }) }
       else setDraft(current => configurationFromSnapshot(current, withSnapshotValue(editableSnapshot(current), conflict.path, conflict.current)))
     }
     setConflicts(current => current.filter(item => item !== conflict))

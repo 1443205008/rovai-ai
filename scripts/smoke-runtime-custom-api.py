@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import shlex
 import signal
 import subprocess
 import tempfile
@@ -173,7 +174,7 @@ def run(kind, executable, helper, root, base):
         finally:
             inherited.close()
             (root / "reuse-native-fixture").unlink()
-        path.write_text(original)
+        path.write_text("profile='dormant'\n" + original + "\n[profiles.dormant]\nmodel='must-not-win'\nmodel_provider='must-not-win'\n")
     native = Native(helper, executable, root, config)
     try:
         if kind == "claude":
@@ -194,13 +195,16 @@ def run(kind, executable, helper, root, base):
             provider_id = effective["model_provider"]
             assert effective["model"] == "rovai-unknown", "native default must match the selected row"
             assert provider_id == "relay.test", "execution must retain the native provider"
+            repaired = (root / "codex/config.toml").read_text()
+            assert "profile='dormant'" not in repaired and '[profiles.dormant]' in repaired
+            assert 'must-not-win' in repaired, "inactive legacy contents stay intact; save removes only the rejected selector"
             provider = effective["model_providers"][provider_id]
             assert provider["http_headers"]["Proxy-Authorization"] == "Basic isolated-proxy-key", "proxy credentials must remain independent from the model key"
             assert provider["base_url"] == base and provider["experimental_bearer_token"] == FAKE_KEY
             assert provider.get("env_key") is None, "native writes must not inject a second key environment"
             for field, expected_value in {"query_params":{"api-version":"fixture-v1"}, "supports_websockets":True, "request_max_retries":0, "stream_max_retries":0, "stream_idle_timeout_ms":15000, "websocket_connect_timeout_ms":2000}.items():
                 assert provider[field] == expected_value, "lost native provider field: " + field
-            catalog = native.rpc("model/list", {"includeHidden": True, "limit": 100})["data"]
+            catalog = native.rpc("model/list", {"includeHidden": False, "limit": 100})["data"]
             ids = {m["model"] for m in catalog}
             assert {"gpt-6.1-sol", "rovai-unknown"} <= ids
             sessions = []
@@ -260,7 +264,9 @@ def run(kind, executable, helper, root, base):
             # Rename onto an existing hidden ID using the same stable row identity
             # as the production editor. Native loading/execution must still work.
             source_catalog = json.loads(edited_catalog_path.read_text())
-            hidden = next(entry for entry in source_catalog["models"] if entry["visibility"] != "list" and entry.get("supported_in_api"))
+            hidden = next(entry for entry in source_catalog["models"] if entry["visibility"] != "list")
+            hidden["supported_in_api"] = False
+            edited_catalog_path.write_text(json.dumps(source_catalog))
             collision_models = [{**row, "rowId":"sha256:" + hashlib.sha256(json.dumps(row["id"]).encode()).hexdigest(), "id":hidden["slug"] if row["id"] == "rovai-unknown" else row["id"], "displayName":"Hidden ID selected" if row["id"] == "rovai-unknown" else row["displayName"]} for row in config["models"]]
             default_row = next(row["rowId"] for row in collision_models if row["id"] == hidden["slug"])
             collision = Native(helper, executable, root, {**config, "models":collision_models, "defaultRowId":default_row, "defaultModel":hidden["slug"]})
@@ -269,7 +275,8 @@ def run(kind, executable, helper, root, base):
                 collision.send({"method":"initialized","params":{}})
                 entries = json.loads(Path(json.loads((root / "catalog-path.json").read_text())).read_text())["models"]
                 assert len({entry["slug"] for entry in entries}) == len(entries)
-                assert next(entry for entry in entries if entry["slug"] == hidden["slug"]) == {**hidden,"visibility":"list","display_name":"Hidden ID selected"}
+                assert next(entry for entry in entries if entry["slug"] == hidden["slug"]) == {**hidden,"visibility":"list","supported_in_api":True,"display_name":"Hidden ID selected"}
+                assert hidden["slug"] in {row["model"] for row in collision.rpc("model/list", {"includeHidden":False,"limit":100})["data"]}, "an explicitly enabled API ID must survive native filtering"
                 session = collision.rpc("thread/start", {"cwd":str(root),"model":hidden["slug"],"approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
                 collision.rpc("turn/start", {"threadId":session["thread"]["id"],"input":[{"type":"text","text":"Reply OK."}]})
                 assert collision.wait(lambda f:f.get("method")=="turn/completed")["params"]["turn"]["status"] == "completed"
@@ -531,7 +538,7 @@ def run_managed_auth_switch(executable, helper, root, store):
             native.send({"method":"initialized","params":{}})
             assert native.rpc("account/read", {"refreshToken":False})["account"]["type"] == "apiKey"
             projected = json.loads((root / "native-read.json").read_text())
-            assert projected["configuration"]["mode"] == "custom_api" and projected["credential"]["status"] == "available"
+            assert projected["observation"]["initialMode"] == "custom_api" and projected["credential"]["status"] == "available"
             if store == "keyring":
                 assert not (home / "auth.json").exists(), "keyring credential must not be copied to a file"
         finally:
@@ -570,6 +577,38 @@ def run_managed_auth_switch(executable, helper, root, store):
             assert cleanup.returncode == 0, "isolated fake native credential cleanup failed"
         elif store != "keyring":
             (home / "auth.json").unlink(missing_ok=True)
+
+
+def run_wrapper_source(executable, helper, root, base):
+    actual = root / "selected-native-home"
+    actual.mkdir(parents=True)
+    path = actual / "config.toml"
+    path.write_text('model="before"\nmodel_provider="relay"\n[model_providers.relay]\nname="Fixture"\nwire_api="responses"\nbase_url="http://127.0.0.1:1/old"\nexperimental_bearer_token="old-fixture-key"\nquery_params={wrapper="preserved"}\n')
+    wrapper = root / "selected-codex"
+    wrapper.write_text("#!/bin/sh\nexport CODEX_HOME=" + shlex.quote(str(actual)) + "\nexec " + shlex.quote(str(executable)) + ' "$@"\n')
+    wrapper.chmod(0o700)
+    config = {"kind":"codex-cli","mode":"custom_api","baseUrl":base + "/wrapper","models":[{"rowId":"wrapper","id":"rovai-wrapper","displayName":"Wrapper model"}],"defaultRowId":"wrapper","defaultModel":"rovai-wrapper"}
+    native = Native(helper, wrapper, root, config)
+    try:
+        native.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
+        native.send({"method":"initialized","params":{}})
+        before = json.loads((root / "native-read.json").read_text())
+        assert before["configuration"]["baseUrl"] == "http://127.0.0.1:1/old" and before["credential"]["status"] == "available"
+        effective = native.rpc("config/read", {"includeLayers":True})["config"]
+        assert effective["model"] == "rovai-wrapper"
+        assert effective["model_providers"]["relay"]["base_url"] == config["baseUrl"]
+        assert effective["model_providers"]["relay"]["query_params"] == {"wrapper":"preserved"}
+        assert not (root / "codex/config.toml").exists(), "do not write an unused default directory"
+        assert "rovai-wrapper" in {row["model"] for row in native.rpc("model/list", {"includeHidden":False,"limit":100})["data"]}
+        session = native.rpc("thread/start", {"cwd":str(root),"approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
+        assert session["model"] == "rovai-wrapper", "runtime default must read the saved model without an explicit override"
+        boundary = len(REQUESTS)
+        native.rpc("turn/start", {"threadId":session["thread"]["id"],"input":[{"type":"text","text":"Reply OK."}]})
+        assert native.wait(lambda f:f.get("method")=="turn/completed")["params"]["turn"]["status"] == "completed"
+        assert REQUESTS[boundary:] and all(row["keyMatches"] and row["model"] == "rovai-wrapper" and "/wrapper/responses" in row["path"] for row in REQUESTS[boundary:])
+        return {"runtime":"codex","case":"selected-wrapper-native-source-and-runtime-default","status":"passed"}
+    finally:
+        native.close()
 
 
 def main():
@@ -613,6 +652,10 @@ def main():
                 migrated = run_auth_migrations(kind, executable.resolve(), helper, args.fixture_root.resolve() / (kind + "-auth-migrations"), "http://127.0.0.1:" + str(server.server_port) + "/auth-switch")
                 results.append(migrated)
                 print(json.dumps(migrated), flush=True)
+            if kind == "codex":
+                wrapped = run_wrapper_source(executable.resolve(), helper, args.fixture_root.resolve() / "codex-wrapper-source", "http://127.0.0.1:" + str(server.server_port) + "/custom/prefix")
+                results.append(wrapped)
+                print(json.dumps(wrapped), flush=True)
             if kind == "codex" and args.native_keyring:
                 keyring = run_managed_auth_switch(executable.resolve(), helper, args.fixture_root.resolve() / "codex-keyring", "keyring")
                 results.append(keyring)

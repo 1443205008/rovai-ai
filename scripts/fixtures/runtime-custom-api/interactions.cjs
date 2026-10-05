@@ -29,7 +29,7 @@ module.exports=async({window,run,click,settle,waitFor,navigate,capture,noOverflo
  assert.equal(await run('window.settingsTest.requests.at(-1).params.apiKey.action'),'keep','URL editing preserves static key')
  // An external mode switch must keep the selected API draft until the user resolves it.
  await input('input[type=url]','https://relay.example/concurrent-edit')
- await run(`window.settingsTest.state.startup['claude-code-cli'].configuration.customApi.mode='official_login'`)
+ await run(`window.settingsTest.state.startup['claude-code-cli'].configuration.customApi.mode='official_login';window.settingsTest.state.startup['claude-code-cli'].nativeRevision='switched-source'`)
  await click(save);await waitFor('document.querySelector(".runtime-save-conflict")')
  assert.equal(await run('document.querySelector("input[value=custom_api]").checked'),true)
  assert.equal(await run('document.querySelector("input[type=url]").value'),'https://relay.example/concurrent-edit')
@@ -123,6 +123,18 @@ module.exports=async({window,run,click,settle,waitFor,navigate,capture,noOverflo
   assert.equal(await run('window.settingsTest.requests.at(-1).params.apiKey.value'),'replacement-key','replacement trims only surrounding whitespace')
   assert.equal(await run('document.querySelector(".runtime-custom-api-key-input input").value'),'','saved replacement leaves no sensitive draft')
  }
+ // An observed API identity initializes display without submitting a synthetic mode edit.
+ await navigate();await run(`(()=>{window.settingsTest.reset('codex-cli');const s=window.settingsTest.state.startup['codex-cli'];s.configuration.customApi.mode=null;s.configuration.customApi.baseUrl='';s.connectionObservation.initialMode='custom_api';s.credential.source='native_managed'})()`)
+ await navigate('codex-cli');await waitFor('document.querySelector(".runtime-api-model-row")')
+ await input('[data-model-row="one"] input[aria-label="显示名称 1"]','identity-independent-label')
+ await run(`(()=>{const s=window.settingsTest.state.startup['codex-cli'];s.connectionObservation.loginStatus='unknown';s.credential.status='unknown'})()`)
+ assert.equal(await run('document.querySelector("input[value=custom_api]").checked'),true,'observation cannot overwrite an active draft')
+ const beforeIdentitySave=await run('window.settingsTest.requests.length')
+ await click(save)
+ assert.equal(await run('window.settingsTest.requests.length'),beforeIdentitySave+1,'save has no extra identity requests')
+ assert.equal(await run('window.settingsTest.requests.at(-1).params.edits.some(e=>e.path[0]==="mode")'),false)
+ assert.equal(await run("window.settingsTest.state.startup['codex-cli'].revision"),1,'identity failure cannot turn success into a save error')
+ assert.equal(await run('document.querySelector("input[value=custom_api]").checked'),true)
  await navigate();await run(`(()=>{window.settingsTest.reset('claude-code-cli');const s=window.settingsTest.state.startup['claude-code-cli'];s.configuration.customApi.baseUrl='';Object.assign(s.credential,{source:'native_cloud',sourceLabel:'Amazon Bedrock',canClear:false})})()`)
  await navigate('claude-code-cli');await waitFor('document.querySelector("input[type=url]")')
  assert.equal(await run('document.querySelector("input[type=url]").value'),'','cloud route does not invent an Anthropic endpoint')

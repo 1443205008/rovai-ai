@@ -767,6 +767,178 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
     assert_eq!(cloud_doc["env"]["CLAUDE_CODE_USE_BEDROCK"], "1");
     assert_eq!(cloud_doc["env"]["ANTHROPIC_MODEL"], "cloud-b");
 
+    // Replacing a legacy Rovai-owned reference retires that hidden Key, rather
+    // than exposing it as an ordinary variable after provider.env_key is removed.
+    let kind = AdapterKind::CodexCli;
+    let saved = runtime_startup::load(&db, kind).unwrap();
+    let mut startup = saved.configuration;
+    startup.environment = vec![RuntimeEnvironmentVariable {
+        name: "PRIVATE_RELAY_CREDENTIAL".into(),
+        value: "retired-fixture-key".into(),
+    }];
+    runtime_startup::save(&mut db, kind, saved.revision, startup, 10).unwrap();
+    let settings = runtime_startup::load(&db, kind).unwrap();
+    let context = native::NativeContext::resolve(kind, &settings.configuration, db.path()).unwrap();
+    std::fs::write(context.path(), b"model='a'\nmodel_provider='relay'\n[model_providers.relay]\nbase_url='https://relay.example'\nenv_key='PRIVATE_RELAY_CREDENTIAL'\n").unwrap();
+    let saved = runtime_startup::load(&db, kind).unwrap();
+    let key = ApiKeyChange::Replace {
+        value: "replacement-fixture-key".into(),
+    };
+    let prepared = runtime_startup::prepare_save(
+        &db,
+        kind,
+        vec![FieldEdit {
+            path: vec!["credentialVersion".into()],
+            before: json!(saved.credential.as_ref().unwrap().version),
+            after: json!("replace"),
+            label: String::new(),
+        }],
+        &key,
+    )
+    .unwrap();
+    let saved = runtime_startup::commit_save(&mut db, kind, prepared, 11, key, None).unwrap();
+    assert!(
+        saved
+            .configuration
+            .environment
+            .iter()
+            .all(|entry| entry.name != "PRIVATE_RELAY_CREDENTIAL")
+    );
+    let public = serde_json::to_string(&runtime_startup::public(saved)).unwrap();
+    assert!(!public.contains("retired-fixture-key") && !public.contains("replacement-fixture-key"));
+
+    // Identity observations never redefine file CAS, even across a failed refresh.
+    let kind = AdapterKind::CodexCli;
+    let mut current = runtime_startup::load(&db, kind).unwrap();
+    current.configuration.environment.clear();
+    runtime_startup::save(&mut db, kind, current.revision, current.configuration, 10).unwrap();
+    let context =
+        native::NativeContext::resolve(kind, &RuntimeStartupConfiguration::default(), db.path())
+            .unwrap();
+    std::fs::write(context.path(), b"cli_auth_credentials_store='keyring'\nmodel='native-id'\nmodel_catalog_json='catalog.json'\n").unwrap();
+    let catalog = json!({"models":[{"slug":"native-id","display_name":"Before","visibility":"list","supported_in_api":true,"hidden_extension":"preserve"}]});
+    private_storage::atomic_write_private_bytes(
+        &context.directory.join("catalog.json"),
+        &serde_json::to_vec(&catalog).unwrap(),
+    )
+    .unwrap();
+    codex_native::observe_fixture(&context, codex_native::Identity::Api);
+    let saved = runtime_startup::load(&db, kind).unwrap();
+    assert_eq!(
+        saved.configuration.custom_api.as_ref().unwrap().mode(),
+        None
+    );
+    assert_eq!(
+        saved.connection_observation.as_ref().unwrap().initial_mode,
+        Some(ConnectionMode::CustomApi)
+    );
+    let row = native::row_id("native-id").unwrap();
+    let edits = vec![
+        FieldEdit {
+            path: vec!["codexModels".into(), row, "displayName".into()],
+            before: json!("Before"),
+            after: json!("After"),
+            label: String::new(),
+        },
+        FieldEdit {
+            path: vec!["nativeRevision".into()],
+            before: json!(saved.native_revision),
+            after: json!(saved.native_revision),
+            label: String::new(),
+        },
+    ];
+    codex_native::observe_fixture(&context, codex_native::Identity::Unknown);
+    let latest = runtime_startup::load(&db, kind).unwrap();
+    assert_eq!(latest.native_revision, saved.native_revision);
+    assert_eq!(
+        latest.connection_observation.as_ref().unwrap().login_status,
+        "unknown"
+    );
+    assert_eq!(
+        latest.connection_observation.as_ref().unwrap().initial_mode,
+        Some(ConnectionMode::CustomApi),
+        "last confirmed choice stays a display hint"
+    );
+    assert_eq!(latest.credential.as_ref().unwrap().status, "available");
+    let prepared =
+        runtime_startup::prepare_save(&db, kind, edits.clone(), &ApiKeyChange::Keep).unwrap();
+    assert!(
+        prepared.conflicts.is_empty(),
+        "identity failure is not a native edit"
+    );
+    let mut renamed = catalog.clone();
+    renamed["models"][0]["display_name"] = json!("After");
+    // The executable/catalog step can yield. An external metadata edit during
+    // that interval must not be overwritten by a stale generated catalog.
+    let mut external_catalog = catalog.clone();
+    external_catalog["models"][0]["external_capability"] = json!({"limit": 8192});
+    let catalog_path = context.directory.join("catalog.json");
+    std::fs::write(
+        &catalog_path,
+        serde_json::to_vec(&external_catalog).unwrap(),
+    )
+    .unwrap();
+    let config_before = std::fs::read(context.path()).unwrap();
+    let error = runtime_startup::commit_save(
+        &mut db,
+        kind,
+        prepared,
+        11,
+        ApiKeyChange::Keep,
+        Some(&renamed),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("模型目录在生成期间变化"));
+    assert_eq!(std::fs::read(context.path()).unwrap(), config_before);
+    assert_eq!(native::read_json(&catalog_path).unwrap(), external_catalog);
+    let prepared =
+        runtime_startup::prepare_save(&db, kind, edits.clone(), &ApiKeyChange::Keep).unwrap();
+    let mut renamed = external_catalog;
+    renamed["models"][0]["display_name"] = json!("After");
+    let saved = runtime_startup::commit_save(
+        &mut db,
+        kind,
+        prepared,
+        11,
+        ApiKeyChange::Keep,
+        Some(&renamed),
+    )
+    .unwrap();
+    assert!(saved.native_written);
+    assert!(
+        !saved.reconnect_required,
+        "a display label does not change execution identity"
+    );
+    assert_eq!(
+        saved.configuration.custom_api.as_ref().unwrap().mode(),
+        None
+    );
+    assert_eq!(
+        saved.connection_observation.as_ref().unwrap().login_status,
+        "unknown"
+    );
+    assert_eq!(
+        native::read_toml(&context.path()).unwrap()["cli_auth_credentials_store"].as_str(),
+        Some("keyring")
+    );
+    let written_catalog =
+        native::read_json(&native::read(&context, None).unwrap().catalog_path.unwrap()).unwrap();
+    assert_eq!(
+        written_catalog["models"][0]["external_capability"],
+        json!({"limit": 8192})
+    );
+    let mut external = native::read_toml(&context.path()).unwrap();
+    external["model_provider"] = toml_edit::value("other");
+    std::fs::write(context.path(), external.to_string().as_bytes()).unwrap();
+    let prepared = runtime_startup::prepare_save(&db, kind, edits, &ApiKeyChange::Keep).unwrap();
+    assert!(
+        prepared
+            .conflicts
+            .iter()
+            .any(|c| c.edit.path == ["nativeRevision"]),
+        "a real provider switch still conflicts"
+    );
+
     // Optional native observation cannot turn an unreadable source into a new execution gate.
     db.connection().execute(
         "UPDATE runtime_startup_setting SET configuration_json=?1 WHERE runtime_kind='codex-cli'",
@@ -793,6 +965,8 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         kind: AdapterKind::CodexCli,
         directory: root.clone(),
         artifact_root: root.join("artifacts"),
+        launcher: None,
+        codex_source: None,
         environment: BTreeMap::from([("RELAY_KEY".into(), "isolated-environment-key".into())]),
     };
     let path = context.path();
@@ -1195,6 +1369,11 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     )
     .unwrap();
     let saved = native::read(&context, None).unwrap();
+    assert_eq!(
+        after_default.snapshot(&context, false).identity().unwrap(),
+        saved.snapshot(&context, false).identity().unwrap(),
+        "the generated label-only catalog must preserve process compatibility"
+    );
     assert!(
         saved
             .snapshot(&context, false)
@@ -1252,6 +1431,7 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     ].iter().enumerate() {
         let mut inline = context.clone();
         inline.directory = root.join(format!("inline-{index}"));
+        inline.codex_source = Some(codex_source::Source { base: inline.path(), legacy: true, ..Default::default() });
         private_storage::atomic_write_private_bytes(&inline.path(), format!("# retain comment\nprofile='work'\n{tables}").as_bytes()).unwrap();
         let read = native::read(&inline, None).unwrap();
         let mut desired = read.configuration.clone();
@@ -1587,6 +1767,8 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         kind: AdapterKind::ClaudeCodeCli,
         directory: root.join("claude"),
         artifact_root: root.join("claude-artifacts"),
+            launcher: None,
+            codex_source: None,
         environment: BTreeMap::from([
             ("ANTHROPIC_AUTH_TOKEN".into(), "shell-only-key".into()),
             ("ANTHROPIC_BASE_URL".into(), "https://relay.example".into()),
@@ -1771,6 +1953,163 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         "unknown",
         "external config changes invalidate native identity hints"
     );
+    // A removed legacy selector must not redirect a modern plain launch's editor.
+    let mut plain = context.clone();
+    plain.directory = root.join("plain-launch-legacy-content");
+    private_storage::atomic_write_private_bytes(&plain.path(), b"model='root-model'\nmodel_provider='root'\nprofile='old'\n[model_providers.root]\nbase_url='https://root.example'\nexperimental_bearer_token='root-key'\n[model_providers.old]\nbase_url='https://old.example'\n[profiles.old]\nmodel='old-model'\nmodel_provider='old'\n").unwrap();
+    let plain_read = native::read(&plain, None).unwrap();
+    assert_eq!(
+        plain_read.configuration.base_url(),
+        "https://root.example",
+        "only the actual launch selects a profile"
+    );
+    let old_bytes = std::fs::read(plain.path()).unwrap();
+    plain.codex_source = Some(codex_source::Source {
+        base: plain.path(),
+        rejected_selector: true,
+        ..Default::default()
+    });
+    let before = native::read(&plain, None).unwrap();
+    assert_eq!(
+        std::fs::read(plain.path()).unwrap(),
+        old_bytes,
+        "read never migrates"
+    );
+    let mut after = before.configuration.clone();
+    if let CustomApiConfiguration::Codex { default_model, .. } = &mut after {
+        *default_model = "new-root-model".into();
+    }
+    native_edit::write(
+        &plain,
+        &before,
+        &after,
+        &[FieldEdit {
+            path: vec!["defaultRowId".into()],
+            before: Value::Null,
+            after: Value::Null,
+            label: String::new(),
+        }],
+        &ApiKeyChange::Keep,
+        None,
+    )
+    .unwrap();
+    let saved = native::read_toml(&plain.path()).unwrap();
+    assert!(saved.get("profile").is_none());
+    assert_eq!(saved["model"].as_str(), Some("new-root-model"));
+    assert_eq!(
+        saved["profiles"]["old"]["model"].as_str(),
+        Some("old-model")
+    );
+    assert_eq!(
+        saved["model_providers"]["root"]["experimental_bearer_token"].as_str(),
+        Some("root-key")
+    );
+    // A native-reported independent User layer is merged, not inferred from inline tables.
+    let base = plain.path();
+    let selected = plain.directory.join("selected.config.toml");
+    private_storage::atomic_write_private_bytes(
+        &selected,
+        b"model='profile-model'\n[model_providers.root]\nbase_url='https://profile.example'\n",
+    )
+    .unwrap();
+    plain.codex_source = Some(codex_source::Source {
+        base: base.clone(),
+        profile: Some(selected.clone()),
+        ..Default::default()
+    });
+    let before = native::read(&plain, None).unwrap();
+    assert_eq!(before.configuration.base_url(), "https://profile.example");
+    assert_eq!(
+        before.snapshot(&plain, false).key().unwrap().as_deref(),
+        Some("root-key")
+    );
+    let mut desired = before.configuration.clone();
+    if let CustomApiConfiguration::Codex {
+        base_url,
+        default_model,
+        ..
+    } = &mut desired
+    {
+        *base_url = "https://edited-profile.example".into();
+        *default_model = "edited-profile".into();
+    }
+    let edits = ["baseUrl", "defaultRowId"].map(|name| FieldEdit {
+        path: vec![name.into()],
+        before: Value::Null,
+        after: Value::Null,
+        label: String::new(),
+    });
+    native_edit::write(&plain, &before, &desired, &edits, &ApiKeyChange::Keep, None).unwrap();
+    assert_eq!(
+        native::read_toml(&base).unwrap()["model"].as_str(),
+        Some("new-root-model")
+    );
+    let selected_doc = native::read_toml(&selected).unwrap();
+    assert_eq!(selected_doc["model"].as_str(), Some("edited-profile"));
+    assert_eq!(
+        selected_doc["model_providers"]["root"]["base_url"].as_str(),
+        Some("https://edited-profile.example")
+    );
+    // A relative catalog is resolved from its defining file, not Rovai's cwd.
+    let mut root_doc = native::read_toml(&base).unwrap();
+    root_doc["model_catalog_json"] = toml_edit::value("relative.json");
+    std::fs::write(&base, root_doc.to_string()).unwrap();
+    std::fs::write(
+        base.parent().unwrap().join("relative.json"),
+        serde_json::to_vec(&json!({"models":[]})).unwrap(),
+    )
+    .unwrap();
+    let before = native::read(&plain, None).unwrap();
+    assert_eq!(
+        before.catalog_path,
+        Some(base.parent().unwrap().join("relative.json"))
+    );
+    // Replacing an inherited credential cannot re-inherit a mutually exclusive source.
+    native_edit::write(
+        &plain,
+        &before,
+        &desired,
+        &edits,
+        &ApiKeyChange::Replace {
+            value: "profile-key".into(),
+        },
+        None,
+    )
+    .unwrap();
+    let before = native::read(&plain, None).unwrap();
+    assert_eq!(
+        before.snapshot(&plain, false).key().unwrap().as_deref(),
+        Some("profile-key")
+    );
+    assert_ne!(before.provider_id, "root");
+    assert_eq!(
+        native::read_toml(&base).unwrap()["model_providers"]["root"]["experimental_bearer_token"]
+            .as_str(),
+        Some("root-key")
+    );
+    desired.set_mode(Some(ConnectionMode::OfficialLogin));
+    native_edit::write(
+        &plain,
+        &before,
+        &desired,
+        &[FieldEdit {
+            path: vec!["mode".into()],
+            before: json!("custom_api"),
+            after: json!("official_login"),
+            label: String::new(),
+        }],
+        &ApiKeyChange::Keep,
+        None,
+    )
+    .unwrap();
+    let selected_doc = native::read_toml(&selected).unwrap();
+    assert_eq!(selected_doc["model_provider"].as_str(), Some("openai"));
+    assert!(selected_doc.get("model").is_none());
+    assert!(
+        native::read_toml(&base).unwrap().get("model").is_none(),
+        "old API defaults cannot reappear by inheritance"
+    );
+
     // Provider-owned command/AWS auth is a reusable source, without running a helper.
     for (mechanism, declaration) in [
         ("auth", "{command='/never/execute-on-read',args=['key']}"),
@@ -2000,6 +2339,58 @@ for line in sys.stdin:
   print(json.dumps({'id':q['id'],'result':{'account':a,'requiresOpenaiAuth':True}}),flush=True)
 "##).unwrap();
         std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let source_wrapper = root.join("source-wrapper");
+        std::fs::write(&source_wrapper, r##"#!/usr/bin/env python3
+import json,os,pathlib,sys
+if '--version' in sys.argv: print('codex-cli 0.159.2'); sys.exit(0)
+root=pathlib.Path(os.environ['CODEX_HOME'])/'actual'
+for line in sys.stdin:
+ q=json.loads(line)
+ if q['method']=='initialize': print(json.dumps({'id':q['id'],'result':{}}),flush=True)
+ if q['method']=='config/read': print(json.dumps({'id':q['id'],'result':{'config':{},'layers':[{'name':{'type':'user','file':str(root/'config.toml'),'profile':None}}]}}),flush=True)
+"##).unwrap();
+        std::fs::set_permissions(&source_wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut via_wrapper = context.clone();
+        via_wrapper.directory = root.join("source-wrapper-home");
+        via_wrapper.environment = BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]);
+        private_storage::atomic_write_private_bytes(&via_wrapper.directory.join("actual/config.toml"), b"model='actual-model'\nmodel_provider='relay'\n[model_providers.relay]\nbase_url='https://actual.example'\nexperimental_bearer_token='actual-fake-key'\n").unwrap();
+        codex_source::refresh(&source_wrapper, &via_wrapper, &via_wrapper).await;
+        via_wrapper.codex_source = codex_source::resolve(&via_wrapper);
+        let found = native::read(&via_wrapper, None).unwrap();
+        assert_eq!(found.configuration.base_url(), "https://actual.example");
+        assert_eq!(
+            via_wrapper.path(),
+            via_wrapper.directory.join("actual/config.toml")
+        );
+        let mut desired = found.configuration.clone();
+        if let CustomApiConfiguration::Codex { base_url, .. } = &mut desired {
+            *base_url = "https://actual-edited.example".into();
+        }
+        native_edit::write(
+            &via_wrapper,
+            &found,
+            &desired,
+            &[FieldEdit {
+                path: vec!["baseUrl".into()],
+                before: Value::Null,
+                after: Value::Null,
+                label: String::new(),
+            }],
+            &ApiKeyChange::Keep,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            native::read(&via_wrapper, None)
+                .unwrap()
+                .configuration
+                .base_url(),
+            "https://actual-edited.example"
+        );
+        assert!(
+            !via_wrapper.directory.join("config.toml").exists(),
+            "a wrapper's default directory must not become a second source"
+        );
         for store in ["keyring", "auto"] {
             let mut opaque = context.clone();
             opaque.directory = root.join(format!("account-{store}"));
@@ -2036,8 +2427,13 @@ for line in sys.stdin:
                 &mut projected.observation,
             );
             assert_eq!(
-                projected.configuration.mode(),
+                projected.observation.initial_mode,
                 Some(ConnectionMode::CustomApi)
+            );
+            assert_eq!(
+                projected.configuration.mode(),
+                None,
+                "identity cannot rewrite the file baseline"
             );
             assert_eq!(projected.credential.status, "available");
             assert_eq!(std::fs::read(opaque.path()).unwrap(), before);

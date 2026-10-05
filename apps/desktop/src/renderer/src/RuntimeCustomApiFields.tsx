@@ -57,8 +57,8 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
             : <p><UiText zh={"按提示完成 ChatGPT 登录。"} /></p>}
           <p><UiText zh={"登录、退出或切换账号在对应 CLI 中操作；完成后重新进入此页。此处切换连接方式不会退出账号。"} /></p>
         </details>
-        {observation?.conflict && <p role="alert" className="runtime-startup-result is-warning runtime-connection-conflict">{observation.conflict}</p>}
       </div>}
+    {observation?.conflict && <p role="alert" className="runtime-startup-result is-warning runtime-connection-conflict">{observation.conflict}</p>}
     {activeApi && <p className="runtime-custom-api-note"><UiText zh={"请求将发送至此接口，可能包含提示词、代码和工具结果。"} /></p>}
     {activeApi && <div id={`${id}-api-fields`} className="runtime-custom-api-fields">
       <label><span><UiText zh={"接口地址（Base URL）"} /></span><input type="url" value={value.baseUrl} placeholder="https://api.example.com" autoComplete="off" spellCheck={false} disabled={disabled} aria-describedby={`${id}-protocol`}
