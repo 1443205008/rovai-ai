@@ -7,6 +7,7 @@ No user endpoint or key is accepted by this script. --official-roundtrip-root op
 official calls using an existing isolated native login; no daily credentials are copied.
 """
 import argparse
+import hashlib
 import http.server
 import json
 import os
@@ -18,6 +19,7 @@ import tempfile
 import threading
 import time
 import uuid
+from urllib.parse import urlsplit
 
 FAKE_KEY = "rovai-isolated-fake-key"
 ROTATED_FAKE_KEY = "rovai-isolated-rotated-key"
@@ -255,6 +257,24 @@ def run(kind, executable, helper, root, base):
                 assert REQUESTS[boundary:] and all(r["keyVersion"] == 2 and r["path"].startswith("/custom/prefix/rotated/") for r in REQUESTS[boundary:])
             finally:
                 rotated.close()
+            # Rename onto an existing hidden ID using the same stable row identity
+            # as the production editor. Native loading/execution must still work.
+            source_catalog = json.loads(edited_catalog_path.read_text())
+            hidden = next(entry for entry in source_catalog["models"] if entry["visibility"] != "list" and entry.get("supported_in_api"))
+            collision_models = [{**row, "rowId":"sha256:" + hashlib.sha256(json.dumps(row["id"]).encode()).hexdigest(), "id":hidden["slug"] if row["id"] == "rovai-unknown" else row["id"], "displayName":"Hidden ID selected" if row["id"] == "rovai-unknown" else row["displayName"]} for row in config["models"]]
+            default_row = next(row["rowId"] for row in collision_models if row["id"] == hidden["slug"])
+            collision = Native(helper, executable, root, {**config, "models":collision_models, "defaultRowId":default_row, "defaultModel":hidden["slug"]})
+            try:
+                collision.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
+                collision.send({"method":"initialized","params":{}})
+                entries = json.loads(Path(json.loads((root / "catalog-path.json").read_text())).read_text())["models"]
+                assert len({entry["slug"] for entry in entries}) == len(entries)
+                assert next(entry for entry in entries if entry["slug"] == hidden["slug"]) == {**hidden,"visibility":"list","display_name":"Hidden ID selected"}
+                session = collision.rpc("thread/start", {"cwd":str(root),"model":hidden["slug"],"approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
+                collision.rpc("turn/start", {"threadId":session["thread"]["id"],"input":[{"type":"text","text":"Reply OK."}]})
+                assert collision.wait(lambda f:f.get("method")=="turn/completed")["params"]["turn"]["status"] == "completed"
+            finally:
+                collision.close()
         native.close()
         if kind == "claude":
             # Reuse a shell-only credential without copying it into native settings.
@@ -351,20 +371,27 @@ def run_auto_fallback(executable, helper, root, base):
     auth.chmod(0o600)
     before = auth.read_bytes()
     config = {"kind":"codex-cli","mode":"custom_api","baseUrl":base,"models":[{"rowId":"a","id":"gpt-6.1-sol","displayName":""}],"defaultModel":"gpt-6.1-sol","defaultRowId":"a"}
-    boundary = len(REQUESTS)
-    native = Native(helper, executable, root, config)
-    try:
-        native.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
-        native.send({"method":"initialized","params":{}})
-        assert native.rpc("account/read", {"refreshToken":False})["account"]["type"] == "apiKey"
-        session = native.rpc("thread/start", {"cwd":str(root),"model":"gpt-6.1-sol","approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
-        native.rpc("turn/start", {"threadId":session["thread"]["id"],"input":[{"type":"text","text":"Reply OK."}]})
-        assert native.wait(lambda f:f.get("method")=="turn/completed")["params"]["turn"]["status"] == "completed"
-        assert REQUESTS[boundary:] and all(r["keyMatches"] for r in REQUESTS[boundary:])
-        assert auth.read_bytes() == before, "auto fallback must not migrate/delete file credentials"
-        return {"runtime":"codex","case":"auto-file-fallback","status":"passed"}
-    finally:
-        native.close()
+    for address in [base, base + "/edited"]:
+        if address != base:
+            (root / "reuse-native-fixture").unlink()
+            (root / "edit-address-only-fixture").touch()
+        boundary = len(REQUESTS)
+        native = Native(helper, executable, root, {**config,"baseUrl":address})
+        try:
+            native.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
+            native.send({"method":"initialized","params":{}})
+            effective = native.rpc("config/read", {"cwd":str(root),"includeLayers":False})["config"]
+            assert effective.get("model_provider") in [None, "openai"] and effective["openai_base_url"] == address
+            assert native.rpc("account/read", {"refreshToken":False})["account"]["type"] == "apiKey"
+            session = native.rpc("thread/start", {"cwd":str(root),"model":"gpt-6.1-sol","approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
+            assert session["modelProvider"] == "openai"
+            native.rpc("turn/start", {"threadId":session["thread"]["id"],"input":[{"type":"text","text":"Reply OK."}]})
+            assert native.wait(lambda f:f.get("method")=="turn/completed")["params"]["turn"]["status"] == "completed"
+            assert REQUESTS[boundary:] and all(r["keyMatches"] and r["path"] == urlsplit(address).path + "/responses" for r in REQUESTS[boundary:])
+            assert auth.read_bytes() == before, "auto fallback/address editing must not migrate/delete file credentials"
+        finally:
+            native.close()
+    return {"runtime":"codex","case":"auto-file-fallback-and-address-edit","status":"passed"}
 
 
 def run_official_roundtrip(kind, executable, helper, root, base):

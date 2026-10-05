@@ -65,7 +65,16 @@ impl NativeFile {
         Ok(())
     }
     pub(crate) fn write(&self, bytes: &[u8]) -> Result<()> {
-        atomic_write(&self.target, bytes, || self.unchanged())
+        atomic_write(&self.target, bytes, || {
+            self.unchanged()?;
+            ensure!(
+                !std::fs::metadata(&self.target)
+                    .is_ok_and(|metadata| metadata.permissions().readonly()),
+                "原生配置来源为只读，未修改：{}。请在该来源调整写入权限后重试，草稿已保留。",
+                self.path.display()
+            );
+            Ok(())
+        })
     }
     pub(crate) fn restore(&self, expected: &Option<Vec<u8>>) -> Result<()> {
         // Roll back only our own bytes on the captured physical target. A retargeted

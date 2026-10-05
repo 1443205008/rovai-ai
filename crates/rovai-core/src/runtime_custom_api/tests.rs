@@ -909,26 +909,33 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     if let CustomApiConfiguration::Codex { base_url, .. } = &mut changed {
         *base_url = "https://new-api.example".into();
     }
-    let before = std::fs::read(&path).unwrap();
-    assert!(
-        native_edit::write(
-            &context,
-            &read,
-            &changed,
-            &[FieldEdit {
-                path: vec!["baseUrl".into()],
-                before: json!("https://relay.example"),
-                after: json!("https://new-api.example"),
-                label: "接口地址".into()
-            }],
-            &ApiKeyChange::Keep,
-            None
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("Codex 原生系统管理")
+    let auth_before = std::fs::read(&auth).unwrap();
+    native_edit::write(
+        &context,
+        &read,
+        &changed,
+        &[FieldEdit {
+            path: vec!["baseUrl".into()],
+            before: json!("https://relay.example"),
+            after: json!("https://new-api.example"),
+            label: "接口地址".into(),
+        }],
+        &ApiKeyChange::Keep,
+        None,
+    )
+    .unwrap();
+    let doc = native::read_toml(&path).unwrap();
+    assert_eq!(
+        doc["openai_base_url"].as_str(),
+        Some("https://new-api.example")
     );
-    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(doc["cli_auth_credentials_store"].as_str(), Some("keyring"));
+    assert!(doc.get("model_providers").is_none() && doc.get("model_provider").is_none());
+    assert_eq!(
+        std::fs::read(&auth).unwrap(),
+        auth_before,
+        "changing an existing API address does not migrate credentials"
+    );
 
     std::fs::write(
         &path,
@@ -1023,7 +1030,8 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         *base_url = "https://new-api.example".into();
         *mode = Some(ConnectionMode::CustomApi);
     }
-    native_edit::write(
+    let original_official = std::fs::read(&path).unwrap();
+    let error = native_edit::write(
         &context,
         &read,
         &desired,
@@ -1036,7 +1044,9 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         &ApiKeyChange::Keep,
         None,
     )
-    .unwrap();
+    .unwrap_err();
+    assert!(error.to_string().contains("官方登录凭据"));
+    assert_eq!(std::fs::read(&path).unwrap(), original_official);
     assert!(matches!(
         native::read(&context, Some(ConnectionMode::CustomApi))
             .unwrap()
@@ -1243,6 +1253,188 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     assert_eq!(doc["model"].as_str(), Some("b"));
     assert_eq!(doc["future_auth"].as_str(), Some("native-source"));
     assert!(doc.get("model_providers").is_none() && doc.get("model_provider").is_none());
+    // Address-only edits retain unknown native auth fields and provider selection.
+    for (index, kind, original) in [
+        (
+            0,
+            AdapterKind::CodexCli,
+            "openai_base_url='https://before.example'\nmodel='a'\nfuture_auth={mechanism='native'}\n",
+        ),
+        (
+            1,
+            AdapterKind::CodexCli,
+            "model_provider='relay'\nmodel_providers={relay={base_url='https://before.example',wire_api='responses',future_auth={mechanism='native'},query_params={tag='keep'}}}\n",
+        ),
+        (
+            2,
+            AdapterKind::ClaudeCodeCli,
+            r#"{"env":{"ANTHROPIC_BASE_URL":"https://before.example"},"futureAuth":{"mechanism":"native"}}"#,
+        ),
+    ] {
+        let mut connection = opaque.clone();
+        connection.kind = kind;
+        connection.directory = root.join(format!("unknown-address-{index}"));
+        private_storage::atomic_write_private_bytes(&connection.path(), original.as_bytes())
+            .unwrap();
+        let read = native::read(&connection, None).unwrap();
+        assert_eq!(read.credential.status, "missing");
+        let mut desired = read.configuration.clone();
+        match &mut desired {
+            CustomApiConfiguration::ClaudeCode { base_url, .. }
+            | CustomApiConfiguration::Codex { base_url, .. } => {
+                *base_url = "https://after.example".into()
+            }
+        }
+        native_edit::write(
+            &connection,
+            &read,
+            &desired,
+            &[FieldEdit {
+                path: vec!["baseUrl".into()],
+                before: json!("https://before.example"),
+                after: json!("https://after.example"),
+                label: String::new(),
+            }],
+            &ApiKeyChange::Keep,
+            None,
+        )
+        .unwrap();
+        let parse = |text: &str| -> Value {
+            if kind == AdapterKind::ClaudeCodeCli {
+                serde_json::from_str(text).unwrap()
+            } else {
+                serde_json::to_value(toml::from_str::<toml::Value>(text).unwrap()).unwrap()
+            }
+        };
+        assert_eq!(
+            parse(&std::fs::read_to_string(connection.path()).unwrap()),
+            parse(&original.replace("https://before.example", "https://after.example"))
+        );
+    }
+    // Personal login restrictions can be removed with an explicit selection.
+    // Managed files and OAuth stay native-owned, and an official account is
+    // never promoted into a Key source for a newly selected API.
+    for kind in [AdapterKind::ClaudeCodeCli, AdapterKind::CodexCli] {
+        let mut personal = opaque.clone();
+        personal.kind = kind;
+        personal.directory = root.join(format!("personal-login-{}", kind.as_str()));
+        let (initial, managed_name, managed_contents) = if kind == AdapterKind::ClaudeCodeCli {
+            (
+                r#"{"forceLoginMethod":"console","env":{"ANTHROPIC_BASE_URL":"https://before.example","ANTHROPIC_AUTH_TOKEN":"api-key","CLAUDE_CODE_OAUTH_TOKEN":"official-token"},"permissions":{"defaultMode":"default"}}"#,
+                "managed-settings.json",
+                r#"{"forceLoginMethod":"console"}"#,
+            )
+        } else {
+            (
+                "forced_login_method='api'\nmodel_provider='relay'\nmodel_providers={relay={base_url='https://before.example',experimental_bearer_token='api-key'}}\napproval_policy='on-request'\n",
+                "requirements.toml",
+                "allowed_approval_policies=['on-request']\n",
+            )
+        };
+        private_storage::atomic_write_private_bytes(&personal.path(), initial.as_bytes()).unwrap();
+        let managed = personal.directory.join(managed_name);
+        std::fs::write(&managed, managed_contents).unwrap();
+        let auth = personal
+            .directory
+            .join(if kind == AdapterKind::ClaudeCodeCli {
+                ".credentials.json"
+            } else {
+                "auth.json"
+            });
+        let oauth = if kind == AdapterKind::ClaudeCodeCli {
+            r#"{"claudeAiOauth":{"accessToken":"official-token"}}"#
+        } else {
+            r#"{"auth_mode":"chatgpt","tokens":{"access_token":"official-token","refresh_token":"official-refresh"}}"#
+        };
+        std::fs::write(&auth, oauth).unwrap();
+        let read = native::read(&personal, None).unwrap();
+        let mut official = read.configuration.clone();
+        official.set_mode(Some(ConnectionMode::OfficialLogin));
+        let mode = FieldEdit {
+            path: vec!["mode".into()],
+            before: json!("custom_api"),
+            after: json!("official_login"),
+            label: String::new(),
+        };
+        native_edit::write(
+            &personal,
+            &read,
+            &official,
+            &[mode],
+            &ApiKeyChange::Keep,
+            None,
+        )
+        .unwrap();
+        if kind == AdapterKind::ClaudeCodeCli {
+            let mut doc = native::read_json(&personal.path()).unwrap();
+            assert!(doc.get("forceLoginMethod").is_none());
+            assert_eq!(doc["env"]["CLAUDE_CODE_OAUTH_TOKEN"], "official-token");
+            assert_eq!(doc["permissions"]["defaultMode"], "default");
+            doc["forceLoginMethod"] = json!("claudeai");
+            std::fs::write(personal.path(), serde_json::to_vec(&doc).unwrap()).unwrap();
+        } else {
+            let mut doc = native::read_toml(&personal.path()).unwrap();
+            assert!(doc.get("forced_login_method").is_none());
+            assert_eq!(doc["approval_policy"].as_str(), Some("on-request"));
+            doc["forced_login_method"] = toml_edit::value("chatgpt");
+            // Opaque auto/keyring identity may be displayed as reusable for the
+            // native connection; it still cannot supply a new API's Key.
+            doc["cli_auth_credentials_store"] = toml_edit::value("auto");
+            std::fs::write(personal.path(), doc.to_string()).unwrap();
+        }
+        let read = native::read(&personal, None).unwrap();
+        assert_eq!(
+            read.configuration.mode(),
+            Some(ConnectionMode::OfficialLogin)
+        );
+        let before = std::fs::read(personal.path()).unwrap();
+        let api = configuration(kind);
+        let edits = [
+            FieldEdit {
+                path: vec!["mode".into()],
+                before: json!("official_login"),
+                after: json!("custom_api"),
+                label: String::new(),
+            },
+            FieldEdit {
+                path: vec!["baseUrl".into()],
+                before: json!(""),
+                after: json!(api.base_url()),
+                label: String::new(),
+            },
+        ];
+        let error = native_edit::write(&personal, &read, &api, &edits, &ApiKeyChange::Keep, None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("官方登录凭据"));
+        assert_eq!(std::fs::read(personal.path()).unwrap(), before);
+        native_edit::write(
+            &personal,
+            &read,
+            &api,
+            &edits,
+            &ApiKeyChange::Replace {
+                value: "new-api-key".into(),
+            },
+            None,
+        )
+        .unwrap();
+        if kind == AdapterKind::ClaudeCodeCli {
+            let doc = native::read_json(&personal.path()).unwrap();
+            assert!(doc.get("forceLoginMethod").is_none());
+            assert_eq!(doc["env"]["ANTHROPIC_AUTH_TOKEN"], "new-api-key");
+            assert_eq!(doc["env"]["CLAUDE_CODE_OAUTH_TOKEN"], "official-token");
+        } else {
+            let doc = native::read_toml(&personal.path()).unwrap();
+            assert!(doc.get("forced_login_method").is_none());
+            assert_eq!(
+                doc["model_providers"]["rovai_custom"]["experimental_bearer_token"].as_str(),
+                Some("new-api-key")
+            );
+        }
+        assert_eq!(std::fs::read_to_string(&auth).unwrap(), oauth);
+        assert_eq!(std::fs::read_to_string(&managed).unwrap(), managed_contents);
+    }
     // An external shell Key remains external: official Save reports it and leaves
     // native bytes intact rather than attempting an execution-time override.
     opaque
@@ -1315,6 +1507,21 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         std::fs::write(&missing, b"external-write").unwrap();
         assert!(written.restore(&Some(b"our-write".to_vec())).is_err());
         assert_eq!(std::fs::read(&missing).unwrap(), b"external-write");
+        std::fs::set_permissions(&missing, std::fs::Permissions::from_mode(0o400)).unwrap();
+        assert!(
+            NativeFile::read(&dangling)
+                .unwrap()
+                .write(b"must-not-write")
+                .unwrap_err()
+                .to_string()
+                .contains("只读")
+        );
+        assert_eq!(std::fs::read(&missing).unwrap(), b"external-write");
+        assert_eq!(
+            std::fs::metadata(&missing).unwrap().permissions().mode() & 0o777,
+            0o400
+        );
+        std::fs::set_permissions(&missing, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
 
     let claude = native::NativeContext {

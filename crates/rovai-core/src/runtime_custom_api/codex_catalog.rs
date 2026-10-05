@@ -56,6 +56,14 @@ fn adapt_catalog(
         anyhow::bail!("Codex 原生配置类型不匹配。");
     };
     super::native_resource::validate_catalog(&catalog)?;
+    let selected_ids = models
+        .iter()
+        .map(|model| model.id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    anyhow::ensure!(
+        selected_ids.len() == models.len(),
+        "Codex 模型 ID 不能重复。"
+    );
     let managed_list =
         catalog["rovai_managed_model_list"] == true || model_ids_changed(current, desired);
     let native = catalog["models"].as_array_mut().unwrap();
@@ -69,7 +77,7 @@ fn adapt_catalog(
     }
     for row in previous
         .iter()
-        .filter(|old| !models.iter().any(|m| m.row_id == old.row_id))
+        .filter(|old| !selected_ids.contains(old.id.as_str()))
     {
         if let Some(item) = native.iter_mut().find(|item| item["slug"] == row.id) {
             item["visibility"] = json!("hide");
@@ -78,16 +86,13 @@ fn adapt_catalog(
     for model in models {
         let previous_row = previous.iter().find(|old| old.row_id == model.row_id);
         let old_id = previous_row.map(|row| row.id.as_str()).unwrap_or(&model.id);
-        let mut item = original
-            .iter()
-            .find(|entry| entry["slug"] == old_id)
-            .cloned()
-            .or_else(|| {
-                original
-                    .iter()
-                    .find(|entry| entry["slug"] == model.id)
-                    .cloned()
-            })
+        // A hidden/native ID already owns its metadata. Reuse that entry instead
+        // of renaming another entry onto it and duplicating the slug.
+        let destination = original.iter().position(|entry| entry["slug"] == model.id);
+        let source = original.iter().position(|entry| entry["slug"] == old_id);
+        let mut item = destination
+            .or(source)
+            .map(|index| original[index].clone())
             .or_else(|| {
                 bundled
                     .and_then(|c| c["models"].as_array())
@@ -107,7 +112,10 @@ fn adapt_catalog(
                 &model.display_name
             });
         }
-        if let Some(index) = original.iter().position(|entry| entry["slug"] == old_id) {
+        // Another row may still select old_id (a swap or chained rename). Keep
+        // that slot in this case, using the immutable original as metadata input.
+        let slot = destination.or(source.filter(|_| !selected_ids.contains(old_id)));
+        if let Some(index) = slot {
             native[index] = item;
         } else {
             native.push(item);
@@ -146,7 +154,11 @@ pub async fn generate(
             !existing
                 .as_ref()
                 .and_then(|c| c["models"].as_array())
-                .is_some_and(|entries| entries.iter().any(|entry| entry["slug"] == *id))
+                .is_some_and(|entries| {
+                    entries
+                        .iter()
+                        .any(|entry| entry["slug"] == *id || entry["slug"] == model.id)
+                })
         });
     let bundled = if needs_metadata {
         let executable =
@@ -269,6 +281,73 @@ mod tests {
         assert_eq!(
             updated["models"][1], original["models"][1],
             "internal entry stays byte-for-value intact"
+        );
+        // Hidden collisions, swaps and chained renames must each produce one
+        // entry per ID. An existing target keeps its own complete metadata.
+        for ids in [
+            ["native-internal", "known-but-unknown-suffix"],
+            ["known-but-unknown-suffix", "known"],
+            ["native-internal", "known"],
+            ["known-but-unknown-suffix", "new-id"],
+        ] {
+            let mut renamed = config.clone();
+            if let CustomApiConfiguration::Codex {
+                models,
+                default_model,
+                ..
+            } = &mut renamed
+            {
+                for (model, id) in models.iter_mut().zip(ids) {
+                    model.id = id.into();
+                }
+                *default_model = ids[1].into();
+            }
+            let updated = adapt_catalog(original.clone(), &config, &renamed, None, true).unwrap();
+            let entries = updated["models"].as_array().unwrap();
+            assert_eq!(
+                entries
+                    .iter()
+                    .map(|entry| entry["slug"].as_str().unwrap())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                entries.len()
+            );
+            assert_eq!(
+                entries
+                    .iter()
+                    .filter(|entry| entry["visibility"] == "list")
+                    .map(|entry| entry["slug"].as_str().unwrap())
+                    .collect::<std::collections::BTreeSet<_>>(),
+                ids.into_iter().collect()
+            );
+            for id in ids {
+                if let Some(before) = original["models"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|entry| entry["slug"] == id)
+                {
+                    let mut expected = before.clone();
+                    let actual = entries.iter().find(|entry| entry["slug"] == id).unwrap();
+                    expected["visibility"] = json!("list");
+                    expected["display_name"] = actual["display_name"].clone();
+                    assert_eq!(*actual, expected, "existing ID metadata is retained");
+                }
+            }
+        }
+        let mut added = config.clone();
+        if let CustomApiConfiguration::Codex { models, .. } = &mut added {
+            models.push(super::super::CustomApiModel {
+                row_id: "three".into(),
+                id: "native-internal".into(),
+                display_name: "Existing hidden model".into(),
+            });
+        }
+        let updated = adapt_catalog(original.clone(), &config, &added, None, true).unwrap();
+        assert_eq!(updated["models"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            updated["models"][1]["display_name"],
+            "Existing hidden model"
         );
     }
 }

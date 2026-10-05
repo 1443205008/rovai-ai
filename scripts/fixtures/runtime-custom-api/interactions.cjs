@@ -103,7 +103,7 @@ module.exports=async({window,run,click,settle,waitFor,navigate,capture,noOverflo
  await input('.runtime-api-model-row input[aria-label="模型 ID 2"]','model-b');
  await click('[data-model-row="two"] input[type=radio]');await click('[data-model-row="one"] button');await click(save)
  assert.equal(await run("window.settingsTest.state.startup['codex-cli'].configuration.customApi.models.length"),1)
- // A native credential projection is advisory for model-only editing. Unknown
+ // A native credential projection is advisory for editing an existing API. Unknown
  // sources must not force users to replace a working native connection's Key.
  for(const [kind,status,selector] of [
   ['claude-code-cli','missing','.runtime-custom-api-fields > label input:not([type])'],
@@ -116,7 +116,9 @@ module.exports=async({window,run,click,settle,waitFor,navigate,capture,noOverflo
   assert.equal(await run(`window.settingsTest.state.startup[${JSON.stringify(kind)}].revision`),1,'model edit is saved without a new Key')
   assert.equal(await run(`window.settingsTest.state.startup[${JSON.stringify(kind)}].credential.status`),status)
   await input('input[type=url]','https://different.example/prefix');await click(save)
-  assert.ok((await text()).includes('当前连接没有可复用的凭据'),'a changed connection still validates its credential source')
+  assert.equal(await run(`window.settingsTest.state.startup[${JSON.stringify(kind)}].revision`),2,'an existing API address edit preserves its native credential source')
+  assert.equal(await run('window.settingsTest.requests.at(-1).params.apiKey.action'),'keep')
+  assert.equal(await run(`window.settingsTest.state.startup[${JSON.stringify(kind)}].credential.status`),status)
   await input('.runtime-custom-api-key-input input',' \t replacement-key \r\n');await click(save)
   assert.equal(await run('window.settingsTest.requests.at(-1).params.apiKey.value'),'replacement-key','replacement trims only surrounding whitespace')
   assert.equal(await run('document.querySelector(".runtime-custom-api-key-input input").value'),'','saved replacement leaves no sensitive draft')

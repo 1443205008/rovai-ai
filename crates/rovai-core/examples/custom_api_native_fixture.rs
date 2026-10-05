@@ -93,7 +93,10 @@ async fn main() -> Result<()> {
         environment,
     };
     let before = native::read(&context, Some(ConnectionMode::CustomApi))?;
-    let fields = if kind == AdapterKind::CodexCli {
+    let address_only = root.join("edit-address-only-fixture").is_file();
+    let fields = if address_only {
+        vec![vec!["baseUrl"]]
+    } else if kind == AdapterKind::CodexCli {
         vec![vec!["baseUrl"], vec!["codexModels"], vec!["defaultRowId"]]
     } else {
         vec![
@@ -115,7 +118,7 @@ async fn main() -> Result<()> {
         })
         .collect::<Vec<_>>();
     if configuration.enabled() && !root.join("reuse-native-fixture").is_file() {
-        let catalog = if kind == AdapterKind::CodexCli {
+        let catalog = if kind == AdapterKind::CodexCli && !address_only {
             Some(
                 runtime_custom_api::codex_catalog::generate(
                     Some(executable),
@@ -133,7 +136,7 @@ async fn main() -> Result<()> {
             &before,
             &configuration,
             &edits,
-            &if shell_credential {
+            &if shell_credential || address_only {
                 ApiKeyChange::Keep
             } else {
                 ApiKeyChange::Replace {

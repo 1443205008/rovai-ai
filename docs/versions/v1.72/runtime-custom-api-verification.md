@@ -86,9 +86,10 @@ python3 scripts/smoke-runtime-custom-api.py --claude /absolute/claude --codex /a
 - Rovai 历史启动环境中的当前 API Key 与地址覆盖在官方保存时直接移除，保留 OAuth 和无关变量，不再隐藏后要求用户自行查找。
   若移除 Rovai 自有项后，Codex 的外部继承环境仍有会抢占官方路径的 `OPENAI_API_KEY`、`CODEX_API_KEY` 或 `OPENAI_BASE_URL`，
   保存官方选择会指出来源及移除覆盖的处理办法，保留草稿；不在每次启动屏蔽变量，也不退出账号。
-  已知强制 API 登录策略同样在保存时报告，未绕过组织策略；原生未知身份不新增运行门槛。
+  个人文件中相反的登录方式限制随明确切换解除；组织管理来源仍由原生执行约束，未新增策略扫描或绕过；原生未知身份不新增运行门槛。
 - 原生系统凭据继续由 CLI 消费。不可见来源的状态不等于已登录；普通环境引用可通过输入新 Key 替换连接，
-  不强制迁移原来源。Codex 不明类型系统凭据切到新地址时需绑定该地址或输入新 Key，避免发送官方 token 到未知接口。
+  不强制迁移原来源。已有 API 改地址保留其原生认证，即使凭据投影未知也无需补 Key；从官方新建 API 时须提供独立 Key，
+  不把 OAuth 或不明类型官方登录凭据迁移成 API 认证。
 - Codex 的原生 HTTP 栈没有把 Proxy-Authorization 发到 origin；验证的是代理凭据配置保留与不误拦截，未声称真实代理认证成功。
 - 保存成功只表示原生写回完成，相关 Rovai 实例按既有机制重连；对共享原生配置的外部会话不承诺无影响。
 
@@ -112,6 +113,32 @@ python3 scripts/smoke-runtime-custom-api.py --claude /absolute/claude --codex /a
 实际 Claude Code 2.1.280、Codex 0.159.2 重新运行本地假服务验收，目录
 `/private/tmp/rovai-api-usability-native-20261005`。两种 CLI 均通过，Codex auto 文件回退也通过；
 地址前缀、查询参数、认证方式、Key 轮换和恢复继续符合上面的原生调用记录，没有真实订阅请求。
+
+## 隐藏 ID 与原生选择修复（2026-10-05）
+
+本轮仍扩展既有目录与原生文件 owner，不新增 Rust 测试函数、表单、探活或认证识别层：
+
+- Codex 模型改为完整目录中已有的隐藏 ID 时，复用目标条目的完整元数据，旧 ID 未继续选用时转为隐藏。
+  同时覆盖交换 ID、连续改名、添加已有隐藏 ID，生成目录保持唯一 ID；已有目标不依赖再次读取可执行程序元数据。
+- 已有 API 修改地址保留现有认证来源，覆盖未知凭据、原生 keyring、内置 OpenAI 和自定义 provider。
+  模型／名称编辑保持原行为。新选 API 不将官方 OAuth 或不明类型官方认证转成 Key。
+- 明确切换时，只解除个人文件中相反的 `forceLoginMethod`／`forced_login_method`，不新增强制限制。
+  本地文件测试保留 OAuth、权限、管理文件和未知字段；只读符号链接目标拒绝写入且保持内容、权限和草稿。
+  这些测试证明编辑边界，不冒充真实组织策略服务验证。
+
+原生 owner 5 项通过；正式 React 组件在 missing／invalid_reference 状态下保存已有 API 新地址，无需输入 Key。
+界面夹具使用 `/private/tmp/rovai-api-selection-ui-4iELr8/user-data` 和其下隔离 Skill Library，无 Core。
+本轮完整回归：Rust workspace 455 passed／1 既有 ignored；Vitest 237 文件／2587 项，Node 334 passed／2 平台 skipped；
+类型检查、桌面构建、Core 编译检查与三项通用文档门禁通过。
+
+实际 Claude Code 2.1.280／Codex 0.159.2 使用本地假服务，根目录 `/private/tmp/rovai-api-selection-native-20261005`。
+Codex 改名到已有隐藏 `gpt-6-astra` 后，完整目录加载、线程创建和 Responses 回复通过，目标完整元数据保留；
+`auto` 文件回退及改地址后调用通过，provider 仍为内置 OpenAI，认证文件字节未变。
+`config/read` 的默认 provider 可为空，验收以线程返回的实际 `modelProvider` 及服务端收到的新路径、Key 为准；
+最初该静态字段断言过严，修正后在独立 `codex-auto-retest` 目录重跑通过。没有额外产品侧检查或真实订阅请求。
+
+原生配置位置和设置优先级参考 [Claude 设置来源](https://code.claude.com/docs/en/settings)；
+Codex 的地址覆盖与登录限制字段参考 [Codex 配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)。
 
 ## 测试准入与退役
 

@@ -46,6 +46,9 @@ pub(crate) fn write_with_saved_environment(
             .iter()
             .any(|e| e.path.first().is_some_and(|p| p == name))
     };
+    let mode_changed = edits
+        .iter()
+        .any(|edit| edit.path == ["mode"] && edit.before != edit.after);
     if !changed("mode")
         && !changed("baseUrl")
         && !changed("claudeModels")
@@ -55,6 +58,13 @@ pub(crate) fn write_with_saved_environment(
     {
         return Ok(Vec::new());
     }
+    ensure!(
+        official
+            || current.configuration.enabled()
+            || !key.is_keep()
+            || !(changed("mode") || changed("baseUrl")),
+        "请填写 API Key；官方登录凭据不能作为自定义 API 凭据迁移。"
+    );
     let path = context.path();
     let file = NativeFile::read(&path)?;
     // Re-read after conflict resolution and immediately before constructing the native patch.
@@ -71,6 +81,9 @@ pub(crate) fn write_with_saved_environment(
                 base_url, models, ..
             } => {
                 let mut doc = native::read_json(&path)?;
+                if mode_changed && doc["forceLoginMethod"] == "claudeai" {
+                    doc.as_object_mut().unwrap().remove("forceLoginMethod");
+                }
                 if doc.get("env").is_none() {
                     doc["env"] = json!({});
                 }
@@ -141,18 +154,32 @@ pub(crate) fn write_with_saved_environment(
                 ..
             } => {
                 let mut doc = native::read_toml(&path)?;
+                if mode_changed
+                    && doc
+                        .get("forced_login_method")
+                        .and_then(toml_edit::Item::as_str)
+                        == Some("chatgpt")
+                {
+                    doc.as_table_mut().remove("forced_login_method");
+                }
                 let profile = doc
                     .get("profile")
                     .and_then(toml_edit::Item::as_str)
                     .map(str::to_owned);
-                let connection_changed = changed("baseUrl")
-                    || !key.is_keep()
-                    || current.configuration.mode() != desired.mode();
+                let reuse_connection = current.configuration.enabled() && key.is_keep();
+                let connection_changed = !key.is_keep();
                 let provider_id = if connection_changed && current.provider_id == "openai" {
                     "rovai_custom"
                 } else {
                     current.provider_id.as_str()
                 };
+                if reuse_connection && changed("baseUrl") && current.provider_id != "openai" {
+                    set(
+                        table(&mut doc, &["model_providers", provider_id])?,
+                        "base_url",
+                        toml_edit::value(base_url),
+                    );
+                }
                 if connection_changed {
                     let provider_path = ["model_providers", provider_id];
                     let provider = table(&mut doc, &provider_path)?;
@@ -164,53 +191,7 @@ pub(crate) fn write_with_saved_environment(
                     }
                     set(provider, "wire_api", toml_edit::value("responses"));
                     match key {
-                        ApiKeyChange::Keep => {
-                            // An existing auth.json/keyring source stays runtime-owned. Never copy its value.
-                            if current.provider_id == "openai" {
-                                match &current.source {
-                                    CredentialSource::Environment { name } => {
-                                        set(provider, "env_key", toml_edit::value(name));
-                                        set(
-                                            provider,
-                                            "requires_openai_auth",
-                                            toml_edit::value(false),
-                                        );
-                                    }
-                                    CredentialSource::Missing => {
-                                        set(
-                                            provider,
-                                            "env_key",
-                                            toml_edit::value("ROVAI_UNCONFIGURED_API_KEY"),
-                                        );
-                                        set(
-                                            provider,
-                                            "requires_openai_auth",
-                                            toml_edit::value(false),
-                                        );
-                                    }
-                                    CredentialSource::NativeManaged { .. } => {
-                                        ensure!(
-                                            !changed("baseUrl")
-                                                || desired.base_url()
-                                                    == current.configuration.base_url(),
-                                            "当前凭据由 Codex 原生系统管理，尚无法确认其为 API Key；更换接口地址时请填写新 Key，或先在原生配置中绑定该接口。已有连接仍可直接复用。"
-                                        );
-                                        set(
-                                            provider,
-                                            "requires_openai_auth",
-                                            toml_edit::value(true),
-                                        );
-                                    }
-                                    _ => {
-                                        set(
-                                            provider,
-                                            "requires_openai_auth",
-                                            toml_edit::value(true),
-                                        );
-                                    }
-                                }
-                            }
-                        }
+                        ApiKeyChange::Keep => {}
                         ApiKeyChange::Replace { value } => {
                             // Native inline bearer is a supported provider source; no shell or auth.json mutation.
                             provider.remove("env_key");
@@ -264,6 +245,9 @@ pub(crate) fn write_with_saved_environment(
                 };
                 if connection_changed {
                     set(target, "model_provider", toml_edit::value(provider_id));
+                }
+                if reuse_connection && changed("baseUrl") && current.provider_id == "openai" {
+                    set(target, "openai_base_url", toml_edit::value(base_url));
                 }
                 if changed("codexModels") {
                     let catalog = generated_catalog
@@ -337,10 +321,11 @@ fn official_configuration(
 ) -> Result<Vec<u8>> {
     if context.kind == crate::agent_profile::AdapterKind::ClaudeCodeCli {
         let mut doc = native::read_json(&context.path())?;
-        ensure!(
-            doc["forceLoginMethod"] != "console",
-            "原生 forceLoginMethod 要求 API 登录；请在该策略来源调整后再保存。"
-        );
+        // This document is the user's settings only. Managed policy remains
+        // in native sources and keeps its native precedence.
+        if doc["forceLoginMethod"] == "console" {
+            doc.as_object_mut().unwrap().remove("forceLoginMethod");
+        }
         if current.configuration.enabled() {
             if doc.get("env").is_none() {
                 doc["env"] = json!({});
@@ -402,12 +387,13 @@ fn official_configuration(
         return Ok(bytes);
     }
     let mut doc = native::read_toml(&context.path())?;
-    ensure!(
-        doc.get("forced_login_method")
-            .and_then(toml_edit::Item::as_str)
-            != Some("api"),
-        "原生 forced_login_method 要求 API 登录；请在该策略来源调整后再保存。"
-    );
+    if doc
+        .get("forced_login_method")
+        .and_then(toml_edit::Item::as_str)
+        == Some("api")
+    {
+        doc.as_table_mut().remove("forced_login_method");
+    }
     for name in ["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"] {
         ensure!(
             !saved_environment.env(name).is_some_and(|v| !v.is_empty()),
