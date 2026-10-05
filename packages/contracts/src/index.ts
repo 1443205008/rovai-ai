@@ -3232,16 +3232,29 @@ export interface OnboardingProvisioningOperation {
   memberAgentId: string | null
   memberVersionBeforeRuntime: number | null
   memberVersionAfterRuntime: number | null
+  runtimeCopies: OnboardingRuntimeCopy[] | null
   quickChatThreadId: string | null
 }
 
+export interface OnboardingRuntimeCopyTarget {
+  agentId: string
+  expectedVersion: number
+}
+
+export interface OnboardingRuntimeCopy extends OnboardingRuntimeCopyTarget {
+  commandId: string
+  status: 'pending' | 'applied' | 'skipped'
+}
+
+export type OnboardingRuntimeCopyOutcome = 'applied' | 'skipped' | 'retry'
+
 export type OnboardingSnapshot =
   | {
-      schemaVersion: 2
+      schemaVersion: 3
       status: 'uninitialized'
     }
   | {
-      schemaVersion: 2
+      schemaVersion: 3
       status: 'in_progress'
       step: OnboardingStep
       selectedMemberRole: BuiltinMemberAvatarRole | null
@@ -3249,7 +3262,7 @@ export type OnboardingSnapshot =
       provisioning: OnboardingProvisioningOperation | null
     }
   | {
-      schemaVersion: 2
+      schemaVersion: 3
       status: 'completed'
       origin: 'onboarding' | 'runtime_deferred' | 'existing_installation'
       completedAt: string
@@ -3273,6 +3286,8 @@ export interface OnboardingApi {
   ): Promise<OnboardingSnapshot>
   recordProvisionedMember(agentId: string, version: number): Promise<OnboardingSnapshot>
   recordProvisionedRuntime(version: number): Promise<OnboardingSnapshot>
+  prepareRuntimeCopies(targets: OnboardingRuntimeCopyTarget[]): Promise<OnboardingSnapshot>
+  recordRuntimeCopy(agentId: string, commandId: string, outcome: OnboardingRuntimeCopyOutcome): Promise<OnboardingSnapshot>
   recordProvisionedThread(threadId: string): Promise<OnboardingSnapshot>
   complete(): Promise<OnboardingSnapshot>
 }

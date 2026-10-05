@@ -710,3 +710,15 @@ User 于 2026-10-03 明确豁免本次真实任务 Gate；其余本地检查、�
 ZCode 根调用结束/压缩触发合并读取，Pi/Antigravity 保留独立字段；界面仅时间刷新复用旧对象。
 实现与 App 证据由[本轮验收](../../research/runtime-monitoring/live-context-usability-2026-10-04.md)拥有。
 继续 PR Review，本轮不自动合并或替换日常 App/数据库。
+
+
+## 2026-10-05 训练营默认 Runtime 配置复制
+
+- Worktree：`rovai/onboarding-runtime-copy`，基线 `cb33fdc0c6203340609e0ac435e09c2a1cfc7ba1`。
+- 在所选成员配置后冻结其余未配置内置队员的版本与命令 ID，逐人保存同一 Runtime、模型参数及默认权限。
+- Desktop onboarding 升级 schema 3；旧未完成进度保持检查点并补齐复制，所有完成来源继续终态、不补写。
+- 未知结果复用原命令；已知拒绝才换命令重试；并发变更和移除跳过，完成准入要求复制计划全部收口。
+- 同步 [First-run Onboarding v6](../../contracts/first-run-onboarding-v6.md)、Architecture、UI 与当前文档路由。
+- 不新增 Rust/Core 行为或数据库表，不修改模型上下文；既有队员页手动应用入口保持独立。
+- 验证已通过：`pnpm typecheck`、`pnpm test`（包含新增 14 项真实 Desktop 状态文件恢复测试，Node 汇总 334 通过 / 2 平台跳过）、`pnpm build:desktop`、`pnpm test:desktop-bridge`（真实隔离 Electron contextBridge）、`git diff --check` 及基于上述基线的 `pnpm docs:check:ci`。
+- `pnpm test:rust:pr` 默认 workspace 回归：453 项通过，1 项既有忽略；使用本机 Rust 1.97.1，仅为该命令补充工具链 PATH。未新增、删除或改动 Rust 测试。恢复测试使用确定性 Core 命令账本，不冒充真实 Runtime 执行验收。
