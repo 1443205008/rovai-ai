@@ -225,6 +225,30 @@ Electron 证据目录为 `/private/tmp/rovai-api-abc-ui-20261005-final`，独立
 配置语义参考 [Codex 高级配置](https://learn.chatgpt.com/docs/config-file/config-advanced) 与
 [Codex app-server](https://learn.chatgpt.com/docs/app-server)，实际运行命令的参数支持以目标程序结果为准。
 
+## 首屏与字段限制收尾（2026-10-05）
+
+以 `2a03e39c` 为基线，继续扩展既有 owner：
+
+- `runtime.startup.get` 只读本地文件；单独的一次 `runtime.startup.observe` 在首屏返回后运行，且不占主交互队列。
+  保存路径不调用辅助版本、来源或身份读取；新增模型所需的本地目录元数据读取保留。
+- 原生文件 owner 确认：默认模型和 provider 选择受启动参数固定时，本地地址、Key、模型仍回显；当前 provider 的地址和新 Key 可保存，
+  受限默认模型不被改写。已确认目标的临时来源错误不阻止其他编辑；从未确认的包装入口即使默认文件存在，
+  也不会把连接修改写进去，原内容保持不变。
+  provider 被固定时，仅确认仍指向当前 provider 的地址／静态 Key 编辑可写入；选择实际上指向其他 provider 时不会误写本地旧定义。
+- Core 的既有检查 owner 用子进程文件屏障让辅助进程等待，期间本地 get 与普通环境字段 save 均能返回；
+  依赖未知目标的写入立即报告具体限制，未启动另一轮辅助进程或误写文件。释放屏障后读取失败不清空本地表单。
+- Electron 正式组件用挂起的补充响应确认本地表单已可输入；迟到模式／来源结果不覆盖地址、模型名称或新 Key 草稿，
+  保存完成后补充读取失败不改变成功状态。隔离证据目录 `/private/tmp/rovai-finish-ui-20261005`，无 Core／真实 Runtime。
+
+macOS arm64 全量回归通过：Rust workspace 455 passed／1 既有 ignored；定向原生 owner 5 passed、Core 启动设置 owner
+3 passed、交互队列 owner 1 passed。完整 `pnpm test` 为 237 个 Vitest 文件／2587 项与 Node 334 passed／2 平台 skipped。
+类型检查、`cargo check --workspace --all-targets`、桌面构建、格式和文档门禁通过。
+实际 Codex **0.159.2** 对本地假服务再次通过，证据目录 `/private/tmp/rovai-finish-native-MOYnpr`：
+包装入口的实际配置来源、目录可选性、保存后的地址／Key／默认模型、查询参数、auto 文件回退、命令／AWS 凭据替换均保持。
+
+这轮验证区分本地配置、受控辅助进程和真实 CLI；未增加真实订阅、系统钥匙串或第三方中转实测结论。
+没有新增字段、常驻刷新、轮询、探活或独立 Rust 测试函数。
+
 ## 测试准入与退役
 
 本轮没有新增独立 Rust test。`runtime_custom_api` 的 5 个 owner 保持不变：配置／身份 parser、SQLite 发布、

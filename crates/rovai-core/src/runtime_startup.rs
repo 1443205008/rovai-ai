@@ -528,6 +528,16 @@ pub fn prepare_save(
             )?;
         }
     }
+    if native_changed && conflicts.is_empty() && kind == AdapterKind::CodexCli {
+        let context =
+            native::NativeContext::resolve(kind, &current.configuration, database.path())?;
+        let read = native::read(&context, None)?;
+        if let Some(desired) = &configuration.custom_api {
+            crate::runtime_custom_api::codex_source::validate_edits(
+                &context, &read, desired, &edits,
+            )?;
+        }
+    }
     // Retired legacy startup secrets must not become ordinary visible variables
     // once a replacement no longer references them from the native provider.
     if !official && !key.is_keep() {

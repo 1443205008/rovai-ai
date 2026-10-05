@@ -134,6 +134,10 @@ Open API grant 兑换、独立 CDN 请求无 token、取消与丢失 grant 的 s
 纯目录与投影不建立数据库；文件到配置发布的状态转换由既有隔离 SQLite owner 负责。最小命令：
 `cargo test -p rovai-core --features slow-tests --lib runtime_custom_api::`。
 真实 CLI 使用 `scripts/smoke-runtime-custom-api.py` 的固定假 Key／本地服务入口，不混入普通单元测试。
+首屏／辅助识别收尾仍扩展既有 owner：`application::runtime_check_environment::tests` 用受控子进程屏障验证
+辅助读取等待时本地 get 和独立启动字段 save 已返回；未知目标不误写默认文件。文件 owner 验证固定默认模型
+不阻断地址／Key、已确认来源暂时失败仍可写、受限字段保护。请求队列 owner 保证补充读取不占交互队列；
+Electron 正式组件覆盖迟到结果、输入中草稿与保存后失败隔离。无新增独立 Rust 测试函数。
 
 ## 测试层级
 

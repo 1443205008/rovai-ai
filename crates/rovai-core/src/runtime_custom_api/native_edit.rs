@@ -70,6 +70,7 @@ pub(crate) fn write_with_saved_environment(
         "请填写 API Key；官方登录凭据不能作为自定义 API 凭据迁移。"
     );
     let path = context.path();
+    super::codex_source::validate_edits(context, current, desired, edits)?;
     let file = NativeFile::read(&path)?;
     let base_guard = context
         .codex_source

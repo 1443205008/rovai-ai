@@ -65,7 +65,17 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     setError(null)
     setLoadError(null)
     void client.request<StartupSettings>('runtime.startup.get', { runtimeKind }).then((settings) => {
-      if (active) { applySaved(settings); loaded.current = true }
+      if (!active) return
+      applySaved(settings); loaded.current = true
+      // One optional supplement after the local form is ready. Never join this
+      // promise to initial loading or saving, and never replace an edited draft.
+      if (runtimeKind === 'codex-cli') {
+        const observationSequence = sequence.current
+        void client.request<StartupSettings>('runtime.startup.observe', { runtimeKind }).then((observed) => {
+          if (!active || sequence.current !== observationSequence || state.current.dirty || state.current.busy === 'save') return
+          if (!observed.connectionReadError) applySaved(observed)
+        }).catch(() => { /* Optional state remains unconfirmed; local editing is available. */ })
+      }
     }).catch((nextError) => { if (active) setLoadError(readErrorMessage(nextError)) })
       .finally(() => { if (active) setBusy(null) })
     return () => { active = false; if (!state.current.dirty) loaded.current = false }

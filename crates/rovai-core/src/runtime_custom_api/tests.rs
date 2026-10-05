@@ -1953,6 +1953,126 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         "unknown",
         "external config changes invalidate native identity hints"
     );
+    // A fixed model is a field restriction, not a switch that clears all local
+    // fields. Address and Key edits still reach the confirmed native source.
+    let mut limited = context.clone();
+    limited.directory = root.join("field-limits");
+    let limited_path = limited.path();
+    private_storage::atomic_write_private_bytes(&limited_path, b"model='native-default'\nmodel_provider='relay'\n[model_providers.relay]\nbase_url='https://before.example'\nexperimental_bearer_token='before-key'\nrequest_max_retries=2\n").unwrap();
+    limited.codex_source = Some(codex_source::Source {
+        base: limited_path.clone(),
+        field_overrides: BTreeMap::from([
+            ("model".into(), "sessionFlags".into()),
+            ("model_provider".into(), "sessionFlags".into()),
+        ]),
+        selected_provider: Some("relay".into()),
+        read_error: Some("原生来源暂未确认，已读取的配置仍保留。".into()),
+        ..Default::default()
+    });
+    let before = native::read(&limited, None).unwrap();
+    assert!(
+        before
+            .observation
+            .conflict
+            .as_deref()
+            .unwrap()
+            .contains("默认模型")
+    );
+    let mut desired = before.configuration.clone();
+    if let CustomApiConfiguration::Codex { base_url, .. } = &mut desired {
+        *base_url = "https://after.example".into();
+    }
+    let address_edit = FieldEdit {
+        path: vec!["baseUrl".into()],
+        before: json!("https://before.example"),
+        after: json!("https://after.example"),
+        label: String::new(),
+    };
+    let key_edit = FieldEdit {
+        path: vec!["credentialVersion".into()],
+        before: Value::Null,
+        after: json!("replace"),
+        label: String::new(),
+    };
+    native_edit::write(
+        &limited,
+        &before,
+        &desired,
+        &[address_edit.clone(), key_edit],
+        &ApiKeyChange::Replace {
+            value: "after-key".into(),
+        },
+        None,
+    )
+    .unwrap();
+    let after = native::read(&limited, None).unwrap();
+    assert_eq!(after.configuration.base_url(), "https://after.example");
+    assert_eq!(
+        after.snapshot(&limited, false).key().unwrap().as_deref(),
+        Some("after-key")
+    );
+    assert_eq!(
+        native::read_toml(&limited_path).unwrap()["model"].as_str(),
+        Some("native-default")
+    );
+    let bytes = std::fs::read(&limited_path).unwrap();
+    let error = native_edit::write(
+        &limited,
+        &after,
+        &desired,
+        &[FieldEdit {
+            path: vec!["defaultRowId".into()],
+            before: Value::Null,
+            after: Value::Null,
+            label: String::new(),
+        }],
+        &ApiKeyChange::Keep,
+        None,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("默认模型"));
+    assert_eq!(std::fs::read(&limited_path).unwrap(), bytes);
+    limited.codex_source.as_mut().unwrap().selected_provider = Some("other".into());
+    assert!(
+        native_edit::write(
+            &limited,
+            &after,
+            &desired,
+            &[address_edit.clone()],
+            &ApiKeyChange::Keep,
+            None,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("model_provider"),
+        "a forced selection of another provider makes the local provider's URL ineffective"
+    );
+    assert_eq!(std::fs::read(&limited_path).unwrap(), bytes);
+    limited.codex_source.as_mut().unwrap().target_unconfirmed = true;
+    let provisional = native::read(&limited, None).unwrap();
+    assert_eq!(
+        provisional.configuration.base_url(),
+        "https://after.example"
+    );
+    assert!(
+        native_edit::write(
+            &limited,
+            &provisional,
+            &desired,
+            &[address_edit],
+            &ApiKeyChange::Keep,
+            None
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("写入目标尚未确认")
+    );
+    assert_eq!(
+        std::fs::read(&limited_path).unwrap(),
+        bytes,
+        "an existing default file is not evidence of the wrapper's write target"
+    );
+
     // A removed legacy selector must not redirect a modern plain launch's editor.
     let mut plain = context.clone();
     plain.directory = root.join("plain-launch-legacy-content");
@@ -2347,7 +2467,7 @@ root=pathlib.Path(os.environ['CODEX_HOME'])/'actual'
 for line in sys.stdin:
  q=json.loads(line)
  if q['method']=='initialize': print(json.dumps({'id':q['id'],'result':{}}),flush=True)
- if q['method']=='config/read': print(json.dumps({'id':q['id'],'result':{'config':{},'layers':[{'name':{'type':'user','file':str(root/'config.toml'),'profile':None}}]}}),flush=True)
+ if q['method']=='config/read': print(json.dumps({'id':q['id'],'result':{'config':{'model_provider':'relay'},'origins':{'model':{'name':{'type':'sessionFlags'}},'model_provider':{'name':{'type':'sessionFlags'}}},'layers':[{'name':{'type':'user','file':str(root/'config.toml'),'profile':None}}]}}),flush=True)
 "##).unwrap();
         std::fs::set_permissions(&source_wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut via_wrapper = context.clone();
@@ -2358,6 +2478,14 @@ for line in sys.stdin:
         via_wrapper.codex_source = codex_source::resolve(&via_wrapper);
         let found = native::read(&via_wrapper, None).unwrap();
         assert_eq!(found.configuration.base_url(), "https://actual.example");
+        assert!(
+            found
+                .observation
+                .conflict
+                .as_deref()
+                .unwrap()
+                .contains("默认模型")
+        );
         assert_eq!(
             via_wrapper.path(),
             via_wrapper.directory.join("actual/config.toml")

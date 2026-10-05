@@ -86,7 +86,14 @@ impl NativeContext {
             kind,
             directory,
             artifact_root: super::storage_root(database, kind)?,
-            launcher: configuration.program_path.clone(),
+            launcher: configuration.program_path.clone().or_else(|| {
+                #[cfg(not(test))]
+                if kind == AdapterKind::CodexCli {
+                    return crate::runtime_discovery::resolve_active_command_path("codex")
+                        .map(|p| p.to_string_lossy().into_owned());
+                }
+                None
+            }),
             codex_source: None,
             environment,
         };
@@ -925,20 +932,30 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
         credential,
         observation: ConnectionObservation {
             initial_mode,
-            login_status: login_status.into(),
-            conflict: if context
+            login_status: if context
                 .codex_source
                 .as_ref()
-                .is_some_and(|s| s.rejected_selector)
-                && evidence.pointer("/config/profile").is_some()
+                .is_some_and(|s| s.target_unconfirmed)
             {
-                Some(
+                "unknown".into()
+            } else {
+                login_status.into()
+            },
+            conflict: super::codex_source::observation(context).or_else(|| {
+                if context
+                    .codex_source
+                    .as_ref()
+                    .is_some_and(|s| s.rejected_selector)
+                    && evidence.pointer("/config/profile").is_some()
+                {
+                    Some(
                     "原生配置包含已停用的 profile 选择字段；保存连接时会移除，其他旧配置内容保留。"
                         .into(),
                 )
-            } else {
-                None
-            },
+                } else {
+                    None
+                }
+            }),
             login_command: context.login_command(None),
         },
         revision,

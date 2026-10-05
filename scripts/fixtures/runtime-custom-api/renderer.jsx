@@ -18,6 +18,11 @@ const client={platform:'darwin',selectRuntimeExecutable:async()=>null,request:as
   if(state.failure===method){state.failure=null;throw Error('隔离测试：读取或保存失败，草稿保留。')}
   const saved=state.startup[params.runtimeKind]
   if(method==='runtime.startup.get')return clone(saved)
+  if(method==='runtime.startup.observe'){
+    if(state.holdObservation) await new Promise(resolve=>{state.releaseObservation=resolve})
+    if(state.observationFailure) throw Error('optional native observation unavailable')
+    return clone(state.observed??saved)
+  }
   if(method==='runtime.startup.save'){
     let current=editableSnapshot(saved.configuration);current.credentialVersion=saved.credential.version;current.nativeRevision=saved.nativeRevision
     const conflicts=params.edits.filter(edit=>JSON.stringify(snapshotValue(current,edit.path))!==JSON.stringify(edit.before)&&JSON.stringify(snapshotValue(current,edit.path))!==JSON.stringify(edit.after)).map(edit=>({...edit,current:snapshotValue(current,edit.path)}))

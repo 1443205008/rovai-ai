@@ -91,6 +91,14 @@ impl Core {
                         context.login_command(settings.configuration.program_path.as_deref());
                 }
                 drop(database);
+                Ok(serde_json::to_value(runtime_startup::public(settings))?)
+            }
+            // A separate, optional read after the local form is already usable.
+            // No Save path calls this; its failure is never a failed write.
+            "runtime.startup.observe" => {
+                let params: KindParams = serde_json::from_value(params)?;
+                let mut settings =
+                    runtime_startup::load(&*self.database.lock().await, params.runtime_kind)?;
                 self.refresh_startup_source(&mut settings).await;
                 self.refresh_startup_account(&mut settings).await;
                 Ok(serde_json::to_value(runtime_startup::public(settings))?)
@@ -143,26 +151,6 @@ impl Core {
                     }
                     _ => anyhow::bail!("启动设置保存格式无效。"),
                 };
-                if kind == AdapterKind::CodexCli
-                    && edits.iter().any(|edit| {
-                        edit.path.first().is_some_and(|field| {
-                            !matches!(field.as_str(), "programPath" | "environment")
-                        })
-                    })
-                {
-                    let mut current = runtime_startup::load(&*self.database.lock().await, kind)?;
-                    let context = {
-                        let database = self.database.lock().await;
-                        rovai_core::runtime_custom_api::native::NativeContext::resolve(
-                            kind,
-                            &current.configuration,
-                            database.path(),
-                        )?
-                    };
-                    if rovai_core::runtime_custom_api::codex_source::needs_refresh(&context) {
-                        self.refresh_startup_source(&mut current).await;
-                    }
-                }
                 let prepared = runtime_startup::prepare_save(
                     &*self.database.lock().await,
                     kind,
@@ -298,6 +286,13 @@ impl Core {
         let Ok(context) = context else {
             return;
         };
+        if context
+            .codex_source
+            .as_ref()
+            .is_some_and(|s| !s.target_unconfirmed && s.read_error.is_none())
+        {
+            return; // Already confirmed for this exact entrypoint/context.
+        }
         let search = self
             .runtime_search_environment
             .read()
@@ -341,6 +336,13 @@ impl Core {
             return;
         }
         let context = snapshot.context.clone();
+        if context
+            .codex_source
+            .as_ref()
+            .is_some_and(|s| s.target_unconfirmed)
+        {
+            return;
+        }
         let kind = settings.runtime_kind;
         let search = self
             .runtime_search_environment

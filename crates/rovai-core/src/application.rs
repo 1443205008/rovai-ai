@@ -809,6 +809,7 @@ fn request_runs_outside_main_queue(method: &str) -> bool {
             | "runtime.product.ensure"
             | "runtime.product.check"
             | "runtime.startup.inspect"
+            | "runtime.startup.observe"
             | "runtime.startup.check"
             | "runtime.startup.save"
             | "runtime.networkRecovery.wake"
@@ -10806,6 +10807,7 @@ impl Core {
                 ))
             }
             method @ ("runtime.startup.get"
+            | "runtime.startup.observe"
             | "runtime.startup.inspect"
             | "runtime.startup.check"
             | "runtime.startup.save") => {
@@ -28435,6 +28437,7 @@ done
         ));
         assert!(request_runs_outside_main_queue("runtime.product.ensure"));
         assert!(request_runs_outside_main_queue("runtime.product.check"));
+        assert!(request_runs_outside_main_queue("runtime.startup.observe"));
         assert!(!request_runs_outside_main_queue("camps.snapshot"));
         assert!(!request_runs_outside_main_queue("camps.enter"));
         assert!(!request_runs_outside_main_queue("camps.open"));

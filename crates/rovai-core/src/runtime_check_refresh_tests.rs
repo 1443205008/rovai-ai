@@ -416,6 +416,79 @@ async fn fresh_formal_and_draft_checks_preserve_program_selection_and_private_st
         .await
         .unwrap_err();
     assert!(!format!("{bad:#}").contains("private-rpc-test-key"));
+    // A stalled optional native process cannot own the settings page's response.
+    let stalled = fixture.program("settings-only", "0.159.2", true);
+    let native_home = fixture.root.join("settings-native");
+    std::fs::create_dir_all(&native_home).unwrap();
+    std::fs::write(native_home.join("config.toml"), "model_provider='relay'\nmodel='local-model'\n[model_providers.relay]\nbase_url='https://local.example'\nexperimental_bearer_token='local-fake-key'\n").unwrap();
+    let mut startup = configuration(Some(&stalled), "local", stalled.parent().unwrap());
+    startup.environment.push(RuntimeEnvironmentVariable {
+        name: "CODEX_HOME".into(),
+        value: native_home.to_string_lossy().into_owned(),
+    });
+    {
+        let mut db = fixture.core.database.lock().await;
+        let before = rovai_core::runtime_startup::load(&db, KIND).unwrap();
+        rovai_core::runtime_startup::save(&mut db, KIND, before.revision, startup, 100).unwrap();
+    }
+    let local = tokio::time::timeout(Duration::from_secs(2), fixture.settings())
+        .await
+        .expect("local settings must not await the stalled auxiliary child");
+    assert_eq!(
+        local["configuration"]["customApi"]["baseUrl"],
+        "https://local.example"
+    );
+    assert!(
+        !stalled.parent().unwrap().join("environment.txt").exists(),
+        "get must not launch a native process"
+    );
+    let observer = {
+        let core = fixture.core.clone();
+        tokio::spawn(async move {
+            core.handle_runtime_startup("runtime.startup.observe", json!({"runtimeKind":KIND}))
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !fixture.root.join("probe-started").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // The auxiliary child is held at a file barrier while both operations finish.
+    let local = tokio::time::timeout(Duration::from_secs(2), fixture.settings())
+        .await
+        .unwrap();
+    assert_eq!(
+        local["configuration"]["customApi"]["baseUrl"],
+        "https://local.example"
+    );
+    let saved = tokio::time::timeout(Duration::from_secs(2), fixture.core.handle_runtime_startup("runtime.startup.save", json!({
+        "runtimeKind":KIND,"edits":[{"path":["environment","VISIBLE_SETTING"],"before":null,"after":"on","label":""}]
+    }))).await.unwrap().unwrap();
+    assert!(
+        saved["configuration"]["environment"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["name"] == "VISIBLE_SETTING")
+    );
+    let original = std::fs::read(native_home.join("config.toml")).unwrap();
+    let error = tokio::time::timeout(Duration::from_secs(2), fixture.core.handle_runtime_startup("runtime.startup.save", json!({
+        "runtimeKind":KIND,"edits":[{"path":["baseUrl"],"before":"https://local.example","after":"https://never-write.example","label":""}]
+    }))).await.unwrap().unwrap_err();
+    assert!(error.to_string().contains("写入目标尚未确认"));
+    assert_eq!(
+        std::fs::read(native_home.join("config.toml")).unwrap(),
+        original
+    );
+    std::fs::write(fixture.root.join("probe-release"), "release").unwrap();
+    let observed = observer.await.unwrap().unwrap();
+    assert!(
+        observed["connectionReadError"].is_null(),
+        "failed supplement never clears the local form"
+    );
     fixture.close().await;
 }
 

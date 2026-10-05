@@ -1,4 +1,4 @@
-//! Local launch metadata for the native editor. Only file references are cached;
+//! Local launch metadata for the native editor. Only source metadata is cached;
 //! effective values and credentials are always re-read from their native sources.
 use super::native::{self, NativeContext};
 use anyhow::Result;
@@ -22,7 +22,11 @@ pub struct Source {
     #[serde(default)]
     pub launcher_identity: String,
     #[serde(default)]
-    pub override_source: Option<String>,
+    pub field_overrides: BTreeMap<String, String>,
+    #[serde(default)]
+    pub selected_provider: Option<String>,
+    #[serde(default)]
+    pub target_unconfirmed: bool,
     #[serde(default)]
     pub read_error: Option<String>,
 }
@@ -48,26 +52,21 @@ fn key(context: &NativeContext) -> String {
     .unwrap_or_default()
 }
 pub fn resolve(context: &NativeContext) -> Option<Source> {
-    SOURCES
+    let cached = SOURCES
         .get_or_init(Default::default)
         .lock()
         .ok()?
         .get(&key(context))
         .filter(|entry| fingerprint(&entry.executable) == entry.fingerprint)
-        .map(|entry| entry.source.clone())
-}
-/// Re-observe only a changed/missing launch source. Ordinary saves use captured
-/// references and fresh file content, without a config or account RPC.
-pub fn needs_refresh(context: &NativeContext) -> bool {
-    if let Ok(sources) = SOURCES.get_or_init(Default::default).lock() {
-        if let Some(entry) = sources.get(&key(context)) {
-            return fingerprint(&entry.executable) != entry.fingerprint;
-        }
-    }
-    needs_read(
-        Path::new(context.launcher.as_deref().unwrap_or("")),
-        context,
-    )
+        .map(|entry| entry.source.clone());
+    cached.or_else(|| {
+        let executable = Path::new(context.launcher.as_deref()?);
+        (needs_read(executable, context) || !executable.is_file()).then(|| Source {
+            base: context.directory.join("config.toml"),
+            target_unconfirmed: true,
+            ..Source::default()
+        })
+    })
 }
 fn remember(context: &NativeContext, executable: &Path, source: Source) {
     if let Ok(mut sources) = SOURCES.get_or_init(Default::default).lock() {
@@ -85,14 +84,24 @@ fn remember(context: &NativeContext, executable: &Path, source: Source) {
     }
 }
 pub fn needs_read(executable: &Path, context: &NativeContext) -> bool {
-    let mut prefix = [0; 2];
-    let wrapper = std::fs::File::open(executable)
-        .ok()
-        .is_some_and(|mut file| file.read_exact(&mut prefix).is_ok() && prefix == *b"#!");
-    wrapper
+    is_wrapper(executable)
         || native::read_toml(&context.directory.join("config.toml"))
             .ok()
             .is_some_and(|doc| doc.get("profile").is_some())
+}
+fn is_wrapper(executable: &Path) -> bool {
+    if executable.extension().is_some_and(|ext| {
+        matches!(
+            ext.to_string_lossy().to_ascii_lowercase().as_str(),
+            "cmd" | "bat" | "ps1"
+        )
+    }) {
+        return true;
+    }
+    let mut prefix = [0; 2];
+    std::fs::File::open(executable)
+        .ok()
+        .is_some_and(|mut file| file.read_exact(&mut prefix).is_ok() && prefix == *b"#!")
 }
 /// Optional local metadata read, never a Save/execute gate or an account check.
 /// Current app-server has no --profile argument. A wrapper may change CODEX_HOME;
@@ -100,10 +109,13 @@ pub fn needs_read(executable: &Path, context: &NativeContext) -> bool {
 pub async fn refresh(executable: &Path, context: &NativeContext, command_context: &NativeContext) {
     let mut source = context.codex_source.clone().unwrap_or_else(|| Source {
         base: context.directory.join("config.toml"),
+        target_unconfirmed: is_wrapper(executable),
         ..Source::default()
     });
     source.launcher_identity = format!("{}:{}", executable.display(), fingerprint(executable));
     if !needs_read(executable, context) {
+        source.target_unconfirmed = false;
+        source.read_error = None;
         remember(context, executable, source);
         return;
     }
@@ -132,6 +144,11 @@ pub async fn refresh(executable: &Path, context: &NativeContext, command_context
             }) {
                 source.legacy = major == 0 && minor < 134;
                 source.rejected_selector = !source.legacy;
+                // A direct binary's directory is explicit even if an obsolete
+                // selector prevents config/read. A wrapper still needs a User source.
+                if !is_wrapper(executable) {
+                    source.target_unconfirmed = false;
+                }
             }
         }
     }
@@ -144,32 +161,51 @@ pub async fn refresh(executable: &Path, context: &NativeContext, command_context
     .await;
     if let Ok(value) = &native_read {
         source.read_error = None;
-        source.override_source = None;
+        source.field_overrides.clear();
+        source.selected_provider = value["config"]["model_provider"]
+            .as_str()
+            .map(str::to_owned);
         if let Some(origins) = value["origins"].as_object() {
-            source.override_source = origins.iter().find_map(|(field, origin)| {
-                let selected = value["config"]["model_provider"]
-                    .as_str()
-                    .unwrap_or("openai");
-                let relevant = matches!(
-                    field.as_str(),
-                    "model"
-                        | "model_provider"
-                        | "openai_base_url"
-                        | "model_catalog_json"
-                        | "forced_login_method"
-                ) || field.starts_with(&format!("model_providers.{selected}."));
-                let source = origin["name"]["type"].as_str().unwrap_or_default();
-                (relevant
-                    && matches!(
-                        source,
-                        "sessionFlags"
-                            | "mdm"
-                            | "enterpriseManaged"
-                            | "legacyManagedConfigTomlFromFile"
-                            | "legacyManagedConfigTomlFromMdm"
-                    ))
-                .then(|| format!("{field}（{source}）"))
-            });
+            source.field_overrides = origins
+                .iter()
+                .filter_map(|(field, origin)| {
+                    let selected = value["config"]["model_provider"]
+                        .as_str()
+                        .unwrap_or("openai");
+                    let relevant = matches!(
+                        field.as_str(),
+                        "model"
+                            | "model_provider"
+                            | "openai_base_url"
+                            | "model_catalog_json"
+                            | "forced_login_method"
+                    ) || field
+                        .strip_prefix(&format!("model_providers.{selected}."))
+                        .is_some_and(|name| {
+                            matches!(
+                                name,
+                                "base_url"
+                                    | "env_key"
+                                    | "experimental_bearer_token"
+                                    | "requires_openai_auth"
+                                    | "auth"
+                                    | "aws"
+                            ) || name.starts_with("auth.")
+                                || name.starts_with("aws.")
+                        });
+                    let source = origin["name"]["type"].as_str().unwrap_or_default();
+                    (relevant
+                        && matches!(
+                            source,
+                            "sessionFlags"
+                                | "mdm"
+                                | "enterpriseManaged"
+                                | "legacyManagedConfigTomlFromFile"
+                                | "legacyManagedConfigTomlFromMdm"
+                        ))
+                    .then(|| (field.clone(), source.to_owned()))
+                })
+                .collect();
         }
         let files: Vec<_> = value["layers"]
             .as_array()
@@ -182,6 +218,9 @@ pub async fn refresh(executable: &Path, context: &NativeContext, command_context
                     .then(|| (file, layer["name"]["profile"].as_str().map(str::to_owned)))
             })
             .collect();
+        if !files.is_empty() {
+            source.target_unconfirmed = false;
+        }
         for (file, profile) in &files {
             if profile.is_none() {
                 source.base = file.clone();
@@ -195,29 +234,12 @@ pub async fn refresh(executable: &Path, context: &NativeContext, command_context
             .map(|(file, _)| file)
             .next_back();
     }
-    if native_read.is_err() && context.codex_source.is_none() && !source.base.exists() {
-        source.read_error = Some("所选启动入口未返回原生配置来源，尚不能确定可写文件。请检查该入口的配置错误后重试；其他启动设置仍可编辑。".into());
+    if native_read.is_err() {
+        source.read_error = Some("原生来源暂未确认，已读取的配置仍保留。".into());
     }
     remember(context, executable, source);
 }
 pub fn read(context: &NativeContext) -> Result<Value> {
-    if let Some(error) = context
-        .codex_source
-        .as_ref()
-        .and_then(|s| s.read_error.as_ref())
-    {
-        anyhow::bail!("{error}");
-    }
-
-    if let Some(source) = context
-        .codex_source
-        .as_ref()
-        .and_then(|s| s.override_source.as_ref())
-    {
-        anyhow::bail!(
-            "原生启动覆盖或管理策略控制 {source}，修改个人文件不会生效；请在该启动入口或管理来源调整。其他启动设置仍可编辑。"
-        );
-    }
     let base = context
         .codex_source
         .as_ref()
@@ -277,4 +299,107 @@ pub fn field_file(context: &NativeContext, keys: &[&str]) -> PathBuf {
         return source.base.clone();
     }
     context.path()
+}
+
+fn field_label(field: &str) -> &str {
+    match field {
+        "model" => "默认模型",
+        "model_catalog_json" => "模型列表",
+        "model_provider" | "forced_login_method" | "forced_chatgpt_workspace_id" => "连接方式",
+        "openai_base_url" => "接口地址",
+        _ if field.ends_with(".base_url") => "接口地址",
+        _ => "API 凭据或连接参数",
+    }
+}
+fn origin_label(origin: &str) -> &str {
+    if origin == "sessionFlags" {
+        "启动参数"
+    } else {
+        "管理策略"
+    }
+}
+pub fn observation(context: &NativeContext) -> Option<String> {
+    let source = context.codex_source.as_ref()?;
+    if source.target_unconfirmed {
+        return Some("当前显示本地配置；实际写入目标尚未确认，连接修改暂不写入。程序路径和普通环境变量仍可保存。".into());
+    }
+    let mut notes = source
+        .field_overrides
+        .iter()
+        .map(|(field, origin)| {
+            format!(
+                "{}由{}固定（{field}），相关修改不能在此生效",
+                field_label(field),
+                origin_label(origin)
+            )
+        })
+        .collect::<Vec<_>>();
+    if let Some(error) = &source.read_error {
+        notes.push(error.clone());
+    }
+    (!notes.is_empty()).then(|| notes.join("；"))
+}
+/// Restrictions apply to the fields this save actually writes. They never gate
+/// reading the local file or editing an unrelated field.
+pub fn validate_edits(
+    context: &NativeContext,
+    current: &native::NativeRead,
+    desired: &super::CustomApiConfiguration,
+    edits: &[super::FieldEdit],
+) -> Result<()> {
+    let Some(source) = &context.codex_source else {
+        return Ok(());
+    };
+    let changed = |field: &str| {
+        edits
+            .iter()
+            .any(|e| e.path.first().is_some_and(|p| p == field))
+    };
+    anyhow::ensure!(
+        !source.target_unconfirmed,
+        "所选入口的原生写入目标尚未确认，连接修改未写入，草稿已保留。来源确认后可重试保存；程序路径和普通环境变量仍可单独保存。"
+    );
+    for (field, origin) in &source.field_overrides {
+        let mode = changed("mode");
+        let credentials = changed("credentialVersion");
+        let model_changed = changed("defaultRowId")
+            || (changed("codexModels")
+                && match (&current.configuration, desired) {
+                    (
+                        super::CustomApiConfiguration::Codex {
+                            default_model: a, ..
+                        },
+                        super::CustomApiConfiguration::Codex {
+                            default_model: b, ..
+                        },
+                    ) => a != b,
+                    _ => false,
+                });
+        let official = mode && desired.mode() == Some(super::ConnectionMode::OfficialLogin);
+        let blocked = match field.as_str() {
+            "model" => model_changed || official,
+            "model_catalog_json" => changed("codexModels") || official,
+            // Editing an existing provider's URL or static Key keeps its ID.
+            // This is safe only when native metadata confirms that same selection.
+            "model_provider" => {
+                (source.selected_provider.as_deref() != Some(current.provider_id.as_str())
+                    && (mode || credentials || changed("baseUrl")))
+                    || (official && current.provider_id != "openai")
+                    || (!official
+                        && credentials
+                        && (current.provider_id == "openai" || source.profile.is_some()))
+            }
+            "forced_login_method" | "forced_chatgpt_workspace_id" => mode || credentials,
+            "openai_base_url" => changed("baseUrl") || official,
+            _ if field.ends_with(".base_url") => changed("baseUrl"),
+            _ => credentials,
+        };
+        anyhow::ensure!(
+            !blocked,
+            "{}由{}固定（{field}），本次相关修改无法生效；其他字段仍可编辑。草稿已保留。",
+            field_label(field),
+            origin_label(origin)
+        );
+    }
+    Ok(())
 }
