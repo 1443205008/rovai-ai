@@ -224,7 +224,7 @@ function renderOnboarding(
 
 function snapshot(step: InProgress['step']): InProgress {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     status: 'in_progress',
     step,
     selectedMemberRole: step === 'welcome' ? null : 'luoke',
