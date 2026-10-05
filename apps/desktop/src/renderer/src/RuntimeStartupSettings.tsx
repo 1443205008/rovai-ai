@@ -6,7 +6,7 @@ import type { AdapterKind, HealthStatus, RuntimeApiKeyChange, RuntimeStartupInsp
 import { configurationFromSnapshot, conflictValue, editableSnapshot, initialConfiguration, withSnapshotValue, type FieldConflict, type RuntimeStartupConfiguration, type RuntimeStartupSettings as StartupSettings } from './runtime-connection-editor'
 import { AppDialogContent, AppDialogFooter, AppDialogHeader, DialogControlIcon } from './AppDialog'
 import { adapterLabel, PRODUCT_RUNTIME_LOGOS } from './runtime-products'
-import { customApiError, emptyCustomApi, nativeConnectionChange, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey, startupEdits, startupSubmission } from './runtime-startup-draft'
+import { customApiError, draftAfterSourceObservation, emptyCustomApi, nativeConnectionChange, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey, startupEdits, startupSourceKey, startupSubmission } from './runtime-startup-draft'
 import { RuntimeCustomApiFields } from './RuntimeCustomApiFields'
 import { readErrorMessage } from './error-message'
 import { UiText, uiAttribute } from './interface-language'
@@ -35,14 +35,18 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   const [inspection, setInspection] = useState<RuntimeStartupInspection | null>(null)
   const [confirmAction, setConfirmAction] = useState<'back' | null>(null)
   const [loadAttempt, setLoadAttempt] = useState(0)
+  const [sourceObservation, setSourceObservation] = useState<{ baseline: StartupSettings; observed: StartupSettings; selection: string; handoff: boolean; sequence: number; nativeSave: number } | null>(null)
+  const observedSelection = useRef<string | null>(null)
+  const nativeSaveSequence = useRef(0)
   const sequence = useRef(0)
   const loaded = useRef(false)
-  const state = useRef({ draft, busy, dirty: false })
+  const state = useRef({ draft, busy, dirty: false, saved })
   const id = useId()
   const dirty = saved !== null && (apiKey.action !== 'keep' || runtimeStartupKey(draft) !== runtimeStartupKey(initialConfiguration(saved)))
   const customApi = draft.customApi ?? emptyCustomApi(runtimeKind)
   const canSave = dirty && conflicts.length === 0
-  state.current = { draft, busy, dirty }
+  state.current = { draft, busy, dirty, saved }
+  const sourceSelection = saved ? startupSourceKey(saved.configuration) : null
   const item = health?.runtimeAvailability.find((candidate) => candidate.runtimeKind === runtimeKind)
   const initialPath = item?.discovery.executablePath ?? null
   const label = adapterLabel(runtimeKind)
@@ -67,19 +71,48 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     void client.request<StartupSettings>('runtime.startup.get', { runtimeKind }).then((settings) => {
       if (!active) return
       applySaved(settings); loaded.current = true
-      // One optional supplement after the local form is ready. Never join this
-      // promise to initial loading or saving, and never replace an edited draft.
-      if (runtimeKind === 'codex-cli') {
-        const observationSequence = sequence.current
-        void client.request<StartupSettings>('runtime.startup.observe', { runtimeKind }).then((observed) => {
-          if (!active || sequence.current !== observationSequence || state.current.dirty || state.current.busy === 'save') return
-          if (!observed.connectionReadError) applySaved(observed)
-        }).catch(() => { /* Optional state remains unconfirmed; local editing is available. */ })
-      }
     }).catch((nextError) => { if (active) setLoadError(readErrorMessage(nextError)) })
       .finally(() => { if (active) setBusy(null) })
     return () => { active = false; if (!state.current.dirty) loaded.current = false }
   }, [client, runtimeKind, loadAttempt])
+
+  useEffect(() => {
+    const baseline = state.current.saved
+    if (runtimeKind !== 'codex-cli' || !baseline || sourceSelection === null) return
+    let active = true
+    const handoff = observedSelection.current !== null && observedSelection.current !== sourceSelection
+    observedSelection.current = sourceSelection
+    const observationSequence = sequence.current
+    const nativeSave = nativeSaveSequence.current
+    setSourceObservation(null)
+    // One supplement per saved source selection, never per Save or keystroke.
+    void client.request<StartupSettings>('runtime.startup.observe', { runtimeKind }).then((observed) => {
+      if (active) setSourceObservation({ baseline, observed, selection: sourceSelection, handoff, sequence: observationSequence, nativeSave })
+    }).catch(() => { /* The local form and any draft remain usable. */ })
+    return () => { active = false }
+  }, [client, runtimeKind, sourceSelection, loadAttempt])
+
+  useEffect(() => {
+    if (!sourceObservation || busy !== null) return
+    setSourceObservation(null)
+    const current = state.current
+    const { baseline, observed, selection, handoff } = sourceObservation
+    if (!current.saved || observed.connectionReadError || conflicts.length
+      || nativeSaveSequence.current !== sourceObservation.nativeSave
+      || startupSourceKey(current.saved.configuration) !== selection
+      || startupSourceKey(observed.configuration) !== selection
+      || current.saved.nativeRevision !== baseline.nativeRevision) return
+    if (!handoff && (current.dirty || sequence.current !== sourceObservation.sequence)) return
+    // An ordinary save may finish while this read is pending. Keep its revision
+    // and startup fields; only the confirmed native projection is supplemental.
+    const updated = { ...observed, revision: current.saved.revision, nativeWritten: current.saved.nativeWritten, reconnectRequired: current.saved.reconnectRequired,
+      configuration: { ...observed.configuration, programPath: current.saved.configuration.programPath, environment: current.saved.configuration.environment } }
+    if (handoff && current.dirty) {
+      setDraft(draftAfterSourceObservation(current.saved, current.draft, updated, apiKey))
+      setSaved(updated)
+      // Keep Key input, row identity and focus within this same editing session.
+    } else applySaved(updated)
+  }, [sourceObservation, busy])
 
   useEffect(() => {
     return () => { sequence.current += 1 }
@@ -110,7 +143,8 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     const requireCredential = saved?.configuration.customApi?.mode === 'official_login' && Boolean(connectionEdits?.some(edit => ['mode', 'baseUrl', 'credentialVersion'].includes(edit.path[0])))
     const addressEdited = Boolean(connectionEdits?.some(edit => ['baseUrl', 'mode', 'credentialVersion'].includes(edit.path[0])))
     const keepCloudRoute = saved?.credential?.source === 'native_cloud' && apiKey.action === 'keep' && !connectionEdits?.some(edit => edit.path[0] === 'baseUrl')
-    const apiError = connectionChanged ? customApiError(next, apiKey, saved?.credential ?? undefined, requireModelList, requireCredential, !keepCloudRoute && addressEdited) : null
+    const selectingSource = runtimeKind === 'codex-cli' && saved && startupSourceKey(normalizedStartupConfiguration(next)) !== startupSourceKey(saved.configuration)
+    const apiError = connectionChanged && !selectingSource ? customApiError(next, apiKey, saved?.credential ?? undefined, requireModelList, requireCredential, !keepCloudRoute && addressEdited) : null
     setError(apiError ? uiAttribute(apiError) : null)
     return Object.keys(nextErrors).length === 0 && !apiError
   }
@@ -157,6 +191,13 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     try {
       const edits = startupEdits(saved, next, apiKey)
       const submission = startupSubmission(saved, next, apiKey)
+      const selectingSource = runtimeKind === 'codex-cli' && startupSourceKey(next) !== startupSourceKey(saved.configuration)
+      if (selectingSource) {
+        // Select the new entrypoint/home first. Its API edits remain in memory
+        // until that source can be confirmed, never written to the old file.
+        submission.edits = submission.edits.filter(edit => ['programPath', 'environment'].includes(edit.path[0]))
+        submission.apiKey = { action: 'keep' }
+      }
       const settings = await client.request<StartupSettings | { status: 'conflict'; latest: StartupSettings; conflicts: FieldConflict[] }>('runtime.startup.save', {
         runtimeKind, ...submission
       })
@@ -174,7 +215,15 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
         return
       }
       if ('status' in settings) return
-      applySaved(settings)
+      // Label-only native saves intentionally keep the connection digest stable.
+      // They still supersede any earlier auxiliary response.
+      if (settings.nativeWritten) nativeSaveSequence.current += 1
+      if (selectingSource && edits.some(edit => !['programPath', 'environment'].includes(edit.path[0]))) {
+        const pending = draftAfterSourceObservation(saved, draft, settings, apiKey)
+        setSaved(settings)
+        setDraft({ ...pending, programPath: settings.configuration.programPath, environment: settings.configuration.environment })
+        setRowIds(settings.configuration.environment.map(variable => rowIds[draft.environment.findIndex(row => row.name === variable.name)] ?? newCommandId()))
+      } else applySaved(settings)
       try { await onReload() } catch { setError(uiAttribute('已保存，列表刷新失败。')) }
     } catch (nextError) { setError(readErrorMessage(nextError)) }
     finally { setBusy(null) }

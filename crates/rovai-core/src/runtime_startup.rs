@@ -682,6 +682,14 @@ pub fn commit_save(
             .custom_api
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("缺少连接配置。"))?;
+        // A changed launcher may report another target even if its provisional
+        // default path happens to equal the old one. Do not write on that guess.
+        crate::runtime_custom_api::codex_source::validate_edits(
+            &future_context,
+            &read,
+            desired,
+            &prepared.edits,
+        )?;
         native_rollback = native_edit::write_with_saved_environment(
             &context,
             &read,

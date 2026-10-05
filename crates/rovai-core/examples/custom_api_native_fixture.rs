@@ -97,6 +97,21 @@ async fn main() -> Result<()> {
     if kind == AdapterKind::CodexCli {
         runtime_custom_api::codex_source::refresh(executable, &context, &context).await;
         context.codex_source = runtime_custom_api::codex_source::resolve(&context);
+        if root.join("source-cache-env-edit-fixture").is_file() {
+            let confirmed = context.path();
+            context
+                .environment
+                .insert("LOG_LEVEL".into(), "debug".into());
+            context.codex_source = runtime_custom_api::codex_source::resolve(&context);
+            ensure!(
+                context
+                    .codex_source
+                    .as_ref()
+                    .is_some_and(|s| !s.target_unconfirmed)
+                    && context.path() == confirmed,
+                "ordinary environment edit lost the confirmed native target"
+            );
+        }
     }
     if runtime_custom_api::codex_native::needs_observation(&context) {
         runtime_custom_api::codex_native::refresh(executable, &context).await;

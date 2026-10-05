@@ -1,5 +1,32 @@
 import type { AdapterKind, RuntimeApiKeyChange } from '@contracts'
-import { editableSnapshot, editedFields, initialConfiguration, reusableCredential, supportsOfficialLogin, usesCustomApi, type FieldEdit, type NativeCredential, type RuntimeCustomApiConfiguration, type RuntimeStartupConfiguration, type RuntimeStartupSettings } from './runtime-connection-editor'
+import { configurationFromSnapshot, editableSnapshot, editedFields, initialConfiguration, reusableCredential, supportsOfficialLogin, usesCustomApi, withSnapshotValue, type FieldEdit, type NativeCredential, type RuntimeCustomApiConfiguration, type RuntimeStartupConfiguration, type RuntimeStartupSettings } from './runtime-connection-editor'
+
+// Only a saved launch/directory selection schedules another source observation.
+// Input edits and ordinary environment saves do not query native processes.
+export function startupSourceKey(configuration: RuntimeStartupConfiguration): string {
+  const selectors = new Set(['CODEX_HOME', 'HOME', 'USERPROFILE', ...(configuration.programPath ? [] : ['PATH'])])
+  return JSON.stringify([configuration.programPath, configuration.environment.filter(entry => selectors.has(entry.name.toUpperCase())).sort((a, b) => a.name.localeCompare(b.name))])
+}
+
+// A newly selected source may finish resolving while the user is already typing.
+// Rebase only their edits; never treat all values of the provisional file as intent.
+export function draftAfterSourceObservation(saved: RuntimeStartupSettings, draft: RuntimeStartupConfiguration, observed: RuntimeStartupSettings, key: RuntimeApiKeyChange): RuntimeStartupConfiguration {
+  const current = editableSnapshot(draft)
+  let merged = editableSnapshot(initialConfiguration(observed))
+  const edits = editedFields(editableSnapshot(initialConfiguration(saved)), current)
+  for (const edit of edits) {
+    if (edit.path[0] === 'codexModels' && edit.path.length > 2 && !merged.codexModels[edit.path[1]]) {
+      merged = withSnapshotValue(merged, ['codexModels', edit.path[1]], current.codexModels[edit.path[1]])
+    }
+    if (edit.path[0] === 'defaultRowId' && edit.after && !merged.codexModels[edit.after as string]) {
+      merged = withSnapshotValue(merged, ['codexModels', edit.after as string], current.codexModels[edit.after as string])
+    }
+    merged = withSnapshotValue(merged, edit.path, edit.after)
+  }
+  // The current editing session owns its selected mode and incomplete env rows.
+  if (key.action !== 'keep' || edits.some(edit => !['programPath', 'environment'].includes(edit.path[0]))) merged.mode = current.mode
+  return { ...configurationFromSnapshot(initialConfiguration(observed), merged), programPath: draft.programPath, environment: draft.environment }
+}
 
 export function normalizedStartupConfiguration(draft: RuntimeStartupConfiguration): RuntimeStartupConfiguration {
   return {

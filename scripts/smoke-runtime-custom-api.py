@@ -579,14 +579,20 @@ def run_managed_auth_switch(executable, helper, root, store):
             (home / "auth.json").unlink(missing_ok=True)
 
 
-def run_wrapper_source(executable, helper, root, base):
+def run_wrapper_source(executable, helper, root, base, node_entry=False):
     actual = root / "selected-native-home"
     actual.mkdir(parents=True)
     path = actual / "config.toml"
     path.write_text('model="before"\nmodel_provider="relay"\n[model_providers.relay]\nname="Fixture"\nwire_api="responses"\nbase_url="http://127.0.0.1:1/old"\nexperimental_bearer_token="old-fixture-key"\nquery_params={wrapper="preserved"}\n')
     wrapper = root / "selected-codex"
-    wrapper.write_text("#!/bin/sh\nexport CODEX_HOME=" + shlex.quote(str(actual)) + "\nexec " + shlex.quote(str(executable)) + ' "$@"\n')
+    if node_entry:
+        wrapper.write_text("#!/usr/bin/env node\nconst {spawnSync}=require('node:child_process');\n"
+                           + "const result=spawnSync(" + json.dumps(str(executable)) + ",process.argv.slice(2),{stdio:'inherit',env:{...process.env,CODEX_HOME:"
+                           + json.dumps(str(actual)) + "}});process.exit(result.status??1);\n")
+    else:
+        wrapper.write_text("#!/bin/sh\nexport CODEX_HOME=" + shlex.quote(str(actual)) + "\nexec " + shlex.quote(str(executable)) + ' "$@"\n')
     wrapper.chmod(0o700)
+    (root / "source-cache-env-edit-fixture").touch()
     config = {"kind":"codex-cli","mode":"custom_api","baseUrl":base + "/wrapper","models":[{"rowId":"wrapper","id":"rovai-wrapper","displayName":"Wrapper model"}],"defaultRowId":"wrapper","defaultModel":"rovai-wrapper"}
     native = Native(helper, wrapper, root, config)
     try:
@@ -606,7 +612,7 @@ def run_wrapper_source(executable, helper, root, base):
         native.rpc("turn/start", {"threadId":session["thread"]["id"],"input":[{"type":"text","text":"Reply OK."}]})
         assert native.wait(lambda f:f.get("method")=="turn/completed")["params"]["turn"]["status"] == "completed"
         assert REQUESTS[boundary:] and all(row["keyMatches"] and row["model"] == "rovai-wrapper" and "/wrapper/responses" in row["path"] for row in REQUESTS[boundary:])
-        return {"runtime":"codex","case":"selected-wrapper-native-source-and-runtime-default","status":"passed"}
+        return {"runtime":"codex","case":"npm-style-node-source-cache" if node_entry else "selected-wrapper-native-source-and-runtime-default","status":"passed"}
     finally:
         native.close()
 
@@ -656,6 +662,9 @@ def main():
                 wrapped = run_wrapper_source(executable.resolve(), helper, args.fixture_root.resolve() / "codex-wrapper-source", "http://127.0.0.1:" + str(server.server_port) + "/custom/prefix")
                 results.append(wrapped)
                 print(json.dumps(wrapped), flush=True)
+                npm_style = run_wrapper_source(executable.resolve(), helper, args.fixture_root.resolve() / "codex-npm-style-source", "http://127.0.0.1:" + str(server.server_port) + "/custom/prefix", node_entry=True)
+                results.append(npm_style)
+                print(json.dumps(npm_style), flush=True)
             if kind == "codex" and args.native_keyring:
                 keyring = run_managed_auth_switch(executable.resolve(), helper, args.fixture_root.resolve() / "codex-keyring", "keyring")
                 results.append(keyring)

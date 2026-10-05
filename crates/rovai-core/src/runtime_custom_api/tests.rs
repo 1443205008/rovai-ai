@@ -939,6 +939,63 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
         "a real provider switch still conflicts"
     );
 
+    // A different shim cannot borrow the old target just because its provisional
+    // config.toml path is the same. Reject the combined write without publishing.
+    {
+        let mut isolated = crate::test_support::seeded_runtime_database_owned();
+        let context = native::NativeContext::resolve(
+            AdapterKind::CodexCli,
+            &RuntimeStartupConfiguration::default(),
+            isolated.path(),
+        )
+        .unwrap();
+        private_storage::atomic_write_private_bytes(&context.path(), b"model_provider='relay'\nmodel='native'\n[model_providers.relay]\nbase_url='https://old.example'\nexperimental_bearer_token='isolated-key'\n").unwrap();
+        let wrapper = context.directory.join("changed-wrapper");
+        std::fs::write(
+            &wrapper,
+            b"#!/usr/bin/env node\n// isolated, never executed\n",
+        )
+        .unwrap();
+        let before = std::fs::read(context.path()).unwrap();
+        let prepared = runtime_startup::prepare_save(
+            &isolated,
+            AdapterKind::CodexCli,
+            vec![
+                FieldEdit {
+                    path: vec!["programPath".into()],
+                    before: Value::Null,
+                    after: json!(wrapper.to_string_lossy()),
+                    label: String::new(),
+                },
+                FieldEdit {
+                    path: vec!["baseUrl".into()],
+                    before: json!("https://old.example"),
+                    after: json!("https://new.example"),
+                    label: String::new(),
+                },
+            ],
+            &ApiKeyChange::Keep,
+        )
+        .unwrap();
+        let error = runtime_startup::commit_save(
+            &mut isolated,
+            AdapterKind::CodexCli,
+            prepared,
+            1,
+            ApiKeyChange::Keep,
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("写入目标尚未确认"));
+        assert_eq!(std::fs::read(context.path()).unwrap(), before);
+        assert!(
+            runtime_startup::load(&isolated, AdapterKind::CodexCli)
+                .unwrap()
+                .configuration
+                .program_path
+                .is_none()
+        );
+    }
     // Optional native observation cannot turn an unreadable source into a new execution gate.
     db.connection().execute(
         "UPDATE runtime_startup_setting SET configuration_json=?1 WHERE runtime_kind='codex-cli'",
@@ -2472,6 +2529,7 @@ for line in sys.stdin:
         std::fs::set_permissions(&source_wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut via_wrapper = context.clone();
         via_wrapper.directory = root.join("source-wrapper-home");
+        via_wrapper.launcher = Some(source_wrapper.to_string_lossy().into_owned());
         via_wrapper.environment = BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]);
         private_storage::atomic_write_private_bytes(&via_wrapper.directory.join("actual/config.toml"), b"model='actual-model'\nmodel_provider='relay'\n[model_providers.relay]\nbase_url='https://actual.example'\nexperimental_bearer_token='actual-fake-key'\n").unwrap();
         codex_source::refresh(&source_wrapper, &via_wrapper, &via_wrapper).await;
@@ -2490,6 +2548,29 @@ for line in sys.stdin:
             via_wrapper.path(),
             via_wrapper.directory.join("actual/config.toml")
         );
+        // Saving an unrelated variable must retain a confirmed shim's target,
+        // while changing its entrypoint or directory still requires confirmation.
+        via_wrapper
+            .environment
+            .insert("LOG_LEVEL".into(), "debug".into());
+        via_wrapper.codex_source = codex_source::resolve(&via_wrapper);
+        assert!(
+            !via_wrapper
+                .codex_source
+                .as_ref()
+                .unwrap()
+                .target_unconfirmed
+        );
+        assert_eq!(
+            via_wrapper.path(),
+            via_wrapper.directory.join("actual/config.toml")
+        );
+        let mut switched = via_wrapper.clone();
+        switched.directory = root.join("another-source-home");
+        assert!(codex_source::resolve(&switched).unwrap().target_unconfirmed);
+        switched = via_wrapper.clone();
+        switched.launcher = Some(wrapper.to_string_lossy().into_owned());
+        assert!(codex_source::resolve(&switched).unwrap().target_unconfirmed);
         let mut desired = found.configuration.clone();
         if let CustomApiConfiguration::Codex { base_url, .. } = &mut desired {
             *base_url = "https://actual-edited.example".into();

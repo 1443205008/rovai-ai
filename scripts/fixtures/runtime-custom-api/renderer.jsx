@@ -13,7 +13,7 @@ const settings = kind => ({runtimeKind:kind,revision:0,nativeRevision:'native-0'
   configuration:{programPath:null,environment:[],customApi:kind==='codex-cli'?{kind,mode:'custom_api',baseUrl:'https://relay.example/prefix',models:[{rowId:'one',id:'model-a',displayName:'开发模型'},{rowId:'two',id:'model-b',displayName:''}],defaultModel:'model-a',defaultRowId:'one'}:{kind,mode:'custom_api',baseUrl:'https://relay.example/prefix',models:{model:'claude-main',reasoningModel:'think',haikuModel:'small',sonnetModel:'medium',opusModel:'large'}}}})
 const state={startup:Object.fromEntries(['claude-code-cli','codex-cli'].map(kind=>[kind,settings(kind)])),failure:null}
 const requests=[]
-const client={platform:'darwin',selectRuntimeExecutable:async()=>null,request:async(method,params={})=>{
+const client={platform:'darwin',selectRuntimeExecutable:async()=>state.selectedExecutable??null,request:async(method,params={})=>{
   requests.push({method,params:clone(params)})
   if(state.failure===method){state.failure=null;throw Error('隔离测试：读取或保存失败，草稿保留。')}
   const saved=state.startup[params.runtimeKind]
@@ -36,7 +36,9 @@ const client={platform:'darwin',selectRuntimeExecutable:async()=>null,request:as
       saved.credential.status='missing'
     }
     if(params.apiKey.action!=='keep'){saved.credential.version+='-next';saved.credential.status=params.apiKey.action==='clear'?'missing':'available'}
-    saved.revision++;saved.nativeRevision+='-next';saved.reconnectRequired=true;saved.nativeWritten=params.edits.some(edit=>!['environment','programPath'].includes(edit.path[0]))
+    saved.nativeWritten=params.edits.some(edit=>!['environment','programPath'].includes(edit.path[0]))
+    if(!state.keepNativeRevision&&(saved.nativeWritten||params.edits.some(edit=>edit.path[0]==='programPath'||edit.path[0]==='environment'&&['CODEX_HOME','HOME','USERPROFILE'].includes(edit.path[1])))) saved.nativeRevision+='-next'
+    saved.revision++;saved.reconnectRequired=true
     return clone(saved)
   }
   if(method==='runtime.startup.inspect')return{status:'recognized',executablePath:'/fixture/runtime',reportedVersion:'fixture'}

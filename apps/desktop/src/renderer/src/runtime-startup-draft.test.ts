@@ -1,6 +1,6 @@
 import type { RuntimeNativeCredential, RuntimeCustomApiConfiguration, RuntimeStartupSettings } from '@contracts'
 import { describe, expect, it } from 'vitest'
-import { customApiError, emptyCustomApi, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey, startupEdits, startupSubmission } from './runtime-startup-draft'
+import { customApiError, draftAfterSourceObservation, emptyCustomApi, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey, startupEdits, startupSubmission } from './runtime-startup-draft'
 
 describe('startup editor draft contract', () => {
   it('treats returning to the saved values as clean and preserves empty or spaced values', () => {
@@ -80,4 +80,21 @@ describe('startup editor draft contract', () => {
     expect(customApiError({ ...draft, customApi: { ...codex, mode: null, baseUrl: '' } }, key, { ...credential, status: 'unknown' }, true, false, false)).toBeNull()
   })
 
+  it('keeps actual edits through a source handoff without copying untouched provisional values', () => {
+    const api = { kind: 'codex-cli' as const, mode: 'custom_api' as const, baseUrl: 'https://provisional.example', models: [{ rowId: 'a', id: 'old-a', displayName: '' }, { rowId: 'b', id: 'old-b', displayName: '' }], defaultRowId: 'b', defaultModel: 'old-b' }
+    const configuration = { programPath: '/tools/npm/codex', environment: [], customApi: api }
+    const saved: RuntimeStartupSettings = { configuration, runtimeKind: 'codex-cli', revision: 0, nativeRevision: 'provisional', credential: null, connectionObservation: null, connectionReadError: null, reconnectRequired: false, nativeWritten: false }
+    const observed = { ...saved, nativeRevision: 'confirmed', configuration: { ...configuration, customApi: { ...api, mode: 'official_login' as const, baseUrl: 'https://actual.example', models: [{ rowId: 'native', id: 'native-model', displayName: 'Native' }], defaultRowId: 'native', defaultModel: 'native-model' } } }
+    const environment = [{ name: '', value: '  raw  ' }, { name: '', value: 'unfinished' }]
+    const draft = { ...configuration, environment, customApi: { ...api, models: [{ ...api.models[0], displayName: '  typed  ' }, api.models[1]], defaultRowId: 'a', defaultModel: 'old-a' } }
+    const rebased = draftAfterSourceObservation(saved, draft, observed, { action: 'keep' })
+    expect(rebased.environment).toEqual(environment)
+    expect(rebased.customApi).toMatchObject({ baseUrl: 'https://actual.example', mode: 'custom_api', defaultRowId: 'a', defaultModel: 'old-a' })
+    if (rebased.customApi?.kind !== 'codex-cli') throw Error('missing Codex draft')
+    expect(rebased.customApi.models).toEqual([{ rowId: 'native', id: 'native-model', displayName: 'Native' }, { rowId: 'a', id: 'old-a', displayName: '  typed  ' }])
+    const ordinaryOnly = draftAfterSourceObservation(saved, { ...configuration, environment }, observed, { action: 'keep' })
+    expect(ordinaryOnly.customApi?.mode).toBe('official_login')
+    const keyOnly = draftAfterSourceObservation(saved, configuration, observed, { action: 'replace', value: 'memory-only' })
+    expect(keyOnly.customApi?.mode).toBe('custom_api')
+  })
 })

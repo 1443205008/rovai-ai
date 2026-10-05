@@ -249,6 +249,30 @@ macOS arm64 全量回归通过：Rust workspace 455 passed／1 既有 ignored；
 这轮验证区分本地配置、受控辅助进程和真实 CLI；未增加真实订阅、系统钥匙串或第三方中转实测结论。
 没有新增字段、常驻刷新、轮询、探活或独立 Rust 测试函数。
 
+## 来源缓存与同页衔接收尾（2026-10-05）
+
+基线 `8f06c9a3` 的两个失败已固定在既有 owner：原生文件用例在修改 `LOG_LEVEL` 后失去已确认来源；
+Electron 用例在保存 `CODEX_HOME` 后等不到同页补充请求。修复后缓存只依赖实际入口与配置目录，普通环境值不再使目标失效。
+
+真正换程序／目录仍重新确认目标。页面在保存启动选择后发起一次独立补充读取，期间输入的地址、模型和 Key 保留；
+确认结果只合并实际草稿修改，期间已保存的普通环境值及修订不回退。若原先已有 API 草稿，切换时不把它写入旧位置，
+而是保留到新目标确认后继续保存。后端也拒绝把新未知入口的默认路径当作旧目标。无新增刷新按钮、轮询或保存前同步检查。
+
+验证使用隔离文件、SQLite、模拟账号／来源和正式 Renderer，未增加真实账号或第三方中转的验证承诺。
+`scripts/smoke-runtime-custom-api.py` 的 npm 式 Node 入口转发给所选实际 Codex，模拟 npm 的脚本启动形态；
+它不代表安装并运行了某个官方 npm 包，也不验证任意包装脚本。
+
+macOS arm64 验证结果：
+
+- 原生连接 5 个既有 owner、Core 启动设置 3 个 owner 通过；新增场景扩展既有 Rust owner，未新增独立 Rust 测试函数。
+- 草稿单元 4 项及隔离 Electron 正式组件通过。最终界面证据目录 `/private/tmp/rovai-source-cache-ui-verified-20261005`，
+  覆盖普通环境保存后继续改 API、同页换目录／程序、已有新 Key 草稿、观察期间普通保存、真实保存错误保留、
+  以及连接摘要未变的名称保存不被迟到结果还原。没有启动日常 Core 或使用日常 userData。
+- 实际 Codex **0.159.2** 对本地假服务通过，证据目录 `/private/tmp/rovai-source-cache-native-20261005`。
+  shell 和 npm 式 Node 包装入口均在修改普通环境变量后复用已确认位置，完成原生写回、模型选择与正常调用。
+- Rust workspace 455 passed／1 既有 ignored；完整 `pnpm test` 为 237 个 Vitest 文件／2588 项，Node 334 passed／2 平台 skipped。
+  类型检查、全 workspace 编译、桌面构建、格式及通用文档门禁通过；界面收尾保护再次运行对应验收。
+
 ## 测试准入与退役
 
 本轮没有新增独立 Rust test。`runtime_custom_api` 的 5 个 owner 保持不变：配置／身份 parser、SQLite 发布、

@@ -44,12 +44,11 @@ fn fingerprint(path: &Path) -> String {
         .unwrap_or_default()
 }
 fn key(context: &NativeContext) -> String {
-    crate::command::canonical_json_digest(&serde_json::json!([
-        context.directory,
-        context.launcher,
-        context.environment // digest only; no env/key values are retained in the cache
-    ]))
-    .unwrap_or_default()
+    // This cache owns file locations, not the process's complete environment.
+    // Directory selection is already resolved; values and credentials are read
+    // from the current context on every use. Ordinary env edits keep the target.
+    crate::command::canonical_json_digest(&serde_json::json!([context.directory, context.launcher]))
+        .unwrap_or_default()
 }
 pub fn resolve(context: &NativeContext) -> Option<Source> {
     let cached = SOURCES
