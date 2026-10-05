@@ -3,7 +3,7 @@ document_type: implementation-plan
 version: v1.72
 authority: version-implementation-and-acceptance
 status: in_progress
-last_updated: 2026-10-03
+last_updated: 2026-10-06
 ---
 
 # v1.72 实施与验收
@@ -433,7 +433,7 @@ ACP 原生标签和 Codex 的固定英文决定标签原样展示；Claude 同�
 记忆决定原样回填 selected suggestion，Claude 负责规则保存与未来匹配；suppression 或无效/未支持建议
 不会产生记忆选项。控制 writer 与转换层共用建议准入，只保存未决请求有效记忆响应的 digest，完成、取消和
 断线时清理；响应的范围、destination 或 input 改动不能通过校验。当前合同见
-[Runtime Launch v46](../../contracts/runtime-launch-and-verification-v46.md)。
+[Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md)。
 
 | 验证 | 结果与边界 |
 | --- | --- |
@@ -749,3 +749,49 @@ ZCode 根调用结束/压缩触发合并读取，Pi/Antigravity 保留独立字�
 `Pre-ready authority calls: windowClose.get`。macOS 夹具的泛化 Proxy 暴露了 Windows-only 能力；
 本次保留原脚本和准入断言，不将其列为通过，也不把 UI 修改扩大到启动与 Camp 清理逻辑。
 签名跨版本升级与实体 Windows/手机不属于本次样式实施证据。
+
+## 2026-10-05 Runtime 轻量启动
+
+在独立 worktree 完成静态发现、配置/队列解耦、真实 Host 验证、初始化状态和具体失败展示。
+未启动日常 App、未使用日常 Core 数据或真实账户 Runtime。自动化使用隔离 SQLite 和合成协议进程；
+真实 CLI 登录、模型服务与跨平台兼容性不由这些夹具证明。
+
+验证环境为 macOS arm64、Rust 1.97.1；工作分支 `rovai/runtime-launch-validation`，基线
+`36a0e92cc28819b13a50198e2483bb8ab5c7ada2`。Spec 与 Standards 两轮静态审核已收口。
+
+已通过：
+
+- `pnpm typecheck`、`pnpm test`：Vitest 238 文件 / 2600 项通过；最后一组 Node 测试 334 通过、2 项平台跳过，文档/Skill/隔离 sandbox 检查通过。
+- `pnpm test:rust:pr`：默认 workspace 共 453 通过、0 失败、1 项原人工 Runtime smoke 忽略。
+- `pnpm build:desktop` 与 `cargo check --workspace --all-targets --features slow-tests`。
+- Runtime 定向 owner 回归：359 通过、0 失败、6 项保留原人工环境忽略；真实 Host 验证、默认模型零目录、取消/替换零输入、错误投影及修复后新任务均通过。实际命令如下。
+- `ROVAI_FAST_CHECK_ONLY=1 pnpm test:camp-fast-layout`：生产组件、隔离 Electron，零自动检查、手动重试、绑定与迟到响应围栏、共享偏好和原生输入通过。
+- Impeccable detector 对修改的界面文件无发现。其 context 工具另报告 4 个既有 brief 的路径过期及未识别的 `desktop` 平台词汇；本切片未改这些仓库资料。
+- `cargo fmt --all --check`、`git diff --check`、`pnpm docs:check` 与基于上述 SHA 的 `pnpm docs:check:ci`。
+
+```bash
+cargo test -p rovai-core --features slow-tests --lib -- \
+  acp:: agent_profile:: antigravity:: camp_fast:: claude:: claude_control:: codex:: \
+  context:: delivery_queue:: health:: pi:: runtime:: runtime_discovery:: \
+  application::tests::runtime_check_manager application::runtime_check_environment:: \
+  application::tests::availability_ application::tests::later_success \
+  application::tests::detected_entry application::tests::trae_version \
+  collaboration::slow_tests::multi_target_send
+```
+
+扩大验证的既有边界：
+
+- `cargo test -p rovai-core --features slow-tests --lib` 初次完整运行未全绿；本切片相关失败经修正后按 owner 重跑。
+  下列 4 项数据库/authority 测试在上述干净基线 worktree 独立复现相同失败，本切片保留原测试与迁移实现：
+  `authority_migration::tests::macos_provenance_added_after_ticket_is_readmitted_without_losing_business_data`、
+  `db::tests::database_contract_preflight_admits_current_and_rejects_future_store`、
+  `db::tests::navigation_summary_migration_preserves_tables_backfills_and_rolls_back_with_events`、
+  `db::thread_names::tests::thread_upgrade_preserves_existing_tables_and_rolls_back_on_receipt_failure`。
+  分别涉及 macOS provenance 再验证、v183 预期值和 `pending_camp_draft_presence` 历史迁移 fixture。
+- `cargo clippy -p rovai-core --all-targets --features slow-tests -- -D warnings` 剩余 10 项错误，与同命令的干净基线一致，
+  位于 Pi host、CLI output、Context、execution window 和 monitoring；本次新增 lint 已修正，未添加抑制规则。
+- 默认完整 `pnpm test:camp-fast-layout` 仍在旧执行过程 disclosure 的 `.open` 断言失败。
+  未改生产代码的基线先暴露过期 `camps.members.fast.*` fixture 路由；仅将该 fixture 路由修正为已存在的
+  `threads.members.fast.*` 后，复现相同 `.open` 失败。本次 Fast 定向模式通过不代表整套历史布局/Stop 验收通过。
+
+未执行真实 CLI/账户、发布包或 Windows 实体验收。没有变更数据库 schema、提高权限或替换日常 App。

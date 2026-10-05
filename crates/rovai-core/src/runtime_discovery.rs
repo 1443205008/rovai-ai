@@ -147,36 +147,42 @@ pub struct RuntimeExecutableCandidate {
 
 impl RuntimeExecutableCandidate {
     pub fn entrypoint_locator_identity_is_current(&self) -> bool {
-        let Some(expected) = self.entrypoint_locator_identity.as_ref() else {
-            return true;
+        entrypoint_locator_identity_is_current(self.entrypoint_locator_identity.as_ref())
+    }
+}
+
+pub fn entrypoint_locator_identity_is_current(
+    expected: Option<&RuntimeEntrypointLocatorIdentity>,
+) -> bool {
+    let Some(expected) = expected else {
+        return true;
+    };
+    #[cfg(windows)]
+    {
+        let Some(resolved) = inspect_codex_cmd_shim(Path::new(&expected.canonical_shim_path))
+        else {
+            return false;
         };
-        #[cfg(windows)]
-        {
-            let Some(resolved) = inspect_codex_cmd_shim(Path::new(&expected.canonical_shim_path))
-            else {
-                return false;
-            };
-            let expected_kind = match resolved.package_manager {
-                PackageManagerShimKind::Npm => "npm_cmd_shim",
-                PackageManagerShimKind::Pnpm => "pnpm_cmd_shim",
-            };
-            if expected.entrypoint_kind != expected_kind {
-                return false;
-            }
-            capture_resolved_windows_command_shim(
-                Path::new(&expected.canonical_shim_path),
-                &resolved.executable,
-            )
-            .ok()
-            .map(|identity| resolved_locator_identity(expected_kind, identity))
-            .as_ref()
-                == Some(expected)
+        let expected_kind = match resolved.package_manager {
+            PackageManagerShimKind::Npm => "npm_cmd_shim",
+            PackageManagerShimKind::Pnpm => "pnpm_cmd_shim",
+        };
+        if expected.entrypoint_kind != expected_kind {
+            return false;
         }
-        #[cfg(not(windows))]
-        {
-            let _ = expected;
-            false
-        }
+        capture_resolved_windows_command_shim(
+            Path::new(&expected.canonical_shim_path),
+            &resolved.executable,
+        )
+        .ok()
+        .map(|identity| resolved_locator_identity(expected_kind, identity))
+        .as_ref()
+            == Some(expected)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = expected;
+        false
     }
 }
 

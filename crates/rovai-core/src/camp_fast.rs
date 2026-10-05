@@ -140,13 +140,11 @@ pub(crate) fn runtime_for_target_on_connection(
     {
         return Ok(None);
     }
-    // Light readiness can freeze an ordinary Run, but has not loaded the native capabilities
-    // needed by Fast (including Codex's per-turn tier). Let the check manager resolve them first.
+    // The explicit Fast check owns its native evidence; historical health does not authorize it.
     let configuration: Option<(Option<String>, Option<String>, Option<String>)> = connection.query_row(
         "SELECT profile.default_runtime_installation_id, profile.default_model_selection_json, profile.default_permission_config_json
          FROM agent_profile AS profile
-         JOIN adapter_capability_snapshot AS snapshot ON snapshot.installation_id = profile.default_runtime_installation_id
-         WHERE profile.id = ?1 AND snapshot.probe_status = 'ready' AND snapshot.stale_at IS NULL",
+         WHERE profile.id = ?1",
         [&expected.agent_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).optional()?;
     let Some((Some(installation_id), Some(model), Some(permissions))) = configuration else {
@@ -219,14 +217,14 @@ pub(crate) fn view_on_connection(
          JOIN camp ON camp.id = fast.camp_id
          JOIN agent_profile AS profile ON profile.id = fast.agent_id
          JOIN adapter_installation AS installation ON installation.id = profile.default_runtime_installation_id
-         JOIN adapter_capability_snapshot AS snapshot ON snapshot.installation_id = profile.default_runtime_installation_id
+         LEFT JOIN adapter_capability_snapshot AS snapshot ON snapshot.installation_id = installation.id
+         LEFT JOIN runtime_executable_identity AS identity ON identity.installation_id = installation.id
          WHERE fast.camp_id = ?1 AND fast.agent_id = ?2 AND fast.eligible = 1
            AND fast.runtime_binding_revision = profile.runtime_binding_revision
            AND fast.cwd = camp.project_path AND member.status = 'active'
-           AND profile.profile_status != 'removed' AND snapshot.stale_at IS NULL
-           AND installation.enabled = 1 AND snapshot.probe_status = 'ready'
-           AND snapshot.authentication_status != 'authentication_required'
-           AND fast.executable_fingerprint = snapshot.executable_fingerprint",
+           AND profile.profile_status != 'removed'
+           AND installation.enabled = 1 AND installation.path_state = 'valid'
+           AND fast.executable_fingerprint = COALESCE(identity.executable_fingerprint, snapshot.executable_fingerprint)",
         params![camp_id, agent_id],
         |row| Ok(ThreadMemberFastView {
             runtime_binding_revision: row.get(0)?,
@@ -726,13 +724,12 @@ mod tests {
                 CommandResultStatus::Applied
             );
         }
-        // A light-ready installation must request native capability resolution before Fast
-        // metadata can be checked; failed availability/authentication also stays hidden.
+        // Historical probes never prevent a new explicit Fast check or erase its own evidence.
         for (probe_status, authentication_status, ready) in [
-            ("light_ready", "unknown", false),
-            ("light_ready", "authentication_required", false),
-            ("light_failed", "unknown", false),
-            ("probe_failed", "authenticated", false),
+            ("light_ready", "unknown", true),
+            ("light_ready", "authentication_required", true),
+            ("light_failed", "unknown", true),
+            ("probe_failed", "authenticated", true),
             ("ready", "authenticated", true),
         ] {
             database.connection().execute(
@@ -742,7 +739,7 @@ mod tests {
             assert_eq!(
                 runtime_for_target(&database, &initial).unwrap().is_some(),
                 ready,
-                "{probe_status}/{authentication_status} must resolve native capabilities first"
+                "{probe_status}/{authentication_status} does not gate explicit native checks"
             );
             assert_eq!(
                 view(&database, camp_id, "agent_1").unwrap().is_some(),
@@ -750,6 +747,21 @@ mod tests {
                 "{probe_status}/{authentication_status}"
             );
         }
+        database.connection().execute_batch("SAVEPOINT entry_only_fast;
+            INSERT INTO runtime_executable_identity(installation_id, executable_path, executable_fingerprint,
+                byte_size, modified_at_unix_nanos, file_id, verified_at)
+            SELECT installation.id, installation.executable_path, snapshot.executable_fingerprint, 0, 0, NULL, datetime('now')
+            FROM adapter_installation AS installation JOIN adapter_capability_snapshot AS snapshot ON snapshot.installation_id = installation.id
+            WHERE installation.id NOT IN (SELECT installation_id FROM runtime_executable_identity);
+            DELETE FROM adapter_capability_snapshot;").unwrap();
+        assert!(
+            view(&database, camp_id, "agent_1").unwrap().is_some(),
+            "entry-only installations can expose explicitly verified Fast"
+        );
+        database
+            .connection()
+            .execute_batch("ROLLBACK TO entry_only_fast; RELEASE entry_only_fast;")
+            .unwrap();
         let assert_saved_choices = |database: &Database| {
             for (camp, choice) in camps.iter().zip([true, false]) {
                 let stored: Option<bool> = database.connection().query_row(

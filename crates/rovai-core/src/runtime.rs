@@ -1910,7 +1910,7 @@ impl ExecutionRuntimeService {
                 SET workspace_json = COALESCE(workspace_json, ?2),
                     starting_git_observation_json =
                         COALESCE(starting_git_observation_json, ?8),
-                    status = 'running', wait_reason = NULL, wait_deadline_at = NULL,
+                    status = 'running', wait_reason = 'runtime_initializing', wait_deadline_at = NULL,
                     runtime_recovery_required = 0,
                     execution_epoch = ?3, execution_lease_owner = ?4,
                     execution_lease_expires_at = ?5,
@@ -8153,7 +8153,14 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!(state, ("running".to_string(), None, version));
+        assert_eq!(
+            state,
+            (
+                "running".to_string(),
+                Some("runtime_initializing".to_string()),
+                version
+            )
+        );
         drop(database);
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -10004,7 +10011,16 @@ mod tests {
         assert_eq!(rebound.result.code, "agent_run.runtime_rebound");
         assert_eq!(rebound.result.payload["version"], 2);
 
-        let state: (String, i64, String, String, String, String, i64, String) = database
+        let state: (
+            String,
+            i64,
+            Option<String>,
+            String,
+            Option<String>,
+            String,
+            i64,
+            String,
+        ) = database
             .connection()
             .query_row(
                 r#"
@@ -10032,12 +10048,9 @@ mod tests {
             .unwrap();
         assert_eq!(state.0, "queued");
         assert_eq!(state.1, 2);
-        assert_eq!(Some(state.2.as_str()), frozen.reported_version.as_deref());
+        assert_eq!(state.2.as_deref(), frozen.reported_version.as_deref());
         assert_eq!(state.3, frozen.executable_fingerprint);
-        assert_eq!(
-            Some(state.4.as_str()),
-            effective.reported_version.as_deref()
-        );
+        assert_eq!(state.4.as_deref(), effective.reported_version.as_deref());
         assert_eq!(state.5, effective.executable_fingerprint);
         assert_eq!(state.6, 1);
         let effective_config: Value = serde_json::from_str(&state.7).unwrap();

@@ -5381,6 +5381,9 @@ describe('task event projections', () => {
   })
 
   it('explains context blockers and A2A delivery without relying on color', () => {
+    expect(agentRunPresentation({ status: 'failed', waitReason: null, terminalReasonCode: 'adapter_installation_disabled' })).toEqual({ label: '所选 Runtime 已停用', tone: 'danger' })
+    expect(agentRunPresentation({ status: 'running', waitReason: 'runtime_initializing' })).toEqual({ label: '正在初始化 Runtime', tone: 'info' })
+    expect(agentRunStateTag({ status: 'running', waitReason: 'runtime_initializing' })).toEqual({ tag: 'STARTING', tone: 'brand' })
     expect(agentRunPresentation({ status: 'waiting', waitReason: 'delivery_unknown' })).toEqual({
       label: '投递待确认',
       tone: 'danger'

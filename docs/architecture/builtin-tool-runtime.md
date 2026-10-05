@@ -388,7 +388,7 @@ request_id 用于回复，tool_use_id 关联实际工具结果。Core 转换为�
 由 Claude 原生配置处理。业务 `rovai send` 继续由现有 Run lease 认证。
 
 允许后的同一 tool_use_id 的真实 tool_result 结算 Action；会话结束、stdin 关闭、取消与失败边界由
-[Runtime Launch and Verification v46](../contracts/runtime-launch-and-verification-v46.md) 拥有。
+[Runtime Launch and Verification v47](../contracts/runtime-launch-and-verification-v47.md) 拥有。
 
 ### ACP Prompt 输入确认
 

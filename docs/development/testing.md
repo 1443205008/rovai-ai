@@ -940,3 +940,23 @@ owner，覆盖已安装指标 schema 129 和 main Thread schema 128 两条路径
 `fresh_schema_database_at`，沿用 `extended-tests`；不新增 Rust owner。既有 Session Context 迁移
 owner 继续拥有指标数量保留与 127/128 升级；默认 workspace 与字段级回归另行执行。
 最低命令：`cargo test -p rovai-core --features extended-tests --lib thread_upgrade_preserves_existing_tables_and_rolls_back_on_receipt_failure`。
+
+## Runtime 轻量启动回归 owner
+
+不增加独立 Rust 测试数量。原 light-ready uniform preflight owner 改为
+`agent_profile::slow_tests::discovered_entry_configures_and_freezes_without_health_evidence`，覆盖无快照配置、
+精确意图及 hash/file identity 不一致拒绝。原 Codex live-model owner 扩展为
+`codex::tests::real_host_validates_before_input_and_executes_in_the_same_process`，以合成协议进程验证启动次数、
+默认模型零目录、version 超时无关，以及初始化/登录/模型选项失败零正文。
+`delivery_queue` 既有 claim owner 扩展历史状态矩阵、公开错误、原终止原因优先、未知错误不公开、失败不循环及修复后新任务；
+`collaboration` 原多目标无 Runtime owner 改为每个目标产生具体失败 Run，保留消息与 Delivery 数量及原子准入断言。
+Antigravity 原取消 owner 同时覆盖初始化期间取消及接收后终止，保留原有进程树和私有日志清理。
+原诊断成功、失败、身份漂移与快照保留测试继续拥有诊断语义，不删除权限、取消、Session 或去重断言。
+最小命令为 `cargo test -p rovai-core --features slow-tests --lib agent_profile::`、
+`cargo test -p rovai-core --features extended-tests --lib codex::`、
+`cargo test -p rovai-core --lib delivery_queue::` 与 `cargo test -p rovai-core --lib antigravity::`。
+完整切片结果记录在当前版本实施计划，合成测试不替代真实账户、CLI 与跨平台验收。
+
+`ROVAI_FAST_CHECK_ONLY=1 pnpm test:camp-fast-layout` 使用原隔离 Electron fixture 验证零自动检查、显式重试、
+绑定与迟到响应 fence、保存去重、两处界面共享偏好及原生键鼠/主题/响应式布局。默认无此变量时继续执行原有完整布局与 Stop 回归，
+不将旧夹具的其他失败静默跳过；两种范围的结果分别记录。

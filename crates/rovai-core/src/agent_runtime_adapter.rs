@@ -1093,14 +1093,9 @@ impl AgentRuntimeAdapterRegistry {
         }
     }
 
-    pub fn light_ready_snapshot(
-        &self,
-        kind: AdapterKind,
-        reported_version: Option<String>,
-        executable_fingerprint: String,
-        observed_at: String,
-    ) -> Result<AdapterCapabilitySnapshot> {
-        let permission_options = match kind {
+    /// Shipped permission vocabulary, independent of diagnostic observations.
+    pub fn permission_options(&self, kind: AdapterKind) -> Vec<PermissionOptionDescriptor> {
+        match kind {
             AdapterKind::CodexCli => codex_permission_options(),
             AdapterKind::Pi => pi_permission_options(),
             AdapterKind::OpencodeCli => opencode_permission_options(),
@@ -1117,7 +1112,17 @@ impl AgentRuntimeAdapterRegistry {
             AdapterKind::GrokBuild => grok_permission_options(),
             AdapterKind::DeepseekHarness => dsh_permission_options(),
             AdapterKind::ZcodeApp => zcode_permission_options(),
-        };
+        }
+    }
+
+    pub fn light_ready_snapshot(
+        &self,
+        kind: AdapterKind,
+        reported_version: Option<String>,
+        executable_fingerprint: String,
+        observed_at: String,
+    ) -> Result<AdapterCapabilitySnapshot> {
+        let permission_options = self.permission_options(kind);
         let permission_schema_digest = adapter_permission_schema_digest(kind, &permission_options)?;
         let grok_version_unsupported = kind == AdapterKind::GrokBuild
             && !grok_build_minimum_version_satisfied(reported_version.as_deref());
@@ -1400,6 +1405,76 @@ impl CodexCliAdapterPolicy {
             native_session_compatibility_key: ready.then(|| "codex-cli:app-server-v2".to_string()),
         })
     }
+}
+
+/// Validate saved intent against evidence from the Host that will receive the input.
+/// Diagnostic catalogs must never substitute for this check.
+#[derive(Debug)]
+pub struct LiveModelValidationError {
+    pub code: &'static str,
+    pub model_id: String,
+    pub detail: String,
+}
+
+impl std::fmt::Display for LiveModelValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{} for explicit model {}: {}",
+            self.code, self.model_id, self.detail
+        )
+    }
+}
+
+impl std::error::Error for LiveModelValidationError {}
+
+pub fn validate_live_model_selection(
+    models: &[ModelDescriptor],
+    model_id: &str,
+    options: &Value,
+) -> std::result::Result<(), LiveModelValidationError> {
+    let failure = |code, detail: String| LiveModelValidationError {
+        code,
+        model_id: model_id.to_string(),
+        detail,
+    };
+    let model = models
+        .iter()
+        .find(|model| model.id == model_id && !model.hidden && !model.deprecated)
+        .ok_or_else(|| {
+            failure(
+                "runtime_model_unavailable",
+                "the current Host did not advertise the selected model".to_string(),
+            )
+        })?;
+    let options = options.as_object().ok_or_else(|| {
+        failure(
+            "runtime_model_options_invalid",
+            "model options must be an object".to_string(),
+        )
+    })?;
+    for (key, value) in options {
+        let descriptor = model
+            .options
+            .iter()
+            .find(|option| option.key == *key)
+            .ok_or_else(|| {
+                failure(
+                    "runtime_model_option_unknown",
+                    format!("unadvertised model option: {key}"),
+                )
+            })?;
+        if !value
+            .as_str()
+            .is_some_and(|value| descriptor.values.iter().any(|choice| choice.value == value))
+        {
+            return Err(failure(
+                "runtime_model_option_invalid",
+                format!("unsupported value for model option {key}: {value}"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub fn codex_models(catalog: &Value) -> Result<Vec<ModelDescriptor>> {

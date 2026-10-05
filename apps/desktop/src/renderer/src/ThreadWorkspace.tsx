@@ -45,7 +45,7 @@ import {
 } from './ExecutionToolGroup'
 import { executionInitialFeedback, executionRunSummary } from './execution-run-summary'
 import { ComposerPrimaryAction } from './ComposerPrimaryAction'
-import { ThreadMemberFastToggle } from './ThreadMemberFastToggle'
+import { ThreadMemberFastCheck, ThreadMemberFastToggle } from './ThreadMemberFastToggle'
 import { useThreadMemberFast, type ThreadMemberFastControls } from './useThreadMemberFast'
 import type {
   ActionApprovalView,
@@ -1548,6 +1548,7 @@ export function emptyThreadRuntimeSummary(
   const readyCount = profiles.filter((profile) => (
     profile?.runtimeReadiness.status === 'ready'
     || profile?.runtimeReadiness.status === 'light_ready'
+    || profile?.runtimeReadiness.status === 'installed_unverified'
   )).length
   if (readyCount === activeMembers.length) return uiAttribute("智能体可用")
   if (readyCount === 0) return uiAttribute("智能体不可用")
@@ -2183,8 +2184,7 @@ export function ThreadWorkspace({
     () => new Map(agents.map((agent) => [agent.agentId, agent])),
     [agents]
   )
-  const memberFast = useThreadMemberFast(snapshot, profileById, installations,
-    inspectorVisible && inspectorSurfaceTab === 'members' ? 'members' : executionDrawerAgentId, onNotify)
+  const memberFast = useThreadMemberFast(snapshot, profileById, installations, onNotify)
   const composerRosterMembers = useMemo(
     () => snapshot.members.map((member) => ({
       agentId: member.agentId,
@@ -7585,8 +7585,10 @@ function ExecutionDrawer({
                       <span className="execution-model-params" title={runtimeConfiguration.summary}>{runtimeConfiguration.summary}</span>
                     )}
                     {fastControl && <span className="execution-drawer-fast-slot">
-                      {fastControl.value && <ThreadMemberFastToggle value={fastControl.value} displayName={displayName}
-                        pending={fastControl.pending} onToggle={next => { void memberFast.save(process.agentId, next) }} />}
+                      {fastControl.value ? <ThreadMemberFastToggle value={fastControl.value} displayName={displayName}
+                        pending={fastControl.pending} onToggle={next => { void memberFast.save(process.agentId, next) }} />
+                        : <ThreadMemberFastCheck displayName={displayName} pending={fastControl.pending}
+                          onCheck={() => { void memberFast.check(process.agentId) }} />}
                     </span>}
                   </span>
                 )}
@@ -8528,8 +8530,10 @@ function ThreadMembersPanel({
                   <svg aria-hidden="true" viewBox="0 0 16 16"><path d="m6 4 4 4-4 4" /></svg>
                 </button>}
               </span>
-              {!mobile && fast && <ThreadMemberFastToggle value={fast} displayName={member.displayName} pending={fastControl!.pending}
-                onToggle={next => { void memberFast.save(member.agentId, next) }} />}
+              {!mobile && fastControl && (fast ? <ThreadMemberFastToggle value={fast} displayName={member.displayName} pending={fastControl.pending}
+                onToggle={next => { void memberFast.save(member.agentId, next) }} />
+                : <ThreadMemberFastCheck displayName={member.displayName} pending={fastControl.pending}
+                  onCheck={() => { void memberFast.check(member.agentId) }} />)}
               <span className={`camp-inspector-member-state ${present ? '' : 'is-away'}`}>
                 <strong>{presenceLabel}</strong>
                 {runtimeTone === 'attention' && profile && <small className="runtime-attention">{runtimeReadinessLabel(profile.runtimeReadiness.status)}</small>}

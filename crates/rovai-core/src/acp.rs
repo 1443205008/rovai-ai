@@ -1317,6 +1317,7 @@ pub(crate) struct AcpHost {
     alive: AtomicBool,
     protocol_violated: AtomicBool,
     initialize_result: RwLock<Option<Value>>,
+    trae_permission_mode: Option<String>,
     startup_diagnostics: Mutex<String>,
     private_config_root: Option<PathBuf>,
     remove_private_config_root_on_shutdown: bool,
@@ -1508,6 +1509,20 @@ impl AcpHost {
             alive: AtomicBool::new(true),
             protocol_violated: AtomicBool::new(false),
             initialize_result: RwLock::new(None),
+            trae_permission_mode: (frozen_runtime.adapter_kind == AdapterKind::TraeCnCli).then(
+                || {
+                    if permission_semantics == PermissionSemantics::CoreEnforcedV1
+                        && workspace.access == "read_only"
+                    {
+                        "plan".to_string()
+                    } else {
+                        frozen_runtime.permissions.values["permission_mode"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string()
+                    }
+                },
+            ),
             startup_diagnostics: Mutex::new(String::new()),
             private_config_root: private_config.as_ref().map(|config| config.root.clone()),
             remove_private_config_root_on_shutdown: private_config
@@ -3441,24 +3456,7 @@ pub struct AcpRuntime {
     native_usage: Mutex<Option<Arc<std::sync::Mutex<NativeUsageReader>>>>,
 }
 
-#[derive(Debug)]
-pub(crate) struct AcpLiveModelValidationError {
-    pub code: &'static str,
-    model_id: String,
-    detail: String,
-}
-
-impl std::fmt::Display for AcpLiveModelValidationError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "{} for explicit model {}: {}",
-            self.code, self.model_id, self.detail
-        )
-    }
-}
-
-impl std::error::Error for AcpLiveModelValidationError {}
+pub(crate) use rovai_core::agent_runtime_adapter::LiveModelValidationError as AcpLiveModelValidationError;
 
 fn select_acp_session_continuation(
     adapter_kind: AdapterKind,
@@ -3795,6 +3793,39 @@ impl AcpRuntime {
         self.host
             .remember_session(&session_id, session_result.as_ref())
             .await;
+        if let Some(requested) = self.host.trae_permission_mode.as_deref() {
+            let current = session_result
+                .as_ref()
+                .and_then(|session| session.pointer("/modes/currentModeId"))
+                .and_then(Value::as_str);
+            let advertised = session_result
+                .as_ref()
+                .and_then(|session| session.pointer("/modes/availableModes"))
+                .and_then(Value::as_array)
+                .is_some_and(|modes| {
+                    modes
+                        .iter()
+                        .any(|mode| mode.get("id").and_then(Value::as_str) == Some(requested))
+                });
+            if current != Some(requested) || !advertised {
+                return Err(anyhow::Error::new(
+                    rovai_core::runtime_failure::RuntimeFailureError::new(
+                        rovai_core::runtime_failure::RuntimeFailureView::new(
+                            self.host.adapter_kind,
+                            rovai_core::runtime_failure::RuntimeFailureOrigin::Compatibility,
+                            rovai_core::runtime_failure::RuntimeFailurePhase::Execution,
+                            "runtime_permission_incompatible",
+                            "Runtime 未确认所选权限模式",
+                            Some(format!(
+                                "Requested TRAE mode {requested}; initialized mode {}",
+                                current.unwrap_or("unknown")
+                            )),
+                            false,
+                        ),
+                    ),
+                ));
+            }
+        }
         if model_source == "explicit" {
             let session_result = session_result.as_ref().ok_or_else(|| {
                 anyhow::Error::new(AcpLiveModelValidationError {
@@ -3811,15 +3842,11 @@ impl AcpRuntime {
                         detail: error.to_string(),
                     })
                 })?;
-            if !models.iter().any(|candidate| {
-                candidate.id == model && !candidate.hidden && !candidate.deprecated
-            }) {
-                return Err(anyhow::Error::new(AcpLiveModelValidationError {
-                    code: "runtime_model_unavailable",
-                    model_id: model.to_string(),
-                    detail: "the real ACP Session did not advertise the saved model".to_string(),
-                }));
-            }
+            rovai_core::agent_runtime_adapter::validate_live_model_selection(
+                &models,
+                model,
+                model_options,
+            )?;
             if self.host.adapter_kind == AdapterKind::CodebuddyCli
                 && model.starts_with("custom-local:")
                 && acp_runtime_model_id_from_session(session_result).as_deref() == Some(model)
@@ -3909,6 +3936,22 @@ impl AcpRuntime {
                 .await;
         }
         Ok(session_id)
+    }
+
+    pub async fn session_capabilities(&self) -> AcpSessionCapabilities {
+        let initialize = self.host.initialize_result.read().await;
+        AcpSessionCapabilities {
+            can_resume: initialize
+                .as_ref()
+                .and_then(|value| value.pointer("/agentCapabilities/sessionCapabilities/resume"))
+                .is_some_and(Value::is_object),
+            can_load_history: self.host.adapter_kind != AdapterKind::GrokBuild
+                && initialize
+                    .as_ref()
+                    .and_then(|value| value.pointer("/agentCapabilities/loadSession"))
+                    .and_then(Value::as_bool)
+                    == Some(true),
+        }
     }
 
     pub async fn observed_model_id(&self) -> Option<String> {
@@ -9310,7 +9353,7 @@ while IFS= read -r ignored; do :; done
 IFS= read -r initialize || exit 1
 printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentCapabilities":{{}}}}}}'
 IFS= read -r session || exit 1
-printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"session-error","models":{{"currentModelId":"trae-default","availableModels":[{{"modelId":"trae-default","name":"TRAE Default"}}]}}}}}}'
+printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"modes":{{"currentModeId":"default","availableModes":[{{"id":"default","name":"Default"}}]}},"sessionId":"session-error","models":{{"currentModelId":"trae-default","availableModels":[{{"modelId":"trae-default","name":"TRAE Default"}}]}}}}}}'
 IFS= read -r prompt || exit 1
 {prompt_activity}
 printf '%s\n' '{{"jsonrpc":"2.0","id":3,"error":{{"code":{error_code},"message":"Internal error","data":{{"error":"failed to call agent: Model usage has reached personal quota limit. Please check usage or contact administrator."}}}}}}'
@@ -9662,7 +9705,7 @@ while IFS= read -r ignored; do :; done
 IFS= read -r initialize || exit 1
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{}}}'
 IFS= read -r session || exit 1
-printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"session-live-model","models":{"currentModelId":"trae-default","availableModels":[{"modelId":"trae-default","name":"TRAE Default"}]}}}'
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default"}]},"sessionId":"session-live-model","models":{"currentModelId":"trae-default","availableModels":[{"modelId":"trae-default","name":"TRAE Default"}]}}}'
 while IFS= read -r ignored; do :; done
 "#,
         );
@@ -9739,7 +9782,7 @@ IFS= read -r resume || exit 1
 printf '%s\n' "$resume" >> '{}'
 printf '%s\n' '{{"jsonrpc":"2.0","id":90,"method":"session/request_permission","params":{{"sessionId":"session-old","toolCall":{{"toolCallId":"historical-tool"}},"options":[]}}}}'
 IFS= read -r quarantined_permission || exit 1
-printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{}}}}'
+printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"modes":{{"currentModeId":"default","availableModes":[{{"id":"default","name":"Default"}}]}}}}}}'
 sleep 0.2
 printf '%s\n' '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"session-old","update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"historical"}}}}}}}}'
 printf '%s\n' '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"session-old","update":{{"sessionUpdate":"tool_call","toolCallId":"historical-tool","kind":"execute","title":"historical"}}}}}}'
@@ -10091,7 +10134,20 @@ while IFS= read -r ignored; do :; done
         fleet.shutdown_all().await;
 
         let invocations = std::fs::read_to_string(&invocation_log).unwrap();
-        assert_eq!(invocations.lines().count(), 1);
+        assert_eq!(
+            invocations
+                .lines()
+                .filter(|line| line.starts_with("acp serve"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            invocations
+                .lines()
+                .filter(|line| line.ends_with("models --json"))
+                .count(),
+            2
+        );
         let protocol = std::fs::read_to_string(&protocol_log).unwrap();
         assert_eq!(protocol.matches("\"method\":\"session/new\"").count(), 1);
         assert_eq!(protocol.matches("\"method\":\"session/prompt\"").count(), 2);
