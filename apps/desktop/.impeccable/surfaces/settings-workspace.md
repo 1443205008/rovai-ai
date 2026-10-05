@@ -1,5 +1,5 @@
 ---
-version: 18
+version: 19
 slug: "settings-workspace"
 primary_target: "apps/desktop/src/renderer/src/SettingsPageHeader.tsx"
 related_targets:
@@ -250,11 +250,14 @@ Coverage, clean-break and freshness semantics local to that page.
 
 ## 关于与更新
 
-About & Updates belongs to the Support group and extends the same borderless `1040px` settings track,
-open section rhythm used by reviewed settings pages. Identity and installed version share one row; update
-actions align with the release summary. Check history is collapsed initially with fixed-width fact labels. The first viewport
-shows the installed Rovai AI version and one primary action. It is a compact updater surface, not an
-updater dashboard or installation wizard.
+About & Updates belongs to the Support group and uses a borderless `880px` reading track. Product identity
+and the installed version share the top row with one primary action; a single status line follows, adding
+a reason for failures or installation. Keep the 34px mark, compact 19px product name and neutral actions.
+Release notes follow immediately, with explicit version numbers in the keyboard-accessible tabs (or one
+version label without a candidate), publication date and 13px prose. Do not repeat the release title below
+the version selector. Check history follows the notes, collapsed initially with fixed-width fact labels.
+The first viewport keeps the installed version and the primary action visible. Desktop-hosted Web stays
+read-only, and Server retains its reconnect recovery and exact release links.
 
 Packaged Main checks the official stable `murray17/rovai-ai` GitHub Release channel five seconds after the
 first window load and again six hours after each automatic check settles. Checking never starts a download.
@@ -270,14 +273,18 @@ badge and the next automatic round may create another generation.
 
 The ordinary Settings footer keeps its remembered-section behavior. When an actionable release exists, a
 separate focusable badge beside Settings deep-links to About without overwriting `lastSettingsSection`; the
-About row inside Settings repeats the badge as non-interactive status. Available, checking/downloading,
+About row inside Settings repeats the badge as non-interactive status. The ordinary badge is a transparent
+34px target with 11.5px text; Settings status uses 11px text and an independently sized inline layout, never
+the navigation icon's 22px slot. Failure labels state download/install failure; retry belongs to the page.
+Narrow English rails may put the update entry on its own row. Available, checking/downloading,
 ready/installing and failed states use different icon/copy and accessible names, not color alone.
 
 The page keeps the installed version visible through idle, checking, available, downloading, up-to-date,
 ready-to-install, installing and recoverable check/download/install failure states. Its bundled, version-matched
 release notes and publication date remain visible offline after an install. A known newer release is a separate fact and remains visible
 when a later check fails. When a newer release exists, the page defaults to its notes and offers keyboard-accessible
-tabs to switch between new and installed versions; the switch does not start a network request. An absent source has
+tabs to switch between new and installed versions; the switch does not start a network request. The update
+shortcut focuses the notes heading and scrolls only as far as needed to reveal it, preserving nearby actions. An absent source has
 an explicit empty state. A duplicate first version heading is removed only from the display copy; long notes scroll
 within a bounded region, and all notes use the shared safe Markdown renderer. Renderer receives no remote HTML, local
 installer path or updater credential.
@@ -289,7 +296,8 @@ installer path or updater credential.
 [更新架构](../../../../docs/architecture/desktop-app-updates.md#多语言发布与展示)。最终仍通过共享
 `SafeMarkdown`，不改写发布快照；语言变化不重挂载页面或改变更新资格。
 
-Downloading shows determinate percent, transferred/total bytes and speed without blocking navigation or
+Downloading shows one visible percentage beside the progress bar, transferred/total bytes and speed;
+the disabled primary action says only “下载中…”. It does not block navigation or
 ordinary App use. Repeated download requests visibly remain one operation. Download completion changes the
 primary action to “安装并重启”; `ready_to_install` never quits by itself. A synchronous install failure leaves
 the App and Core usable and offers retry. Fixed GitHub Releases/support links appear only when the updater is

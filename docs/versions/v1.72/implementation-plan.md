@@ -722,3 +722,30 @@ ZCode 根调用结束/压缩触发合并读取，Pi/Antigravity 保留独立字�
 - 不新增 Rust/Core 行为或数据库表，不修改模型上下文；既有队员页手动应用入口保持独立。
 - 验证已通过：`pnpm typecheck`、`pnpm test`（包含新增 14 项真实 Desktop 状态文件恢复测试，Node 汇总 334 通过 / 2 平台跳过）、`pnpm build:desktop`、`pnpm test:desktop-bridge`（真实隔离 Electron contextBridge）、`git diff --check` 及基于上述基线的 `pnpm docs:check:ci`。
 - `pnpm test:rust:pr` 默认 workspace 回归：453 项通过，1 项既有忽略；使用本机 Rust 1.97.1，仅为该命令补充工具链 PATH。未新增、删除或改动 Rust 测试。恢复测试使用确定性 Core 命令账本，不冒充真实 Runtime 执行验收。
+
+## 2026-10-05：更新入口与关于设置 R2
+
+按 User 确认的 R2 HTML 稿落实普通侧栏与「关于与更新」。侧栏使用可读的透明状态入口，设置菜单图标与更新
+状态采用独立尺寸规则，修复状态被 22px 图标槽挤压的问题；英文窄栏允许入口另起一行。页面顶部合并当前
+版本、状态与操作，日志优先于折叠检查记录，版本号进入日志 Tab，下载只保留一处可见百分比。当前
+[设置 brief](../../../apps/desktop/.impeccable/surfaces/settings-workspace.md#关于与更新)同步实际 880px 阅读轨道。
+
+当前/候选版本分离、语言切换、安全 Markdown、明确下载/安装、提示代次、只读 Desktop Web、Server 重连
+和精确发布回退链接继续原合同；无 Main/Core 更新状态机、API、Schema、发布源、模型上下文或 Runtime 变化。
+
+验证：
+
+- `pnpm typecheck`、全量 Vitest 238 文件 / 2600 项通过。原有 About 静态布局断言转由真实 Electron 的
+  几何与交互检查覆盖；进度 Token、提示、Mobile 44px 操作区等既有断言保留。
+- `pnpm test:rust:pr`：453 passed、1 项原有 ignored；`pnpm test:navigation-shell` 通过。
+- `pnpm test:release-notes-ui`：日夜与中英文、8 种侧栏状态、200/270/420px、原生方向键、
+  切换语言保留所选版本且零请求、日志/检查记录顺序、下载单一百分比、显式安装和 390px 手机布局通过。
+- `pnpm build:desktop`、`pnpm package:mac` 与 `accept-app-updates-ui.mjs`：独立 userData/Skill Library，
+  真实 packaged 0.4.4 的内置日志/发布日期、确定性关闭联网自动检查、Day 1440×920、Night 1040×700、
+  reduced motion 与 200% 等效布局通过。未操作日常 App、下载真实更新或执行升级安装。
+- `pnpm docs:test`、`DOCS_BASE_REF=2d0d5171… pnpm docs:check:ci` 通过。
+
+既有验收限制：`pnpm test:startup-presentation` 在本分支和冻结 `2d0d5171` 的生产模块上均报告
+`Pre-ready authority calls: windowClose.get`。macOS 夹具的泛化 Proxy 暴露了 Windows-only 能力；
+本次保留原脚本和准入断言，不将其列为通过，也不把 UI 修改扩大到启动与 Camp 清理逻辑。
+签名跨版本升级与实体 Windows/手机不属于本次样式实施证据。

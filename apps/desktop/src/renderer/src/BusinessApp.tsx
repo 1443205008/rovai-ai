@@ -3029,7 +3029,7 @@ export function BusinessApp({
       if (releaseSection?.dataset.appUpdateReleaseVersion !== expectedVersion) return false
       const heading = document.querySelector<HTMLElement>('#about-release-notes-heading')
       heading?.focus({ preventScroll: true })
-      releaseSection.scrollIntoView({ block: 'start' })
+      heading?.scrollIntoView({ block: 'nearest' })
       return Boolean(heading)
     } catch (nextError) {
       setError(uiAttribute("无法打开更新内容：{0}", String(errorMessage(nextError))))
