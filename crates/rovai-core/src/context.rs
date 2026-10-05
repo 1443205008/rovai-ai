@@ -2323,6 +2323,7 @@ impl ContextService {
             delivery_id,
             native_input_id,
             &now,
+            false,
         )?;
         transaction.commit()?;
         Ok(delivery)
@@ -2344,6 +2345,32 @@ impl ContextService {
             delivery_id,
             native_input_id,
             &now,
+            false,
+        )?;
+        transaction.commit()?;
+        Ok(result)
+    }
+
+    /// Called by the current Runtime input/ACK event path, which continues to
+    /// own this execution. Historical receipt reconciliation must use the
+    /// evidence-only entry points above instead.
+    pub fn acknowledge_active_input_delivery(
+        &self,
+        database: &mut Database,
+        delivery_id: &str,
+        native_input_id: &str,
+    ) -> Result<(RuntimeInputDelivery, bool)> {
+        if native_input_id.trim().is_empty() {
+            anyhow::bail!("Native Input ID must not be empty");
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        let transaction = database.connection_mut().transaction()?;
+        let result = acknowledge_input_delivery_transaction(
+            &transaction,
+            delivery_id,
+            native_input_id,
+            &now,
+            true,
         )?;
         transaction.commit()?;
         Ok(result)
@@ -2549,6 +2576,7 @@ fn acknowledge_input_delivery_transaction(
     delivery_id: &str,
     native_input_id: &str,
     now: &str,
+    resume_active_execution: bool,
 ) -> Result<(RuntimeInputDelivery, bool)> {
     let row = load_delivery_target(transaction, delivery_id)?
         .context("Runtime Input Delivery does not exist")?;
@@ -2660,7 +2688,39 @@ fn acknowledge_input_delivery_transaction(
                 );
             }
         }
-        if row.status == "delivery_unknown" {
+        if row.status == "delivery_unknown" && resume_active_execution {
+            let lease_expires_at =
+                (chrono::Utc::now() + chrono::Duration::seconds(120)).to_rfc3339();
+            transaction.execute(
+                "UPDATE agent_run SET status = 'running', wait_reason = NULL, wait_deadline_at = NULL,
+                     runtime_recovery_required = 0,
+                     last_error_code = CASE WHEN last_error_code = 'runtime_network_interrupted'
+                         THEN last_error_code ELSE NULL END,
+                     execution_lease_owner = ?4, execution_lease_expires_at = ?5,
+                     version = version + 1, updated_at = ?2
+                 WHERE id = ?1 AND execution_epoch = ?3 AND status = 'waiting'
+                   AND wait_reason = 'delivery_unknown' AND cancel_requested_at IS NULL",
+                params![row.agent_run_id, now, row.execution_epoch,
+                        format!("runtime-input:{delivery_id}"), lease_expires_at],
+            )?;
+            let camp_turn_id: Option<String> = transaction.query_row(
+                "SELECT camp_turn_id FROM agent_run WHERE id = ?1",
+                [&row.agent_run_id],
+                |run| run.get(0),
+            )?;
+            if let Some(camp_turn_id) = camp_turn_id {
+                crate::runtime::recompute_camp_turn(
+                    transaction,
+                    &row.camp_id,
+                    &camp_turn_id,
+                    &crate::command::ActorRef::System {
+                        component_id: "runtime-input-acknowledgement".into(),
+                    },
+                    Some(row.execution_epoch),
+                    now,
+                )?;
+            }
+        } else if row.status == "delivery_unknown" {
             transaction.execute(
                 r#"
                 UPDATE agent_run
@@ -12783,7 +12843,7 @@ mod slow_tests {
                     )
                     .unwrap();
                 ContextService
-                    .acknowledge_input_delivery(
+                    .acknowledge_active_input_delivery(
                         &mut fixture.database,
                         &delivery.id,
                         "late-accepted",
@@ -15469,136 +15529,267 @@ mod slow_tests {
     }
 
     #[test]
-    fn restart_marks_a_prepared_input_unknown_without_advancing_the_marker() {
-        let mut fixture = fixture();
-        let store = ManagedBlobStore::new(&fixture.directory);
-        let service = ContextService;
-        let prepared = service
-            .materialize(
-                &mut fixture.database,
-                &store,
-                &MaterializeContextRequest {
-                    agent_run_id: &fixture.run_id,
-                    execution_epoch: fixture.execution_epoch,
-                    charter_delivery_mode: CharterDeliveryMode::NativeAppend,
-                    max_payload_bytes: DEFAULT_MAX_CONTEXT_PAYLOAD_BYTES,
-                },
-            )
-            .unwrap();
-        let ContextMaterialization::Ready(prepared) = prepared else {
-            panic!("small context should be ready");
-        };
-        let runtime = ExecutionRuntimeService::default();
-        let execution = runtime
-            .load_agent_run_execution(&fixture.database, &fixture.run_id, fixture.execution_epoch)
-            .unwrap()
-            .unwrap();
-        let binding = runtime
-            .bind_native_session(
-                &mut fixture.database,
-                &CommandEnvelope {
-                    command_id: Uuid::new_v4().to_string(),
-                    actor: ActorRef::System {
-                        component_id: "runtime-adapter:codex-cli".to_string(),
+    fn uncertain_input_acknowledgement_resumes_only_the_active_execution() {
+        for (active_execution, network_recovery) in [(false, false), (true, false), (true, true)] {
+            let mut fixture = fixture();
+            let store = ManagedBlobStore::new(&fixture.directory);
+            let service = ContextService;
+            let prepared = service
+                .materialize(
+                    &mut fixture.database,
+                    &store,
+                    &MaterializeContextRequest {
+                        agent_run_id: &fixture.run_id,
+                        execution_epoch: fixture.execution_epoch,
+                        charter_delivery_mode: CharterDeliveryMode::NativeAppend,
+                        max_payload_bytes: DEFAULT_MAX_CONTEXT_PAYLOAD_BYTES,
                     },
-                    camp_id: Some(fixture.camp_id.clone()),
-                    expected_versions: Vec::new(),
-                    execution_epoch: None,
-                    payload: BindNativeSessionCommand {
-                        conversation_id: execution.conversation_id.clone(),
-                        agent_run_id: execution.agent_run_id.clone(),
-                        expected_conversation_version: execution.conversation_version,
-                        expected_execution_epoch: execution.execution_epoch,
-                        previous_adapter_installation_id: execution
-                            .native_adapter_installation_id
-                            .clone(),
-                        previous_native_session_id: execution.native_session_id.clone(),
-                        previous_binding_compatibility_digest: execution
-                            .native_binding_compatibility_digest
-                            .clone(),
-                        proposed_binding_id: Some(fixture.native_binding_id.clone()),
-                        adapter_installation_id: execution.runtime.installation_id.clone(),
-                        native_session_id: "native-session-1".to_string(),
-                        binding_compatibility_digest: execution
-                            .runtime
-                            .binding_compatibility_digest
-                            .clone(),
+                )
+                .unwrap();
+            let ContextMaterialization::Ready(prepared) = prepared else {
+                panic!("small context should be ready");
+            };
+            let runtime = ExecutionRuntimeService::default();
+            let execution = runtime
+                .load_agent_run_execution(
+                    &fixture.database,
+                    &fixture.run_id,
+                    fixture.execution_epoch,
+                )
+                .unwrap()
+                .unwrap();
+            let binding = runtime
+                .bind_native_session(
+                    &mut fixture.database,
+                    &CommandEnvelope {
+                        command_id: Uuid::new_v4().to_string(),
+                        actor: ActorRef::System {
+                            component_id: "runtime-adapter:codex-cli".to_string(),
+                        },
+                        camp_id: Some(fixture.camp_id.clone()),
+                        expected_versions: Vec::new(),
+                        execution_epoch: None,
+                        payload: BindNativeSessionCommand {
+                            conversation_id: execution.conversation_id.clone(),
+                            agent_run_id: execution.agent_run_id.clone(),
+                            expected_conversation_version: execution.conversation_version,
+                            expected_execution_epoch: execution.execution_epoch,
+                            previous_adapter_installation_id: execution
+                                .native_adapter_installation_id
+                                .clone(),
+                            previous_native_session_id: execution.native_session_id.clone(),
+                            previous_binding_compatibility_digest: execution
+                                .native_binding_compatibility_digest
+                                .clone(),
+                            proposed_binding_id: Some(fixture.native_binding_id.clone()),
+                            adapter_installation_id: execution.runtime.installation_id.clone(),
+                            native_session_id: "native-session-1".to_string(),
+                            binding_compatibility_digest: execution
+                                .runtime
+                                .binding_compatibility_digest
+                                .clone(),
+                        },
                     },
-                },
-            )
-            .unwrap();
-        assert_eq!(binding.result.status, CommandResultStatus::Applied);
-        let delivery = service
-            .prepare_input_delivery(
-                &mut fixture.database,
-                &fixture.run_id,
-                fixture.execution_epoch,
-                &prepared.manifest_id,
-            )
-            .unwrap();
-        assert_eq!(delivery.status, "prepared");
+                )
+                .unwrap();
+            assert_eq!(binding.result.status, CommandResultStatus::Applied);
+            let delivery = service
+                .prepare_input_delivery(
+                    &mut fixture.database,
+                    &fixture.run_id,
+                    fixture.execution_epoch,
+                    &prepared.manifest_id,
+                )
+                .unwrap();
+            assert_eq!(delivery.status, "prepared");
 
-        let recovery = fixture.database.prepare_v2_recovery().unwrap();
-        assert_eq!(recovery.input_deliveries_marked_unknown, 1);
-        let delivery_state: String = fixture
-            .database
-            .connection()
-            .query_row(
-                "SELECT status FROM runtime_input_delivery WHERE id = ?1",
-                [&delivery.id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(delivery_state, "delivery_unknown");
-        let run_state: (String, Option<String>) = fixture
-            .database
-            .connection()
-            .query_row(
-                "SELECT status, wait_reason FROM agent_run WHERE id = ?1",
-                [&fixture.run_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(
-            run_state,
-            ("waiting".to_string(), Some("delivery_unknown".to_string()))
-        );
-        let marker: i64 = fixture
-            .database
-            .connection()
-            .query_row(
-                "SELECT last_accepted_public_boundary_sequence FROM conversation WHERE id = ?1",
-                [&execution.conversation_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(marker, 0);
-        service
-            .acknowledge_input_delivery(&mut fixture.database, &delivery.id, "late-native-input-1")
-            .unwrap();
-        let reconciled: (String, Option<String>, i64) = fixture
-            .database
-            .connection()
-            .query_row(
-                r#"
+            if network_recovery {
+                fixture.database.connection().execute(
+                    "UPDATE agent_run SET last_error_code = 'runtime_network_interrupted' WHERE id = ?1",
+                    [&fixture.run_id],
+                ).unwrap();
+            }
+            if active_execution {
+                service
+                    .mark_input_delivery_unknown(
+                        &mut fixture.database,
+                        &delivery.id,
+                        "uncertain live response",
+                    )
+                    .unwrap();
+            } else {
+                let recovery = fixture.database.prepare_v2_recovery().unwrap();
+                assert_eq!(recovery.input_deliveries_marked_unknown, 1);
+            }
+            let delivery_state: String = fixture
+                .database
+                .connection()
+                .query_row(
+                    "SELECT status FROM runtime_input_delivery WHERE id = ?1",
+                    [&delivery.id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(delivery_state, "delivery_unknown");
+            let run_state: (String, Option<String>) = fixture
+                .database
+                .connection()
+                .query_row(
+                    "SELECT status, wait_reason FROM agent_run WHERE id = ?1",
+                    [&fixture.run_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(
+                run_state,
+                ("waiting".to_string(), Some("delivery_unknown".to_string()))
+            );
+            let marker: i64 = fixture
+                .database
+                .connection()
+                .query_row(
+                    "SELECT last_accepted_public_boundary_sequence FROM conversation WHERE id = ?1",
+                    [&execution.conversation_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(marker, 0);
+            if active_execution {
+                service
+                    .acknowledge_active_input_delivery(
+                        &mut fixture.database,
+                        &delivery.id,
+                        "late-native-input-1",
+                    )
+                    .unwrap();
+            } else {
+                service
+                    .acknowledge_input_delivery(
+                        &mut fixture.database,
+                        &delivery.id,
+                        "late-native-input-1",
+                    )
+                    .unwrap();
+            }
+            let reconciled: (String, Option<String>, i64) = fixture
+                .database
+                .connection()
+                .query_row(
+                    r#"
                 SELECT agent_run.status, agent_run.wait_reason,
                        conversation.last_accepted_public_boundary_sequence
                 FROM agent_run
                 JOIN conversation ON conversation.id = agent_run.conversation_id
                 WHERE agent_run.id = ?1
                 "#,
-                [&fixture.run_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(
-            reconciled,
-            (
-                "waiting".to_string(),
-                Some("runtime_recovery".to_string()),
-                prepared.camp_message_boundary_sequence,
-            )
-        );
-        fixture.cleanup();
+                    [&fixture.run_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(
+                reconciled,
+                (
+                    if active_execution {
+                        "running"
+                    } else {
+                        "waiting"
+                    }
+                    .to_string(),
+                    (!active_execution).then(|| "runtime_recovery".to_string()),
+                    prepared.camp_message_boundary_sequence,
+                )
+            );
+            if network_recovery {
+                let version: i64 = fixture
+                    .database
+                    .connection()
+                    .query_row(
+                        "SELECT version FROM agent_run WHERE id = ?1",
+                        [&fixture.run_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                let recovered = ExecutionRuntimeService::default()
+                    .complete_network_recovery(
+                        &mut fixture.database,
+                        &CommandEnvelope {
+                            command_id: Uuid::new_v4().to_string(),
+                            actor: ActorRef::System {
+                                component_id: "network-recovery-coordinator".into(),
+                            },
+                            camp_id: Some(fixture.camp_id.clone()),
+                            expected_versions: Vec::new(),
+                            execution_epoch: None,
+                            payload: crate::runtime::CompleteAgentRunNetworkRecoveryCommand {
+                                agent_run_id: fixture.run_id.clone(),
+                                expected_version: version,
+                                execution_epoch: fixture.execution_epoch,
+                            },
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(
+                    recovered.result.code,
+                    "agent_run.network_recovery_progressed"
+                );
+            }
+            if active_execution {
+                let current = ExecutionRuntimeService::default()
+                    .load_agent_run_execution(
+                        &fixture.database,
+                        &fixture.run_id,
+                        fixture.execution_epoch,
+                    )
+                    .unwrap()
+                    .unwrap();
+                let completed = ExecutionRuntimeService::default()
+                    .succeed_agent_run(
+                        &mut fixture.database,
+                        &CommandEnvelope {
+                            command_id: Uuid::new_v4().to_string(),
+                            actor: ActorRef::System {
+                                component_id: "runtime-adapter:codex".to_string(),
+                            },
+                            camp_id: Some(fixture.camp_id.clone()),
+                            expected_versions: Vec::new(),
+                            execution_epoch: None,
+                            payload: SucceedAgentRunCommand {
+                                agent_run_id: fixture.run_id.clone(),
+                                expected_version: current.version,
+                                execution_epoch: fixture.execution_epoch,
+                                native_turn_id: "late-native-input-1".into(),
+                                final_output: "Original execution completed".into(),
+                                missing_send_recovery_candidate: None,
+                                ending_git_observation: None,
+                            },
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(completed.result.code, "agent_run.succeeded");
+                // A later exit from that same Host cannot replace the known result.
+                let exited = crate::action::ActionSafetyService::default()
+                    .reconcile_runtime_loss(
+                        &mut fixture.database,
+                        &CommandEnvelope {
+                            command_id: Uuid::new_v4().to_string(),
+                            actor: ActorRef::System {
+                                component_id: "runtime-recovery-coordinator".into(),
+                            },
+                            camp_id: Some(fixture.camp_id.clone()),
+                            expected_versions: Vec::new(),
+                            execution_epoch: None,
+                            payload: crate::action::ReconcileRuntimeLossCommand {
+                                agent_run_id: fixture.run_id.clone(),
+                                expected_version: current.version + 1,
+                                execution_epoch: fixture.execution_epoch,
+                                reason: "codex_host_exited".into(),
+                            },
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(exited.result.code, "runtime_loss.fenced");
+            }
+            fixture.cleanup();
+        }
     }
 }

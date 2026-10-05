@@ -11639,6 +11639,66 @@ impl Core {
         }
     }
 
+    // Resolve the existing queue attempt after admission/dispatch returns. A
+    // deferred claim has no Runtime owner yet; a newer active epoch does.
+    async fn finish_network_recovery_dispatch(&self, agent_run_id: &str, execution_epoch: i64) {
+        let state = {
+            let database = self.database.lock().await;
+            database
+                .connection()
+                .query_row(
+                    "SELECT status, wait_reason, execution_epoch, cancel_requested_at IS NOT NULL
+                     FROM agent_run WHERE id = ?1",
+                    [agent_run_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, bool>(3)?,
+                        ))
+                    },
+                )
+                .optional()
+        };
+        match state {
+            Ok(Some((status, _, epoch, false)))
+                if epoch > execution_epoch && matches!(status.as_str(), "running" | "waiting") => {}
+            Ok(Some((status, wait_reason, epoch, false)))
+                if epoch == execution_epoch
+                    && status == "waiting"
+                    && matches!(
+                        wait_reason.as_deref(),
+                        Some("network_recovery" | "runtime_recovery")
+                    ) =>
+            {
+                self.defer_network_recovery_check(
+                    agent_run_id,
+                    execution_epoch,
+                    "dispatch_deferred",
+                )
+                .await;
+            }
+            Err(error) => {
+                eprintln!("failed to inspect recovery dispatch for {agent_run_id}: {error:#}");
+                self.defer_network_recovery_check(
+                    agent_run_id,
+                    execution_epoch,
+                    "dispatch_check_failed",
+                )
+                .await;
+            }
+            _ => {
+                self.stop_network_recovery(
+                    agent_run_id,
+                    execution_epoch,
+                    "dispatch_no_longer_active",
+                )
+                .await
+            }
+        }
+    }
+
     async fn begin_network_recovery_attempt(
         self: &Arc<Self>,
         attempt: NetworkRecoveryAttempt,
@@ -11713,7 +11773,7 @@ impl Core {
             }
             Ok(Some(admission)) => {
                 eprintln!(
-                    "network_recovery run={} epoch={} source={} attempt={} category={} decision=stopped code={}",
+                    "network_recovery run={} epoch={} source={} attempt={} category={} decision=admission_rejected code={}",
                     registration.agent_run_id,
                     registration.execution_epoch,
                     registration.source,
@@ -11721,10 +11781,9 @@ impl Core {
                     registration.category.as_str(),
                     admission.result.code,
                 );
-                self.stop_network_recovery(
+                self.finish_network_recovery_dispatch(
                     &registration.agent_run_id,
                     registration.execution_epoch,
-                    &admission.result.code,
                 )
                 .await;
                 if admission.result.code == "agent_run.network_recovery_needs_attention" {
@@ -11737,10 +11796,9 @@ impl Core {
                 None
             }
             Ok(None) => {
-                self.stop_network_recovery(
+                self.finish_network_recovery_dispatch(
                     &registration.agent_run_id,
                     registration.execution_epoch,
-                    "run_no_longer_active",
                 )
                 .await;
                 None
@@ -13506,9 +13564,11 @@ impl Core {
         native_input_id: &str,
     ) -> Result<()> {
         let mut database = self.database.lock().await;
-        if let Err(error) =
-            ContextService.acknowledge_input_delivery(&mut database, delivery_id, native_input_id)
-        {
+        if let Err(error) = ContextService.acknowledge_active_input_delivery(
+            &mut database,
+            delivery_id,
+            native_input_id,
+        ) {
             let acknowledgement_error = format!("{error:#}");
             if let Err(mark_error) = ContextService.mark_input_delivery_unknown(
                 &mut database,
@@ -13544,7 +13604,7 @@ impl Core {
         else {
             return Ok(None);
         };
-        match ContextService.acknowledge_input_delivery_transition(
+        match ContextService.acknowledge_active_input_delivery(
             &mut database,
             delivery_id,
             native_input_id,
@@ -16557,6 +16617,71 @@ impl Core {
         Ok(())
     }
 
+    // Called only after the adapter has matched the exiting Host and epoch.
+    // Earlier terminal events use the same ingress queue and retain ownership
+    // of their result; the domain command fences terminal and successor Runs.
+    async fn reconcile_exited_agent_run(
+        &self,
+        output: &mpsc::UnboundedSender<String>,
+        agent_run_id: &str,
+        execution_epoch: i64,
+        reason: &str,
+    ) {
+        let recovery = {
+            let mut database = self.database.lock().await;
+            let service = ExecutionRuntimeService::default();
+            match service.load_agent_run_execution(&database, agent_run_id, execution_epoch) {
+                Ok(Some(execution)) => ActionSafetyService::default()
+                    .reconcile_runtime_loss(
+                        &mut database,
+                        &CommandEnvelope {
+                            command_id: uuid::Uuid::new_v4().to_string(),
+                            actor: ActorRef::System {
+                                component_id: "runtime-recovery-coordinator".to_string(),
+                            },
+                            camp_id: Some(execution.camp_id.clone()),
+                            expected_versions: Vec::new(),
+                            execution_epoch: None,
+                            payload: ReconcileRuntimeLossCommand {
+                                agent_run_id: agent_run_id.to_string(),
+                                expected_version: execution.version,
+                                execution_epoch,
+                                reason: reason.to_string(),
+                            },
+                        },
+                    )
+                    .map(|result| Some((execution, result))),
+                Ok(None) => Ok(None),
+                Err(error) => Err(error),
+            }
+        };
+        match recovery {
+            Ok(Some((execution, recovery)))
+                if recovery.result.status != CommandResultStatus::Rejected =>
+            {
+                let payload = json!({
+                    "agentRunId": agent_run_id,
+                    "executionEpoch": execution_epoch,
+                    "adapterKind": execution.runtime.adapter_kind,
+                    "reason": reason,
+                    "result": recovery.result,
+                });
+                if matches!(
+                    recovery.result.code.as_str(),
+                    "agent_run.failed" | "agent_run.cancelled"
+                ) {
+                    emit_agent_run_terminal(output, Some(&execution.camp_id), payload);
+                    self.agent_run_cancellation_notify.notify_one();
+                } else {
+                    emit(output, "agent_run.recovering", payload);
+                }
+                self.delivery_batch_scheduler_notify.notify_one();
+            }
+            Ok(_) => {}
+            Err(error) => eprintln!("failed to settle exited AgentRun {agent_run_id}: {error:#}"),
+        }
+    }
+
     async fn fail_claimed_agent_run(
         &self,
         output: &mpsc::UnboundedSender<String>,
@@ -19549,52 +19674,8 @@ async fn process_pi_agent_run_exit(
         "runtime_host_exit_unclassified",
     )
     .await;
-    let execution = {
-        let database = core.database.lock().await;
-        ExecutionRuntimeService::default().load_agent_run_execution(
-            &database,
-            agent_run_id,
-            execution_epoch,
-        )
-    };
-    let Ok(Some(execution)) = execution else {
-        return;
-    };
-    let recovery = {
-        let mut database = core.database.lock().await;
-        ActionSafetyService::default().reconcile_runtime_loss(
-            &mut database,
-            &CommandEnvelope {
-                command_id: uuid::Uuid::new_v4().to_string(),
-                actor: ActorRef::System {
-                    component_id: "runtime-recovery-coordinator".to_string(),
-                },
-                camp_id: Some(execution.camp_id.clone()),
-                expected_versions: Vec::new(),
-                execution_epoch: None,
-                payload: ReconcileRuntimeLossCommand {
-                    agent_run_id: agent_run_id.to_string(),
-                    expected_version: execution.version,
-                    execution_epoch,
-                    reason: "pi_host_exited".to_string(),
-                },
-            },
-        )
-    };
-    match recovery {
-        Ok(recovery) if recovery.result.status != CommandResultStatus::Rejected => emit(
-            output,
-            "agent_run.recovering",
-            json!({
-                "agentRunId": agent_run_id,
-                "executionEpoch": execution_epoch,
-                "adapterKind": AdapterKind::Pi,
-                "reason": "pi_host_exited",
-            }),
-        ),
-        Ok(_) => {}
-        Err(error) => eprintln!("failed to mark AgentRun {agent_run_id} for recovery: {error:#}"),
-    }
+    core.reconcile_exited_agent_run(output, agent_run_id, execution_epoch, "pi_host_exited")
+        .await;
 }
 
 async fn process_acp_events(
@@ -22343,53 +22424,13 @@ async fn process_acp_agent_run_exit(
         "runtime_host_exit_unclassified",
     )
     .await;
-    let execution = {
-        let database = core.database.lock().await;
-        ExecutionRuntimeService::default().load_agent_run_execution(
-            &database,
-            agent_run_id,
-            execution_epoch,
-        )
-    };
-    let Ok(Some(execution)) = execution else {
-        return;
-    };
-    let reason = format!("{}_host_exited", adapter_kind.as_str().replace('-', "_"));
-    let recovery = {
-        let mut database = core.database.lock().await;
-        ActionSafetyService::default().reconcile_runtime_loss(
-            &mut database,
-            &CommandEnvelope {
-                command_id: uuid::Uuid::new_v4().to_string(),
-                actor: ActorRef::System {
-                    component_id: "runtime-recovery-coordinator".to_string(),
-                },
-                camp_id: Some(execution.camp_id.clone()),
-                expected_versions: Vec::new(),
-                execution_epoch: None,
-                payload: ReconcileRuntimeLossCommand {
-                    agent_run_id: agent_run_id.to_string(),
-                    expected_version: execution.version,
-                    execution_epoch,
-                    reason: reason.clone(),
-                },
-            },
-        )
-    };
-    match recovery {
-        Ok(recovery) if recovery.result.status != CommandResultStatus::Rejected => emit(
-            output,
-            "agent_run.recovering",
-            json!({
-                "agentRunId": agent_run_id,
-                "executionEpoch": execution_epoch,
-                "adapterKind": adapter_kind,
-                "reason": reason,
-            }),
-        ),
-        Ok(_) => {}
-        Err(error) => eprintln!("failed to mark AgentRun {agent_run_id} for recovery: {error:#}"),
-    }
+    core.reconcile_exited_agent_run(
+        output,
+        agent_run_id,
+        execution_epoch,
+        &format!("{}_host_exited", adapter_kind.as_str().replace('-', "_")),
+    )
+    .await;
 }
 
 async fn buffer_runtime_usage(
@@ -23653,51 +23694,8 @@ async fn process_agent_run_exit(
         "runtime_host_exit_unclassified",
     )
     .await;
-    let execution = {
-        let database = core.database.lock().await;
-        ExecutionRuntimeService::default().load_agent_run_execution(
-            &database,
-            agent_run_id,
-            execution_epoch,
-        )
-    };
-    let Ok(Some(execution)) = execution else {
-        return;
-    };
-    let recovery = {
-        let mut database = core.database.lock().await;
-        ActionSafetyService::default().reconcile_runtime_loss(
-            &mut database,
-            &CommandEnvelope {
-                command_id: uuid::Uuid::new_v4().to_string(),
-                actor: ActorRef::System {
-                    component_id: "runtime-recovery-coordinator".to_string(),
-                },
-                camp_id: Some(execution.camp_id.clone()),
-                expected_versions: Vec::new(),
-                execution_epoch: None,
-                payload: ReconcileRuntimeLossCommand {
-                    agent_run_id: agent_run_id.to_string(),
-                    expected_version: execution.version,
-                    execution_epoch,
-                    reason: "codex_host_exited".to_string(),
-                },
-            },
-        )
-    };
-    match recovery {
-        Ok(recovery) if recovery.result.status != CommandResultStatus::Rejected => emit(
-            output,
-            "agent_run.recovering",
-            json!({
-                "agentRunId": agent_run_id,
-                "executionEpoch": execution_epoch,
-                "reason": "codex_host_exited",
-            }),
-        ),
-        Ok(_) => {}
-        Err(error) => eprintln!("failed to mark AgentRun {agent_run_id} for recovery: {error:#}"),
-    }
+    core.reconcile_exited_agent_run(output, agent_run_id, execution_epoch, "codex_host_exited")
+        .await;
 }
 
 async fn dispatch_pending_single_chat_inputs(core: &Core) {
@@ -24059,9 +24057,9 @@ async fn process_network_recovery(
                 result = workers.join_next_with_id() => {
                     match result {
                         Some(Ok((task_id, admitted))) => {
-                            worker_entries.remove(&task_id);
-                            if let Some(agent_run_id) = admitted {
-                                dispatch_admitted.push(agent_run_id);
+                            if let Some((_, epoch)) = worker_entries.remove(&task_id)
+                                && let Some(agent_run_id) = admitted {
+                                dispatch_admitted.push((agent_run_id, epoch));
                             }
                         }
                         Some(Err(error)) => {
@@ -24085,9 +24083,16 @@ async fn process_network_recovery(
             }
         }
         if !dispatch_admitted.is_empty() {
+            let run_ids = dispatch_admitted
+                .iter()
+                .map(|(run_id, _)| run_id.clone())
+                .collect::<Vec<_>>();
             tokio::select! {
-                _ = core.dispatch_agent_runs_by_id(&dispatch_admitted, &output) => {}
+                _ = core.dispatch_agent_runs_by_id(&run_ids, &output) => {}
                 _ = &mut shutdown => break 'coordinator,
+            }
+            for (run_id, epoch) in dispatch_admitted {
+                core.finish_network_recovery_dispatch(&run_id, epoch).await;
             }
         }
     }
@@ -29928,15 +29933,10 @@ done
     }
 
     #[cfg(all(target_os = "macos", feature = "slow-tests"))]
-    #[tokio::test]
-    async fn runtime_cleanup_dispatch_is_non_blocking_and_deduplicated() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let root =
-            std::env::temp_dir().join(format!("rovai-cleanup-dispatch-{}", uuid::Uuid::new_v4()));
-        let workspace = root.join("workspace");
-        fs::create_dir_all(&workspace).unwrap();
-        let core = Arc::new(runtime_resolution_test_core(&root).unwrap());
+    async fn claimed_runtime_cleanup_test_run(
+        core: &Arc<Core>,
+        workspace: &Path,
+    ) -> (String, String, i64, i64) {
         let camp_id = {
             let mut database = core.database.lock().await;
             let agent_id = AgentProfileService::default()
@@ -30046,6 +30046,245 @@ done
                 claimed.result.payload["executionEpoch"].as_i64().unwrap(),
             )
         };
+        (camp_id, agent_run_id, version, execution_epoch)
+    }
+
+    // Owns the DB-to-memory recovery handoff across actual dispatch deferral
+    // and rejection. Queue-only tests cannot observe the scheduler's result.
+    #[cfg(all(target_os = "macos", feature = "slow-tests"))]
+    #[tokio::test]
+    async fn network_recovery_dispatch_defers_claims_and_finishes_rejections() {
+        use std::os::unix::fs::PermissionsExt;
+        let root =
+            std::env::temp_dir().join(format!("rovai-recovery-dispatch-{}", uuid::Uuid::new_v4()));
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let core = Arc::new(runtime_resolution_test_core(&root).unwrap());
+        let (camp_id, run_id, _, epoch) = claimed_runtime_cleanup_test_run(&core, &workspace).await;
+        let execution = {
+            let mut database = core.database.lock().await;
+            let service = ExecutionRuntimeService::default();
+            let execution = service
+                .load_agent_run_execution(&database, &run_id, epoch)
+                .unwrap()
+                .unwrap();
+            let result = service
+                .mark_for_network_recovery(
+                    &mut database,
+                    &CommandEnvelope {
+                        command_id: uuid::Uuid::new_v4().to_string(),
+                        actor: ActorRef::System {
+                            component_id: "network-recovery-coordinator".into(),
+                        },
+                        camp_id: Some(camp_id.clone()),
+                        expected_versions: Vec::new(),
+                        execution_epoch: None,
+                        payload: MarkAgentRunForNetworkRecoveryCommand {
+                            agent_run_id: run_id.clone(),
+                            expected_version: execution.version,
+                            execution_epoch: epoch,
+                            category: "connection_reset".into(),
+                            source: "acp_prompt_terminal".into(),
+                            failure: RuntimeFailureView::new(
+                                AdapterKind::CodexCli,
+                                RuntimeFailureOrigin::Runtime,
+                                RuntimeFailurePhase::Execution,
+                                "runtime_network_interrupted",
+                                "network interrupted",
+                                None,
+                                true,
+                            ),
+                        },
+                    },
+                )
+                .unwrap();
+            assert_eq!(result.result.code, "agent_run.network_recovery_waiting");
+            execution
+        };
+        core.register_network_recovery(&execution, NetworkFailureCategory::ConnectionReset, "test")
+            .await;
+        core.subsystems
+            .finish("mcp", Err(anyhow::anyhow!("dependency initializing")));
+        // First dispatch is genuinely deferred by the existing dependency gate.
+        // A second admitted check must remain possible on the same epoch.
+        for _ in 0..2 {
+            let attempt = core
+                .network_recovery
+                .lock()
+                .await
+                .take_due(Instant::now() + Duration::from_secs(60))
+                .pop()
+                .unwrap();
+            assert_eq!(
+                core.begin_network_recovery_attempt(attempt, &core.output)
+                    .await
+                    .as_deref(),
+                Some(run_id.as_str())
+            );
+            core.dispatch_agent_runs_by_id(std::slice::from_ref(&run_id), &core.output)
+                .await;
+            core.finish_network_recovery_dispatch(&run_id, epoch).await;
+            assert!(core.network_recovery.lock().await.next_deadline().is_some());
+        }
+        // Claim in a later epoch: the old attempt must yield to its ACK/terminal,
+        // not clear the cycle or declare a missing Runtime handle a failure.
+        let next_epoch = {
+            let mut database = core.database.lock().await;
+            let service = ExecutionRuntimeService::default();
+            let candidate = service
+                .load_dispatchable_agent_run(&database, &run_id)
+                .unwrap()
+                .unwrap();
+            let claim = service
+                .claim_agent_run(
+                    &mut database,
+                    &CommandEnvelope {
+                        command_id: uuid::Uuid::new_v4().to_string(),
+                        actor: ActorRef::System {
+                            component_id: "agent-run-scheduler".into(),
+                        },
+                        camp_id: Some(camp_id.clone()),
+                        expected_versions: Vec::new(),
+                        execution_epoch: None,
+                        payload: ClaimAgentRunCommand {
+                            agent_run_id: run_id.clone(),
+                            expected_version: candidate.version,
+                            lease_owner: "recovery-test".into(),
+                            lease_seconds: 120,
+                            workspace: None,
+                            starting_git_observation: None,
+                        },
+                    },
+                )
+                .unwrap();
+            assert_eq!(claim.result.code, "agent_run.claimed");
+            claim.result.payload["executionEpoch"].as_i64().unwrap()
+        };
+        let attempt = core
+            .network_recovery
+            .lock()
+            .await
+            .take_due(Instant::now() + Duration::from_secs(60))
+            .pop()
+            .unwrap();
+        assert!(
+            core.begin_network_recovery_attempt(attempt, &core.output)
+                .await
+                .is_none()
+        );
+        core.finish_network_recovery_dispatch(&run_id, epoch).await;
+        assert!(core.network_recovery.lock().await.contains(&run_id, epoch));
+        assert!(core.network_recovery.lock().await.next_deadline().is_none());
+        // A second network failure registers the new epoch. An old callback
+        // must leave its pending retry intact.
+        let next = {
+            let mut database = core.database.lock().await;
+            let service = ExecutionRuntimeService::default();
+            let next = service
+                .load_agent_run_execution(&database, &run_id, next_epoch)
+                .unwrap()
+                .unwrap();
+            let result = service
+                .mark_for_network_recovery(
+                    &mut database,
+                    &CommandEnvelope {
+                        command_id: uuid::Uuid::new_v4().to_string(),
+                        actor: ActorRef::System {
+                            component_id: "network-recovery-coordinator".into(),
+                        },
+                        camp_id: Some(camp_id.clone()),
+                        expected_versions: Vec::new(),
+                        execution_epoch: None,
+                        payload: MarkAgentRunForNetworkRecoveryCommand {
+                            agent_run_id: run_id.clone(),
+                            expected_version: next.version,
+                            execution_epoch: next_epoch,
+                            category: "connection_reset".into(),
+                            source: "acp_prompt_terminal".into(),
+                            failure: RuntimeFailureView::new(
+                                AdapterKind::CodexCli,
+                                RuntimeFailureOrigin::Runtime,
+                                RuntimeFailurePhase::Execution,
+                                "runtime_network_interrupted",
+                                "network interrupted",
+                                None,
+                                true,
+                            ),
+                        },
+                    },
+                )
+                .unwrap();
+            assert_eq!(result.result.code, "agent_run.network_recovery_waiting");
+            next
+        };
+        core.register_network_recovery(&next, NetworkFailureCategory::ConnectionReset, "test")
+            .await;
+        core.finish_network_recovery_dispatch(&run_id, epoch).await;
+        assert!(core.network_recovery.lock().await.next_deadline().is_some());
+        core.subsystems.finish("mcp", Ok(()));
+        fs::rename(&workspace, root.join("moved-workspace")).unwrap();
+        let attempt = core
+            .network_recovery
+            .lock()
+            .await
+            .take_due(Instant::now() + Duration::from_secs(60))
+            .pop()
+            .unwrap();
+        assert!(
+            core.begin_network_recovery_attempt(attempt, &core.output)
+                .await
+                .is_some()
+        );
+        core.dispatch_agent_runs_by_id(std::slice::from_ref(&run_id), &core.output)
+            .await;
+        core.finish_network_recovery_dispatch(&run_id, next_epoch)
+            .await;
+        assert!(
+            !core
+                .network_recovery
+                .lock()
+                .await
+                .contains(&run_id, next_epoch)
+        );
+        let state: String = core
+            .database
+            .lock()
+            .await
+            .connection()
+            .query_row(
+                "SELECT status FROM agent_run WHERE id = ?1",
+                [&run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "failed");
+        ThreadAttachmentStore::new(&core.data_dir)
+            .remove_camp(&camp_id)
+            .unwrap();
+        let view_root = core.attachment_views.root().join("camps").join(&camp_id);
+        drop(core);
+        for path in [
+            &view_root,
+            view_root.parent().unwrap(),
+            view_root.parent().unwrap().parent().unwrap(),
+        ] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(all(target_os = "macos", feature = "slow-tests"))]
+    #[tokio::test]
+    async fn runtime_cleanup_dispatch_is_non_blocking_and_deduplicated() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("rovai-cleanup-dispatch-{}", uuid::Uuid::new_v4()));
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let core = Arc::new(runtime_resolution_test_core(&root).unwrap());
+        let (camp_id, agent_run_id, version, execution_epoch) =
+            claimed_runtime_cleanup_test_run(&core, &workspace).await;
         let permit = core.planned_shutdown.enter_launch().await.unwrap();
         let key = ActiveExecutionKey::new(&agent_run_id, execution_epoch);
         assert!(
