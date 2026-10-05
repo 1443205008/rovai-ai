@@ -49,7 +49,7 @@
   "自动检查只发现了新版本。只有你确认后才会开始下载。": "Automatic check detected a new version. A download will only begin after your confirmation.",
   "下载中": "Downloading",
   "下载期间可以继续使用 Rovai AI。": "You can continue using Rovai AI during the download.",
-  "可安装": "Installable",
+  "可安装": "Ready",
   "点击后将安装更新并重新启动。": "Click to install the update and restart.",
   "正在重启": "Restarting",
   "正在准备安装更新": "Preparing to install the update",
@@ -3486,5 +3486,12 @@
   "权限": "Permissions",
   "{0}的模型信息": "Model info for {0}",
   "关闭模型信息": "Close model info",
-  "模型未记录": "Model not recorded"
+  "模型未记录": "Model not recorded",
+  "版本与更新": "Version and updates",
+  "下载中…": "Downloading…",
+  "下载 {0}%": "Download {0}%",
+  "新版本 {0} 可用": "{0} is available",
+  "正在检查更新 · 已知 {0}": "Checking for updates · {0} available",
+  "{0} 已下载": "{0} is ready to install",
+  "当前应用仍可使用，可重试安装。": "You can keep using the app and retry installation."
 }

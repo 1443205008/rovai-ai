@@ -3143,7 +3143,7 @@ describe('task event projections', () => {
     expect(ordinary).toContain('role="group" aria-label="设置与应用更新"')
     expect(ordinary).toContain('aria-label="设置，打开上次保留的设置页面"')
     expect(ordinary).toContain('aria-label="打开关于与更新，Rovai AI v0.0.3 更新可用"')
-    expect(ordinary).toContain('>更新可用</span>')
+    expect(ordinary).toContain('>有更新</span>')
 
     const settings = renderToStaticMarkup(createElement(ThreadNavigation, {
       ...baseProps,
