@@ -12,6 +12,7 @@ use std::{
 
 pub mod claude_native;
 pub mod codex_catalog;
+pub mod codex_native;
 pub mod native;
 pub mod native_edit;
 pub(crate) mod native_file;
@@ -108,6 +109,14 @@ impl CustomApiConfiguration {
         kind: AdapterKind,
         require_model_list: bool,
     ) -> Result<()> {
+        self.validate_edit(kind, require_model_list, true)
+    }
+    pub(crate) fn validate_edit(
+        &mut self,
+        kind: AdapterKind,
+        require_model_list: bool,
+        require_address: bool,
+    ) -> Result<()> {
         ensure!(self.kind() == kind, "连接类型与当前智能体不一致。");
         let enabled = self.enabled();
         let base_url = match self {
@@ -115,7 +124,7 @@ impl CustomApiConfiguration {
         };
         *base_url = base_url.trim().to_owned();
         ensure!(base_url.len() <= 4096, "接口地址过长。");
-        if enabled || !base_url.is_empty() {
+        if require_address && (enabled || !base_url.is_empty()) {
             let url = url::Url::parse(base_url)
                 .map_err(|_| anyhow::anyhow!("请输入有效的 HTTP 或 HTTPS 接口地址。"))?;
             ensure!(

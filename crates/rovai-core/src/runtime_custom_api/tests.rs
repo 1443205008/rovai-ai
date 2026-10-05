@@ -43,6 +43,23 @@ pub(super) fn configuration(kind: AdapterKind) -> CustomApiConfiguration {
 fn configuration_rejects_ambiguous_connections_and_preserves_optional_models() {
     use claude_native::Identity;
     for (account, expected) in [
+        (json!({"type":"apiKey"}), codex_native::Identity::Api),
+        (json!({"type":"chatgpt"}), codex_native::Identity::Official),
+        (Value::Null, codex_native::Identity::SignedOut),
+        (json!({"type":"future"}), codex_native::Identity::Unknown),
+    ] {
+        assert_eq!(
+            codex_native::Identity::from_account(
+                &json!({"account":account,"requiresOpenaiAuth":true})
+            ),
+            expected
+        );
+    }
+    assert_eq!(
+        codex_native::Identity::from_account(&json!({"account":null,"requiresOpenaiAuth":false})),
+        codex_native::Identity::Unknown
+    );
+    for (account, expected) in [
         (
             json!({"subscriptionType":"max","email":"private@example.invalid"}),
             Identity::Official,
@@ -712,6 +729,44 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
         }
     }
 
+    // A cloud route without an explicit endpoint still permits model-only edits.
+    let cloud_kind = AdapterKind::ClaudeCodeCli;
+    let saved = runtime_startup::load(&db, cloud_kind).unwrap();
+    let cloud_context =
+        native::NativeContext::resolve(cloud_kind, &saved.configuration, db.path()).unwrap();
+    std::fs::write(
+        cloud_context.path(),
+        br#"{"env":{"CLAUDE_CODE_USE_BEDROCK":"1","ANTHROPIC_MODEL":"cloud-a"}}"#,
+    )
+    .unwrap();
+    let cloud_saved = runtime_startup::load(&db, cloud_kind).unwrap();
+    assert_eq!(
+        cloud_saved
+            .configuration
+            .custom_api
+            .as_ref()
+            .unwrap()
+            .base_url(),
+        ""
+    );
+    let prepared = runtime_startup::prepare_save(
+        &db,
+        cloud_kind,
+        vec![FieldEdit {
+            path: vec!["claudeModels".into(), "model".into()],
+            before: json!("cloud-a"),
+            after: json!("cloud-b"),
+            label: String::new(),
+        }],
+        &ApiKeyChange::Keep,
+    )
+    .unwrap();
+    runtime_startup::commit_save(&mut db, cloud_kind, prepared, 9, ApiKeyChange::Keep, None)
+        .unwrap();
+    let cloud_doc = native::read_json(&cloud_context.path()).unwrap();
+    assert_eq!(cloud_doc["env"]["CLAUDE_CODE_USE_BEDROCK"], "1");
+    assert_eq!(cloud_doc["env"]["ANTHROPIC_MODEL"], "cloud-b");
+
     // Optional native observation cannot turn an unreadable source into a new execution gate.
     db.connection().execute(
         "UPDATE runtime_startup_setting SET configuration_json=?1 WHERE runtime_kind='codex-cli'",
@@ -992,7 +1047,11 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     frozen_official.redactor().unwrap();
     std::fs::write(&auth, serde_json::to_vec(&fallback).unwrap()).unwrap();
     // Auto uses the native file fallback without promoting it over a possible keyring identity.
-    assert!(auto.configuration.enabled());
+    assert_eq!(
+        auto.configuration.mode(),
+        None,
+        "an auto fallback file cannot identify the selected keyring account"
+    );
     // Explicit clear affects the API field only, retaining official tokens and
     // unrelated native data. The resulting provider cannot fall back to them.
     std::fs::write(
@@ -1712,5 +1771,356 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         "unknown",
         "external config changes invalidate native identity hints"
     );
+    // Provider-owned command/AWS auth is a reusable source, without running a helper.
+    for (mechanism, declaration) in [
+        ("auth", "{command='/never/execute-on-read',args=['key']}"),
+        ("aws", "{region='us-east-1',profile='fixture'}"),
+    ] {
+        let mut custom = context.clone();
+        custom.directory = root.join(format!("provider-{mechanism}"));
+        let text = format!(
+            "model_provider='relay'\nmodel='a'\n[model_providers.relay]\nbase_url='https://before.example'\nwire_api='responses'\n{mechanism}={declaration}\nquery_params={{tag='keep'}}\nstream_idle_timeout_ms=15000\n[model_providers.other]\nexperimental_bearer_token='unrelated-key'\n"
+        );
+        private_storage::atomic_write_private_bytes(&custom.path(), text.as_bytes()).unwrap();
+        let read = native::read(&custom, None).unwrap();
+        assert_eq!(read.credential.status, "available");
+        assert!(
+            read.credential
+                .source_label
+                .contains(if mechanism == "auth" {
+                    "原生命令"
+                } else {
+                    "AWS"
+                })
+        );
+        assert!(
+            native::credential_value(&read.source, &custom)
+                .unwrap()
+                .0
+                .is_none()
+        );
+        let mut desired = read.configuration.clone();
+        if let CustomApiConfiguration::Codex { base_url, .. } = &mut desired {
+            *base_url = "https://after.example".into();
+        }
+        let edits = [FieldEdit {
+            path: vec!["baseUrl".into()],
+            before: json!("https://before.example"),
+            after: json!("https://after.example"),
+            label: String::new(),
+        }];
+        native_edit::write(&custom, &read, &desired, &edits, &ApiKeyChange::Keep, None).unwrap();
+        let doc = native::read_toml(&custom.path()).unwrap();
+        assert!(doc["model_providers"]["relay"].get(mechanism).is_some());
+        let read = native::read(&custom, None).unwrap();
+        native_edit::write(
+            &custom,
+            &read,
+            &desired,
+            &[],
+            &ApiKeyChange::Replace {
+                value: "new-static-key".into(),
+            },
+            None,
+        )
+        .unwrap();
+        let doc = native::read_toml(&custom.path()).unwrap();
+        let provider = &doc["model_providers"]["relay"];
+        for name in ["auth", "aws", "env_key"] {
+            assert!(provider.get(name).is_none());
+        }
+        assert_eq!(
+            provider["experimental_bearer_token"].as_str(),
+            Some("new-static-key")
+        );
+        assert_eq!(provider["query_params"]["tag"].as_str(), Some("keep"));
+        assert_eq!(provider["stream_idle_timeout_ms"].as_integer(), Some(15000));
+        assert_eq!(
+            doc["model_providers"]["other"]["experimental_bearer_token"].as_str(),
+            Some("unrelated-key")
+        );
+    }
+    // Cloud endpoints are never fabricated as api.anthropic.com. Only an explicit
+    // new Messages connection disables the selectors; model edits retain them.
+    for (flag, base, route) in native::CLAUDE_CLOUD_ROUTES {
+        let mut cloud = context.clone();
+        cloud.kind = AdapterKind::ClaudeCodeCli;
+        cloud.directory = root.join(flag);
+        cloud.environment.insert(flag.into(), "1".into());
+        let initial = json!({"env":{flag:"1",base:"https://cloud.example/native","ANTHROPIC_MODEL":"a","CLAUDE_CODE_OAUTH_TOKEN":"official-token","AWS_SECRET_ACCESS_KEY":"aws-private-key"},"permissions":{"defaultMode":"default"}});
+        private_storage::atomic_write_private_bytes(
+            &cloud.path(),
+            &serde_json::to_vec(&initial).unwrap(),
+        )
+        .unwrap();
+        let read = native::read(&cloud, None).unwrap();
+        assert_eq!(
+            read.configuration.base_url(),
+            "https://cloud.example/native"
+        );
+        assert_eq!(read.credential.source, "native_cloud");
+        assert_eq!(read.credential.source_label, route);
+        let mut desired = read.configuration.clone();
+        if let CustomApiConfiguration::ClaudeCode { models, .. } = &mut desired {
+            models.model = "b".into();
+        }
+        native_edit::write(
+            &cloud,
+            &read,
+            &desired,
+            &[FieldEdit {
+                path: vec!["claudeModels".into(), "model".into()],
+                before: json!("a"),
+                after: json!("b"),
+                label: String::new(),
+            }],
+            &ApiKeyChange::Keep,
+            None,
+        )
+        .unwrap();
+        assert_eq!(native::read_json(&cloud.path()).unwrap()["env"][flag], "1");
+        let read = native::read(&cloud, None).unwrap();
+        if let CustomApiConfiguration::ClaudeCode { base_url, .. } = &mut desired {
+            *base_url = "https://messages.example/prefix".into();
+        }
+        let edits = [FieldEdit {
+            path: vec!["baseUrl".into()],
+            before: json!("https://cloud.example/native"),
+            after: json!(desired.base_url()),
+            label: String::new(),
+        }];
+        let before = std::fs::read(cloud.path()).unwrap();
+        assert!(
+            native_edit::write(&cloud, &read, &desired, &edits, &ApiKeyChange::Keep, None).is_err()
+        );
+        assert_eq!(std::fs::read(cloud.path()).unwrap(), before);
+        let mut host_managed = cloud.clone();
+        host_managed
+            .environment
+            .insert("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST".into(), "1".into());
+        let error = native_edit::write(
+            &host_managed,
+            &read,
+            &desired,
+            &edits,
+            &ApiKeyChange::Replace {
+                value: "messages-key".into(),
+            },
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("外部宿主管理"));
+        assert_eq!(std::fs::read(cloud.path()).unwrap(), before);
+        native_edit::write(
+            &cloud,
+            &read,
+            &desired,
+            &edits,
+            &ApiKeyChange::Replace {
+                value: "messages-key".into(),
+            },
+            None,
+        )
+        .unwrap();
+        let doc = native::read_json(&cloud.path()).unwrap();
+        assert_eq!(
+            doc["env"][flag], "0",
+            "saved native mask also disables inherited selection"
+        );
+        assert_eq!(
+            doc["env"][base], "https://cloud.example/native",
+            "inactive cloud fields are retained"
+        );
+        assert_eq!(doc["env"]["CLAUDE_CODE_OAUTH_TOKEN"], "official-token");
+        assert_eq!(doc["env"]["AWS_SECRET_ACCESS_KEY"], "aws-private-key");
+        let read = native::read(&cloud, None).unwrap();
+        assert_eq!(
+            read.configuration.base_url(),
+            "https://messages.example/prefix"
+        );
+        assert_ne!(read.credential.source, "native_cloud");
+    }
+    for store in ["file", "auto"] {
+        let mut api_only = context.clone();
+        api_only.directory = root.join(format!("api-only-{store}"));
+        private_storage::atomic_write_private_bytes(
+            &api_only.path(),
+            format!("cli_auth_credentials_store='{store}'\n").as_bytes(),
+        )
+        .unwrap();
+        let auth_path = api_only.directory.join("auth.json");
+        std::fs::write(
+            &auth_path,
+            br#"{"auth_mode":"apikey","OPENAI_API_KEY":"fake-key","unknown":true}"#,
+        )
+        .unwrap();
+        let read = native::read(&api_only, None).unwrap();
+        let mut official = read.configuration.clone();
+        official.set_mode(Some(ConnectionMode::OfficialLogin));
+        native_edit::write(
+            &api_only,
+            &read,
+            &official,
+            &[FieldEdit {
+                path: vec!["mode".into()],
+                before: Value::Null,
+                after: json!("official_login"),
+                label: String::new(),
+            }],
+            &ApiKeyChange::Keep,
+            None,
+        )
+        .unwrap();
+        let auth = native::read_json(&auth_path).unwrap();
+        assert!(auth.get("OPENAI_API_KEY").is_none());
+        assert_eq!(
+            auth["auth_mode"], "apikey",
+            "do not manufacture a ChatGPT identity from an empty auth object"
+        );
+        assert_eq!(auth["unknown"], true);
+        assert_eq!(
+            native::read_toml(&api_only.path()).unwrap()["forced_login_method"].as_str(),
+            Some("chatgpt")
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let wrapper = root.join("account-cli");
+        std::fs::write(&wrapper, r##"#!/usr/bin/env python3
+import json,os,pathlib,re,sys
+root=pathlib.Path(os.environ['CODEX_HOME'])
+for line in sys.stdin:
+ q=json.loads(line)
+ with (root/'calls').open('a') as f: f.write(json.dumps(q)+'\n')
+ if q['method']=='initialize': print(json.dumps({'id':q['id'],'result':{'userAgent':'fixture'}}),flush=True)
+ if q['method']=='account/read':
+  a=json.loads((root/'account.json').read_text())
+  if re.search(r'forced_login_method\s*=\s*[\"\x27]chatgpt', (root/'config.toml').read_text()) and a.get('type')=='apiKey': a=None
+  print(json.dumps({'id':q['id'],'result':{'account':a,'requiresOpenaiAuth':True}}),flush=True)
+"##).unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        for store in ["keyring", "auto"] {
+            let mut opaque = context.clone();
+            opaque.directory = root.join(format!("account-{store}"));
+            opaque.environment = BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]);
+            private_storage::atomic_write_private_bytes(
+                &opaque.path(),
+                format!("cli_auth_credentials_store='{store}'\nmodel='native-api-default'\n")
+                    .as_bytes(),
+            )
+            .unwrap();
+            let account = opaque.directory.join("account.json");
+            std::fs::write(&account, br#"{"type":"apiKey"}"#).unwrap();
+            if store == "keyring" {
+                std::fs::write(
+                    opaque.directory.join("auth.json"),
+                    b"unrelated-invalid-file",
+                )
+                .unwrap();
+            }
+            let before = std::fs::read(opaque.path()).unwrap();
+            let read = native::read(&opaque, None).unwrap();
+            let identity = read.snapshot(&opaque, false).identity().unwrap();
+            assert_eq!(
+                read.configuration.mode(),
+                None,
+                "a managed store is not proof of ChatGPT"
+            );
+            codex_native::refresh(&wrapper, &opaque).await;
+            let mut projected = native::read(&opaque, None).unwrap();
+            codex_native::project(
+                &opaque,
+                &mut projected.configuration,
+                &mut projected.credential,
+                &mut projected.observation,
+            );
+            assert_eq!(
+                projected.configuration.mode(),
+                Some(ConnectionMode::CustomApi)
+            );
+            assert_eq!(projected.credential.status, "available");
+            assert_eq!(std::fs::read(opaque.path()).unwrap(), before);
+            assert_eq!(
+                native::read(&opaque, None)
+                    .unwrap()
+                    .snapshot(&opaque, false)
+                    .identity()
+                    .unwrap(),
+                identity,
+                "display observation does not change execution binding"
+            );
+            let mut official = projected.configuration.clone();
+            official.set_mode(Some(ConnectionMode::OfficialLogin));
+            native_edit::write(
+                &opaque,
+                &read,
+                &official,
+                &[FieldEdit {
+                    path: vec!["mode".into()],
+                    before: json!("custom_api"),
+                    after: json!("official_login"),
+                    label: String::new(),
+                }],
+                &ApiKeyChange::Keep,
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                native::read_toml(&opaque.path()).unwrap()["forced_login_method"].as_str(),
+                Some("chatgpt")
+            );
+            assert!(
+                native::read_toml(&opaque.path())
+                    .unwrap()
+                    .get("model")
+                    .is_none()
+            );
+            assert_eq!(
+                std::fs::read_to_string(&account).unwrap(),
+                r#"{"type":"apiKey"}"#,
+                "Rovai does not delete a native keyring object"
+            );
+            codex_native::refresh(&wrapper, &opaque).await;
+            let mut projected = native::read(&opaque, None).unwrap();
+            codex_native::project(
+                &opaque,
+                &mut projected.configuration,
+                &mut projected.credential,
+                &mut projected.observation,
+            );
+            assert_eq!(
+                projected.configuration.mode(),
+                Some(ConnectionMode::OfficialLogin)
+            );
+            assert_eq!(projected.observation.login_status, "signed_out");
+            std::fs::write(&account, br#"{"type":"chatgpt"}"#).unwrap();
+            codex_native::refresh(&wrapper, &opaque).await;
+            let mut projected = native::read(&opaque, None).unwrap();
+            codex_native::project(
+                &opaque,
+                &mut projected.configuration,
+                &mut projected.credential,
+                &mut projected.observation,
+            );
+            assert_eq!(projected.observation.login_status, "signed_in");
+            codex_native::refresh(&root.join("missing-native-cli"), &opaque).await;
+            assert_eq!(
+                codex_native::observed(&opaque),
+                codex_native::Identity::Unknown
+            );
+            let calls = std::fs::read_to_string(opaque.directory.join("calls")).unwrap();
+            for line in calls.lines() {
+                let q: Value = serde_json::from_str(line).unwrap();
+                assert!(matches!(
+                    q["method"].as_str(),
+                    Some("initialize" | "initialized" | "account/read")
+                ));
+                if q["method"] == "account/read" {
+                    assert_eq!(q["params"]["refreshToken"], false);
+                }
+            }
+        }
+    }
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -79,14 +79,22 @@ Claude 使用实际 `CLAUDE_CONFIG_DIR`／原生 Home 下的设置、相关环�
 Thinking 只作兼容字段透传，不改推理强度，不把变量进入进程当成运行时实际识别。
 普通启动直接读取已保存原生配置，不生成连接用 `--settings`、认证环境覆盖或额外 `get_settings`／身份验证门槛。
 既有 `auth status` 的明确原生身份仅用于状态回显，诊断展示文案不作身份依据。
+Bedrock／Vertex／Foundry 显示其原生路由与对应 Base URL；没有显式端点时留空，不补 Anthropic 默认地址。
+只编辑模型保留云路由；明确换地址或 Key 则要求该 Messages 接口的新 Key，并在保存时解除个人设置中的云路由选择。
+继承选择开关用原生 settings.env 停用，不迁移云认证、不清理未使用的云字段；外部宿主管理路由不能由个人设置覆盖时返回具体限制。
 
 Codex 使用实际 `CODEX_HOME`、活动 profile、provider、模型目录及引用凭据；来源不局限于 auth.json。
 普通 env 引用不可写时仍可换 Key：adapter 在当前原生 provider 中使用该版本支持的 inline bearer，并解除该连接的旧 env 引用，
-不改外部环境，不复制旧 Key，不改官方登录文件。原生管理凭据保持由原生运行时消费；受限组合明确报告来源与限制。
+不改外部环境，不复制旧 Key，不改官方登录文件。`auth.command`／`aws` 显示原生命令／AWS 来源，
+只读声明，不执行取 Key 命令；未改认证完整保留。明确替换静态 Key 时移除当前 provider 中互斥的 `auth`、`aws`、
+`env_key`，保留独立网关认证及其他 provider 字段。原生管理凭据保持由原生运行时消费；受限组合明确报告来源与限制。
 正常启动与 thread start/resume 不再重建 provider，不传重复连接或默认模型覆盖，也不为模式选择增加
 `config/read`、`account/read`。查询参数、传输、超时、重试及未知字段全部留给原生读取。
 `auto` 保留 Codex 的钥匙串优先、缺失或不可用时回退 `auth.json` 语义；不把回退文件中的 Key 提升为覆盖钥匙串的
-环境 Key，也不把回退文件等同于最终身份。设置读取失败、身份缺失、未知或未登录不构成本功能的执行门槛。
+环境 Key，也不把回退文件等同于最终身份。对 keyring／auto／ephemeral，设置入口及保存后可通过所选程序的
+`app-server account/read(refreshToken:false)` 读取原生账号类型，不回传 token、不请求模型，参数明确不要求刷新令牌。
+API、ChatGPT、未登录和未知分别投影；无法读到类型时不猜成官方登录。观察仅在内存用于回显及本次编辑来源，
+不改变执行快照，不增加运行检查、后台轮询或认证准入。设置读取失败、身份缺失、未知或未登录不构成本功能的执行门槛。
 原生检查与正常调用继续负责认证结果；成员显式模型、推理参数、cwd、权限、沙箱与协作工具沿用原有集成。
 Claude/Codex 的 `Proxy-Authorization` 与模型认证独立，不要求值与模型 Key 相同；代理头的传输范围交给原生 HTTP 实现。
 
@@ -117,8 +125,10 @@ Claude 移除当前 API 的地址、静态 Key、helper 与模型映射；
 自定义请求头仅移除会抢占模型认证的 Authorization／X-Api-Key，保留跟踪及代理认证等其他请求头。
 Codex 在活动 profile／根配置选择原生 OpenAI，清理参与该连接回退的 API 地址、默认模型和目录引用；
 其他 provider、profile、完整目录文件及未知字段保留。需要停用 file／auto 的认证文件 API 回退时只移除
-`OPENAI_API_KEY` 及对应 API 模式标志，保留 tokens、刷新令牌与未知字段。不改钥匙串、不执行 logout，
-不新增 `forced_login_method` 强制切换。明确切换时可解除个人原生文件中与所选方式相反的 `forceLoginMethod`／
+`OPENAI_API_KEY`，保留 tokens、刷新令牌与未知字段；已有 OAuth 时恢复其原生账号类型。没有 OAuth 时保留无 Key 的
+API 类型标记，避免空对象被原生误读为 ChatGPT，并用原生 `forced_login_method="chatgpt"` 停用该 API 类型。
+keyring／auto／ephemeral 同样在保存官方时写入这一原生选择，由 CLI 过滤存储中的 API 认证；不读取、复制或删除钥匙串对象，
+不执行 logout。没有官方身份时回显需要原生登录，旧 API 身份仍被报告时不冒充切换完成。明确切换时可解除个人文件中与所选方式相反的 `forceLoginMethod`／
 `forced_login_method` 限制，保留相同方式的限制和其他字段，不写入组织管理来源。只读目标保持原状，失败保留草稿。
 确认无法通过可写原生配置停用的外部环境来源，在保存时报具体原因
 并保留草稿，不假报成功，也不恢复启动覆盖。未知认证状态交给原生处理。

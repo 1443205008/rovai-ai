@@ -22,7 +22,9 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
   const keyAvailable = reusableCredential(credential)
   const clearing = apiKey.action === 'clear'
   const credentialNote = clearing ? '保存后清除该 API Key，不退出官方登录。' : apiKey.action === 'replace' ? credential?.sourceWritable === false ? '保存后改用新 Key，原凭据来源不变。' : '保存后替换当前 API Key。'
-    : keyAvailable ? '已从原生配置读取，无需重新输入。'
+    : credential?.source === 'native_cloud' ? `${credential.sourceLabel} 原生路由`
+      : keyAvailable ? credential?.source === 'native_managed' ? credential.sourceLabel : '已从原生配置读取，无需重新输入。'
+      : credential?.status === 'unknown' ? '由原生 CLI 管理，尚未确认'
       : credential?.status === 'invalid_reference' ? uiAttribute('未能读取 {0}。可填写新 Key，或修复该来源。', credential.sourceLabel)
         : '未找到可复用的凭据，请填写 API Key。'
   const loginStatus = observation?.loginStatus ?? 'unknown'
@@ -61,7 +63,7 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
     {activeApi && <div id={`${id}-api-fields`} className="runtime-custom-api-fields">
       <label><span><UiText zh={"接口地址（Base URL）"} /></span><input type="url" value={value.baseUrl} placeholder="https://api.example.com" autoComplete="off" spellCheck={false} disabled={disabled} aria-describedby={`${id}-protocol`}
         onChange={(event) => onChange({ ...value, baseUrl: event.target.value })} /></label>
-      <p id={`${id}-protocol`} className="runtime-api-protocol">{value.kind === 'claude-code-cli' ? 'Anthropic Messages' : 'OpenAI Responses'}</p>
+      <p id={`${id}-protocol`} className="runtime-api-protocol">{credential?.source === 'native_cloud' && apiKey.action === 'keep' ? credential.sourceLabel : value.kind === 'claude-code-cli' ? 'Anthropic Messages' : 'OpenAI Responses'}</p>
       {value.baseUrl.trim().toLowerCase().startsWith('http:') && <p className="runtime-startup-result is-warning" role="status"><UiText zh="HTTP 不加密，凭据与请求内容可能在传输中泄露。建议使用 HTTPS。" /></p>}
       <div className="runtime-custom-api-key-row">
         <label htmlFor={`${id}-key`}>API Key</label>

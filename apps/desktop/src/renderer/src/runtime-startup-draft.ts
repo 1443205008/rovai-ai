@@ -55,17 +55,18 @@ export function nativeConnectionChange(saved: RuntimeStartupSettings, draft: Run
   return edits.length ? edits : null
 }
 
-export function customApiError(draft: RuntimeStartupConfiguration, key: RuntimeApiKeyChange, credential: NativeCredential | undefined, requireModelList = true, requireCredential = true): string | null {
+export function customApiError(draft: RuntimeStartupConfiguration, key: RuntimeApiKeyChange, credential: NativeCredential | undefined, requireModelList = true, requireCredential = true, requireAddress = true): string | null {
   const api = draft.customApi ? normalizedCustomApi(draft.customApi) : null
   if (api?.mode === 'official_login') return null
   if (key.action === 'replace' && credential?.canReplace === false) return [credential.sourceLabel, credential.restriction, credential.remedy].filter(Boolean).join('。')
   if (key.action === 'clear' && credential?.canClear === false) return `无法在此清除 ${credential.sourceLabel}。${credential.remedy ?? '请在该原生来源处理。'}`
   if (api && supportsOfficialLogin(api) && api.mode === null) return '请选择官方登录或自定义 API。'
   if (!api || !usesCustomApi(api)) return null
-  try {
+  if (requireAddress) try {
     const url = new URL(api.baseUrl)
     if (!['https:', 'http:'].includes(url.protocol) || !url.hostname || url.username || url.password || url.hash) throw new Error()
   } catch { return '请输入有效的 HTTP 或 HTTPS 地址，且不要在地址中包含账号或密码。' }
+  if (credential?.source === 'native_cloud' && requireAddress && key.action !== 'replace') return '改用 Messages 接口时请填写该接口的 API Key；原有云厂商认证不会迁移。'
   // Explicit removal is savable; the resulting missing-credential state remains visible.
   if (requireCredential && key.action === 'keep' && !reusableCredential(credential)) return '当前连接没有可复用的凭据，请填写 API Key 或修复原生凭据来源。'
   if (key.action === 'replace' && !key.value.trim()) return '请输入 API Key。'

@@ -98,7 +98,8 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     const connectionEdits = saved ? nativeConnectionChange(saved, next, apiKey) : null
     const requireModelList = saved?.connectionObservation?.initialMode !== 'custom_api' || Boolean(connectionEdits?.some(edit => ['codexModels', 'defaultRowId'].includes(edit.path[0])))
     const requireCredential = saved?.configuration.customApi?.mode !== 'custom_api'
-    const apiError = connectionChanged ? customApiError(next, apiKey, saved?.credential ?? undefined, requireModelList, requireCredential) : null
+    const keepCloudRoute = saved?.credential?.source === 'native_cloud' && apiKey.action === 'keep' && !connectionEdits?.some(edit => edit.path[0] === 'baseUrl')
+    const apiError = connectionChanged ? customApiError(next, apiKey, saved?.credential ?? undefined, requireModelList, requireCredential, !keepCloudRoute) : null
     setError(apiError ? uiAttribute(apiError) : null)
     return Object.keys(nextErrors).length === 0 && !apiError
   }

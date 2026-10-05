@@ -45,6 +45,12 @@ describe('startup editor draft contract', () => {
     expect(customApiError({ ...draft, customApi: { ...draft.customApi, mode: 'official_login', models: [] } }, { action: 'clear' }, credential)).toBeNull()
     const claude: RuntimeCustomApiConfiguration = { kind: 'claude-code-cli', mode: 'custom_api', models: { model: '', reasoningModel: '', haikuModel: '', sonnetModel: '', opusModel: '' }, baseUrl: 'http://localhost:1234/prefix' }
     expect(customApiError({ ...draft, customApi: claude }, { action: 'replace', value: 'fake-local-key' }, undefined)).toBeNull()
+    const cloud = { ...credential, source: 'native_cloud' as const, sourceLabel: 'Amazon Bedrock' }
+    const nativeCloud = { ...draft, customApi: { ...claude, baseUrl: '' } }
+    expect(customApiError(nativeCloud, key, cloud, false, false, false)).toBeNull()
+    expect(customApiError({ ...nativeCloud, customApi: claude }, key, cloud, false, false, true)).toContain('原有云厂商认证不会迁移')
+    expect(customApiError({ ...nativeCloud, customApi: claude }, { action: 'replace', value: 'new-messages-key' }, cloud, false, false, true)).toBeNull()
+    expect(customApiError(draft, key, { ...credential, status: 'unknown' }, true, false)).toBeNull()
     expect(emptyCustomApi('pi')).toBeNull()
     expect(emptyCustomApi('kimi-code-cli')).toBeNull()
     expect(emptyCustomApi('grok-build')).toBeNull()

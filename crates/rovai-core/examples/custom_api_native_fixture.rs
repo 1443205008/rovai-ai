@@ -92,7 +92,25 @@ async fn main() -> Result<()> {
         artifact_root: root.join("derived"),
         environment,
     };
+    if runtime_custom_api::codex_native::needs_observation(&context) {
+        runtime_custom_api::codex_native::refresh(executable, &context).await;
+    }
     let before = native::read(&context, Some(ConnectionMode::CustomApi))?;
+    let mut displayed_configuration = before.configuration.clone();
+    let mut displayed_credential = before.credential.clone();
+    let mut displayed_observation = before.observation.clone();
+    runtime_custom_api::codex_native::project(
+        &context,
+        &mut displayed_configuration,
+        &mut displayed_credential,
+        &mut displayed_observation,
+    );
+    std::fs::write(
+        root.join("native-read.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "configuration":displayed_configuration,"credential":displayed_credential,"observation":displayed_observation
+        }))?,
+    )?;
     let address_only = root.join("edit-address-only-fixture").is_file();
     let fields = if address_only {
         vec![vec!["baseUrl"]]
@@ -166,7 +184,25 @@ async fn main() -> Result<()> {
             None,
         )?;
     }
+    if runtime_custom_api::codex_native::needs_observation(&context) {
+        runtime_custom_api::codex_native::refresh(executable, &context).await;
+    }
     let read = native::read(&context, configuration.mode())?;
+    let mut displayed_configuration = read.configuration.clone();
+    let mut displayed_credential = read.credential.clone();
+    let mut displayed_observation = read.observation.clone();
+    runtime_custom_api::codex_native::project(
+        &context,
+        &mut displayed_configuration,
+        &mut displayed_credential,
+        &mut displayed_observation,
+    );
+    std::fs::write(
+        root.join("native-after.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "configuration":displayed_configuration,"credential":displayed_credential,"observation":displayed_observation
+        }))?,
+    )?;
     // Expose only the parsed catalog path to the isolated smoke owner. No second
     // TOML parser or credential projection is needed in the Python fixture.
     std::fs::write(

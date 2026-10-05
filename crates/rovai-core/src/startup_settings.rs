@@ -90,6 +90,8 @@ impl Core {
                     observation.login_command =
                         context.login_command(settings.configuration.program_path.as_deref());
                 }
+                drop(database);
+                self.refresh_startup_account(&mut settings).await;
                 Ok(serde_json::to_value(runtime_startup::public(settings))?)
             }
             "runtime.startup.inspect" | "runtime.startup.check" => {
@@ -140,6 +142,16 @@ impl Core {
                     }
                     _ => anyhow::bail!("启动设置保存格式无效。"),
                 };
+                if kind == AdapterKind::CodexCli
+                    && edits.iter().any(|e| {
+                        e.path.first().is_some_and(|field| {
+                            !matches!(field.as_str(), "programPath" | "environment")
+                        })
+                    })
+                {
+                    let mut current = runtime_startup::load(&*self.database.lock().await, kind)?;
+                    self.refresh_startup_account(&mut current).await;
+                }
                 let prepared = runtime_startup::prepare_save(
                     &*self.database.lock().await,
                     kind,
@@ -225,7 +237,7 @@ impl Core {
                 } else {
                     None
                 };
-                let settings = {
+                let mut settings = {
                     let mut database = self.database.lock().await;
                     runtime_startup::commit_save(
                         &mut database,
@@ -236,6 +248,7 @@ impl Core {
                         generated_catalog.as_ref(),
                     )?
                 };
+                self.refresh_startup_account(&mut settings).await;
                 let search =
                     search.with_startup_configuration(kind, settings.configuration.clone());
                 search.activate_for_runtime_commands();
@@ -247,6 +260,58 @@ impl Core {
                 Ok(serde_json::to_value(runtime_startup::public(settings))?)
             }
             _ => anyhow::bail!("Unknown startup settings method"),
+        }
+    }
+
+    async fn refresh_startup_account(
+        &self,
+        settings: &mut runtime_startup::RuntimeStartupSettings,
+    ) {
+        use rovai_core::runtime_custom_api::{codex_native, native::CredentialSource};
+        let Some(snapshot) = &settings.configuration.custom_api_snapshot else {
+            return;
+        };
+        if !matches!(
+            snapshot.credential_source,
+            CredentialSource::NativeManaged { .. }
+        ) || !codex_native::needs_observation(&snapshot.context)
+        {
+            return;
+        }
+        let context = snapshot.context.clone();
+        codex_native::forget(&context);
+        let kind = settings.runtime_kind;
+        let search = self
+            .runtime_search_environment
+            .read()
+            .await
+            .as_ref()
+            .clone()
+            .with_startup_configuration(kind, settings.configuration.clone());
+        let discovery = search.clone();
+        let path =
+            tokio::task::spawn_blocking(move || discover_runtime_path(kind, &discovery)).await;
+        if let Ok(discovery) = path {
+            if let Some(path) = discovery.executable_path {
+                let mut command = tokio::process::Command::new(&path);
+                search.configure_tokio_command(kind, &mut command);
+                codex_native::refresh(std::path::Path::new(&path), &context.for_command(&command))
+                    .await;
+            }
+        }
+        // A missing executable also clears a previous identity hint. Reloading
+        // is display-only; failure never becomes an execution prerequisite.
+        if let Ok(mut latest) = runtime_startup::load(&*self.database.lock().await, kind) {
+            if latest.revision == 0 {
+                latest.configuration.program_path = settings.configuration.program_path.clone();
+            }
+            latest.native_written = settings.native_written;
+            latest.reconnect_required = settings.reconnect_required;
+            if let Some(observation) = &mut latest.connection_observation {
+                observation.login_command =
+                    context.login_command(latest.configuration.program_path.as_deref());
+            }
+            *settings = latest;
         }
     }
 

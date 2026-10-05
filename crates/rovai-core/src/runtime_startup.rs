@@ -168,7 +168,31 @@ fn read_settings(database: &Database, kind: AdapterKind) -> Result<RuntimeStartu
             Err(error) => settings.connection_read_error = Some(error.to_string()),
         }
     }
+    project_native_identity(&mut settings);
     Ok(settings)
+}
+
+// Account observation affects the editor only. The snapshot above retains the
+// native connection's stable configuration, independent of an optional status read.
+fn project_native_identity(settings: &mut RuntimeStartupSettings) {
+    if let (Some(snapshot), Some(api), Some(credential), Some(observation)) = (
+        &settings.configuration.custom_api_snapshot,
+        &mut settings.configuration.custom_api,
+        &mut settings.credential,
+        &mut settings.connection_observation,
+    ) {
+        if matches!(
+            snapshot.credential_source,
+            native::CredentialSource::NativeManaged { .. }
+        ) {
+            crate::runtime_custom_api::codex_native::project(
+                &snapshot.context,
+                api,
+                credential,
+                observation,
+            );
+        }
+    }
 }
 
 pub fn load(database: &Database, kind: AdapterKind) -> Result<RuntimeStartupSettings> {
@@ -467,7 +491,13 @@ pub fn prepare_save(
                 .connection_observation
                 .as_ref()
                 .is_some_and(|o| o.initial_mode == Some(ConnectionMode::CustomApi));
-            api.validate_model_list(kind, list_edited || !inherited_api)?;
+            let keep_cloud_route = current
+                .credential
+                .as_ref()
+                .is_some_and(|c| c.source == "native_cloud")
+                && key.is_keep()
+                && !edits.iter().any(|e| e.path == ["baseUrl"]);
+            api.validate_edit(kind, list_edited || !inherited_api, !keep_cloud_route)?;
         }
     }
     if official && edits.iter().any(|e| e.path == ["mode"]) {

@@ -140,6 +140,45 @@ Codex 改名到已有隐藏 `gpt-6-astra` 后，完整目录加载、线程创�
 原生配置位置和设置优先级参考 [Claude 设置来源](https://code.claude.com/docs/en/settings)；
 Codex 的地址覆盖与登录限制字段参考 [Codex 配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)。
 
+## 原生认证来源与路由切换修复（2026-10-05）
+
+本轮继续使用两张简单表单及保存时原生编辑，不增加用户探活、认证方式字段或运行时连接覆盖。
+
+| 场景 | 结果与边界 |
+| --- | --- |
+| Codex `auth.command`／`aws` | 原生 owner 按声明识别来源，不执行命令取 Key；改地址保留认证。替换静态 Key 后移除互斥 `auth`／`aws`／`env_key`，保留查询参数、传输、超时及独立网关配置 |
+| Claude 三种云路由 | 无显式端点时回显空值，有端点时使用对应云地址；只改模型保留路由，明确提供 Messages 地址与新 Key 时停用个人选择开关；继承开关用原生设置停用，OAuth 与未使用云字段保留 |
+| Codex 托管账号类型 | 隔离模拟后端覆盖 keyring／auto 的 API、ChatGPT、未登录与未知；通过实际选中入口 `account/read(refreshToken:false)` 的结构化结果回显，失败不阻止执行；观察不改变执行快照 |
+| Codex 官方选择 | 原生 `forced_login_method="chatgpt"` 排除存储中的 API 认证，不复制或删除钥匙串对象；已有 OAuth 和未知字段保留。只有 API 的认证文件清除 Key 后保留类型标记，由原生筛除，避免空 JSON 被误读为残缺 OAuth |
+| 正式组件 | 云路由端点不伪造、只改模型无需新地址／Key、Messages 切换需独立 Key；命令认证显示原生来源；未知账号类型不默认选官方。既有草稿往返、冲突、默认项及日夜主题／窄屏全部保留 |
+| 模型目录 | 本轮重跑已有完整目录改名、添加／删除、默认选择、隐藏 ID 冲突与完整元数据保留，以及实际原生目录加载和两个模型调用 |
+
+实际平台 macOS arm64，Claude Code **2.1.280**、Codex **0.159.2**，验收根目录
+`/private/tmp/rovai-api-auth-acceptance-hhf41_a3`。使用固定假 Key 与本地服务，不发送项目代码：
+
+- 实际 Codex 先加载命令认证并完成调用，再换静态 Key；AWS 声明可被原生解析，替换后同样完成 Responses 回复。
+  AWS 原有服务本身未请求；这里只证明切换后无互斥配置，原生实际采用新地址／Key。
+- Claude Bedrock、Vertex、Foundry 分别切为 Messages 后，实际 CLI 请求均到新前缀并携带新 Key；旧云选择未抢占。
+- 实际 Codex file／auto 从 API 保存为官方后，`account/read` 返回 `account:null`、`requiresOpenaiAuth:true`。
+  auto 额外保留一个 API 对象重开原生进程，仍被原生 ChatGPT 选择过滤；观察没有删除或改写该对象。
+- 真实 OS keyring 用例仅在 `--native-keyring` 显式启用，曾尝试以全新 CODEX_HOME 写入固定假 Key；因隔离 HOME
+  没有默认钥匙串而在初始化失败，未进入切换验收。未修改日常钥匙串、默认钥匙串或用户登录。
+  **模拟后端通过不冒充真实系统钥匙串切换通过**；该项仍待具备独立钥匙串的环境实测。失败用例保留为失败，不改成跳过即通过。
+
+Electron 根目录 `/private/tmp/rovai-api-auth-ui-w5tx64v8`，独立 `user-data` 与其下 Skill Library，无 Core。
+Rust 默认 workspace 455 passed／1 既有 ignored，定向原生 owner 5 passed；草稿 Vitest 3 passed、Electron owner 1 passed。
+类型检查、Core 编译、桌面构建通过；收尾修改重新运行原生 owner，没有新增独立 Rust 测试函数。
+完整 `pnpm test` 通过：237 个 Vitest 文件／2587 项，Node 334 passed／2 平台 skipped；三项通用文档门禁通过。
+最后一次完整本地原生验收位于上述根目录的 `final` 子目录，Claude／Codex 主路径、认证迁移和 file／auto 官方切换全部通过。
+真实订阅、真实中转、真实 AWS 云认证和其他平台本轮未实测，不据此封禁版本或入口。
+
+原生语义核对使用实际版本对应的 Codex `rust-v0.159.2` 源码：
+[provider 互斥字段](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/model-provider-info/src/lib.rs)、
+[原生认证加载与登录方式过滤](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/login/src/auth/manager.rs)、
+[凭据后端](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/login/src/auth/storage.rs)。
+账号投影参考 [Codex app-server](https://learn.chatgpt.com/docs/app-server)，云路由参考
+[Claude 原生环境变量](https://code.claude.com/docs/en/env-vars)。这些是开发证据，不成为产品的固定版本限制。
+
 ## 测试准入与退役
 
 本轮没有新增独立 Rust test。`runtime_custom_api` 的 5 个 owner 保持不变：配置／身份 parser、SQLite 发布、

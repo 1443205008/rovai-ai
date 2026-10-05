@@ -247,6 +247,15 @@ pub enum CredentialSource {
     Helper {
         path: PathBuf,
     },
+    CodexProvider {
+        path: PathBuf,
+        provider: String,
+        mechanism: String,
+    },
+    ClaudeCloud {
+        path: PathBuf,
+        route: String,
+    },
     NativeManaged {
         directory: PathBuf,
     },
@@ -379,6 +388,18 @@ pub fn credential_value(
                 .cloned()
                 .unwrap_or_default(),
         ),
+        CredentialSource::CodexProvider {
+            provider,
+            mechanism,
+            ..
+        } => (
+            None,
+            codex_config(context)?["model_providers"][provider][mechanism].clone(),
+        ),
+        CredentialSource::ClaudeCloud { path, route } => (
+            None,
+            json!([path, route, claude_cloud_route(context, &read_json(path)?)]),
+        ),
         // Keep selection opaque, but account for auto's real file fallback when
         // fencing API processes. Never turn a fallback key into an env override.
         CredentialSource::NativeManaged { directory } => {
@@ -414,12 +435,45 @@ pub fn claude_models(models: &ClaudeApiModels) -> [(&'static str, &str); 5] {
         ("ANTHROPIC_DEFAULT_OPUS_MODEL", &models.opus_model),
     ]
 }
+pub(crate) const CLAUDE_CLOUD_ROUTES: [(&str, &str, &str); 3] = [
+    (
+        "CLAUDE_CODE_USE_BEDROCK",
+        "ANTHROPIC_BEDROCK_BASE_URL",
+        "Amazon Bedrock",
+    ),
+    (
+        "CLAUDE_CODE_USE_VERTEX",
+        "ANTHROPIC_VERTEX_BASE_URL",
+        "Google Vertex AI",
+    ),
+    (
+        "CLAUDE_CODE_USE_FOUNDRY",
+        "ANTHROPIC_FOUNDRY_BASE_URL",
+        "Microsoft Foundry",
+    ),
+];
+fn claude_cloud_route(context: &NativeContext, settings: &Value) -> Option<(String, String)> {
+    let get = |name: &str| {
+        settings["env"][name]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| context.env(name))
+            .unwrap_or_default()
+    };
+    CLAUDE_CLOUD_ROUTES
+        .iter()
+        .find(|(flag, _, _)| matches!(get(flag).as_str(), "1" | "true"))
+        .map(|(_, base, route)| (route.to_string(), get(base)))
+}
 fn credential(context: &NativeContext, source: &CredentialSource) -> Result<NativeCredential> {
     let (value, version) = credential_value(source, context)?;
     let available = value.is_some()
         || matches!(
             source,
-            CredentialSource::Helper { .. } | CredentialSource::NativeManaged { .. }
+            CredentialSource::Helper { .. }
+                | CredentialSource::NativeManaged { .. }
+                | CredentialSource::CodexProvider { .. }
+                | CredentialSource::ClaudeCloud { .. }
         );
     let (kind, label, writable) = match source {
         CredentialSource::Missing => ("native_file", "未配置".into(), true),
@@ -437,6 +491,17 @@ fn credential(context: &NativeContext, source: &CredentialSource) -> Result<Nati
         CredentialSource::NativeManaged { .. } => {
             ("native_managed", "Codex 原生凭据管理".into(), false)
         }
+        CredentialSource::CodexProvider { mechanism, .. } => (
+            "native_managed",
+            if mechanism == "auth" {
+                "由原生命令提供"
+            } else {
+                "由原生 AWS 认证提供"
+            }
+            .into(),
+            true,
+        ),
+        CredentialSource::ClaudeCloud { route, .. } => ("native_cloud", route.clone(), false),
     };
     Ok(NativeCredential {
         status: if available {
@@ -499,16 +564,20 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
             {
                 source = CredentialSource::Helper { path: path.clone() };
             }
-            let base_url = get("ANTHROPIC_BASE_URL");
+            let cloud = claude_cloud_route(context, &settings);
+            if let Some((route, _)) = &cloud {
+                source = CredentialSource::ClaudeCloud {
+                    path: path.clone(),
+                    route: route.clone(),
+                };
+            }
+            let base_url = cloud
+                .as_ref()
+                .map(|(_, url)| url.clone())
+                .unwrap_or_else(|| get("ANTHROPIC_BASE_URL"));
             let native_api = !base_url.is_empty()
                 || !matches!(source, CredentialSource::Missing)
-                || [
-                    "CLAUDE_CODE_USE_BEDROCK",
-                    "CLAUDE_CODE_USE_VERTEX",
-                    "CLAUDE_CODE_USE_FOUNDRY",
-                ]
-                .iter()
-                .any(|name| matches!(get(name).as_str(), "1" | "true"));
+                || cloud.is_some();
             let login = read_json(&context.directory.join(".credentials.json"))?;
             let observed_login = observed_claude_login(&context.directory);
             let login_status = if !get("CLAUDE_CODE_OAUTH_TOKEN").is_empty()
@@ -542,7 +611,7 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
             });
             let config = CustomApiConfiguration::ClaudeCode {
                 mode: initial,
-                base_url: if native_api && base_url.is_empty() {
+                base_url: if native_api && cloud.is_none() && base_url.is_empty() {
                     "https://api.anthropic.com".into()
                 } else {
                     base_url
@@ -607,7 +676,24 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
                     .and_then(toml::Value::as_bool)
                     == Some(true);
             let mut source = CredentialSource::Missing;
-            if !ps("env_key").is_empty() {
+            if provider
+                .and_then(|p| p.get("auth"))
+                .and_then(|a| a.get("command"))
+                .and_then(toml::Value::as_str)
+                .is_some_and(|v| !v.trim().is_empty())
+            {
+                source = CredentialSource::CodexProvider {
+                    path: path.clone(),
+                    provider: provider_id.clone(),
+                    mechanism: "auth".into(),
+                };
+            } else if provider.and_then(|p| p.get("aws")).is_some() {
+                source = CredentialSource::CodexProvider {
+                    path: path.clone(),
+                    provider: provider_id.clone(),
+                    mechanism: "aws".into(),
+                };
+            } else if !ps("env_key").is_empty() {
                 source = if ps("env_key") == "ROVAI_UNCONFIGURED_API_KEY" {
                     CredentialSource::Missing
                 } else {
@@ -665,7 +751,7 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
             };
             let native_api = provider_id != "openai"
                 || !base_url.is_empty()
-                || (store == "auto"
+                || (!managed_store
                     && auth["auth_mode"] != "chatgpt"
                     && auth["OPENAI_API_KEY"]
                         .as_str()
@@ -725,6 +811,10 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
                 .map(|m| m.row_id.clone());
             let initial = if native_api {
                 Some(ConnectionMode::CustomApi)
+            } else if managed_store
+                && doc.get("forced_login_method").and_then(toml::Value::as_str) != Some("chatgpt")
+            {
+                None // Native storage may contain either API or ChatGPT auth; do not guess.
             } else {
                 Some(ConnectionMode::OfficialLogin)
             };
@@ -757,7 +847,7 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
         );
     }
     let credential = credential(context, &source)?;
-    let configured_model_ids = if configuration.enabled()
+    let configured_model_ids = if configuration.mode() != Some(ConnectionMode::OfficialLogin)
         && evidence
             .pointer("/catalog/rovai_managed_model_list")
             .and_then(Value::as_bool)
@@ -840,7 +930,7 @@ fn connection_revision(
         json!({
             "provider": if api { provider } else { Value::Null },
             "headerEnvironment": if api { json!(header_values) } else { Value::Null },
-            "catalog": if api { evidence["catalog"].clone() } else { Value::Null },
+            "catalog": evidence["catalog"],
             "officialModel": if !api && initial != Some(ConnectionMode::CustomApi) { codex_setting(doc, "model").clone() } else { Value::Null },
             "restoresOfficialCatalog": !api && initial == Some(ConnectionMode::CustomApi),
             "authStore": if managed { json!(store) } else { Value::Null },
@@ -862,6 +952,7 @@ fn connection_revision(
             _ => unreachable!(),
         };
         json!({
+            "cloudRoute": claude_cloud_route(context, evidence),
             "headers": if api { json!(env("ANTHROPIC_CUSTOM_HEADERS")) } else { Value::Null },
             "officialToken": if api { Value::Null } else { json!(env("CLAUDE_CODE_OAUTH_TOKEN")) },
             "officialTokenDescriptor": if api { Value::Null } else { json!(env("CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR")) },
@@ -873,7 +964,7 @@ fn connection_revision(
     };
     canonical_json_digest(&json!({"mode": configuration.mode(), "native": native,
         "api": if api { json!(configuration) } else { Value::Null },
-        "credential": if api { json!(credential) } else { Value::Null }}))
+        "credential": if api || configuration.mode().is_none() && matches!(source, CredentialSource::NativeManaged { .. }) { json!(credential) } else { Value::Null }}))
 }
 pub fn row_id(id: &str) -> Result<String> {
     canonical_json_digest(&json!(id))

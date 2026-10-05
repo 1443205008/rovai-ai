@@ -49,6 +49,13 @@ pub(crate) fn write_with_saved_environment(
     let mode_changed = edits
         .iter()
         .any(|edit| edit.path == ["mode"] && edit.before != edit.after);
+    let current_api = current.configuration.enabled() || super::codex_native::observed_api(context);
+    let cloud = matches!(current.source, CredentialSource::ClaudeCloud { .. });
+    let replace_cloud = cloud && (changed("baseUrl") || !key.is_keep());
+    ensure!(
+        official || !replace_cloud || matches!(key, ApiKeyChange::Replace { .. }),
+        "改用 Messages 接口时请填写该接口的 API Key；原有云厂商认证不会迁移。"
+    );
     if !changed("mode")
         && !changed("baseUrl")
         && !changed("claudeModels")
@@ -59,10 +66,7 @@ pub(crate) fn write_with_saved_environment(
         return Ok(Vec::new());
     }
     ensure!(
-        official
-            || current.configuration.enabled()
-            || !key.is_keep()
-            || !(changed("mode") || changed("baseUrl")),
+        official || current_api || !key.is_keep() || !(changed("mode") || changed("baseUrl")),
         "请填写 API Key；官方登录凭据不能作为自定义 API 凭据迁移。"
     );
     let path = context.path();
@@ -88,7 +92,22 @@ pub(crate) fn write_with_saved_environment(
                     doc["env"] = json!({});
                 }
                 ensure!(doc["env"].is_object(), "Claude Code 的 env 必须是对象。");
-                if changed("baseUrl") {
+                if replace_cloud {
+                    ensure!(
+                        !saved_environment
+                            .env("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST")
+                            .is_some_and(|v| matches!(v.as_str(), "1" | "true")),
+                        "Claude 路由由外部宿主管理，个人配置无法切换；请在该宿主调整路由。草稿已保留。"
+                    );
+                    for (flag, _, _) in native::CLAUDE_CLOUD_ROUTES {
+                        if saved_environment.env(flag).is_some_and(|v| !v.is_empty()) {
+                            doc["env"][flag] = json!("0");
+                        } else {
+                            doc["env"].as_object_mut().unwrap().remove(flag);
+                        }
+                    }
+                }
+                if changed("baseUrl") || replace_cloud {
                     doc["env"]["ANTHROPIC_BASE_URL"] = json!(base_url);
                 }
                 let names = [
@@ -166,7 +185,7 @@ pub(crate) fn write_with_saved_environment(
                     .get("profile")
                     .and_then(toml_edit::Item::as_str)
                     .map(str::to_owned);
-                let reuse_connection = current.configuration.enabled() && key.is_keep();
+                let reuse_connection = current_api && key.is_keep();
                 let connection_changed = !key.is_keep();
                 let provider_id = if connection_changed && current.provider_id == "openai" {
                     "rovai_custom"
@@ -195,6 +214,8 @@ pub(crate) fn write_with_saved_environment(
                         ApiKeyChange::Replace { value } => {
                             // Native inline bearer is a supported provider source; no shell or auth.json mutation.
                             provider.remove("env_key");
+                            provider.remove("auth");
+                            provider.remove("aws");
                             set(
                                 provider,
                                 "experimental_bearer_token",
@@ -227,6 +248,8 @@ pub(crate) fn write_with_saved_environment(
                                 credential_patch = Some((auth_path.clone(), original, updated));
                             }
                             provider.remove("experimental_bearer_token");
+                            provider.remove("auth");
+                            provider.remove("aws");
                             // A required, unset reference prevents falling back to a saved official account.
                             set(
                                 provider,
@@ -412,7 +435,7 @@ fn official_configuration(
     };
     set(target, "model_provider", toml_edit::value("openai"));
     target.remove("openai_base_url");
-    if current.configuration.enabled() {
+    if current.configuration.enabled() || super::codex_native::observed_api(context) {
         target.remove("model");
         target.remove("model_catalog_json");
         // Root defaults also participate in the selected profile's fallback.
@@ -424,6 +447,8 @@ fn official_configuration(
         .get("cli_auth_credentials_store")
         .and_then(toml_edit::Item::as_str)
         .unwrap_or("file");
+    let managed_store = matches!(store, "keyring" | "auto" | "ephemeral");
+    let mut cleared_api_without_oauth = false;
     if matches!(store, "file" | "auto") {
         let auth_path = context.directory.join("auth.json");
         let before = native::read_bytes(&auth_path)?;
@@ -439,17 +464,24 @@ fn official_configuration(
                 .as_object_mut()
                 .ok_or_else(|| anyhow::anyhow!("Codex 原生认证文件格式无效。"))?;
             fields.remove("OPENAI_API_KEY");
-            if fields.get("auth_mode").is_some_and(|v| v == "apikey") {
-                if oauth {
-                    fields.insert("auth_mode".into(), json!("chatgpt"));
-                } else {
-                    fields.remove("auth_mode");
-                }
-            }
+            // An untyped empty auth object is interpreted as ChatGPT by the
+            // native loader. Keep its API type until a real login replaces it;
+            // the native selection below filters it before credential parsing.
+            fields.insert(
+                "auth_mode".into(),
+                json!(if oauth { "chatgpt" } else { "apikey" }),
+            );
+            cleared_api_without_oauth = !oauth;
             let mut bytes = serde_json::to_vec_pretty(&auth)?;
             bytes.push(b'\n');
             *credential_patch = Some((auth_path, before, bytes));
         }
+    }
+    if managed_store || cleared_api_without_oauth {
+        // Native AuthConfig filters stored API identities in this mode. Do not
+        // inspect, copy or delete a keyring object (which may also contain OAuth).
+        // A later explicit API selection removes this personal restriction.
+        doc["forced_login_method"] = toml_edit::value("chatgpt");
     }
     Ok(doc.to_string().into_bytes())
 }

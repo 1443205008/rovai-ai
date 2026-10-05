@@ -452,6 +452,126 @@ def run_official_roundtrip(kind, executable, helper, root, base):
     return {"runtime":kind,"case":"real-official-api-roundtrip","status":"passed","completed":completed}
 
 
+def run_auth_migrations(kind, executable, helper, root, base):
+    root.mkdir(parents=True, exist_ok=False)
+    cases = ["command", "aws"] if kind == "codex" else ["BEDROCK", "VERTEX", "FOUNDRY"]
+    for case in cases:
+        directory = root / case
+        native_home = directory / ("codex" if kind == "codex" else "claude")
+        native_home.mkdir(parents=True)
+        config = {"kind": "codex-cli" if kind == "codex" else "claude-code-cli", "mode":"custom_api", "baseUrl":base + "/" + case}
+        if kind == "codex":
+            config.update(models=[{"rowId":"a","id":"gpt-6.1-sol","displayName":""}], defaultModel="gpt-6.1-sol", defaultRowId="a")
+            auth = 'auth={command="/bin/echo",args=["' + FAKE_KEY + '"]}' if case == "command" else 'aws={region="us-east-1"}'
+            (native_home / "config.toml").write_text('model_provider="relay"\nmodel="gpt-6.1-sol"\n[model_providers.relay]\nname="Fixture"\nbase_url=' + json.dumps(config["baseUrl"]) + '\nwire_api="responses"\n' + auth + '\nquery_params={fixture="keep"}\nrequest_max_retries=0\n')
+            (directory / "reuse-native-fixture").touch()
+            inherited = Native(helper, executable, directory, config)
+            try:
+                inherited.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
+                inherited.send({"method":"initialized","params":{}})
+                projected = json.loads((directory / "native-read.json").read_text())
+                assert projected["credential"]["status"] == "available"
+                assert ("原生命令" if case == "command" else "AWS") in projected["credential"]["sourceLabel"]
+                if case == "command":
+                    thread = inherited.rpc("thread/start", {"cwd":str(directory),"model":"gpt-6.1-sol","approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
+                    inherited.rpc("turn/start", {"threadId":thread["thread"]["id"],"input":[{"type":"text","text":"Reply OK."}]})
+                    assert inherited.wait(lambda f:f.get("method")=="turn/completed")["params"]["turn"]["status"] == "completed"
+            finally:
+                inherited.close()
+            (directory / "reuse-native-fixture").unlink()
+        else:
+            config["models"] = {"model":"rovai-main","reasoningModel":"","haikuModel":"","sonnetModel":"","opusModel":""}
+            (native_home / "settings.json").write_text(json.dumps({"env":{"CLAUDE_CODE_USE_"+case:"1","ANTHROPIC_"+case+"_BASE_URL":"https://cloud.invalid/old","ANTHROPIC_MODEL":"old-cloud-model"}}))
+        boundary = len(REQUESTS)
+        replaced = Native(helper, executable, directory, config)
+        try:
+            if kind == "codex":
+                replaced.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
+                replaced.send({"method":"initialized","params":{}})
+                provider = replaced.rpc("config/read", {"cwd":str(directory),"includeLayers":False})["config"]["model_providers"]["relay"]
+                assert all(provider.get(name) is None for name in ["auth","aws","env_key"])
+                assert provider["experimental_bearer_token"] == FAKE_KEY and provider["query_params"]["fixture"] == "keep"
+                thread = replaced.rpc("thread/start", {"cwd":str(directory),"model":"gpt-6.1-sol","approvalPolicy":"never","sandbox":"read-only","ephemeral":True})
+                replaced.rpc("turn/start", {"threadId":thread["thread"]["id"],"input":[{"type":"text","text":"Reply OK."}]})
+                assert replaced.wait(lambda f:f.get("method")=="turn/completed")["params"]["turn"]["status"] == "completed"
+            else:
+                replaced.control("initialize")
+                projected = json.loads((directory / "native-read.json").read_text())
+                assert projected["configuration"]["baseUrl"] == "https://cloud.invalid/old"
+                assert projected["credential"]["source"] == "native_cloud"
+                saved = json.loads((native_home / "settings.json").read_text())
+                assert saved["env"].get("CLAUDE_CODE_USE_"+case) in [None,"0",""]
+                replaced.send({"type":"user","message":{"role":"user","content":"Reply OK."}})
+                assert not replaced.wait(lambda f:f.get("type")=="result").get("is_error",False)
+            assert REQUESTS[boundary:] and all(r["keyMatches"] and r["path"].startswith(urlsplit(config["baseUrl"]).path + "/") for r in REQUESTS[boundary:])
+        finally:
+            replaced.close()
+    return {"runtime":kind,"case":"native-auth-source-migrations","status":"passed","sources":cases}
+
+
+def run_managed_auth_switch(executable, helper, root, store):
+    root.mkdir(parents=True, exist_ok=False)
+    home = root / "codex"
+    home.mkdir()
+    (home / "config.toml").write_text('cli_auth_credentials_store=' + json.dumps(store) + '\n')
+    env = {"PATH":os.environ["PATH"],"HOME":str(root),"USERPROFILE":str(root),"CODEX_HOME":str(home),"DO_NOT_TRACK":"1"}
+    logged_in = False
+    try:
+        if store == "keyring":
+            login = subprocess.run([str(executable),"login","--with-api-key"],input=FAKE_KEY + "\n",env=env,cwd=root,capture_output=True,text=True,timeout=20)
+            assert login.returncode == 0, "isolated native credential-store setup unavailable (no daily keychain is used)"
+            logged_in = True
+        else:
+            (home / "auth.json").write_text(json.dumps({"auth_mode":"apikey","OPENAI_API_KEY":FAKE_KEY}))
+        config = {"kind":"codex-cli","mode":"custom_api","baseUrl":"https://api.openai.com/v1","models":[{"rowId":"a","id":"gpt-6.1-sol","displayName":""}],"defaultModel":"gpt-6.1-sol","defaultRowId":"a"}
+        (root / "reuse-native-fixture").touch()
+        native = Native(helper, executable, root, config)
+        try:
+            native.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
+            native.send({"method":"initialized","params":{}})
+            assert native.rpc("account/read", {"refreshToken":False})["account"]["type"] == "apiKey"
+            projected = json.loads((root / "native-read.json").read_text())
+            assert projected["configuration"]["mode"] == "custom_api" and projected["credential"]["status"] == "available"
+            if store == "keyring":
+                assert not (home / "auth.json").exists(), "keyring credential must not be copied to a file"
+        finally:
+            native.close()
+        official = Native(helper, executable, root, {**config,"mode":"official_login"})
+        try:
+            official.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
+            official.send({"method":"initialized","params":{}})
+            response = official.rpc("account/read", {"refreshToken":False})
+            assert response["account"] is None and response["requiresOpenaiAuth"], "old managed API must no longer authenticate the official path"
+            projected = json.loads((root / "native-after.json").read_text())
+            assert projected["configuration"]["mode"] == "official_login" and projected["observation"]["loginStatus"] == "signed_out"
+            if store == "keyring":
+                assert not (home / "auth.json").exists()
+        finally:
+            official.close()
+        if store == "auto":
+            # Exercise the actual native auth-type filter even with a retained
+            # API object. The keyring fixture tests the same store-independent
+            # path without depending on the OS's interactive secure backend.
+            (home / "auth.json").write_text(json.dumps({"auth_mode":"apikey","OPENAI_API_KEY":FAKE_KEY}))
+            native = Native(helper, executable, root, config)
+            try:
+                native.rpc("initialize", {"clientInfo":{"name":"rovai_fixture","version":"1"}})
+                native.send({"method":"initialized","params":{}})
+                response = native.rpc("account/read", {"refreshToken":False})
+                assert response["account"] is None and response["requiresOpenaiAuth"], "native ChatGPT selection must ignore a retained API auth object"
+                assert json.loads((home / "auth.json").read_text())["OPENAI_API_KEY"] == FAKE_KEY, "observation must not log out or modify the native auth object"
+            finally:
+                native.close()
+        return {"runtime":"codex","case":"isolated-native-"+store+"-api-to-official","status":"passed","officialLogin":"required"}
+    finally:
+        # Only the fake credential under this newly-created CODEX_HOME is removed.
+        if logged_in:
+            cleanup = subprocess.run([str(executable),"logout"],env=env,cwd=root,capture_output=True,timeout=20)
+            assert cleanup.returncode == 0, "isolated fake native credential cleanup failed"
+        elif store != "keyring":
+            (home / "auth.json").unlink(missing_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for kind in ["claude", "codex"]:
@@ -459,6 +579,7 @@ def main():
     parser.add_argument("--helper", type=Path, default=Path("target/debug/examples/custom_api_native_fixture"))
     parser.add_argument("--fixture-root", type=Path, required=True, help="Explicit isolated acceptance directory")
     parser.add_argument("--official-roundtrip-root", type=Path, help="Opt-in: existing isolated native official logins; sends minimal real official requests")
+    parser.add_argument("--native-keyring", action="store_true", help="Opt-in: create and clean a fake native keyring credential scoped to the new fixture CODEX_HOME")
     args = parser.parse_args()
     helper = args.helper.resolve()
     assert helper.is_file(), "build the native fixture helper first"
@@ -484,6 +605,18 @@ def main():
                 auto = run_auto_fallback(executable.resolve(), helper, args.fixture_root.resolve() / "codex-auto", "http://127.0.0.1:" + str(server.server_port) + "/auto/prefix")
                 results.append(auto)
                 print(json.dumps(auto), flush=True)
+                for store in ["auto", "file"]:
+                    switched = run_managed_auth_switch(executable.resolve(), helper, args.fixture_root.resolve() / ("codex-"+store+"-official"), store)
+                    results.append(switched)
+                    print(json.dumps(switched), flush=True)
+            if result["status"] == "passed":
+                migrated = run_auth_migrations(kind, executable.resolve(), helper, args.fixture_root.resolve() / (kind + "-auth-migrations"), "http://127.0.0.1:" + str(server.server_port) + "/auth-switch")
+                results.append(migrated)
+                print(json.dumps(migrated), flush=True)
+            if kind == "codex" and args.native_keyring:
+                keyring = run_managed_auth_switch(executable.resolve(), helper, args.fixture_root.resolve() / "codex-keyring", "keyring")
+                results.append(keyring)
+                print(json.dumps(keyring), flush=True)
             if args.official_roundtrip_root and result["status"] == "passed":
                 try:
                     official = run_official_roundtrip(kind, executable.resolve(), helper, args.official_roundtrip_root.resolve(), "http://127.0.0.1:" + str(server.server_port) + "/official-switch")

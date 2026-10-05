@@ -372,8 +372,8 @@ export type RuntimeCustomApiConfiguration =
 /** Write only; omitted means keep. Masked values are never round-tripped as credentials. */
 export type RuntimeApiKeyChange = { action: 'keep' } | { action: 'replace'; value: string } | { action: 'clear' }
 export interface RuntimeNativeCredential {
-  status: 'available' | 'missing' | 'invalid_reference'
-  source: 'native_file' | 'environment_reference' | 'native_managed'
+  status: 'available' | 'missing' | 'invalid_reference' | 'unknown'
+  source: 'native_file' | 'environment_reference' | 'native_managed' | 'native_cloud'
   sourceLabel: string
   version: string
   sourceWritable: boolean
