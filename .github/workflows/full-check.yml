@@ -163,10 +163,15 @@ jobs:
           --target x86_64-pc-windows-msvc
           managed_process
 
-      - name: Exercise Windows Fleet cleanup receipts and Codex release policy
-        run: |
-          cargo test -p rovai-core --lib --features extended-tests --target x86_64-pc-windows-msvc runtime_fleet::tests::
-          cargo test -p rovai-core --lib --features extended-tests --target x86_64-pc-windows-msvc codex::tests::
+      - name: Exercise Windows Fleet cleanup receipts
+        run: >-
+          cargo test -p rovai-core --lib --features extended-tests
+          --target x86_64-pc-windows-msvc runtime_fleet::tests::
+
+      - name: Exercise Windows Codex release policy
+        run: >-
+          cargo test -p rovai-core --lib --features extended-tests
+          --target x86_64-pc-windows-msvc codex::tests::
 
       - name: Exercise Windows private storage admission
         run: >-
