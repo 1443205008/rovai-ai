@@ -6,7 +6,7 @@ authority: version-scope-and-status
 design_status: confirmed
 implementation_status: in_progress
 model_context_change: true
-last_updated: 2026-10-06
+last_updated: 2026-10-07
 ---
 
 # Rovai-ai v1.72：Lark 独立渠道

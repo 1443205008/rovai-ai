@@ -905,3 +905,8 @@ Clippy 与首轮基线比较仍是原有 10 项错误，本切片没有新增 li
   Bootstrap、Skill 与 CLI help 继续逐字符合已批准文本。
 - 本轮最终默认 workspace 回归：454 项通过、1 项既有 Runtime smoke 忽略；格式、文档测试 10 项及
   diff-aware 文档治理通过。没有新增或退役 Rust owner；真实模型 Gate 仍待配置和验收。
+
+- 2026-10-07：User 在已收到 Gate 缺口说明后，通过消息
+  `10a0a3f7-2d2b-478f-bb99-6726b07d37cb` 再次明确要求“pr main merge”；据此推进本项交付，
+  真实模型 Gate 保持未运行，不记为通过。已合入主线 `520320a8`；版本概览冲突保留 Member CLI
+  与 Runtime 探测修复两段记录，未改动后者的实现或验收结论。

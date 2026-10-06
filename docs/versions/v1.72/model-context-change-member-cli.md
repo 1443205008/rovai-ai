@@ -749,3 +749,11 @@ CLI 保留原始 `avatarFile`，Core 认证 Run 后复用 `agent_file_ingress_sc
 规范化不做 canonicalize 或提前存在性检查；安全检查继续由头像 importer 执行。
 本次不改输入／结果字段或已批准的 Bootstrap、Skill、CLI help 文本，真实模型 Gate 仍待验收。
 修复后的验证结果记录在[实施计划](implementation-plan.md#member-cli-最小增量)。
+
+### 2026-10-07：后续 PR 与合并指令
+
+在已明确告知真实模型 Gate 未执行、PR／合并尚未完成后，User `local_user` 在 Thread 消息
+`10a0a3f7-2d2b-478f-bb99-6726b07d37cb` 再次指示“pr main merge”。按这次后续指令推进本项
+PR 和 main 合并，并在 PR 中保留真实模型验证未运行的事实；不记为 Gate 通过，不继承其他工作的豁免。
+已批准的 r1 提示词文本与二次确认保持不变。合入当前主线 `520320a8` 后继续执行本地回归、
+独立代码复核及远端 CI，结果写入实施计划。
