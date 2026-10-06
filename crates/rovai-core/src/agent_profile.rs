@@ -7249,6 +7249,47 @@ mod slow_tests {
                 )
                 .unwrap();
             assert_eq!(configured.result.status, CommandResultStatus::Applied);
+            if kind == AdapterKind::ClaudeCodeCli {
+                service
+                    .record_managed_probe_failure(
+                        &mut database,
+                        ManagedProbeFailure {
+                            adapter_kind: kind,
+                            auth_scope: "default",
+                            candidate_path: executable_path.to_str().unwrap(),
+                            fingerprint: Some(&fingerprint),
+                            source: Some(InstallationSource::InheritedPath),
+                            failure_class: "transient",
+                            diagnostic_code: "runtime_model_catalog_refresh_failed",
+                            failure: None,
+                        },
+                    )
+                    .unwrap();
+                let after_failure = service
+                    .get_profile(&database, &profile.agent_id)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    after_failure.runtime_configuration.as_ref().unwrap().model,
+                    selected
+                );
+                let saved_again = service
+                    .set_runtime(
+                        &mut database,
+                        &user_command(
+                            "save-after-catalog-failure",
+                            SetMemberRuntimeConfigurationCommand {
+                                agent_id: profile.agent_id.clone(),
+                                expected_version: after_failure.version,
+                                adapter_kind: kind,
+                                model: selected.clone(),
+                                permissions: defaults.permissions.clone(),
+                            },
+                        ),
+                    )
+                    .unwrap();
+                assert_eq!(saved_again.result.status, CommandResultStatus::Applied);
+            }
             let binding = ResolvedRuntimeBinding {
                 adapter_kind: kind,
                 installation_id,

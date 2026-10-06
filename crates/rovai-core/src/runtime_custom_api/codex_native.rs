@@ -198,13 +198,7 @@ pub(super) async fn request(
             context.directory.parent().unwrap_or(Path::new("/"))
         })
         .args(["app-server", "--listen", "stdio://"]);
-    let mut process = RuntimeProbeProcess::spawn(
-        &mut command,
-        1024 * 1024,
-        16 * 1024,
-        256 * 1024,
-        DEFAULT_CLEANUP_TIMEOUT,
-    )?;
+    let mut process = RuntimeProbeProcess::spawn(&mut command, 16 * 1024, DEFAULT_CLEANUP_TIMEOUT)?;
     let result = timeout(Duration::from_secs(8), async {
         let (stdin, lines) = process.split_io()?;
         for (id, method, params) in [

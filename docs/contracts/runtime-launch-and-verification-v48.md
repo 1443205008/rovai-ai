@@ -9,9 +9,41 @@ last_updated: 2026-10-06
 
 # Runtime Launch and Verification v48
 
-继承 [v47](runtime-launch-and-verification-v47.md) 的启动、审批、平台准入、真实 Host 初始化和恢复边界。
-本版扩展 [v40](runtime-launch-and-verification-v40.md) 的启动设置，仅为 Claude Code 与 Codex 提供
-原生连接配置的读取、编辑和执行接入，不认证中转或模型能力。证据见[本期验收](../versions/v1.72/runtime-custom-api-verification.md)。
+继承 [v47](runtime-launch-and-verification-v47.md) 的启动、审批、平台准入、真实 Host 初始化和恢复边界；
+Claude 模型目录准入以下节为准。本版亦扩展 [v40](runtime-launch-and-verification-v40.md) 的启动设置，
+仅为 Claude Code 与 Codex 提供原生连接配置的读取、编辑和执行接入，不认证中转或模型能力。
+连接配置证据见[本期验收](../versions/v1.72/runtime-custom-api-verification.md)。
+
+## 模型发现与探测容量
+
+本节覆盖继承合同中 Claude Code 以 initialize 目录校验显式模型的要求。模型目录服务选择与诊断，
+不能仅因目录失败、为空或缺少已配置 ID 而阻止保存与实际执行；配置中的模型和选项原样保留。
+沿用现有选择方式，原生默认由用户主动选择，不新增任意模型 ID 输入或自动替换。
+
+Claude Code 优先发送 `control_request`，`request.subtype=list_models`，使用本次唯一 `request_id`。
+仅接收精确关联的成功 `models`；明确不支持该 subtype 才以新 ID 回退一次 `initialize.models`。
+两次请求共享原有 30 秒总预算；认证／策略拒绝、超时、取消、退出和损坏响应保留其原因，不被改写为不支持。
+不发送 Prompt，不触发模型推理，不要求升级，不缓存能力结论。探测与执行继承相同入口及有效原生配置。
+目录成功后立即回收进程；成功、失败、超时与取消均回收完整进程树。
+
+共享协议探测读取器的单帧容量默认 `67108864` 字节（64 MiB），按需增长。帧大小按 UTF-8 字节计算，
+不包含 LF／CRLF 分隔符；无 LF 的 EOF 尾帧照常计入全部字节。跨读取块、多个帧同块与 UTF-8 边界不改变容量语义。
+通过 **Rovai Core 进程环境** `ROVAI_RUNTIME_PROBE_MAX_FRAME_BYTES` 增大容量，设置后重启相应 Core；
+未设置使用默认值，非正整数或超出可分配索引范围明确报配置错误，不静默回退。此值不是原生协议限制，
+也不是 Runtime 子进程独有的启动变量；不新增数据库字段或设置表单。
+
+删除 256 KiB 单行和 4 MiB 累计 stdout 门槛；仅当前未完成帧有缓冲，处理后释放，只保留有效结果。
+达到容量仍无完整帧时，最多为 CRLF 保留一个候选 CR 字节；超限不得返回部分 JSON 或跳过关键响应。
+错误码 `runtime_probe_frame_capacity_exceeded`／`runtime_probe_frame_capacity_invalid`／
+`runtime_probe_frame_allocation_failed` 归因 Rovai；容量错误包含当前容量与调整入口。stderr 摘要继续有界，
+超过摘要容量持续排空，不单独导致查询失败；诊断不复制完整坏帧。超时不能代替内存容量约束。
+此读取规则覆盖所有 `RuntimeProbeProcess` 调用点，不扩大到普通日志、文件、图片或其他独立协议实现。
+
+目录刷新失败继续使用既有缓存、并发和状态：历史结果明确为缓存，不更新成功时间，不伪造 Ready。
+失败保留脱敏后的公开原因，目录失败标题不能宣称整个 Runtime 不可执行。原生认证或策略拒绝仍如实呈现。
+正式 Claude 会话保留 initialize 和权限检查；显式模型 ID（含别名、上下文后缀）原样交给 CLI。
+Adapter 只校验自己能传递的选项形状：`effort` 为无控制字符的非空字符串，未知键明确失败，不能静默丢弃。
+effort 值不由旧目录限制；原生拒绝、警告或替换行为保持可观察，不把请求值冒充实际执行模型。
 
 ## 配置权威与输入
 

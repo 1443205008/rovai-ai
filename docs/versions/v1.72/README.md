@@ -6,7 +6,7 @@ authority: version-scope-and-status
 design_status: confirmed
 implementation_status: in_progress
 model_context_change: true
-last_updated: 2026-10-05
+last_updated: 2026-10-06
 ---
 
 # Rovai-ai v1.72：Lark 独立渠道
@@ -18,6 +18,15 @@ User 于 2026-10-06 确认[提示词与接口 r1](model-context-change-member-cl
 复用创建记录授权、命令幂等、版本、Run tmp 和失效通知，无数据库迁移、Runtime 配置或成员关系扩权。
 当前字段合同见 [Transport v36](../../contracts/builtin-tool-transport-v36.md)。确定性回归与真实任务 Gate 状态
 记录在[实施计划](implementation-plan.md#member-cli-最小增量)。
+
+## 并行修复：Claude Code 模型发现与 Runtime 探测可用性
+
+按用户确认，删除 256 KiB 单行与 4 MiB 累计 stdout 探测门槛，改为默认 64 MiB、按需增长、可调的单帧容量。
+Claude 优先 list_models，仅明确不支持才兼容 initialize，两者共享超时和进程回收。目录失败保留已有模型、
+选项和缓存标识，不阻止原样保存／执行；保留原生默认选择，不纳入任意模型 ID 输入、能力缓存、复杂重试或资源调度。
+正式握手与真实原生拒绝保持有效。规范见 [Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md#模型发现与探测容量)，
+实现与环境证据见[验收记录](runtime-probe-availability-verification.md)。本地完整前端／默认 Rust 回归通过，
+Claude 2.1.280 专用查询与 2.1.100 旧协议回退分别实测通过；Windows 2.1.289 未实测，不推断通过。
 
 ## 并行实施：Claude Code 与 Codex 原生连接编辑
 

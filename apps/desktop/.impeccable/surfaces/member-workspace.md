@@ -105,7 +105,7 @@ Desktop, Web and Mobile; it does not fall back to the Steel brand family.
 Use the accepted understated permission guidance from the [member configuration UI contract](../../../../docs/ui/components/member-identity.md#队员配置页): ordinary recommendation text appears only inside an open menu, with one short line below switches. The inline permission switch face and its minimum height are both 36px. Guidance never changes a saved value or draft, and language changes preserve both.
 
 Model rows keep Runtime display names separate from opaque selection IDs and show the Runtime description when
-provided, with the full text available on hover. Claude's initialize catalog uses this same Picker; no family-specific
+provided, with the full text available on hover. Claude's native control catalog uses this same Picker; no family-specific
 rows or inferred version labels are supplied by Renderer.
 
 Opening the model Picker uses Core-owned stale-while-revalidate state. Fresh catalogs display immediately;

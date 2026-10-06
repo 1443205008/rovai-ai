@@ -4423,7 +4423,8 @@ impl Core {
                     RuntimeCheckOutcome::Superseded
                 }))
             }
-            Err(_) => {
+            Err(error) => {
+                let failure = health::model_catalog_failure(kind, &error, path);
                 service.record_managed_probe_failure(
                     &mut database,
                     ManagedProbeFailure {
@@ -4434,7 +4435,7 @@ impl Core {
                         source: Some(installation.source),
                         failure_class: "transient",
                         diagnostic_code: "runtime_model_catalog_refresh_failed",
-                        failure: None,
+                        failure: Some(&failure),
                     },
                 )?;
                 Ok(Some(RuntimeCheckOutcome::StableFailure))

@@ -161,7 +161,8 @@ Camp Fast service 拥有可空偏好、保存绑定代次与 Run 冻结。活跃
 刷新只写明确取得的目录证据；失败保留原诊断记录，Superseded 不提交错误身份的结果。
 
 Core 原子保存显式模型和选项的精确意图及静态权限配置；过期、缺失目录或历史失败不阻止保存。
-真实 Host 在正文发送前验证当前模型及每个显式选项；无效值拒绝本次启动，不静默替换或忽略。
+真实 Host 负责原生握手和选项传递，不静默替换或忽略。Claude Code 将已有模型 ID 与可传递的显式选项交给
+原生 CLI 判定；不能仅因枚举缺失或目录不包含该 ID 而拒绝正文。其他 Adapter 的原生模型设置协议保持原合同。
 默认模型不依赖目录，内部 sentinel 只用于审计和冻结，不向原生 Runtime 发送。
 
 成员配置只拥有模型策略，不拥有某次 Run 的实际模型。使用 `runtime_default` 时，Core 只能从当前
@@ -171,10 +172,16 @@ Model 继续表达“Agent 运行时默认”，不会把缺失升级为 Runtime
 
 ### Claude Code 原生模型目录
 
-Claude Code 通过选中的原生 CLI，以 stream-json 双向控制协议发送一次无 Prompt `initialize`。
-精确关联的成功响应 `models` 是唯一候选目录来源，`--help` 只检查命令参数。Probe 继承原生环境与
+Claude Code 通过选中的原生 CLI，以 stream-json 双向控制协议优先发送无 Prompt `list_models`。
+只有匹配 request_id 的明确“不支持 list_models”错误才回退一次 `initialize.models`，两次请求共享
+30 秒总预算；超时、退出、认证、策略和其他错误不触发回退，不建立能力缓存或最低版本门槛。
+精确关联的成功响应 `models` 是候选目录来源，`--help` 只检查命令参数。Probe 继承原生环境与
 active PATH，使用 `--no-session-persistence`，不追加 model、settings、权限或 Provider 覆盖。
-整个握手沿用 `RuntimeProbeProcess` 的 30 秒 deadline、有界输出和进程树回收。
+整个查询沿用 `RuntimeProbeProcess` 的超时、取消和进程树回收。协议读取只限制当前未完成帧，默认
+64 MiB、按需增长，通过 Core 环境变量 `ROVAI_RUNTIME_PROBE_MAX_FRAME_BYTES` 配置字节数。
+删除 256 KiB 单行和 4 MiB 历史累计门槛；解析完成的帧释放，stderr 继续有界保存并持续消费。
+超限完整失败并报告本地读取容量，不截断 JSON 后继续，不作为原生 CLI 拒绝。此规则覆盖复用读取器的
+Claude、ACP、Codex 模型／初始化及 Codex 原生配置查询，不删除文件、日志、图片等其他边界。
 
 `value` 保留为选择 ID，显示名称与描述独立；原生单条模型元数据进入统一 descriptor 的
 `runtimeMetadata`，包括 Runtime 明确给出的别名、resolved ID 和能力。整份 account/初始化响应不进入
@@ -183,8 +190,11 @@ active PATH，使用 `--no-session-persistence`，不追加 model、settings、�
 
 新目录复用统一快照、Picker、缓存和刷新；help 时代旧目录缺少原生 entry 证据，不能再服务选择或作为 LKG，
 但保存的队员配置保留。原生成功目录在刷新失败时继续按已有 stale/expired 边界读取，失败不能更新成功时间。
-`model.catalog.initialize` 是当前 Claude Ready 必需证据，旧配置在执行前重新验证。显式模型 ID 继续
-原样传给 `--model`；运行时默认省略该参数。字段与错误边界见
+`model.catalog.initialize` 保留为既有持久化能力名，专用查询或兼容查询均可建立该目录证据；查询失败
+不制造 Ready，界面独立表达目录不可用。已有模型和选项可原样保存并执行；默认项由用户主动选择，
+本期不增加任意模型 ID 输入。正式会话仍完成 initialize 协议／权限握手，但不再据其目录拒绝已有配置。
+显式模型 ID 原样传给 `--model`，effort 原样传给 `--effort`；不能传递的键或非字符串选项明确拒绝，
+不把未知原生枚举值静默删除。运行时默认省略模型参数。字段与错误边界见
 [Runtime Launch v48](../contracts/runtime-launch-and-verification-v48.md)。
 
 ## 内部诊断与公开 Runtime failure
