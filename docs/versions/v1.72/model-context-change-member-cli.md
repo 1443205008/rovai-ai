@@ -720,3 +720,18 @@ update help 的参数列表和例子留在单操作入口；不把数据库、as
 本次代码复核不代表真实模型 Gate 通过。
 
 复核汇总：Standards 未关闭代码问题 0 项、另有 Gate 证据缺口 1 项；Spec 未关闭代码问题 0 项，Gate 仍待验收。
+
+### User 追加复核：无 Lead 与相对图片路径
+
+User 在消息 `8472d677-5582-4a97-b941-7aef594d043c` 指出 `c069b3f5` 的两项 P2，均复现：
+
+- 原 SQL 在 Lead 为 null 时返回 null，既有 Member owner 加入该分支后报 `Invalid column type Null`。
+  查询改用 `COALESCE(...,0)`，名单、顺序保持，所有 Lead 标记为 false；读取后 Lead 仍为 null。
+- 原 CLI 把相对 `avatarFile` 原样发给 Core。隔离的调用者与接收端使用不同 cwd，各有不同内容的同名 PNG；
+  修复前实际 CLI 的直接参数、JSON 文件、stdin 三路均传相对路径，接收端均读到自己目录的图片。
+  现于三路共用的 CLI 输入出口转为调用者 cwd 下的绝对路径，在 IPC 与请求 digest 前固定。
+  不做 canonicalize 或提前检查存在性，保留源文件清理后的回放；create 与批准的提示词文本不变。
+
+沿用两个已有 Rust owner 补断言，未新增持久字段、授权／资产机制或测试 owner。
+双进程验证使用隔离 IPC 接收夹具，没有启动真实 Core/Runtime，也不替代真实模型 Gate。
+本次修复的最终回归结果记录在[实施计划](implementation-plan.md#member-cli-最小增量)。

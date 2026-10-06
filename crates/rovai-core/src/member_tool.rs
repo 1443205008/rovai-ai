@@ -157,7 +157,7 @@ pub fn authorize_member_target(
 
 pub fn list_members(connection: &Connection, run: &AuthenticatedTeamToolRun) -> Result<Value> {
     let mut statement = connection.prepare(
-        "SELECT p.id,p.display_name,p.team_role,p.professional_responsibilities,p.id=c.default_lead_agent_id
+        "SELECT p.id,p.display_name,p.team_role,p.professional_responsibilities,COALESCE(p.id=c.default_lead_agent_id,0)
          FROM camp_member m JOIN agent_profile p ON p.id=m.agent_id JOIN camp c ON c.id=m.camp_id
          WHERE m.camp_id=?1 AND m.status='active' AND m.leave_requested_at IS NULL AND p.profile_status!='removed'
          ORDER BY p.member_order,p.id")?;

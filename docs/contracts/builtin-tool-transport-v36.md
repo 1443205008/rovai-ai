@@ -24,7 +24,8 @@ path. Single Chat's allowlist is unchanged.
 Every invocation, including a replay, requires the current authenticated Run, lease,
 Native Binding and active caller membership version. `list` returns all active members
 of the current Thread, including self and away; leaving/left and globally removed members
-are excluded. It has no global selector or pagination.
+are excluded. Without a Default Lead, every `isDefaultLead` is false; reading never
+appoints a Lead. It has no global selector or pagination.
 
 `get/update` target a non-removed Profile that is either a current Thread member or was
 created by the caller in this same Thread. The creation exception uses the existing Core
@@ -106,7 +107,11 @@ same version and no roster invalidation. Equivalent normalized source, crop and 
 preserve the existing managed reference even when the upload uses a new request ID.
 
 `avatarFile` accepts the same local PNG/JPEG import as creation. Normalized source is the
-portrait; its crop produces the icon. All three crop fields are supplied together:
+portrait; its crop produces the icon. For update, the CLI resolves a relative path against
+its own working directory, for every input source, before IPC and request digest creation.
+The input JSON file's directory and Core's working directory do not change that base.
+Making the path absolute does not require the file to exist, preserving durable replay
+after source cleanup. All three crop fields are supplied together:
 centers 0–1, size 0.12–1 of the source's shorter edge, fully inside the source. Without
 crop fields a source replacement uses the existing default crop. Crop fields without a
 file crop the current source, preserving its bytes in a new immutable compound asset.

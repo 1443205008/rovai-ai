@@ -102,6 +102,9 @@ Rust owner 分成四个可执行层级；feature gating 只改变日常路由，
 PATCH owner 同时覆盖相同图片的新请求无版本变化、源文件消失后的持久回放、同路径换图冲突，
 以及已提交资产缺失时不得重建其 ID。Run tmp 轮换删除与图片重取扩展既有
 `builtin_tool_runtime::tests::lease_rotates_fences_and_replays_exact_request`。
+无 Lead 的名单与零写入扩展原 PATCH owner；调用者相对图片路径在 IPC 前变为绝对路径，
+扩展 CLI 的 `direct_flags_and_input_file_are_mutually_exclusive`，覆盖直接参数与 JSON 文件共用边界，
+并使用不存在的源证明没有引入阻止持久回放的 canonicalize／存在性检查。未新增 Rust owner。
 
 最小验证：先 `cargo test -p rovai-core --features extended-tests --lib member_ -- --list` 确认 owner 非零，
 再执行同命令去掉 `-- --list`；租约 owner 使用

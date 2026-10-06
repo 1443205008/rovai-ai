@@ -2485,6 +2485,33 @@ mod tests {
                 .iter()
                 .any(|m| m["agentId"] == "agent_2")
         );
+        fixture
+            .database
+            .connection()
+            .execute(
+                "UPDATE camp SET default_lead_agent_id=NULL WHERE id=?1",
+                [&fixture.camp_id],
+            )
+            .unwrap();
+        let without_lead = list_members(fixture.database.connection(), &run).unwrap();
+        let mut expected_without_lead = list.clone();
+        for member in expected_without_lead["items"].as_array_mut().unwrap() {
+            member["isDefaultLead"] = json!(false);
+        }
+        assert_eq!(without_lead, expected_without_lead);
+        assert!(
+            fixture
+                .database
+                .connection()
+                .query_row(
+                    "SELECT default_lead_agent_id FROM camp WHERE id=?1",
+                    [&fixture.camp_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .unwrap()
+                .is_none(),
+            "listing must not appoint a Lead"
+        );
         assert!(
             authorize_member_target(fixture.database.connection(), &run, "agent_4", false).is_err()
         );
