@@ -3499,8 +3499,6 @@
   "尚未检测到可执行入口。": "No executable entry has been detected.",
   "已检测到可执行入口；启动任务时验证登录、模型与所需能力。": "Executable detected. Sign-in, model and required capabilities are checked when a task starts.",
   "已检测到": "Detected",
-  "启动任务时验证登录、模型与权限；修复环境后可直接重试。": "Sign-in, model and permissions are checked at launch. Retry after fixing the environment.",
-  "可尝试运行": "Ready to try",
   "检查 Fast": "Check Fast",
   "检查中…": "Checking…",
   "正在初始化 Runtime": "Initializing runtime",
