@@ -14565,6 +14565,8 @@ impl Core {
         };
         self.bind_prepared_native_session(execution, &binding_credential, &thread_id)
             .await?;
+        record_runtime_fast_default(self, output, execution, runtime.native_fast_default().await)
+            .await;
         let Some(prepared_context) = self
             .materialize_agent_run_context(
                 execution,
@@ -15366,6 +15368,16 @@ impl Core {
         managed_output_root: &Path,
         event: &claude::ClaudeCodeRuntimeEvent,
     ) -> Result<()> {
+        if event.event_type == "runtime.fast.initialized" {
+            record_runtime_fast_default(
+                self,
+                output,
+                execution,
+                event.payload.get("enabled").and_then(Value::as_bool),
+            )
+            .await;
+            return Ok(());
+        }
         if matches!(
             event.event_type,
             "runtime.usage.observed" | "runtime.context.observed"
@@ -20745,6 +20757,62 @@ fn public_acp_content_text(value: Option<&Value>) -> Option<String> {
 
 fn nonempty_public_text(text: &str) -> Option<String> {
     (!text.is_empty()).then(|| text.to_string())
+}
+
+async fn record_runtime_fast_default(
+    core: &Core,
+    output: &mpsc::UnboundedSender<String>,
+    execution: &AgentRunExecution,
+    native_default: Option<bool>,
+) {
+    let Some(fast) = execution.runtime.camp_fast.as_ref() else {
+        return;
+    };
+    // An overridden Host describes Rovai's request, not the native default.
+    if fast.fast_override.is_some() {
+        return;
+    }
+    let result = {
+        let database = core.database.lock().await;
+        (|| -> Result<bool> {
+            let active = database.connection().query_row(
+                "SELECT EXISTS(SELECT 1 FROM agent_run AS run
+                 JOIN agent_profile AS profile ON profile.id = run.agent_id
+                 WHERE run.id = ?1 AND run.execution_epoch = ?2
+                   AND run.status IN ('running', 'waiting') AND run.cancel_requested_at IS NULL
+                   AND json_extract(profile.default_model_selection_json, '$.mode') = ?3
+                   AND (?3 = 'runtime_default'
+                        OR json_extract(profile.default_model_selection_json, '$.modelId') = ?4))",
+                rusqlite::params![
+                    execution.agent_run_id,
+                    execution.execution_epoch,
+                    execution.runtime.model.source,
+                    execution.runtime.model.model_id
+                ],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !active {
+                return Ok(false);
+            }
+            rovai_core::camp_fast::record_runtime_default(
+                database.connection(),
+                &execution.camp_id,
+                &execution.agent_id,
+                &fast.runtime_binding_revision,
+                native_default,
+            )
+        })()
+    };
+    match result {
+        Ok(true) => emit(
+            output,
+            "camp.member.fast.updated",
+            json!({"threadId": execution.camp_id}),
+        ),
+        Ok(false) => {}
+        // Optional display metadata must never hold up execution.
+        Err(error) => eprintln!("Could not record Runtime Fast baseline: {error}"),
+    }
 }
 
 async fn record_runtime_model_observation(

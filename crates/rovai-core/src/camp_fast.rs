@@ -26,6 +26,15 @@ pub enum ObservedFastState {
 }
 
 impl ObservedFastState {
+    /// A display baseline, never a transport override or proof of per-turn pricing.
+    pub fn fast_default(self) -> Option<bool> {
+        match self {
+            Self::Fast | Self::Cooldown => Some(true),
+            Self::Standard => Some(false),
+            Self::Unknown => None,
+        }
+    }
+
     pub fn from_claude(value: &Value) -> Option<Self> {
         match value.as_str()? {
             "on" => Some(Self::Fast),
@@ -129,7 +138,8 @@ pub(crate) fn view_on_connection(
 ) -> Result<Option<ThreadMemberFastView>> {
     let row = connection
         .query_row(
-            "SELECT profile.runtime_binding_revision, fast.fast_override, NULL
+            "SELECT profile.runtime_binding_revision, fast.fast_override,
+                    CASE WHEN fast.executable_fingerprint = '' THEN fast.runtime_default_fast END
          FROM camp_member AS member
          JOIN agent_profile AS profile ON profile.id = member.agent_id
          LEFT JOIN camp_member_fast_preference AS fast
@@ -149,6 +159,38 @@ pub(crate) fn view_on_connection(
         )
         .optional()?;
     Ok(row)
+}
+
+/// Store only the real Host's initialization baseline in the existing member row.
+/// Legacy diagnostic rows carry a fingerprint and are not a baseline source.
+/// Callers fence the Run/epoch and exclude launches with a frozen Fast override.
+pub fn record_runtime_default(
+    connection: &Connection,
+    camp_id: &str,
+    agent_id: &str,
+    runtime_binding_revision: &str,
+    native_default: Option<bool>,
+) -> Result<bool> {
+    let changed = connection.execute(
+        "INSERT INTO camp_member_fast_preference(
+            camp_id, agent_id, runtime_binding_revision, cwd, executable_fingerprint, runtime_default_fast)
+         SELECT member.camp_id, member.agent_id, profile.runtime_binding_revision, camp.project_path, '', ?4
+         FROM camp_member AS member
+         JOIN camp ON camp.id = member.camp_id
+         JOIN agent_profile AS profile ON profile.id = member.agent_id
+         WHERE member.camp_id = ?1 AND member.agent_id = ?2
+           AND member.status = 'active' AND profile.profile_status != 'removed'
+           AND profile.runtime_binding_revision = ?3
+           AND profile.selected_runtime_adapter_kind IN ('claude-code-cli', 'codex-cli')
+         ON CONFLICT(camp_id, agent_id) DO UPDATE SET
+            runtime_default_fast = excluded.runtime_default_fast, executable_fingerprint = ''
+         WHERE camp_member_fast_preference.runtime_binding_revision = excluded.runtime_binding_revision
+           AND camp_member_fast_preference.fast_override IS NULL
+           AND (camp_member_fast_preference.runtime_default_fast IS NOT excluded.runtime_default_fast
+                OR camp_member_fast_preference.executable_fingerprint != '')",
+        params![camp_id, agent_id, runtime_binding_revision, native_default],
+    )?;
+    Ok(changed != 0)
 }
 
 pub fn freeze(
@@ -326,6 +368,30 @@ mod tests {
         merge_claude_inline_settings(&mut native_default, Some(false)).unwrap();
         assert_eq!(native_default["fastMode"], false);
         assert!(merge_claude_inline_settings(&mut json!(null), Some(false)).is_err());
+        for (native, expected) in [
+            ("on", Some(true)),
+            ("cooldown", Some(true)),
+            ("off", Some(false)),
+            ("future", None),
+        ] {
+            assert_eq!(
+                ObservedFastState::from_claude(&json!(native))
+                    .and_then(ObservedFastState::fast_default),
+                expected
+            );
+        }
+        for (tier, expected) in [
+            ("fast", Some(true)),
+            ("priority", Some(true)),
+            ("default", Some(false)),
+            ("standard", Some(false)),
+            ("future", None),
+        ] {
+            assert_eq!(
+                ObservedFastState::from_tier(tier).and_then(ObservedFastState::fast_default),
+                expected
+            );
+        }
     }
 
     #[cfg(feature = "extended-tests")]
@@ -546,6 +612,97 @@ mod tests {
             projected["runtimeDefaultFast"].is_null(),
             "stale qualification defaults are not native evidence"
         );
+        assert!(
+            !record_runtime_default(
+                database.connection(),
+                camp_id,
+                "agent_1",
+                &initial.runtime_binding_revision,
+                Some(false),
+            )
+            .unwrap(),
+            "a late initialization cannot replace a saved choice"
+        );
+        set_preference(
+            &mut database,
+            &set(camp_id, &initial.runtime_binding_revision, None),
+        )
+        .unwrap();
+        for baseline in [Some(true), Some(false), None] {
+            assert!(
+                record_runtime_default(
+                    database.connection(),
+                    camp_id,
+                    "agent_1",
+                    &initial.runtime_binding_revision,
+                    baseline,
+                )
+                .unwrap()
+            );
+            let current = view(&database, camp_id, "agent_1").unwrap().unwrap();
+            assert_eq!(
+                current.fast_override, None,
+                "initialization never writes user intent"
+            );
+            assert_eq!(current.runtime_default_fast, baseline);
+            assert!(
+                !record_runtime_default(
+                    database.connection(),
+                    camp_id,
+                    "agent_1",
+                    &initial.runtime_binding_revision,
+                    baseline,
+                )
+                .unwrap(),
+                "duplicate initialization does not invalidate the projection"
+            );
+            let reopened = Connection::open(database.path()).unwrap();
+            assert_eq!(
+                view_on_connection(&reopened, camp_id, "agent_1")
+                    .unwrap()
+                    .unwrap()
+                    .runtime_default_fast,
+                baseline
+            );
+        }
+        assert!(
+            !record_runtime_default(
+                database.connection(),
+                camp_id,
+                "agent_1",
+                "old-binding",
+                Some(true),
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            view(&database, &camps[1], "agent_1")
+                .unwrap()
+                .unwrap()
+                .fast_override,
+            Some(false)
+        );
+        set_preference(
+            &mut database,
+            &set(camp_id, &initial.runtime_binding_revision, Some(false)),
+        )
+        .unwrap();
+        assert!(
+            !record_runtime_default(
+                database.connection(),
+                camp_id,
+                "agent_1",
+                &initial.runtime_binding_revision,
+                Some(true),
+            )
+            .unwrap(),
+            "explicit Off is never replaced by native On"
+        );
+        set_preference(
+            &mut database,
+            &set(camp_id, &initial.runtime_binding_revision, Some(true)),
+        )
+        .unwrap();
         database.connection().execute("UPDATE agent_profile SET display_name = 'Renamed', version = version + 1 WHERE id = 'agent_1'", []).unwrap();
         crate::agent_profile::configure_test_runtime(&database, &["agent_1"]);
         assert_eq!(

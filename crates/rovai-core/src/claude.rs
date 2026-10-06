@@ -743,6 +743,15 @@ impl ClaudeCodeCliRuntimeAdapter {
                         &models, &request.runtime.model.model_id, &request.runtime.model.options,
                     )?;
                 }
+                if let Some(events) = &request.runtime_events {
+                    let enabled = initialize.get("fast_mode_state")
+                        .and_then(rovai_core::camp_fast::ObservedFastState::from_claude)
+                        .and_then(rovai_core::camp_fast::ObservedFastState::fast_default);
+                    let _ = events.send(ClaudeCodeRuntimeEvent {
+                        event_type: "runtime.fast.initialized",
+                        payload: serde_json::json!({ "enabled": enabled }),
+                    });
+                }
                 protocol.send_prompt(&request.prompt).await
                     .context("failed to deliver structured input to Claude Code stdin")
             } => {
@@ -3302,6 +3311,15 @@ mod tests {
             std::fs::create_dir_all(&workspace).expect("workspace should be created");
             let executable = root.join("fake-claude");
             let session_id = "0bdd2166-d420-40c6-94be-70b93eb290c5";
+            let native_fast = match (explicit, resume) {
+                (false, false) => Some("on"),
+                (false, true) => Some("off"),
+                (true, false) => Some("cooldown"),
+                (true, true) => None,
+            };
+            let fast_field = native_fast
+                .map(|state| format!(r#"\"fast_mode_state\":\"{state}\","#))
+                .unwrap_or_default();
             std::fs::write(
                 &executable,
                 format!(
@@ -3316,7 +3334,7 @@ mod tests {
     done
     IFS= read -r init
     init_id=$(printf '%s' "$init" | /usr/bin/sed -E 's/.*"request_id":"([^"]+)".*/\1/')
-    printf '%s\n' "{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"$init_id\",\"response\":{{\"models\":[{{\"value\":\"provider/custom[extended]\",\"displayName\":\"Custom\",\"supportedEffortLevels\":[\"future-level\"]}}]}}}}}}"
+    printf '%s\n' "{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"$init_id\",\"response\":{{{fast_field}\"models\":[{{\"value\":\"provider/custom[extended]\",\"displayName\":\"Custom\",\"supportedEffortLevels\":[\"future-level\"]}}]}}}}}}"
     IFS= read -r prompt
     printf '%s\n' "$prompt" >> "$0.prompts"
     printf '%s\n' '{{"type":"stream_event","session_id":"{session_id}","event":{{"type":"message_start"}}}}'
@@ -3352,12 +3370,23 @@ mod tests {
             }
             let (accepted_sender, mut accepted_receiver) = mpsc::unbounded_channel();
             request.input_accepted = Some(accepted_sender);
+            let (events, mut event_receiver) = mpsc::unbounded_channel();
+            request.runtime_events = Some(events);
 
             let error = adapter
                 .run(request)
                 .await
                 .expect_err("structured Provider failure must remain visible on exit 1");
             let diagnostic = format!("{error:#}");
+            let initialized = event_receiver
+                .try_recv()
+                .expect("initialization baseline precedes input events");
+            assert_eq!(initialized.event_type, "runtime.fast.initialized");
+            assert_eq!(
+                initialized.payload["enabled"].as_bool(),
+                native_fast.map(|state| state != "off"),
+                "initialization metadata is optional on both new and resumed sessions"
+            );
             let delivered = error
                 .downcast_ref::<ClaudeCodeDeliveredFailure>()
                 .expect("structured final should prove the delivered turn ended")

@@ -302,6 +302,12 @@ Object.assign(window, { fastTest: {
   },
   publishBinding: () => updateSnapshot(current => ({ ...current, members: current.members.map(member => ({ ...member,
     fast: values.get(member.agentId) })) })),
+  nativeBaseline: (enabled: boolean | null, projectedOverride?: boolean | null) => {
+    const value = { ...values.get('agent-0')!, runtimeDefaultFast: enabled }
+    values.set('agent-0', value)
+    updateSnapshot(current => ({ ...current, members: current.members.map(member => member.agentId === 'agent-0'
+      ? { ...member, fast: { ...value, ...(projectedOverride === undefined ? {} : { fastOverride: projectedOverride }) } } : member) }))
+  },
   observe: (state: string, disabledReason: string | null = null) => updateSnapshot(current => ({ ...current,
     executionEvidence: [...current.executionEvidence, { id: `fast-${current.executionEvidence.length}`, agentRunId: 'run-agent-0',
       executionEpoch: 1, sequence: current.executionEvidence.length + 1, eventType: 'runtime.fast.observed',

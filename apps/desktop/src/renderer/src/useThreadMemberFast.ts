@@ -13,7 +13,7 @@ type FastEntry = {
 
 export type ThreadMemberFastControls = {
   get(agentId: string): { value: ThreadMemberFastView | null | undefined; pending: boolean } | undefined
-  save(agentId: string, fastOverride: boolean | null): Promise<void>
+  save(agentId: string, fastOverride: boolean): Promise<void>
 }
 
 // One workspace owns both surfaces. Writes are coalesced per Thread/member,
@@ -86,11 +86,17 @@ export function useThreadMemberFast(
         commandId: newCommandId(),
         command: { threadId: snapshot.thread.id, agentId, expectedRuntimeBindingRevision: value.runtimeBindingRevision, fastOverride }
       })
-      if (!mounted.current || entries.current.get(agentId) !== entry) return
+      const current = entries.current.get(agentId)
+      if (!mounted.current || !current || current.scope !== entry.scope) return
+      // An initialization-only projection can arrive while this save is pending.
+      // Keep its entry, but still apply this receipt unless a newer choice arrived.
+      if (current !== entry && current.value?.fastOverride !== value.fastOverride) return
       if (result.status !== 'applied') throw new Error('队员配置已变化，请稍后重试。')
-      entry.value = (result.payload as { fast?: ThreadMemberFastView | null }).fast ?? null
+      current.value = (result.payload as { fast?: ThreadMemberFastView | null }).fast ?? null
     } catch (error) {
-      if (mounted.current && entries.current.get(agentId) === entry) {
+      const current = entries.current.get(agentId)
+      if (mounted.current && current?.scope === entry.scope
+        && (current === entry || current.value?.fastOverride === value.fastOverride)) {
         onNotify(readErrorMessage(error, '响应模式未保存，请重试。'))
       }
     } finally { saves.current.delete(key); changed() }

@@ -840,3 +840,23 @@ Clippy 与首轮基线比较仍是原有 10 项错误，本切片没有新增 li
   原生反馈不反写偏好、零资格请求；日夜截图已检查。完整 `pnpm test:camp-fast-layout` 仍在上轮已记录的
   执行 disclosure `.open` 旧断言失败，未修改或跳过该断言，不能算整套布局/Stop 验收通过。
 - 未执行真实 CLI 账户、实体 Windows、实际计费或日常 App 安装验收；合成进程与隔离 Renderer 结果不替代这些验证。
+
+## 2026-10-06 Fast 二态与初始化值
+
+- 基线：`4099bc3843eb3b6bdbe51d9bb09c3df2fdc2d347`；分支 `rovai/fast-native-baseline`。
+- 保留现有 Thread 队员偏好表、nullable override、绑定代次和 Run 冻结，不改成 Session 级存储。
+  真实初始化值复用现有默认列，只用于控件显示；历史诊断 fingerprint 记录不充当原生默认。
+- Codex 正常 start/resume 响应读取 `serviceTier`，Claude 正常 control initialize 读取
+  `fast_mode_state`；缺失保持内部未知。两者不新增请求、子进程、配置文件解析或正文等待。
+- Fast 控件恢复单按钮、固定文字和二态 ARIA，保存明确布尔值。已有选择优先于 baseline，
+  保存期间仅初值刷新的投影不能丢掉回执；普通运行观察保持独立。
+- 扩展既有 `camp_fast`、Claude/Codex 启动测试及隔离 Renderer owner，不增加框架或独立测试 owner。
+  覆盖默认来源、历史诊断隔离、保存/重绑、缺字段继续输入、无额外 RPC/进程及新建/恢复参数。
+- `pnpm typecheck`、`pnpm check:rust`、`pnpm build:desktop` 通过；`pnpm test` 包含文档/Skill 门禁，
+  Vitest 2601 项通过，末轮 Node 334 项通过、2 项平台限定跳过。
+  固定上述 base 的 `pnpm docs:check:ci` 通过。
+- `pnpm test:rust:pr` 451 项通过、1 项真实 Runtime smoke 保持忽略；启用 `extended-tests` 的
+  `camp_fast::` / `claude::` / `codex::` 定向回归分别通过 2 / 33 / 22 项，Codex 1 项真实 smoke 保持忽略。
+- `ROVAI_FAST_CHECK_ONLY=1 pnpm test:camp-fast-layout` 通过，日夜截图已检查；验证二态、初始化值、
+  明确关闭、双入口同步及保存期间迟到刷新。未增加或退役 Rust owner。
+- 不执行真实账户计费、实体 Windows 或日常 App 安装验收；沿用上一节完整布局测试的已知限制。

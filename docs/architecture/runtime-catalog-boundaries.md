@@ -115,9 +115,10 @@ catalog。Rovai 只有在唯一内容的项目 Skill 同时通过新 Session adv
 
 ## Camp 队员 Fast 边界
 
-Camp Fast service 拥有三态偏好、保存绑定代次与 Run 冻结。活跃 Claude/Codex 绑定直接显示控件，首次保存
+Camp Fast service 拥有可空偏好、保存绑定代次与 Run 冻结。活跃 Claude/Codex 绑定直接显示二态控件，首次保存
 在现有事务/表中写入；不依赖版本、账号资格、schema 导出或健康快照。真实 Host 直接传递冻结参数，关闭值
-不能因资格未知而丢弃。原生默认无法可靠取得时保持未知；观察只属于对应 Run Evidence/Usage，不反写偏好。
+不能因资格未知而丢弃。正常 Host 初始化的原生默认复用现有字段作显示初值，用户选择优先；
+未启动或字段缺失时按钮不高亮，内部保持未知且不生成关闭覆盖。普通运行观察只属于对应 Run Evidence/Usage，不反写偏好。
 通用诊断、必要的认证/显式模型/权限验证与输入去重保持。没有 Fast 兼容重启、后台查询或新的资格管理器。
 字段由 [Camp Member Fast v3](../contracts/camp-member-fast-v3.md)拥有。
 
