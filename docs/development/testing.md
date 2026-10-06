@@ -666,8 +666,8 @@ Team Case 可在密封 manifest 中声明 `collaboration` 合同。Runner 将它
 `pnpm test:camp-fast-layout` 使用生产 CampWorkspace/CSS 的独立 Electron fixture，无需打包或 Core。
 关闭的模拟 API 只提供成员偏好与 Draft；临时 userData 与日常 App 完全分离，不调用模型。
 它拥有 Fast 的 1280×720/窄屏/大屏布局、日夜主题、键盘焦点、失败保留、直接静默切换、旧观测不影响偏好与初始默认。
-同一 owner 还验证打开队员浮层后的静默自动检测、正负结果复用、失败重开重试、同成员请求去重、切换绑定自动重测与旧响应隔离；
-其他 Runtime 不检测，非官方认证的拒绝结果不显示入口，菜单不再暴露手动检测。
+同一 owner 验证打开/切换零资格请求、三态保存、同成员保存去重、跨成员并发、绑定与迟到回执隔离；
+Claude/Codex 无历史证据仍有入口，其他 Runtime 不显示，原生反馈在 Run 中展示且不反写偏好。
 `ROVAI_KEEP_FAST_FIXTURE=1` 保留本次临时截图供排错；成功默认自动清理。手动 Full check 的 Linux job 通过 `xvfb-run -a` 执行。
 
 以下命令使用已打包 App 和隔离 `userData`，不调用模型：
@@ -957,7 +957,7 @@ Antigravity 原取消 owner 同时覆盖初始化期间取消及接收后终止�
 `cargo test -p rovai-core --lib delivery_queue::` 与 `cargo test -p rovai-core --lib antigravity::`。
 完整切片结果记录在当前版本实施计划，合成测试不替代真实账户、CLI 与跨平台验收。
 
-`ROVAI_FAST_CHECK_ONLY=1 pnpm test:camp-fast-layout` 使用原隔离 Electron fixture 验证零自动检查、显式重试、
+`ROVAI_FAST_CHECK_ONLY=1 pnpm test:camp-fast-layout` 使用原隔离 Electron fixture 验证零资格检查、直接三态保存、
 绑定与迟到响应 fence、保存去重、两处界面共享偏好及原生键鼠/主题/响应式布局。默认无此变量时继续执行原有完整布局与 Stop 回归，
 不将旧夹具的其他失败静默跳过；两种范围的结果分别记录。
 
@@ -973,3 +973,14 @@ Codex 既有真实 Host owner 增加销毁 Host 后的第二次默认模型执�
 而单列此 owner；纯函数无法证明真实 Core 锁和持久化重开。测试以单线程阻塞池和 channel 屏障确定顺序，不依赖文件大小、
 磁盘速度、sleep 或性能阈值；并在 Core 重开后验证同一安装身份的元数据快速路径。最小命令为
 `cargo test -p rovai-core --features slow-tests --lib application::tests::discovered_runtime_verification`。
+
+
+Fast v3 复用 `camp_fast::tests` 的持久化/冻结 owner，新增无快照首次写入、receipt 重放不覆盖新选择和旧缓存不准入的输入；
+同一 SQLite fixture 保留绑定切换、模型/权限变化、两 Thread 隔离和冻结摘要验证，并进入 `extended-tests`。
+原 Claude auth/version 与 Codex eligibility parser/metadata 进程测试随其生产资格路径退出；临时 settings 三态映射仍由
+`native_overrides_preserve_three_states_without_qualification` 拥有。通用 schema 诊断测试保留。
+Claude 既有真实进程错误 owner 扩展新建/恢复、显式/默认模型和三态参数矩阵，验证实际临时文件、权限独立、
+version/auth 零调用及一次正文/零重放。Codex 既有真实 Host owner 扩展三态单 Turn、零持久档位、缺失反馈仍执行，
+以及关闭参数被原生协议拒绝时返回错误且不重放。
+最小命令：`cargo test -p rovai-core --features extended-tests --lib camp_fast::`、相同参数的 `claude::`、`codex::`，
+以及 `execution_evidence::tests::` 的字段脱敏、Run/epoch 所属和逻辑执行窗口回归。

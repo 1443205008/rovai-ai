@@ -3505,5 +3505,14 @@
   "检查中…": "Checking…",
   "正在初始化 Runtime": "Initializing runtime",
   "当前未确认 Fast 资格，可继续使用默认响应模式。": "Fast eligibility could not be confirmed. You can continue with the default response mode.",
-  "Fast 资格检查失败，可再次尝试。": "Fast eligibility check failed. You can try again."
+  "Fast 资格检查失败，可再次尝试。": "Fast eligibility check failed. You can try again.",
+  "跟随 Runtime 默认": "Follow Runtime default",
+  "Fast · 默认": "Fast · Default",
+  "{0}的 Fast 偏好": "{0}’s Fast preference",
+  "开启 Fast": "Enable Fast",
+  "关闭 Fast": "Disable Fast",
+  "原生反馈：Fast": "Runtime reports Fast",
+  "原生反馈：标准速度": "Runtime reports standard speed",
+  "原生反馈：Fast 冷却中": "Runtime reports Fast cooldown",
+  "Fast 实际状态未确认": "Actual Fast state unconfirmed"
 }

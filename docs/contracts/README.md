@@ -73,7 +73,7 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Single Chat v1（历史）](single-chat-v1.md) | Camp 内本地单聊的领域复用、Source Ref Draft/Runtime 解析、Conversation-local Pending FIFO、封闭 Built-in policy、公共水位、私有 terminal 路由与迟到 fence |
 | [Cancellation Settlement v2（当前）](cancellation-settlement-v2.md) | 取消 Run 统一为 cancelled；效果证据保留但不产生公共待确认提示，清理与后续调度边界不变 |
 | [Cancellation Settlement v1（历史）](cancellation-settlement-v1.md) | 取消事务按发送/效果证据区分 cancelled 与 failed/accepted_input_outcome_unknown 的旧规则 |
-| [Camp Member Fast v2（当前）](camp-member-fast-v2.md) | Camp/member/保存绑定代次的三态覆盖、原生订阅资格、执行冻结、观察与紧凑 UI |
+| [Camp Member Fast v3（当前）](camp-member-fast-v3.md) | Camp/member/保存绑定代次的三态偏好直接保存、执行冻结、原生参数与本次运行观察 |
 | [Runtime Images v5（当前）](runtime-images-v5.md) | 保留结构化图片观察与存储；自动公屏只接受 Codex 原生生图及已完成、精确关联的 Antigravity 生图，历史未知来源默认隐藏，显式发送附件不变 |
 | [Runtime Images v4（历史）](runtime-images-v4.md) | v3 来源/读取/去重不变；Runtime 图片并入 Agent 图片区，按作者分区并采用 Agent 原比例与用户 72px 两种 Gallery variant；自动展示来源由 v5 收紧 |
 | [Runtime Images v3（历史）](runtime-images-v3.md) | v2 来源/保存/读取不变；同 Run 的已发送同摘要图片优先展示；统一图片几何与附件原序规则由 v4 替代 |

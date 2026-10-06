@@ -37,7 +37,7 @@ if (modelReview) {
       options: index === 0 ? { effort: 'max' } : { reasoning_effort: 'high' } }
   })
 }
-const values = new Map<string, ThreadMemberFastView>(agents.filter((_, index) => index !== 2 && index !== 3).map(agent => [agent.agentId, {
+const values = new Map<string, ThreadMemberFastView>(agents.filter((_, index) => index !== 2).map(agent => [agent.agentId, {
   runtimeBindingRevision: `binding-${agent.agentId}`, fastOverride: null, runtimeDefaultFast: null
 }]))
 let clearNotice: () => void
@@ -56,7 +56,7 @@ const initial: ThreadSnapshot = {
     projectPath: '/fixture/workspace', defaultLeadAgentId: agents[0].agentId, membershipGeneration: 1, version: 1, createdAt: now, updatedAt: now },
   members: agents.map((agent, index) => ({ agentId: agent.agentId, displayName: agent.displayName, avatarRef: null,
     teamRole: agent.teamRole, accent: '', membershipStatus: 'active', leaveRequestedAt: null, profilePresence: 'present',
-    memberOrder: index, isDefaultLead: index === 0, version: 1, fast: index === 1 || index === 4 ? undefined : values.get(agent.agentId) })),
+    memberOrder: index, isDefaultLead: index === 0, version: 1, fast: values.get(agent.agentId) })),
   membershipReconciliations: [], tasks: [], messages: [], messageDeliveries: [], turns: [], agentRuns: [],
   executionEvidence: [], agentRunFileChanges: [], contextManifests: [], approvals: [], actions: [], timeline: []
 }
@@ -85,12 +85,6 @@ let metricInputOutputComplete = false
 let metricGeneration = 1
 let metricSessionVisible = true
 let metricRuns: AgentRunView[] = []
-const checkFailures = new Set(['agent-4'])
-const heldChecks = new Map<string, Promise<void>>()
-const checksInFlight = new Map<string, number>()
-let releaseCheck: (() => void) | null = null
-heldChecks.set('agent-1', new Promise<void>(resolve => { releaseCheck = resolve }))
-let maxChecksPerMember = 0
 let currentAgents = agents
 let bindingSequence = 0
 let failNext = false
@@ -132,20 +126,6 @@ Object.assign(window, { rovai: {
         ?? { pendingInputId: id, state: 'missing', threadTurnId: null, addressedAgentIds: [] })}
     if (method === 'camp.composerDraft.get') return draft
     if (method === 'camp.composerDraft.save') { draft = { ...draft, ...params, revision: draft.revision + 1 }; return draft }
-    if (method === 'threads.members.fast.check') {
-      const agentId = params!.agentId as string
-      const count = (checksInFlight.get(agentId) ?? 0) + 1
-      checksInFlight.set(agentId, count)
-      maxChecksPerMember = Math.max(maxChecksPerMember, count)
-      const value = values.get(agentId) ?? null
-      const held = heldChecks.get(agentId)
-      heldChecks.delete(agentId)
-      try {
-        await held
-        if (checkFailures.delete(agentId)) throw new Error('fixture metadata unavailable')
-        return value
-      } finally { checksInFlight.set(agentId, count - 1) }
-    }
     if (method === 'threads.members.fast.set') {
       if (failNext) { failNext = false; throw new Error('fixture offline') }
       const command = params!.command
@@ -307,24 +287,26 @@ Object.assign(window, { fastTest: {
   },
   clearNotice: () => clearNotice(),
   failNext: () => { failNext = true },
-  holdCheck: (agentId: string) => {
-    const wait = new Promise<void>(resolve => { releaseCheck = resolve })
-    heldChecks.set(agentId, wait)
-  },
-  releaseCheck: () => { releaseCheck?.(); releaseCheck = null },
   holdNext: () => { holdNext = true },
   release: () => { releaseResponse?.(); releaseResponse = null },
-  rebind: (kind: 'claude-code-cli' | 'codex-cli' | 'opencode-cli', supported = false, keepProjection = false) => {
-    if (supported) values.set('agent-0', { runtimeBindingRevision: `binding-rebound-${++bindingSequence}`,
+  rebind: (kind: 'claude-code-cli' | 'codex-cli' | 'opencode-cli', keepProjection = false) => {
+    if (kind !== 'opencode-cli') values.set('agent-0', { runtimeBindingRevision: `binding-rebound-${++bindingSequence}`,
       fastOverride: null, runtimeDefaultFast: null })
     else values.delete('agent-0')
     currentAgents = currentAgents.map(agent => agent.agentId === 'agent-0' ? { ...agent, version: agent.version + 1,
       runtimeConfiguration: { adapterKind: kind, model: { mode: 'runtime_default' },
         permissions: { adapterKind: kind, schemaVersion: 1, values: {} } } } : agent)
     updateAgents(currentAgents)
-    if (!keepProjection) updateSnapshot({ ...initial, members: initial.members.map(member => ({ ...member,
-      fast: member.agentId === 'agent-0' ? undefined : values.get(member.agentId) })) })
+    if (!keepProjection) updateSnapshot(current => ({ ...current, members: current.members.map(member => ({ ...member,
+      fast: values.get(member.agentId) })) }))
   },
+  publishBinding: () => updateSnapshot(current => ({ ...current, members: current.members.map(member => ({ ...member,
+    fast: values.get(member.agentId) })) })),
+  observe: (state: string, disabledReason: string | null = null) => updateSnapshot(current => ({ ...current,
+    executionEvidence: [...current.executionEvidence, { id: `fast-${current.executionEvidence.length}`, agentRunId: 'run-agent-0',
+      executionEpoch: 1, sequence: current.executionEvidence.length + 1, eventType: 'runtime.fast.observed',
+      kind: 'step', phase: 'updated', payload: { state, disabledReason }, contentBlobId: null,
+      contentByteCount: 0, isTruncated: false, occurredAt: now }] })),
   snapshot: () => {
     const panel = element('.camp-detail-popover')
     const button = element('.camp-fast-toggle[aria-pressed]')
@@ -347,7 +329,6 @@ Object.assign(window, { fastTest: {
       requests: requests.filter(request => request.method.startsWith('threads.members.fast.')),
       checks: requests.filter(request => request.method === 'threads.members.fast.check').map(request => request.params),
       saves: requests.filter(request => request.method === 'threads.members.fast.set'),
-      maxChecksPerMember,
       memberStates: Array.from(document.querySelectorAll('.camp-inspector-member-row')).map((row, index) => {
         const button = row.querySelector('.camp-fast-toggle[aria-pressed]'); return {agentId: agents[index].agentId,
           pending: button?.getAttribute('aria-busy'), pressed: button?.getAttribute('aria-pressed'), opacity: button ? getComputedStyle(button).opacity : null}

@@ -92,7 +92,7 @@ Desktop 只编辑草稿，不拥有第二份有效配置。SQLite 保存与旧 m
 运行中的初始化/错误属于当前 Run；修复环境后的新任务重新尝试，不必手动解除历史健康状态。
 
 主动诊断沿用有界 Runtime Check Manager 和进程清理，Probe 前后仍校验目标身份；其结果不授权运行。
-Antigravity 的正文只能进入 argv，因此保留有界 help/models 无正文预检；可选 Fast 的兼容检查只在明确请求时执行。
+Antigravity 的正文只能进入 argv，因此保留有界 help/models 无正文预检；Fast 可选偏好直接进入真实 Host，不再进行资格预检。
 特例和字段由 [Runtime Launch v47](../contracts/runtime-launch-and-verification-v47.md)拥有，不扩展为统一健康门禁。
 
 ### Machine Ready 与 Adapter 行为证据
@@ -115,11 +115,11 @@ catalog。Rovai 只有在唯一内容的项目 Skill 同时通过新 Session adv
 
 ## Camp 队员 Fast 边界
 
-Camp Fast service 拥有三态偏好、绑定代次和安全资格缓存。普通页面只读缓存；未知资格由“检查 Fast”
-按钮明确触发原生检查，不自动深检，不轮询，也不要求历史 Ready。两处控件共用在途状态和身份围栏。
-只有显式覆盖才在执行前复核资格；默认任务不产生 Fast 元数据进程或完整模型目录请求。
-无法在线确认的可选 schema/认证由最小特例处理，失败不删除用户偏好；实际状态仅进入当前 Run Evidence/Usage。
-字段及例外由 [Camp Member Fast v2](../contracts/camp-member-fast-v2.md)拥有。
+Camp Fast service 拥有三态偏好、保存绑定代次与 Run 冻结。活跃 Claude/Codex 绑定直接显示控件，首次保存
+在现有事务/表中写入；不依赖版本、账号资格、schema 导出或健康快照。真实 Host 直接传递冻结参数，关闭值
+不能因资格未知而丢弃。原生默认无法可靠取得时保持未知；观察只属于对应 Run Evidence/Usage，不反写偏好。
+通用诊断、必要的认证/显式模型/权限验证与输入去重保持。没有 Fast 兼容重启、后台查询或新的资格管理器。
+字段由 [Camp Member Fast v3](../contracts/camp-member-fast-v3.md)拥有。
 
 ## 模型目录缓存与执行事实
 

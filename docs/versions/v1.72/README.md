@@ -259,3 +259,12 @@ macOS/Web 不增加入口。托盘及第二次启动恢复原窗口，明确退�
 [Camp Member Fast v2](../../contracts/camp-member-fast-v2.md)，理由见 [V1.72-D12](decisions.md#v1-72-d12)。
 不改变 schema、版本指针、权限默认、会话隔离、输入去重或模型上下文；不新增 LKG、健康快照或轮询。
 验证记录见[实施记录](implementation-plan.md#2026-10-05-runtime-轻量启动)。
+
+
+## 并行交付：Fast 偏好直接应用
+
+User 于 2026-10-06 确认移除 Fast 专用资格链，沿用现有表、事务、三态及 Run 冻结。
+Claude 直接传临时 settings，Codex 直接传单 Turn 档位；不再启动 Fast 版本、认证、schema 或元数据检查。
+关闭值不被资格过滤，运行反馈只在对应 Run 中展示，不写回偏好。无迁移、资格管理器、兼容重启或 #642 链路重做。
+当前规范见 [Camp Member Fast v3](../../contracts/camp-member-fast-v3.md)，理由见 [V1.72-D13](decisions.md#v1-72-d13)。
+验证范围与限制见[实施记录](implementation-plan.md#2026-10-06-fast-偏好直接应用)。

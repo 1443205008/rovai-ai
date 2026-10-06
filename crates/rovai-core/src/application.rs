@@ -2175,7 +2175,6 @@ struct RuntimeCheckActivity {
 struct RuntimeCheckRequest {
     search: Arc<RuntimeSearchEnvironment>,
     startup_preview: Option<Arc<startup_settings::StartupPreview>>,
-    fast_target: Option<rovai_core::camp_fast::ThreadMemberFastTarget>,
     runtime_kind: AdapterKind,
     purpose: RuntimeLaunchPurpose,
     trigger: RuntimeCheckTrigger,
@@ -2186,7 +2185,6 @@ struct RuntimeCheckRequest {
 struct RuntimeCheckAttempt {
     search: Arc<RuntimeSearchEnvironment>,
     startup_preview: Option<Arc<startup_settings::StartupPreview>>,
-    fast_target: Option<rovai_core::camp_fast::ThreadMemberFastTarget>,
     attempt_id: String,
     runtime_kind: AdapterKind,
     purpose: RuntimeLaunchPurpose,
@@ -2210,7 +2208,6 @@ impl RuntimeCheckAttempt {
         request.startup_preview.is_none()
             && self.startup_preview.is_none()
             && self.runtime_kind == request.runtime_kind
-            && self.fast_target == request.fast_target
             && self.search.generation() == request.search.generation()
     }
 }
@@ -3895,7 +3892,6 @@ impl Core {
             .send(RuntimeCheckRequest {
                 search: self.runtime_search_environment.read().await.clone(),
                 startup_preview: None,
-                fast_target: None,
                 runtime_kind: kind,
                 purpose,
                 trigger,
@@ -3915,21 +3911,10 @@ impl Core {
         purpose: RuntimeLaunchPurpose,
         trigger: RuntimeCheckTrigger,
     ) -> Result<RuntimeCheckOutcome> {
-        self.await_runtime_check_target(kind, purpose, trigger, None)
-            .await
-    }
-
-    async fn await_runtime_check_target(
-        &self,
-        kind: AdapterKind,
-        purpose: RuntimeLaunchPurpose,
-        trigger: RuntimeCheckTrigger,
-        fast_target: Option<rovai_core::camp_fast::ThreadMemberFastTarget>,
-    ) -> Result<RuntimeCheckOutcome> {
         if let Some(blocker) = current_runtime_platform_blocker(kind) {
             anyhow::bail!("{}: {}", blocker.code, blocker.payload);
         }
-        let search = if trigger == RuntimeCheckTrigger::UserCheck && fast_target.is_none() {
+        let search = if trigger == RuntimeCheckTrigger::UserCheck {
             self.refresh_runtime_check_environment(true).await?
         } else {
             self.runtime_search_environment.read().await.clone()
@@ -3940,7 +3925,6 @@ impl Core {
             .send(RuntimeCheckRequest {
                 search,
                 startup_preview: None,
-                fast_target,
                 runtime_kind: kind,
                 purpose,
                 trigger,
@@ -9432,27 +9416,10 @@ impl Core {
                 )?;
                 Ok(serde_json::to_value(execution.result)?)
             }
+            // Kept as a read-only compatibility alias; Fast no longer launches qualification probes.
             "camps.members.fast.check" => {
                 let params: ThreadMemberRemovalPreviewParams =
                     serde_json::from_value(request.params.clone())?;
-                let target = {
-                    let database = self.database.lock().await;
-                    rovai_core::camp_fast::target(
-                        &database,
-                        params.camp_id.as_str(),
-                        &params.agent_id,
-                    )?
-                };
-                let Some(target) = target else {
-                    return Ok(Value::Null);
-                };
-                self.await_runtime_check_target(
-                    target.adapter_kind,
-                    RuntimeLaunchPurpose::AvailabilityCheck,
-                    RuntimeCheckTrigger::UserCheck,
-                    Some(target),
-                )
-                .await?;
                 let database = self.database.lock().await;
                 Ok(serde_json::to_value(rovai_core::camp_fast::view(
                     &database,
@@ -11040,96 +11007,6 @@ impl Core {
                 return Err(error);
             }
         }
-    }
-
-    async fn run_camp_member_fast_check(
-        &self,
-        target: rovai_core::camp_fast::ThreadMemberFastTarget,
-        deadline: tokio::time::Instant,
-    ) -> Result<RuntimeCheckOutcome> {
-        use rovai_core::camp_fast;
-        // Reuse the complete Probe identity boundary, with at most one retry in this deadline.
-        for _ in 0..2 {
-            if tokio::time::Instant::now() >= deadline {
-                return Ok(RuntimeCheckOutcome::Superseded);
-            }
-            let runtime = {
-                let database = self.database.lock().await;
-                camp_fast::runtime_for_target(&database, &target)?
-            };
-            let Some(runtime) = runtime else {
-                return Ok(RuntimeCheckOutcome::Superseded);
-            };
-            if !matches!(
-                self.inspect_runtime_integrity(&runtime).await?,
-                RuntimeIntegrityPreflight::Verified
-            ) {
-                continue;
-            }
-            let path = Path::new(&runtime.executable_path);
-            let search_generation = u64::try_from(runtime.search_environment_generation)
-                .context("invalid Runtime search generation")?;
-            if !self
-                .runtime_probe_identity_is_current(
-                    target.adapter_kind,
-                    search_generation,
-                    path,
-                    &runtime.executable_fingerprint,
-                )
-                .await
-            {
-                return Ok(RuntimeCheckOutcome::Superseded);
-            }
-            let checked = run_identity_checked_probe(path, async {
-                match target.adapter_kind {
-                    AdapterKind::ClaudeCodeCli => {
-                        health::claude_fast_eligibility(&runtime, Path::new(&target.cwd)).await
-                    }
-                    AdapterKind::CodexCli => {
-                        health::codex_fast_eligibility(&runtime, Path::new(&target.cwd)).await
-                    }
-                    _ => unreachable!("Fast target is restricted to two native runtimes"),
-                }
-            })
-            .await;
-            let observation = match checked {
-                IdentityCheckedProbe::Stable(result) => result.unwrap_or_default(),
-                IdentityCheckedProbe::Superseded => {
-                    self.inspect_runtime_integrity(&runtime).await?;
-                    continue;
-                }
-            };
-            // The executable can change while the pre-probe identity check awaits locks.
-            // A stable probe must still belong to the originally resolved executable.
-            if !matches!(
-                self.inspect_runtime_integrity(&runtime).await?,
-                RuntimeIntegrityPreflight::Verified
-            ) {
-                continue;
-            }
-            if !self
-                .runtime_probe_identity_is_current(
-                    target.adapter_kind,
-                    search_generation,
-                    path,
-                    &runtime.executable_fingerprint,
-                )
-                .await
-            {
-                return Ok(RuntimeCheckOutcome::Superseded);
-            }
-            // Failed metadata hides the control, but neither clears nor re-reads the saved intent.
-            let database = self.database.lock().await;
-            if !camp_fast::record_eligibility(&database, &target, &runtime, &observation)? {
-                return Ok(RuntimeCheckOutcome::Superseded);
-            }
-            return Ok(if observation.eligible {
-                RuntimeCheckOutcome::Ready
-            } else {
-                RuntimeCheckOutcome::StableFailure
-            });
-        }
-        Ok(RuntimeCheckOutcome::Superseded)
     }
 
     async fn deep_probe_candidate(
@@ -14707,65 +14584,19 @@ impl Core {
                 .await;
             return Ok(());
         };
-        let checking_fast = execution
+        let service_tier_for_turn = execution
             .runtime
             .camp_fast
             .as_ref()
-            .is_some_and(|fast| fast.fast_override.is_some());
-        let fast_eligibility = if checking_fast {
-            tokio::time::timeout(Duration::from_secs(30), async {
-                if health::codex_fast_turn_supported(Path::new(&execution.runtime.executable_path))
-                    .await
-                {
-                    runtime
-                        .fast_eligibility(&execution_root, explicit_model)
-                        .await
-                } else {
-                    Ok(rovai_core::camp_fast::NativeFastEligibility::default())
-                }
-            })
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .unwrap_or_default()
-        } else {
-            rovai_core::camp_fast::NativeFastEligibility::default()
-        };
-        let service_tier_for_turn = if fast_eligibility.eligible {
-            execution
-                .runtime
-                .camp_fast
-                .as_ref()
-                .and_then(|fast| fast.service_tier_for_turn())
-        } else {
-            None
-        };
+            .and_then(|fast| fast.service_tier_for_turn());
         {
             let mut database = self.database.lock().await;
-            if checking_fast {
-                rovai_core::camp_fast::record_runtime_eligibility(
-                    &database,
-                    &execution.camp_id,
-                    &execution.agent_id,
-                    &execution.runtime,
-                    &fast_eligibility,
-                )?;
-            }
-            let requested = service_tier_for_turn
-                .or_else(|| {
-                    fast_eligibility
-                        .runtime_default_fast
-                        .map(|fast| if fast { "priority" } else { "default" })
-                })
-                .unwrap_or("unknown");
-            MonitoringService::record_service_tier(&mut database, execution, requested, false)?;
-        }
-        if checking_fast {
-            emit(
-                output,
-                "camp.member.fast.updated",
-                json!({"threadId": execution.camp_id, "agentId": execution.agent_id}),
-            );
+            MonitoringService::record_service_tier(
+                &mut database,
+                execution,
+                service_tier_for_turn.unwrap_or("unknown"),
+                false,
+            )?;
         }
         let reasoning_effort = execution.runtime.model.options["reasoning_effort"].as_str();
         let delivery = {
@@ -21067,10 +20898,7 @@ async fn process_runtime_event(
         // Internal image bytes/paths never become public Execution Evidence or channel messages.
         return Ok(());
     }
-    if matches!(
-        event_type,
-        "runtime.fast.eligibility" | "runtime.fast.observed"
-    ) {
+    if event_type == "runtime.fast.observed" {
         let mut database = core.database.lock().await;
         let Some(execution) = ExecutionRuntimeService::default().load_agent_run_execution(
             &database,
@@ -21081,26 +20909,6 @@ async fn process_runtime_event(
             return Ok(());
         };
         if execution.runtime.adapter_kind != scope.adapter_kind {
-            return Ok(());
-        }
-        if event_type == "runtime.fast.eligibility" {
-            let eligibility = rovai_core::camp_fast::NativeFastEligibility {
-                eligible: payload.get("eligible").and_then(Value::as_bool) == Some(true),
-                runtime_default_fast: payload.get("runtimeDefaultFast").and_then(Value::as_bool),
-            };
-            if rovai_core::camp_fast::record_runtime_eligibility(
-                &database,
-                &execution.camp_id,
-                &execution.agent_id,
-                &execution.runtime,
-                &eligibility,
-            )? {
-                emit(
-                    output,
-                    "camp.member.fast.updated",
-                    json!({"threadId": execution.camp_id, "agentId": execution.agent_id}),
-                );
-            }
             return Ok(());
         }
         if let Some(tier) = payload.get("observedServiceTier").and_then(Value::as_str) {
@@ -22716,11 +22524,12 @@ async fn process_agent_run_codex_message(
             .or_else(|| params.pointer("/turn/serviceTier"))
             .or_else(|| params.pointer("/tokenUsage/serviceTier"))
             .and_then(Value::as_str);
-        if let Some(tier) = tier
+        if (tier.is_some() || method == "turn/started")
             && let Some(camp_id) = runtime.camp_id()
         {
-            let state =
-                rovai_core::camp_fast::ObservedFastState::from_tier(tier).unwrap_or_default();
+            let state = tier
+                .and_then(rovai_core::camp_fast::ObservedFastState::from_tier)
+                .unwrap_or_default();
             let _ = process_runtime_event(
                 core,
                 output,
@@ -24054,11 +23863,10 @@ async fn process_runtime_check_manager(
                 if let Some(completion) = request.completion {
                     waiters.push(completion);
                 }
-                let is_private_check = request.fast_target.is_some() || request.startup_preview.is_some();
+                let is_private_check = request.startup_preview.is_some();
                 let attempt = RuntimeCheckAttempt {
                     search: request.search,
                     startup_preview: request.startup_preview,
-                    fast_target: request.fast_target,
                     attempt_id: attempt_id.clone(),
                     runtime_kind: request.runtime_kind,
                     purpose: request.purpose,
@@ -24106,9 +23914,7 @@ async fn process_runtime_check_manager(
                                 // Preserve its Ready-delivery behavior without letting a
                                 // catalog-only success manufacture verification evidence.
                                 attempt.catalog_only = worker.catalog_only;
-                                if attempt.fast_target.is_none() {
-                                    execution_deferrals.record(attempt.runtime_kind, attempt.trigger, &worker.result);
-                                }
+                                execution_deferrals.record(attempt.runtime_kind, attempt.trigger, &worker.result);
                                 finalize_runtime_check(
                                     &core,
                                     attempt,
@@ -24162,7 +23968,7 @@ async fn process_runtime_check_manager(
                 .map(|(index, _)| index);
             let Some(next) = next else { break };
             let attempt = pending.swap_remove(next);
-            if attempt.fast_target.is_none() && attempt.startup_preview.is_none() {
+            if attempt.startup_preview.is_none() {
                 core.runtime_check_activity.write().await.insert(
                     attempt.runtime_kind,
                     RuntimeCheckActivity {
@@ -24184,7 +23990,6 @@ async fn process_runtime_check_manager(
             let worker_kind = attempt.runtime_kind;
             let worker_purpose = attempt.purpose;
             let worker_deadline = attempt.deadline;
-            let worker_fast_target = attempt.fast_target.clone();
             let worker_startup_preview = attempt.startup_preview.clone();
             let worker_search = attempt.search.clone();
             let worker_catalog_only = attempt.catalog_only;
@@ -24201,10 +24006,6 @@ async fn process_runtime_check_manager(
                             .await?;
                         *preview.result.lock().await = Some(result);
                         Ok(RuntimeCheckOutcome::Ready)
-                    } else if let Some(target) = worker_fast_target {
-                        check_core
-                            .run_camp_member_fast_check(target, worker_deadline)
-                            .await
                     } else {
                         if worker_catalog_only
                             && let Some(outcome) = check_core
@@ -24285,17 +24086,6 @@ async fn finalize_runtime_check(
     finalization: RuntimeCheckFinalization,
 ) {
     if attempt.startup_preview.is_some() {
-        for waiter in attempt.waiters {
-            let _ = waiter.send(result.clone());
-        }
-        return;
-    }
-    if let Some(target) = &attempt.fast_target {
-        emit(
-            &core.output,
-            "camp.member.fast.updated",
-            json!({"threadId": target.camp_id, "agentId": target.agent_id}),
-        );
         for waiter in attempt.waiters {
             let _ = waiter.send(result.clone());
         }
@@ -26162,7 +25952,6 @@ done
             .send(RuntimeCheckRequest {
                 search: core.runtime_search_environment.read().await.clone(),
                 startup_preview: None,
-                fast_target: None,
                 runtime_kind: AdapterKind::CodexCli,
                 purpose: RuntimeLaunchPurpose::AvailabilityCheck,
                 trigger: RuntimeCheckTrigger::CatalogOpen,
@@ -26193,7 +25982,6 @@ done
             .send(RuntimeCheckRequest {
                 search: core.runtime_search_environment.read().await.clone(),
                 startup_preview: None,
-                fast_target: None,
                 runtime_kind: AdapterKind::CodexCli,
                 purpose: RuntimeLaunchPurpose::AvailabilityCheck,
                 trigger: RuntimeCheckTrigger::UserCheck,

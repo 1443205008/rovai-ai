@@ -10135,19 +10135,6 @@ mod tests {
         let fast_target = crate::camp_fast::target(&database, &camp_id, "agent_2")
             .unwrap()
             .unwrap();
-        let selected_runtime = crate::camp_fast::runtime_for_target(&database, &fast_target)
-            .unwrap()
-            .unwrap();
-        crate::camp_fast::record_eligibility(
-            &database,
-            &fast_target,
-            &selected_runtime,
-            &crate::camp_fast::NativeFastEligibility {
-                eligible: true,
-                runtime_default_fast: Some(false),
-            },
-        )
-        .unwrap();
         let preference = |command_id: &str, enabled| {
             user_envelope(
                 command_id,
