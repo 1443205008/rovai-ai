@@ -97,7 +97,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Camp Open Projection v10（历史）](camp-open-projection-v10.md) | main Snapshot 34/Open 6；Open 不读取 event_log，移除 timeline/coverage.timeline，保留 high-water 与业务卡片 |
 | [Camp Open Projection v10（渠道分支历史）](camp-open-projection-channel-v10.md) | v9 保留；Camp/Navigation 增加可选 channelSource，原始 title 不变；合并时保留原文以区分同号合同 |
 | [Camp Open Projection v9（历史）](camp-open-projection-v9.md) | v8 保留；Snapshot 34/Open 5 增加可选 member.fast，仅查询安全缓存 |
-| [Runtime Launch and Verification v47（当前）](runtime-launch-and-verification-v47.md) | 继承 v46；静态安装发现、真实 Host 初始化屏障、版本未知可运行与诊断解耦 |
+| [Runtime Launch and Verification v48（当前）](runtime-launch-and-verification-v48.md) | 继承 v47；Codex 可信原生终态决定复用、事务清理门禁、明确回收证据和精确冷恢复 |
+| [Runtime Launch and Verification v47](runtime-launch-and-verification-v47.md) | 继承 v46；静态安装发现、真实 Host 初始化屏障、版本未知可运行与诊断解耦 |
 | [Runtime Launch and Verification v45（历史）](runtime-launch-and-verification-v45.md) | 继承 v44；Claude Code 双向 stream-json 原生审批、stdin 生命周期与 Run fence；仅允许一次/拒绝由 v46 扩展 |
 | [Runtime Launch and Verification v44（历史）](runtime-launch-and-verification-v44.md) | 继承 v43；官方 ZCode 新版 Provider Registry 的资源、握手、选模、Probe 和账号边界 |
 | [Runtime Launch and Verification v43（历史）](runtime-launch-and-verification-v43.md) | 继承 v42；Claude Code 同进程多结果流逐条校验，EOF 后只用最后结果结算和生成最终正文 fallback |

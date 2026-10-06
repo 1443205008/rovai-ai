@@ -294,7 +294,9 @@ use rovai_core::{
     },
     team_tool_catalog::validate_builtin_tool_input,
 };
-use runtime_fleet::{AgentRuntimeFleetConfig, AgentRuntimeFleetManager};
+use runtime_fleet::{
+    AgentRuntimeFleetConfig, AgentRuntimeFleetManager, FleetReleaseDisposition, FleetReleaseOutcome,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{
@@ -12546,6 +12548,9 @@ impl Core {
             eprintln!("failed to record Runtime cleanup: {error:#}");
             return false;
         }
+        self.runtime_fleet
+            .acknowledge_cleanup(&candidate.agent_run_id, candidate.execution_epoch)
+            .await;
         self.planned_shutdown
             .cleanup_completed(&ActiveExecutionKey::new(
                 &candidate.agent_run_id,
@@ -12578,6 +12583,33 @@ impl Core {
             }
         });
         true
+    }
+
+    async fn finish_codex_terminal_host(
+        &self,
+        agent_run_id: &str,
+        execution_epoch: i64,
+        outcome: Option<FleetReleaseOutcome>,
+    ) {
+        if matches!(
+            outcome,
+            Some(FleetReleaseOutcome::Reusable | FleetReleaseOutcome::Reaped)
+        ) {
+            let database = self.database.lock().await;
+            if let Err(error) = ExecutionRuntimeService::default().record_runtime_cleanup_completed(
+                &database,
+                agent_run_id,
+                execution_epoch,
+            ) {
+                eprintln!("failed to acknowledge Codex release: {error:#}");
+                return;
+            }
+            self.runtime_fleet
+                .acknowledge_cleanup(agent_run_id, execution_epoch)
+                .await;
+        } else {
+            self.agent_run_cancellation_notify.notify_one();
+        }
     }
 
     async fn record_cancelled_run_ending_git_observation(
@@ -12694,6 +12726,25 @@ impl Core {
                         self.claude_code_cli
                             .wait_for_agent_run_quiescence(agent_run_id, execution_epoch, remaining)
                             .await
+                    }
+                } else if adapter_kind == "codex-cli" {
+                    match self
+                        .runtime_fleet
+                        .stop_agent_run_until_with_outcome(agent_run_id, execution_epoch, deadline)
+                        .await
+                    {
+                        FleetReleaseOutcome::Reaped => true,
+                        FleetReleaseOutcome::NoMatchingLease => {
+                            // A launch that never bound a route plus Fleet's
+                            // retained ownership/stop evidence permits cleanup.
+                            // A bare missing lease or missing coordinator does not.
+                            launching_before_stop
+                                || self
+                                    .planned_shutdown
+                                    .launch_finished_without_route(&key)
+                                    .await
+                        }
+                        _ => false,
                     }
                 } else {
                     self.runtime_fleet
@@ -14467,7 +14518,7 @@ impl Core {
             "runtime_default" => None,
             _ => anyhow::bail!("Codex model source is invalid"),
         };
-        let mut session_bootstrap = {
+        let session_bootstrap = {
             let mut database = self.database.lock().await;
             ContextService
                 .prepare_session_bootstrap(
@@ -14480,7 +14531,7 @@ impl Core {
                 .payload
         };
         let resumable_session_id = initial_binding.native_session_id.clone();
-        let mut binding_credential = initial_binding;
+        let binding_credential = initial_binding;
         let active_builtin_tools = runtime
             .builtin_tool_process_config()
             .context("Codex Runtime has no Built-in Tool process context")?
@@ -14504,64 +14555,20 @@ impl Core {
             .await;
         let thread_id = match thread {
             Ok(thread_id) => thread_id,
-            Err(error) if resumable_session_id.is_some() => {
-                if resume_disposition != NativeSessionResumeDisposition::New {
-                    let failure = classify_native_resume_failure(&error);
+            Err(error) => {
+                if resumable_session_id.is_some()
+                    && resume_disposition == NativeSessionResumeDisposition::Controlled
+                {
                     let mut database = self.database.lock().await;
-                    if resume_disposition == NativeSessionResumeDisposition::Controlled {
-                        ExecutionRuntimeService::default().record_native_session_resume_failure(
-                            &mut database,
-                            execution,
-                            failure,
-                        )?;
-                    }
+                    ExecutionRuntimeService::default().record_native_session_resume_failure(
+                        &mut database,
+                        execution,
+                        classify_native_resume_failure(&error),
+                    )?;
                 }
-                let replacement_binding =
-                    self.prepare_builtin_tool_binding(execution, true).await?;
-                let active_builtin_tools = runtime
-                    .builtin_tool_process_config()
-                    .context("Codex Runtime has no Built-in Tool process context")?
-                    .clone();
-                self.bind_builtin_tool_runtime(
-                    &active_builtin_tools,
-                    execution,
-                    &replacement_binding,
-                )
-                .await?;
-                session_bootstrap = {
-                    let mut database = self.database.lock().await;
-                    ContextService
-                        .prepare_session_bootstrap(
-                            &mut database,
-                            &ManagedBlobStore::new(&self.data_dir),
-                            &execution.agent_run_id,
-                            execution.execution_epoch,
-                            CharterDeliveryMode::NativeAppend,
-                        )?
-                        .payload
-                };
-                launch_permit.check_cancelled()?;
-                let thread_id = runtime
-                    .start_or_resume_agent_thread(
-                        &execution_root,
-                        CodexAgentThreadOptions {
-                            existing_thread_id: None,
-                            developer_instructions: Some(session_bootstrap.as_str()),
-                            sandbox_mode,
-                            approval_policy,
-                            model: explicit_model,
-                            attachment_access_root: &attachment_access_root,
-                            external_mcp_servers: &mcp_projection.servers,
-                        },
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("failed to replace unavailable Native Session: {error:#}")
-                    })?;
-                binding_credential = replacement_binding;
-                thread_id
+                return Err(error)
+                    .context("Codex Native Session restoration failed; no input was sent");
             }
-            Err(error) => return Err(error),
         };
         self.bind_prepared_native_session(execution, &binding_credential, &thread_id)
             .await?;
@@ -16508,6 +16515,14 @@ impl Core {
             "runtime_failure",
         )
         .await;
+        if execution.runtime.adapter_kind == AdapterKind::CodexCli {
+            self.planned_shutdown
+                .cancel_active(&ActiveExecutionKey::new(
+                    &execution.agent_run_id,
+                    execution.execution_epoch,
+                ))
+                .await;
+        }
         let file_change_ingress_flushed = match self
             .agent_run_runtime(&execution.agent_run_id, execution.execution_epoch)
             .await
@@ -16646,9 +16661,7 @@ impl Core {
         }
         match execution.runtime.adapter_kind {
             rovai_core::agent_profile::AdapterKind::CodexCli => {
-                self.codex_cli
-                    .forget_agent_run(&execution.agent_run_id, execution.execution_epoch)
-                    .await;
+                self.agent_run_cancellation_notify.notify_one();
             }
             rovai_core::agent_profile::AdapterKind::Pi => {
                 self.pi
@@ -22719,6 +22732,11 @@ async fn process_agent_run_codex_message(
         eprintln!("ignored fenced native Turn completion for AgentRun {agent_run_id}");
         return;
     }
+    if completed.release_disposition() == FleetReleaseDisposition::Stop {
+        core.runtime_fleet
+            .retire_agent_run_on_host(agent_run_id, execution_epoch, host_instance_id)
+            .await;
+    }
     if let Some(diff) = runtime.take_turn_diff(&completed.turn_id).await {
         const MAX_CODEX_RUN_DIFF_BYTES: usize = 8 * 1024 * 1024;
         if diff.len() <= MAX_CODEX_RUN_DIFF_BYTES {
@@ -22786,6 +22804,11 @@ async fn process_agent_run_codex_message(
         Some(message) => Some(message),
         None => runtime.final_agent_message().await,
     };
+    let release_disposition = completed.release_disposition();
+    eprintln!(
+        "Codex terminal run={agent_run_id} epoch={execution_epoch} host={host_instance_id} native={} disposition={release_disposition:?}",
+        completed.status
+    );
     let planned_outcome = if completed.status == "completed" && final_agent_message.is_some() {
         RuntimeTerminalOutcome::Succeeded
     } else if completed.status == "cancelled" {
@@ -22814,16 +22837,23 @@ async fn process_agent_run_codex_message(
         ),
     };
     let public_failure = (planned_outcome == RuntimeTerminalOutcome::Failed).then(|| {
-        public_runtime_failure_from_output(
-            AdapterKind::CodexCli,
-            RuntimeFailureOrigin::Runtime,
-            RuntimeFailurePhase::Execution,
-            &base_error_code,
-            "Codex CLI 未能完成运行",
-            Some(completed.error_message().unwrap_or(&error_detail)),
-            &[(&core.data_dir, "<data-dir>")],
-            true,
-        )
+        if completed.status == "failed" {
+            rovai_core::runtime_failure::public_codex_terminal_failure(
+                &base_error_code,
+                completed.error.as_ref(),
+                &[(&core.data_dir, "<data-dir>")],
+            )
+        } else {
+            RuntimeFailureView::new(
+                AdapterKind::CodexCli,
+                RuntimeFailureOrigin::Rovai,
+                RuntimeFailurePhase::Terminal,
+                &base_error_code,
+                "Codex CLI 未能交付最终回复",
+                None,
+                true,
+            )
+        }
     });
     let error_code = public_failure
         .as_ref()
@@ -22853,6 +22883,23 @@ async fn process_agent_run_codex_message(
             return;
         }
     };
+    let released = if release_disposition == FleetReleaseDisposition::Reusable {
+        runtime.clear_turn(Some(&completed.turn_id)).await;
+        let outcome = core
+            .codex_cli
+            .complete_agent_run(agent_run_id, execution_epoch, release_disposition)
+            .await;
+        eprintln!(
+            "Codex release run={agent_run_id} epoch={execution_epoch} host={host_instance_id} native=completed disposition={release_disposition:?} outcome={outcome:?}"
+        );
+        Some(outcome)
+    } else {
+        None
+    };
+    let cleanup_required = !matches!(
+        released,
+        Some(FleetReleaseOutcome::Reusable | FleetReleaseOutcome::Reaped)
+    );
     if let Some(permit) = terminal_admission.planned_permit()
         && planned_outcome != RuntimeTerminalOutcome::Succeeded
     {
@@ -22899,8 +22946,7 @@ async fn process_agent_run_codex_message(
                         .await;
                 }
                 runtime.clear_turn(Some(&completed.turn_id)).await;
-                core.codex_cli
-                    .complete_agent_run(agent_run_id, execution_epoch)
+                core.finish_codex_terminal_host(agent_run_id, execution_epoch, released)
                     .await;
                 core.delivery_batch_scheduler_notify.notify_one();
                 core.project_agent_run_file_changes_after_terminal(agent_run_id, execution_epoch)
@@ -22956,42 +23002,53 @@ async fn process_agent_run_codex_message(
                     },
                 };
                 let service = ExecutionRuntimeService::default();
-                match terminal_admission.planned_permit() {
-                    Some(permit) => service.succeed_agent_run_during_planned_shutdown(
+                if cleanup_required {
+                    service.succeed_agent_run_requiring_cleanup(
                         &mut database,
-                        permit,
                         &envelope,
-                    ),
-                    None => service.succeed_agent_run(&mut database, &envelope),
+                        terminal_admission.planned_permit(),
+                    )
+                } else {
+                    match terminal_admission.planned_permit() {
+                        Some(permit) => service.succeed_agent_run_during_planned_shutdown(
+                            &mut database,
+                            permit,
+                            &envelope,
+                        ),
+                        None => service.succeed_agent_run(&mut database, &envelope),
+                    }
                 }
             } else {
                 let mut database = core.database.lock().await;
-                ExecutionRuntimeService::default().fail_agent_run(
-                    &mut database,
-                    &CommandEnvelope {
-                        command_id: uuid::Uuid::new_v4().to_string(),
-                        actor: ActorRef::System {
-                            component_id: "runtime-adapter:codex".to_string(),
-                        },
-                        camp_id: Some(execution.camp_id.clone()),
-                        expected_versions: Vec::new(),
-                        execution_epoch: None,
-                        payload: FailAgentRunCommand {
-                            agent_run_id: agent_run_id.to_string(),
-                            expected_version: execution.version,
-                            execution_epoch,
-                            error_code: error_code.clone(),
-                            error_detail: Some(error_detail.clone()),
-                            failure: public_failure.clone(),
-                            manual_retry_allowed: !execution.camp_turn_id.is_empty(),
-                            ending_git_observation: ending_git_observation.clone(),
-                        },
+                let envelope = CommandEnvelope {
+                    command_id: uuid::Uuid::new_v4().to_string(),
+                    actor: ActorRef::System {
+                        component_id: "runtime-adapter:codex".to_string(),
                     },
-                )
+                    camp_id: Some(execution.camp_id.clone()),
+                    expected_versions: Vec::new(),
+                    execution_epoch: None,
+                    payload: FailAgentRunCommand {
+                        agent_run_id: agent_run_id.to_string(),
+                        expected_version: execution.version,
+                        execution_epoch,
+                        error_code: error_code.clone(),
+                        error_detail: Some(error_detail.clone()),
+                        failure: public_failure.clone(),
+                        manual_retry_allowed: !execution.camp_turn_id.is_empty(),
+                        ending_git_observation: ending_git_observation.clone(),
+                    },
+                };
+                let service = ExecutionRuntimeService::default();
+                if cleanup_required {
+                    service.fail_agent_run_requiring_cleanup(&mut database, &envelope)
+                } else {
+                    service.fail_agent_run(&mut database, &envelope)
+                }
             }
         } else {
             let mut database = core.database.lock().await;
-            ExecutionRuntimeService::default().fail_agent_run(
+            ExecutionRuntimeService::default().fail_agent_run_requiring_cleanup(
                 &mut database,
                 &CommandEnvelope {
                     command_id: uuid::Uuid::new_v4().to_string(),
@@ -23073,8 +23130,7 @@ async fn process_agent_run_codex_message(
             .await;
     }
     runtime.clear_turn(Some(&completed.turn_id)).await;
-    core.codex_cli
-        .complete_agent_run(agent_run_id, execution_epoch)
+    core.finish_codex_terminal_host(agent_run_id, execution_epoch, released)
         .await;
     core.delivery_batch_scheduler_notify.notify_one();
     core.project_agent_run_file_changes_after_terminal(agent_run_id, execution_epoch)
@@ -30074,6 +30130,360 @@ done
         ] {
             fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(all(target_os = "macos", feature = "slow-tests"))]
+    #[tokio::test]
+    async fn codex_native_terminal_controls_host_independently_of_business_delivery() {
+        use std::os::unix::fs::PermissionsExt;
+        for (native_status, final_reply, expected_business, reusable) in [
+            ("completed", true, "succeeded", true),
+            ("completed", false, "failed", true),
+            ("failed", false, "failed", false),
+            ("cancelled", false, "failed", false),
+            ("interrupted", false, "failed", false),
+        ] {
+            let root =
+                std::env::temp_dir().join(format!("rovai-codex-terminal-{}", uuid::Uuid::new_v4()));
+            let workspace = root.join("workspace");
+            fs::create_dir_all(&workspace).unwrap();
+            let core = Arc::new(runtime_resolution_test_core(&root).unwrap());
+            let (camp_id, run_id, _, epoch) =
+                claimed_runtime_cleanup_test_run(&core, &workspace).await;
+            let execution = {
+                let database = core.database.lock().await;
+                ExecutionRuntimeService::default()
+                    .load_agent_run_execution(&database, &run_id, epoch)
+                    .unwrap()
+                    .unwrap()
+            };
+            let executable = root.join("codex-fixture");
+            write_runtime_resolution_executable(
+                &executable,
+                r#"#!/usr/bin/python3
+import json, sys
+for line in sys.stdin:
+    request = json.loads(line)
+    if 'id' not in request: continue
+    method = request['method']
+    result = {'thread': {'id': 'native-fixture'}} if method.startswith('thread/') else {'turn': {'id':'native-turn'}} if method == 'turn/start' else {}
+    print(json.dumps({'id':request['id'], 'result':result}), flush=True)
+"#,
+            );
+            let mut frozen = execution.runtime.clone();
+            frozen.executable_path = executable.to_string_lossy().into_owned();
+            let endpoint = rovai_core::builtin_tool_transport::LocalIpcEndpoint::UnixSocket {
+                path: root.join("builtin.sock").to_string_lossy().into_owned(),
+            };
+            let tools = BuiltinToolProcessConfig::create(&executable, &endpoint, &root).unwrap();
+            let runtime = core
+                .codex_cli
+                .ensure_agent_run_runtime(CodexAgentRunRuntimeRequest {
+                    agent_run_id: &run_id,
+                    execution_epoch: epoch,
+                    camp_id: &camp_id,
+                    agent_id: &execution.agent_id,
+                    cwd: &workspace,
+                    frozen_runtime: &frozen,
+                    runtime_compatibility_digest: "fixture",
+                    builtin_tools: &tools,
+                })
+                .await
+                .unwrap();
+            runtime
+                .start_or_resume_agent_thread(
+                    &workspace,
+                    CodexAgentThreadOptions {
+                        existing_thread_id: None,
+                        developer_instructions: None,
+                        sandbox_mode: "workspace-write",
+                        approval_policy: "on-request",
+                        model: None,
+                        attachment_access_root: &root,
+                        external_mcp_servers: &Default::default(),
+                    },
+                )
+                .await
+                .unwrap();
+            runtime
+                .start_turn_with_config("fixture input", None, None, None)
+                .await
+                .unwrap();
+            let host_id = runtime.host_instance_id().to_string();
+            core.database.lock().await.connection().execute(
+                "UPDATE conversation SET native_session_id = 'native-fixture' WHERE id = (SELECT conversation_id FROM agent_run WHERE id = ?1)", [&run_id],
+            ).unwrap();
+            // Intermediate error notifications cannot release even willRetry=false.
+            for will_retry in [true, false] {
+                let mut route = core.planned_shutdown.enter_runtime_route().await.unwrap();
+                process_agent_run_codex_message(&core, &core.output, &host_id, &run_id, epoch,
+                    json!({"method":"error","params":{"threadId":"native-fixture","turnId":"native-turn","willRetry":will_retry,"error":{"message":"unauthorized"}}}), &mut route).await;
+                assert!(
+                    core.codex_cli
+                        .get_agent_run_on_host(&host_id, &run_id, epoch)
+                        .await
+                        .is_some()
+                );
+            }
+            let terminal = json!({"method":"turn/completed","params":{"threadId":"native-fixture", "turn":{
+                "id":"native-turn", "status":native_status,
+                "items": if final_reply { json!([{"type":"agentMessage","text":"Tool output: 401; quoted unauthorized"}]) } else { json!([]) },
+                "error": if native_status == "failed" { json!({"message":"opaque","codexErrorInfo":"unauthorized"}) } else { Value::Null }
+            }}});
+            let mut route = core.planned_shutdown.enter_runtime_route().await.unwrap();
+            process_agent_run_codex_message(
+                &core,
+                &core.output,
+                &host_id,
+                &run_id,
+                epoch,
+                terminal.clone(),
+                &mut route,
+            )
+            .await;
+            drop(route);
+            {
+                let database = core.database.lock().await;
+                let state: (String, Option<String>, Option<String>) = database.connection().query_row(
+                    "SELECT status, cancel_requested_at, last_error_code FROM agent_run WHERE id = ?1", [&run_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+                assert_eq!(
+                    state.0, expected_business,
+                    "native={native_status} final={final_reply}"
+                );
+                assert_eq!(state.1.is_none(), reusable);
+                let binding: Option<String> = database.connection().query_row(
+                    "SELECT native_session_id FROM conversation WHERE id = (SELECT conversation_id FROM agent_run WHERE id = ?1)",
+                    [&run_id], |row| row.get(0),
+                ).unwrap();
+                assert_eq!(
+                    binding.as_deref(),
+                    Some("native-fixture"),
+                    "trusted native terminal must preserve the original session"
+                );
+                if native_status == "failed" {
+                    assert_eq!(state.2.as_deref(), Some("runtime_authentication_required"));
+                }
+            }
+            if !reusable {
+                let candidate = {
+                    let database = core.database.lock().await;
+                    ExecutionRuntimeService::default()
+                        .list_cancellation_candidates(&database, 100)
+                        .unwrap()
+                        .pop()
+                        .unwrap()
+                };
+                assert!(
+                    core.finish_agent_run_runtime_cleanup(&core.output, candidate)
+                        .await
+                );
+            }
+            let next = core
+                .codex_cli
+                .ensure_agent_run_runtime(CodexAgentRunRuntimeRequest {
+                    agent_run_id: "successor",
+                    execution_epoch: 1,
+                    camp_id: &camp_id,
+                    agent_id: &execution.agent_id,
+                    cwd: &workspace,
+                    frozen_runtime: &frozen,
+                    runtime_compatibility_digest: "fixture",
+                    builtin_tools: &tools,
+                })
+                .await
+                .unwrap();
+            assert_eq!(next.host_instance_id() == host_id, reusable);
+            // A duplicate old terminal cannot change or stop the successor lease.
+            let mut route = core.planned_shutdown.enter_runtime_route().await.unwrap();
+            process_agent_run_codex_message(
+                &core,
+                &core.output,
+                &host_id,
+                &run_id,
+                epoch,
+                terminal,
+                &mut route,
+            )
+            .await;
+            assert!(
+                core.codex_cli
+                    .get_agent_run_on_host(next.host_instance_id(), "successor", 1)
+                    .await
+                    .is_some()
+            );
+            core.codex_cli.forget_agent_run("successor", 1).await;
+            core.runtime_fleet.shutdown_all().await;
+            ThreadAttachmentStore::new(&core.data_dir)
+                .remove_camp(&camp_id)
+                .unwrap();
+            let view = core.attachment_views.root().join("camps").join(&camp_id);
+            for path in [
+                &view,
+                view.parent().unwrap(),
+                view.parent().unwrap().parent().unwrap(),
+            ] {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            drop(core);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    // This seam needs the real terminal transaction, Delivery claim and Fleet
+    // worker together: isolated policy assertions cannot close the claim race.
+    #[cfg(all(target_os = "macos", feature = "slow-tests"))]
+    #[tokio::test]
+    async fn native_failure_gates_already_queued_input_until_managed_reap() {
+        use std::os::unix::fs::PermissionsExt;
+        let root =
+            std::env::temp_dir().join(format!("rovai-terminal-cleanup-{}", uuid::Uuid::new_v4()));
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let core = Arc::new(runtime_resolution_test_core(&root).unwrap());
+        let (camp_id, run_id, version, epoch) =
+            claimed_runtime_cleanup_test_run(&core, &workspace).await;
+        core.send_test_camp_message_request(SendThreadMessageParams {
+            command_id: uuid::Uuid::new_v4().to_string(),
+            camp_id: ThreadId::parse(&camp_id).unwrap(),
+            content: text_composer_document("Already queued before native failure"),
+            source_attachments: Vec::new(),
+            quotes: Vec::new(),
+            reply_to_camp_message_id: None,
+            execution: Some(ExecutionRequest {
+                task_id: None,
+                purpose: "Queued successor".into(),
+                completion_role: "required".into(),
+                budget: None,
+            }),
+        })
+        .await
+        .unwrap();
+        let execution = {
+            let database = core.database.lock().await;
+            ExecutionRuntimeService::default()
+                .load_agent_run_execution(&database, &run_id, epoch)
+                .unwrap()
+                .unwrap()
+        };
+        let (host, entered, release) =
+            runtime_fleet::fake_runtime_process_host_with_reap_gate("old-native-host");
+        core.runtime_fleet
+            .acquire(
+                runtime_fleet::FleetAcquireRequest {
+                    agent_run_id: run_id.clone(),
+                    execution_epoch: epoch,
+                    adapter_kind: AdapterKind::CodexCli,
+                    compatibility: runtime_fleet::RuntimeCompatibilityKey::member(
+                        &camp_id,
+                        &execution.agent_id,
+                        "fixture",
+                    ),
+                },
+                || async { Ok(host) },
+            )
+            .await
+            .unwrap();
+        {
+            let mut database = core.database.lock().await;
+            let terminal = ExecutionRuntimeService::default()
+                .fail_agent_run_requiring_cleanup(
+                    &mut database,
+                    &CommandEnvelope {
+                        command_id: "native-failure".into(),
+                        actor: ActorRef::System {
+                            component_id: "runtime-adapter:codex".into(),
+                        },
+                        camp_id: Some(camp_id.clone()),
+                        expected_versions: Vec::new(),
+                        execution_epoch: None,
+                        payload: FailAgentRunCommand {
+                            agent_run_id: run_id.clone(),
+                            expected_version: version,
+                            execution_epoch: epoch,
+                            error_code: "runtime_turn_failed".into(),
+                            error_detail: None,
+                            failure: None,
+                            manual_retry_allowed: false,
+                            ending_git_observation: None,
+                        },
+                    },
+                )
+                .unwrap();
+            assert_eq!(terminal.result.code, "agent_run.failed");
+        }
+        core.dispatch_agent_run_cancellations(&core.output).await;
+        tokio::time::timeout(Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+        {
+            let mut database = core.database.lock().await;
+            assert!(
+                claim_waiting_delivery_batches(&mut database, 100)
+                    .unwrap()
+                    .is_empty()
+            );
+            let state: (i64, i64, String) = database.connection().query_row(
+                "SELECT (SELECT COUNT(*) FROM agent_run WHERE camp_id = ?1),
+                 (SELECT COUNT(*) FROM camp_message_delivery WHERE camp_id = ?1 AND claimed_agent_run_id IS NULL),
+                 terminal_resolution_source FROM agent_run WHERE id = ?2", rusqlite::params![camp_id, run_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+            assert_eq!(state, (1, 1, "runtime_terminal".into()));
+        }
+        // While the old native writer is held, an unrelated execution root can claim.
+        let other_workspace = root.join("other-workspace");
+        fs::create_dir_all(&other_workspace).unwrap();
+        let (other_camp, _, _, _) = claimed_runtime_cleanup_test_run(&core, &other_workspace).await;
+        release.add_permits(1);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let database = core.database.lock().await;
+                if ExecutionRuntimeService::default()
+                    .list_cancellation_candidates(&database, 100)
+                    .unwrap()
+                    .is_empty()
+                {
+                    break;
+                }
+                drop(database);
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        {
+            let mut database = core.database.lock().await;
+            let next = claim_waiting_delivery_batches(&mut database, 100).unwrap();
+            assert_eq!(next.len(), 1);
+            assert_ne!(next[0], run_id);
+            assert!(
+                claim_waiting_delivery_batches(&mut database, 100)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        // No lease, no launch barrier, no cleanup receipt: never claim a reap.
+        assert_eq!(
+            core.cleanup_agent_run_runtime("absent", 1, "codex-cli")
+                .await,
+            RuntimeCancellationIngressFence::Unproven
+        );
+        core.runtime_fleet.shutdown_all().await;
+        for camp in [&camp_id, &other_camp] {
+            ThreadAttachmentStore::new(&core.data_dir)
+                .remove_camp(camp)
+                .unwrap();
+            let view = core.attachment_views.root().join("camps").join(camp);
+            for path in [
+                &view,
+                view.parent().unwrap(),
+                view.parent().unwrap().parent().unwrap(),
+            ] {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+            }
+        }
+        drop(core);
         fs::remove_dir_all(root).unwrap();
     }
 

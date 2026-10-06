@@ -46,7 +46,7 @@ use crate::{
     builtin_tool_runtime::BuiltinToolProcessConfig,
     runtime_fleet::{
         AgentRuntimeFleetManager, FleetAcquireRequest, FleetReleaseDisposition,
-        RuntimeCompatibilityKey, RuntimeProcessHost,
+        FleetReleaseOutcome, RuntimeCompatibilityKey, RuntimeProcessHost,
     },
 };
 
@@ -134,6 +134,7 @@ impl CodexRuntimeOwner {
 }
 
 pub(crate) struct CodexHost {
+    initialized: tokio::sync::OnceCell<()>,
     host_instance_id: String,
     child: Mutex<ManagedProcess>,
     stdin: Mutex<ManagedChildStdin>,
@@ -351,7 +352,7 @@ struct PendingRpc {
 }
 
 impl CodexHost {
-    async fn spawn_with_executable(
+    async fn spawn_uninitialized(
         codex_path: &Path,
         cwd: &Path,
         incoming: mpsc::UnboundedSender<CodexIncoming>,
@@ -387,6 +388,7 @@ impl CodexHost {
             .take_stderr()
             .context("Codex app-server stderr was unavailable")?;
         let host = Arc::new(Self {
+            initialized: tokio::sync::OnceCell::new(),
             host_instance_id: uuid::Uuid::new_v4().to_string(),
             child: Mutex::new(child),
             stdin: Mutex::new(stdin),
@@ -401,31 +403,20 @@ impl CodexHost {
         });
         Self::spawn_stdout_reader(host.clone(), stdout);
         Self::spawn_stderr_reader(host.clone(), stderr);
-        let initialized = host
-            .rpc(
-                "initialize",
-                json!({
-                    "clientInfo": {
-                        "name": "rovai",
-                        "title": "Rovai-ai",
-                        "version": env!("CARGO_PKG_VERSION")
-                    },
-                    "capabilities": {
-                        "experimentalApi": true
-                    }
-                }),
-            )
-            .await
-            .context("Codex app-server initialize failed");
-        if let Err(error) = initialized {
-            host.shutdown().await;
-            return Err(error);
-        }
-        if let Err(error) = host.notify("initialized", json!({})).await {
-            host.shutdown().await;
-            return Err(error.context("Codex app-server initialized notification failed"));
-        }
         Ok(host)
+    }
+
+    async fn initialize(&self) -> Result<()> {
+        self.initialized.get_or_try_init(|| async {
+            self.rpc("initialize", json!({
+                "clientInfo": {"name": "rovai", "title": "Rovai-ai", "version": env!("CARGO_PKG_VERSION")},
+                "capabilities": {"experimentalApi": true}
+            })).await.context("Codex app-server initialize failed")?;
+            self.notify("initialized", json!({})).await
+                .context("Codex app-server initialized notification failed")?;
+            Ok::<_, anyhow::Error>(())
+        }).await?;
+        Ok(())
     }
 
     fn spawn_stdout_reader(host: Arc<Self>, stdout: ManagedChildStdout) {
@@ -625,10 +616,6 @@ impl CodexHost {
 
     pub(crate) fn is_alive(&self) -> bool {
         self.alive.load(Ordering::Acquire)
-    }
-
-    async fn shutdown(&self) {
-        self.shutdown_and_reap().await;
     }
 
     pub(crate) async fn is_quiescent(&self) -> bool {
@@ -920,6 +907,9 @@ impl CodexRuntime {
             .and_then(Value::as_str)
             .context("Codex thread response did not include thread.id")?
             .to_string();
+        if existing_thread_id.is_some_and(|expected| expected != thread_id) {
+            bail!("Codex resumed a different Native Thread than requested");
+        }
         self.host.bind_thread(&thread_id, &self.owner).await?;
         *self.thread_id.write().await = Some(thread_id.clone());
         *self.observed_model_id.write().await = observed_model_id;
@@ -1418,7 +1408,7 @@ impl CodexCliRuntimeAdapter {
                     compatibility,
                 },
                 move || async move {
-                    let host = CodexHost::spawn_with_executable(
+                    let host = CodexHost::spawn_uninitialized(
                         &spawn_executable,
                         &spawn_cwd,
                         spawn_incoming,
@@ -1432,6 +1422,7 @@ impl CodexCliRuntimeAdapter {
         let _process_id = &fleet_lease.process_id;
         let _residency = fleet_lease.residency;
         let host = fleet_lease.host.into_codex()?;
+        host.initialize().await?;
         let runtime = CodexRuntime::from_host(
             CodexRuntimeOwner::AgentRun {
                 agent_run_id: agent_run_id.to_string(),
@@ -1477,27 +1468,23 @@ impl CodexCliRuntimeAdapter {
             .cloned()
     }
 
-    pub async fn forget_agent_run(&self, agent_run_id: &str, execution_epoch: i64) -> bool {
-        let runtime = {
-            let mut runtimes = self.agent_run_runtimes.lock().await;
-            if runtimes
-                .get(agent_run_id)
-                .is_some_and(|runtime| runtime.agent_run_epoch() == Some(execution_epoch))
-            {
-                runtimes.remove(agent_run_id)
-            } else {
-                None
-            }
-        };
-        if let Some(runtime) = runtime {
-            runtime.detach().await;
-        }
-        self.fleet
-            .release(agent_run_id, execution_epoch, FleetReleaseDisposition::Stop)
+    pub async fn forget_agent_run(
+        &self,
+        agent_run_id: &str,
+        execution_epoch: i64,
+    ) -> FleetReleaseOutcome {
+        self.complete_agent_run(agent_run_id, execution_epoch, FleetReleaseDisposition::Stop)
             .await
     }
 
-    pub async fn complete_agent_run(&self, agent_run_id: &str, execution_epoch: i64) {
+    /// Only a fenced native terminal may request reuse. Cleanup callers must
+    /// explicitly choose Stop; business delivery success is not native success.
+    pub async fn complete_agent_run(
+        &self,
+        agent_run_id: &str,
+        execution_epoch: i64,
+        disposition: FleetReleaseDisposition,
+    ) -> FleetReleaseOutcome {
         let runtime = {
             let mut runtimes = self.agent_run_runtimes.lock().await;
             if runtimes
@@ -1513,12 +1500,8 @@ impl CodexCliRuntimeAdapter {
             runtime.detach().await;
         }
         self.fleet
-            .release(
-                agent_run_id,
-                execution_epoch,
-                FleetReleaseDisposition::Reusable,
-            )
-            .await;
+            .release_with_outcome(agent_run_id, execution_epoch, disposition)
+            .await
     }
 
     pub async fn forget_camp(&self, camp_id: &str) {
@@ -2174,12 +2157,12 @@ pub struct CompletedTurn {
 }
 
 impl CompletedTurn {
-    pub fn error_message(&self) -> Option<&str> {
-        self.error.as_ref().and_then(|error| {
-            error
-                .as_str()
-                .or_else(|| error.get("message").and_then(Value::as_str))
-        })
+    pub(crate) fn release_disposition(&self) -> FleetReleaseDisposition {
+        if self.status == "completed" {
+            FleetReleaseDisposition::Reusable
+        } else {
+            FleetReleaseDisposition::Stop
+        }
     }
 }
 
@@ -2198,6 +2181,12 @@ pub fn completed_turn(params: &Value) -> Result<CompletedTurn> {
         .and_then(Value::as_str)
         .context("turn/completed did not include turn.status")?
         .to_string();
+    if !matches!(
+        status.as_str(),
+        "completed" | "failed" | "cancelled" | "interrupted"
+    ) {
+        bail!("turn/completed did not contain a trusted terminal status");
+    }
     let final_agent_message = turn
         .get("items")
         .and_then(Value::as_array)
@@ -2328,7 +2317,9 @@ mod tests {
             .await
             .unwrap();
         let first_host_id = first.host_instance_id().to_string();
-        adapter.complete_agent_run("run-1", 1).await;
+        adapter
+            .complete_agent_run("run-1", 1, FleetReleaseDisposition::Reusable)
+            .await;
         let second = adapter
             .ensure_agent_run_runtime(CodexAgentRunRuntimeRequest {
                 agent_run_id: "run-2",
@@ -2343,7 +2334,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(second.host_instance_id(), first_host_id);
-        adapter.complete_agent_run("run-2", 1).await;
+        adapter
+            .complete_agent_run("run-2", 1, FleetReleaseDisposition::Reusable)
+            .await;
 
         next.host_config_digest = "sha256:host-v2".to_string();
         let replacement_digest =
@@ -2367,9 +2360,248 @@ mod tests {
             !first.host.is_alive(),
             "old writer must be reaped before replacement"
         );
-        adapter.complete_agent_run("run-3", 1).await;
+        adapter
+            .complete_agent_run("run-3", 1, FleetReleaseDisposition::Reusable)
+            .await;
         fleet.shutdown_all().await;
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Owns the process/credential/session seam. All credentials and protocol
+    // messages are fixtures; no installed Runtime or account is accessed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failed_warm_host_is_reaped_and_cold_resume_reads_updated_credentials_without_replay() {
+        for (status, update_before_failure) in [
+            ("failed", true),
+            ("failed", false),
+            ("cancelled", false),
+            ("interrupted", false),
+            ("unknown_error", false),
+        ] {
+            let root =
+                std::env::temp_dir().join(format!("rovai-codex-recovery-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("credentials"), "fixture-v1").unwrap();
+            let executable = root.join("codex");
+            make_test_executable(&executable, &r#"#!/usr/bin/python3
+import json, os, sys
+root = os.path.dirname(__file__)
+credential = open(os.path.join(root, 'credentials')).read()
+turn = 0
+for line in sys.stdin:
+    req = json.loads(line)
+    method = req['method']
+    if 'id' not in req: continue
+    result = {}
+    if method in ('thread/start', 'thread/resume'):
+        thread = req['params'].get('threadId', 'native-fixture')
+        if os.path.exists(os.path.join(root, 'wrong-thread')): thread = 'wrong-thread'
+        result = {'thread': {'id': thread}}
+        with open(os.path.join(root, 'sessions'), 'a') as f: f.write(method + ':' + thread + '\n')
+    if method == 'turn/start':
+        turn += 1
+        result = {'turn': {'id': 'turn-' + str(turn)}}
+        with open(os.path.join(root, 'inputs'), 'a') as f: f.write(json.dumps(req['params']['input']) + '\n')
+    print(json.dumps({'id': req['id'], 'result': result}), flush=True)
+    if method == 'turn/start':
+        for retry in [True, False]:
+            print(json.dumps({'method':'error', 'params':{'threadId':'native-fixture', 'turnId':result['turn']['id'], 'willRetry':retry, 'error':{'message':'unauthorized'}}}), flush=True)
+        failed = credential == 'fixture-v1' and turn == 2
+        status = '__STATUS__' if failed else 'completed'
+        error = {'message':'opaque', 'codexErrorInfo':'unauthorized'} if status != 'unknown_error' else {'message':'unclassified'}
+        if status == 'unknown_error': status = 'failed'
+        print(json.dumps({'method':'turn/completed', 'params':{'threadId':'native-fixture', 'turn':{'id':result['turn']['id'], 'status':status, 'error':error if failed else None, 'items':[] if failed else [{'type':'agentMessage','text':'tool 401; quote unauthorized'}]}}}), flush=True)
+"#.replace("__STATUS__", status));
+            let fleet = Arc::new(AgentRuntimeFleetManager::new(Default::default()));
+            let (incoming, mut receiver) = mpsc::unbounded_channel();
+            let adapter = CodexCliRuntimeAdapter::new(incoming, fleet.clone());
+            let frozen = process_compatibility_runtime(&executable);
+            let endpoint = rovai_core::builtin_tool_transport::LocalIpcEndpoint::UnixSocket {
+                path: root.join("builtin.sock").to_string_lossy().into_owned(),
+            };
+            let tools = BuiltinToolProcessConfig::create(&executable, &endpoint, &root).unwrap();
+            let mut hosts = Vec::new();
+            for round in 1..=3 {
+                if (round == 2 && update_before_failure) || (round == 3 && !update_before_failure) {
+                    std::fs::write(root.join("credentials"), "fixture-v2").unwrap();
+                }
+                let run = format!("run-{round}");
+                let runtime = adapter
+                    .ensure_agent_run_runtime(CodexAgentRunRuntimeRequest {
+                        agent_run_id: &run,
+                        execution_epoch: 1,
+                        camp_id: "camp-fixture",
+                        agent_id: "agent-fixture",
+                        cwd: &root,
+                        frozen_runtime: &frozen,
+                        runtime_compatibility_digest: "stable",
+                        builtin_tools: &tools,
+                    })
+                    .await
+                    .unwrap();
+                hosts.push(runtime.host_instance_id().to_string());
+                let thread = runtime
+                    .start_or_resume_thread_with_config(
+                        &root,
+                        (round > 1).then_some("native-fixture"),
+                        CodexThreadStartOptions {
+                            developer_instructions: None,
+                            sandbox: "workspace-write",
+                            approval_policy: "on-request",
+                            model: None,
+                            config: None,
+                            runtime_workspace_roots: None,
+                            ephemeral: false,
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(thread, "native-fixture");
+                runtime
+                    .start_turn_with_config(&format!("input-{round}"), None, None, None)
+                    .await
+                    .unwrap();
+                let mut retries = 0;
+                let completed = tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        if let CodexIncoming::Message { message, .. } =
+                            receiver.recv().await.unwrap()
+                        {
+                            if message["method"] == "error" {
+                                retries += 1;
+                                assert!(runtime.host.is_alive());
+                                continue;
+                            }
+                            if message["method"] == "turn/completed" {
+                                break completed_turn(&message["params"]).unwrap();
+                            }
+                        }
+                    }
+                })
+                .await
+                .unwrap();
+                assert_eq!(retries, 2, "willRetry=false is not a terminal");
+                let disposition = completed.release_disposition();
+                assert_eq!(
+                    disposition,
+                    if round == 2 {
+                        FleetReleaseDisposition::Stop
+                    } else {
+                        FleetReleaseDisposition::Reusable
+                    }
+                );
+                runtime.clear_turn(Some(&completed.turn_id)).await;
+                assert_eq!(
+                    adapter.complete_agent_run(&run, 1, disposition).await,
+                    if round == 2 {
+                        FleetReleaseOutcome::Reaped
+                    } else {
+                        FleetReleaseOutcome::Reusable
+                    }
+                );
+                if round == 2 {
+                    assert!(!runtime.host.is_alive());
+                    // A late success cannot reverse the decision.
+                    assert_eq!(
+                        adapter
+                            .complete_agent_run(&run, 1, FleetReleaseDisposition::Reusable)
+                            .await,
+                        FleetReleaseOutcome::Reaped
+                    );
+                }
+                if round == 3 {
+                    assert_eq!(
+                        adapter
+                            .complete_agent_run("run-2", 0, FleetReleaseDisposition::Stop)
+                            .await,
+                        FleetReleaseOutcome::NoMatchingLease
+                    );
+                    assert!(runtime.host.is_alive());
+                }
+            }
+            assert_eq!(hosts[0], hosts[1]);
+            assert_ne!(hosts[1], hosts[2]);
+            assert_eq!(
+                std::fs::read_to_string(root.join("sessions")).unwrap(),
+                "thread/start:native-fixture\nthread/resume:native-fixture\nthread/resume:native-fixture\n"
+            );
+            let inputs = std::fs::read_to_string(root.join("inputs")).unwrap();
+            assert_eq!(inputs.lines().count(), 3);
+            for round in 1..=3 {
+                assert_eq!(inputs.matches(&format!("input-{round}")).count(), 1);
+            }
+            // Reject a provider that silently starts a different thread.
+            std::fs::write(root.join("wrong-thread"), "fixture").unwrap();
+            let runtime = adapter
+                .ensure_agent_run_runtime(CodexAgentRunRuntimeRequest {
+                    agent_run_id: "run-4",
+                    execution_epoch: 1,
+                    camp_id: "camp-fixture",
+                    agent_id: "agent-fixture",
+                    cwd: &root,
+                    frozen_runtime: &frozen,
+                    runtime_compatibility_digest: "stable",
+                    builtin_tools: &tools,
+                })
+                .await
+                .unwrap();
+            assert!(
+                runtime
+                    .start_or_resume_thread_with_config(
+                        &root,
+                        Some("native-fixture"),
+                        CodexThreadStartOptions {
+                            developer_instructions: None,
+                            sandbox: "workspace-write",
+                            approval_policy: "on-request",
+                            model: None,
+                            config: None,
+                            runtime_workspace_roots: None,
+                            ephemeral: false,
+                        }
+                    )
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.join("inputs")).unwrap(),
+                inputs
+            );
+            assert_eq!(
+                adapter.forget_agent_run("run-4", 1).await,
+                FleetReleaseOutcome::Reaped
+            );
+            fleet.shutdown_all().await;
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn only_closed_native_terminal_statuses_choose_release() {
+        for (status, disposition) in [
+            ("completed", FleetReleaseDisposition::Reusable),
+            ("failed", FleetReleaseDisposition::Stop),
+            ("cancelled", FleetReleaseDisposition::Stop),
+            ("interrupted", FleetReleaseDisposition::Stop),
+        ] {
+            for items in [
+                json!([]),
+                json!([{"type":"agentMessage","text":"unauthorized"}]),
+                json!([{"type":"commandExecution","aggregatedOutput":"401"}]),
+            ] {
+                let completed =
+                    completed_turn(&json!({"turn":{"id":"t", "status":status, "items":items}}))
+                        .unwrap();
+                assert_eq!(completed.release_disposition(), disposition);
+            }
+        }
+        for status in ["inProgress", "unknown", ""] {
+            assert!(
+                completed_turn(&json!({"turn":{"id":"t", "status":status}, "willRetry":false}))
+                    .is_err()
+            );
+        }
     }
 
     #[test]
@@ -2593,20 +2825,30 @@ for line in sys.stdin:
             let attempts = if scenario == "default" { 3 } else { 1 };
             for attempt in 0..attempts {
                 let (incoming, _receiver) = mpsc::unbounded_channel();
-                let result =
-                    CodexHost::spawn_with_executable(&executable, &root, incoming, None).await;
+                let fleet = Arc::new(AgentRuntimeFleetManager::new(Default::default()));
+                let adapter = CodexCliRuntimeAdapter::new(incoming, fleet.clone());
+                let frozen = process_compatibility_runtime(&executable);
+                let endpoint = rovai_core::builtin_tool_transport::LocalIpcEndpoint::UnixSocket {
+                    path: root.join("builtin.sock").to_string_lossy().into_owned(),
+                };
+                let tools =
+                    BuiltinToolProcessConfig::create(&executable, &endpoint, &root).unwrap();
+                let result = adapter
+                    .ensure_agent_run_runtime(CodexAgentRunRuntimeRequest {
+                        agent_run_id: "launch-fixture",
+                        execution_epoch: 1,
+                        camp_id: "camp-fixture",
+                        agent_id: "agent-fixture",
+                        cwd: &root,
+                        frozen_runtime: &frozen,
+                        runtime_compatibility_digest: "launch-fixture",
+                        builtin_tools: &tools,
+                    })
+                    .await;
                 if scenario == "init_failure" {
                     assert!(result.is_err());
                 } else {
-                    let host = result.unwrap();
-                    let runtime = CodexRuntime::from_host(
-                        CodexRuntimeOwner::AgentRun {
-                            agent_run_id: format!("launch-fixture-{attempt}"),
-                            execution_epoch: 1,
-                        },
-                        None,
-                        host.clone(),
-                    );
+                    let runtime = result.unwrap();
                     let authenticated = runtime.authentication_available().await.unwrap();
                     assert_eq!(authenticated, scenario != "auth_required");
                     let options = match scenario {
@@ -2682,8 +2924,14 @@ for line in sys.stdin:
                             turn.unwrap();
                         }
                     }
-                    host.shutdown().await;
                 }
+                assert_eq!(
+                    adapter.forget_agent_run("launch-fixture", 1).await,
+                    FleetReleaseOutcome::Reaped,
+                    "initialization/validation failures must retain a managed Host until confirmed reap"
+                );
+                fleet.acknowledge_cleanup("launch-fixture", 1).await;
+                fleet.shutdown_all().await;
             }
             if scenario == "default" {
                 let turns = std::fs::read_to_string(root.join("turns")).unwrap();
@@ -2902,7 +3150,9 @@ for line in sys.stdin:
         .await
         .unwrap();
         let first_host = first.host_instance_id().to_string();
-        adapter.complete_agent_run("run-1", 1).await;
+        adapter
+            .complete_agent_run("run-1", 1, FleetReleaseDisposition::Reusable)
+            .await;
         let successor_builtin_tools =
             BuiltinToolProcessConfig::create(&executable, &endpoint, &directory).unwrap();
         let successor = adapter
@@ -3497,7 +3747,10 @@ for line in sys.stdin:
                 "codexErrorInfo": "serverOverloaded"
             }))
         );
-        assert_eq!(completed.error_message(), Some("model unavailable"));
+        assert_eq!(
+            completed.error.as_ref().unwrap()["message"],
+            "model unavailable"
+        );
     }
 
     #[test]

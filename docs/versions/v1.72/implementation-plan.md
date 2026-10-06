@@ -840,3 +840,49 @@ Clippy 与首轮基线比较仍是原有 10 项错误，本切片没有新增 li
   原生反馈不反写偏好、零资格请求；日夜截图已检查。完整 `pnpm test:camp-fast-layout` 仍在上轮已记录的
   执行 disclosure `.open` 旧断言失败，未修改或跳过该断言，不能算整套布局/Stop 验收通过。
 - 未执行真实 CLI 账户、实体 Windows、实际计费或日常 App 安装验收；合成进程与隔离 Renderer 结果不替代这些验证。
+
+
+## 2026-10-06 Codex Host 失败恢复
+
+基线 `4099bc3843eb3b6bdbe51d9bb09c3df2fdc2d347`，worktree `rovai-ai-codex-host-recovery`，分支 `rovai/codex-host-recovery`。
+本次不需要主线先行治理提交；状态与验证以本节和分支最终提交为准。
+
+- `application.rs`：原生终态与业务交付分别判定；成功先做安全释放，失败事务建门禁后交既有 worker；未确认回收不解锁。
+- `runtime.rs` / `delivery_queue.rs`：复用现有清理意图、ACK 与 claim 事务；新增内部显式需要清理的终态入口，保留原生来源。
+  输入未知的 Codex 失败接入既有 abortive settlement，默认轮换原生绑定。
+- `codex.rs`：进程先交 Fleet，再 initialize / account / model 验证；显式释放策略；thread/resume 校验 ID，不隐式回退空 Thread。
+- `runtime_fleet.rs`：四种释放结果、迟到检查防止误停后继、停止未确认保留租约/容量；现有 owner record 延长到数据库清理 ACK，
+  记录 Run/epoch 与停止回执以支持重启对账。没有新增认证、调度、恢复管理器或后台健康轮询。
+- `runtime_failure.rs`：仅可信 Codex 失败对象进入结构化优先分类，认证拒绝不等于未登录。
+
+测试 owner 与准入：扩展 Codex 真实 Host 验证 fixture，初始化/认证/模型失败均断言零正文和已回收；新增假 Runtime
+进程测试拥有 warm→失败→换 Host→精确冷恢复的跨进程合同，覆盖失败前/后更新假凭据。原生状态和错误分类矩阵由
+小型 parser/policy 测试拥有。复用 Fleet 清理超时及 runtime 未知结果测试，补齐回收回执跨重启的唯一 owner。
+Core 并发 seam 测试实际执行终态事务、Delivery claim 和带停止屏障的 Fleet worker，验证已排队输入不被领取，
+且无关会话能推进；这一竞态不能仅用纯函数或源码字符串测试证明。
+
+Adapter 审计：
+
+| Adapter | 状态 | 本次结论 |
+| --- | --- | --- |
+| Codex | 已接入，受控验证通过 | 本次闭环范围；不操作日常故障会话 |
+| ACP | 已审计，发现缺口，未接入 | prepare_agent_run_terminal_visibility 在持久终态前释放；多数 Adapter 仍申请 Reusable。ZCode 后台任务归属必须单独处理 |
+| Pi | 已审计，发现缺口，未接入 | 失败已有 Stop 路径，但仍以业务输出判断完成且忽略清理结果；需独立接入原生终态策略 |
+
+验证命令与证据（macOS arm64；`slow-tests` 包含 `extended-tests`）：
+
+| 命令 / filter | 结果 |
+| --- | --- |
+| `cargo fmt --all --check`、`cargo check --workspace` | 通过 |
+| `pnpm test:rust:pr` | workspace 452 项通过；1 项现有人工验证按声明跳过 |
+| `cargo test -p rovai-core --lib --features slow-tests codex::` | 24 项通过；1 项真实 Runtime smoke 按声明跳过 |
+| 同上 `runtime_fleet::` / `runtime::tests::` / `runtime_failure::` | 分别 23 / 34 / 5 项通过 |
+| 同上 `acp::` / `pi::` | 74 / 21 项通过；Pi 真实安装 smoke 按声明跳过 |
+| 同上 `native_failure_gates_already_queued_input_until_managed_reap` | 已排队输入、暂停回收、无关 lane、ACK 后单次 claim 通过 |
+| 同上 `codex_native_terminal_controls_host_independently_of_business_delivery` | 实际回调覆盖 completed 缺少回复、失败、取消、中断、中间 error、旧终态及绑定保留 |
+| 同上 `runtime_cleanup_dispatch_is_non_blocking_and_deduplicated` / `cancellation_covers_launch_without_a_handle_and_has_one_total_deadline` | 均通过 |
+| `pnpm docs:test`、`pnpm docs:check`、`DOCS_BASE_REF=4099bc3843eb3b6bdbe51d9bb09c3df2fdc2d347 pnpm docs:check:ci` | 通过 |
+
+状态：ready，独立 worktree 保留供后续审查，下一步为人工审阅远程分支；本次不自动创建 PR。
+所有 Runtime 测试使用临时目录、受控假进程和假凭据，不访问用户账号，不重启日常 Core/Host。
+真实 Runtime 与 Windows 运行验证未执行；不能将夹具成功描述为故障会话已经现场恢复。

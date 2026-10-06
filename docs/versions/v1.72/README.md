@@ -268,3 +268,11 @@ Claude 直接传临时 settings，Codex 直接传单 Turn 档位；不再启动 
 关闭值不被资格过滤，运行反馈只在对应 Run 中展示，不写回偏好。无迁移、资格管理器、兼容重启或 #642 链路重做。
 当前规范见 [Camp Member Fast v3](../../contracts/camp-member-fast-v3.md)，理由见 [V1.72-D13](decisions.md#v1-72-d13)。
 验证范围与限制见[实施记录](implementation-plan.md#2026-10-06-fast-偏好直接应用)。
+
+
+## 并行修复：Codex 失败 Host 回收
+
+User 于 2026-10-06 授权在独立 worktree 实施并推送分支。Codex 仅原生 completed 有资格复用，失败进程沿既有清理门禁
+和 worker 回收；初始化失败保留受管进程，冷恢复验证精确 Thread，未知投递沿既有 v6 轮换，正文不自动重放。
+当前规范见 [Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md)，改动与验证范围见
+[实施记录](implementation-plan.md#2026-10-06-codex-host-失败恢复)。不改变数据库 schema、Runtime 容量策略或模型上下文。
