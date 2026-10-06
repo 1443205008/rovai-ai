@@ -171,7 +171,7 @@ v0.4.1 发布后补齐候选版本的日期兼容：macOS 合并清单保留日�
 Claude Code 保留 `--print` 结构化输出，增加 stream-json 输入与 stdio 权限处理。原生 request_id
 与 tool_use_id 分别绑定审批回复和实际工具结果，复用 Action/Approval Dock。初始化成功才发送任务，
 会话 idle 与末轮结果共同控制 stdin 关闭；取消与断线撤销请求。当前合同见
-[Runtime Launch and Verification v48](../../contracts/runtime-launch-and-verification-v49.md)，取舍见
+[Runtime Launch and Verification v49](../../contracts/runtime-launch-and-verification-v49.md)，取舍见
 [V1.72-D06](decisions.md#v1-72-d06)。
 
 审批选项补充原生建议的显式记忆：一次允许不保存规则，记忆由 Claude 保存选中的范围和 destination，

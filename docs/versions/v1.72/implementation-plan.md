@@ -969,4 +969,9 @@ Adapter 审计：
 最小定向命令为 `cargo test -p rovai-core --lib --features extended-tests runtime_fleet::tests::`、
 同参数的 `codex::tests::`，以及 `cargo test -p rovai-core --lib managed_process::tests::windows_`。
 后者仅 Windows 有有效用例；Unix/macOS 限定的冷恢复、初始化零正文与两条 Core 集成用例在 macOS 独立执行。
-本轮验证结果随 PR 检查记录补齐；既有 Windows 10 的 492 项结果只覆盖上一节提交，不能代替本轮修复。
+本轮 macOS 验证：默认 workspace 455 项通过、1 项真实 Runtime 按声明忽略；slow-tests 下 Fleet 23 项、
+Codex 24 项通过（另 1 项真实账号 smoke 忽略），两条 Core 原生终态／已排队输入门禁 owner 各 1 项通过。
+`cargo check --workspace`、format、文档单测 10 项与以 `520320a8` 为 base 的全部文档门禁通过。
+两路独立复核确认 P1 回收判定及 P2 PowerShell 失败码覆盖均已关闭；Fleet/Codex 采用独立 CI step。
+Windows 原生运行结果归档于 [PR #652](https://github.com/murray17/rovai-ai/pull/652) 的检查记录；
+既有 Windows 10 的 492 项结果只覆盖上一节提交，不能代替本轮修复。本轮不运行真实账号或日常 App。
