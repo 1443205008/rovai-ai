@@ -7920,7 +7920,7 @@ describe('task event projections', () => {
     expect(markup).not.toContain('尚未检查')
   })
 
-  it('shows one available status and version without the former blocker banner', () => {
+  it('keeps the version without routine readiness status or verification copy', () => {
     const markup = renderToStaticMarkup(createElement(MemberRuntimeForm, {
       agent: {
         ...agentProfile(),
@@ -7938,7 +7938,8 @@ describe('task event projections', () => {
 
     expect(markup).toContain('智能体类型，Kiro')
     expect(markup).toContain('status-available')
-    expect(markup).toContain('可用')
+    expect(markup).not.toContain('member-editor-runtime-status')
+    expect(markup).not.toContain('runtime-status-detail')
     expect(markup).toContain('kiro-cli 1.0.0')
     expect(markup).not.toContain('runtime-blockers')
     expect(markup).not.toContain('需要探测智能体')

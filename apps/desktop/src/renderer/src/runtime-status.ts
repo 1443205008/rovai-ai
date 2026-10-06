@@ -225,10 +225,7 @@ export function memberRuntimePresentation(
 
   if (agent.runtimeReadiness.status === 'light_ready' || agent.runtimeReadiness.status === 'installed_unverified') {
     if (availabilityStatus.status === 'not_qualified' || availabilityStatus.status === 'unsupported') return availabilityStatus
-    return {
-      ...presentation('available', uiAttribute('启动任务时验证登录、模型与权限；修复环境后可直接重试。')),
-      label: uiAttribute('可尝试运行')
-    }
+    return presentation('available')
   }
 
   const blockerCodes = new Set(agent.runtimeReadiness.blockers.map((blocker) => blocker.code))
@@ -269,12 +266,12 @@ export function memberRuntimePresentation(
 
 export function runtimeReadinessLabel(
   status: AgentProfile['runtimeReadiness']['status']
-): string {
+): string | null {
   return ({
     runtime_not_configured: uiAttribute('未配置智能体'),
     needs_attention: uiAttribute('不可用'),
-    light_ready: uiAttribute('可尝试运行'),
-    installed_unverified: uiAttribute('可尝试运行'),
-    ready: uiAttribute('可用')
+    light_ready: null,
+    installed_unverified: null,
+    ready: null
   })[status]
 }

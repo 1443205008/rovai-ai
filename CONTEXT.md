@@ -1334,7 +1334,7 @@ The product-facing label `智能体` (English `Agent`, plural `Agents`) names th
 _Avoid_: using `智能体` for the teammate identity, displaying Adapter Installation, bare Runtime, or English `Ready` as generic end-user labels
 
 **Runtime User Status**:
-The actionable installation state: detected entries display 已检测到 or 可尝试运行; an absent entry remains 未安装 and no configuration remains 未配置智能体. Detection does not claim authentication or protocol readiness. Initializing and concrete failures belong to the current Run.
+The actionable installation state: Settings displays detected entries as 已检测到; ordinary Member information shows the configured product name without routine readiness labels or verification explanations. Missing installations, absent configuration and actionable failures remain visible. Detection does not claim authentication or protocol readiness. Initializing and concrete failures belong to the current Run.
 _Avoid_: Runtime Discovery status, Probe Attempt status, Snapshot lifecycle label, stacked primary statuses
 
 **Runtime Readiness Projection**:
