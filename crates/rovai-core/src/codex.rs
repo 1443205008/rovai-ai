@@ -729,7 +729,6 @@ pub struct CodexRuntime {
     host: Arc<CodexHost>,
     thread_id: RwLock<Option<String>>,
     observed_model_id: RwLock<Option<String>>,
-    thread_service_tier: RwLock<Option<String>>,
     action_items: Mutex<HashMap<String, Value>>,
     streamed_agent_text: Mutex<String>,
     completed_agent_message: RwLock<Option<String>>,
@@ -776,7 +775,6 @@ impl CodexRuntime {
             host,
             thread_id: RwLock::new(None),
             observed_model_id: RwLock::new(None),
-            thread_service_tier: RwLock::new(None),
             action_items: Mutex::new(HashMap::new()),
             streamed_agent_text: Mutex::new(String::new()),
             completed_agent_message: RwLock::new(None),
@@ -925,10 +923,7 @@ impl CodexRuntime {
         self.host.bind_thread(&thread_id, &self.owner).await?;
         *self.thread_id.write().await = Some(thread_id.clone());
         *self.observed_model_id.write().await = observed_model_id;
-        *self.thread_service_tier.write().await = result
-            .get("serviceTier")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+
         Ok(thread_id)
     }
 
@@ -963,61 +958,6 @@ impl CodexRuntime {
             .context("Codex turn response did not include turn.id")?
             .to_string();
         Ok(turn_id)
-    }
-
-    pub async fn fast_eligibility(
-        &self,
-        cwd: &Path,
-        model: Option<&str>,
-    ) -> Result<rovai_core::camp_fast::NativeFastEligibility> {
-        if crate::health::custom_fast_environment(AdapterKind::CodexCli) {
-            return Ok(rovai_core::camp_fast::NativeFastEligibility::default());
-        }
-        let account = self
-            .rpc("account/read", json!({"refreshToken": false}))
-            .await?;
-        let config = self
-            .rpc("config/read", json!({"cwd": cwd, "includeLayers": true}))
-            .await?;
-        let mut models = Vec::new();
-        let mut cursor: Option<String> = None;
-        for _ in 0..100 {
-            let page = self
-                .rpc(
-                    "model/list",
-                    json!({"includeHidden": true, "limit": 100, "cursor": cursor}),
-                )
-                .await?;
-            models.extend(
-                page.get("data")
-                    .and_then(Value::as_array)
-                    .context("model/list omitted data")?
-                    .iter()
-                    .cloned(),
-            );
-            cursor = page
-                .get("nextCursor")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            if cursor.is_none() {
-                let observed_model = self.observed_model_id().await;
-                let mut eligibility = rovai_core::camp_fast::codex_eligibility(
-                    &account,
-                    &config,
-                    &json!({"data": models}),
-                    model.or(observed_model.as_deref()),
-                );
-                if let Some(tier) = self.thread_service_tier.read().await.as_deref() {
-                    eligibility.runtime_default_fast = match tier {
-                        "priority" | "fast" => Some(true),
-                        "default" | "standard" => Some(false),
-                        _ => None,
-                    };
-                }
-                return Ok(eligibility);
-            }
-        }
-        anyhow::bail!("model/list exceeded pagination limit")
     }
 
     pub async fn interrupt(&self) -> Result<()> {
@@ -2613,6 +2553,7 @@ mod tests {
             "unknown_option",
             "auth_required",
             "init_failure",
+            "fast_rejected",
         ] {
             let root = std::env::temp_dir()
                 .join(format!("rovai-codex-live-launch-{}", uuid::Uuid::new_v4()));
@@ -2623,7 +2564,7 @@ import json, os, sys, time
 root = os.path.dirname(__file__)
 scenario = '__SCENARIO__'
 with open(os.path.join(root, 'starts'), 'a') as log: log.write('start\n')
-if '--version' in sys.argv:
+if '--version' in sys.argv or 'generate-json-schema' in sys.argv:
     time.sleep(30)
     sys.exit(1)
 for line in sys.stdin:
@@ -2639,12 +2580,17 @@ for line in sys.stdin:
     elif method == 'model/list':
         response['result'] = {'data': [{'id': 'selected', 'supportedReasoningEfforts': [{'reasoningEffort': 'low'}]}]}
     elif method == 'thread/start': response['result'] = {'thread': {'id': 'thread-fixture'}}
-    elif method == 'turn/start': response['result'] = {'turn': {'id': 'turn-fixture'}}
+    elif method == 'turn/start':
+        with open(os.path.join(root, 'turns'), 'a') as log: log.write(json.dumps(request['params']) + '\n')
+        if scenario == 'fast_rejected':
+            response = {'id': request['id'], 'error': {'code': -32602, 'message': 'serviceTierForTurn was rejected'}}
+        else:
+            response['result'] = {'turn': {'id': 'turn-fixture'}}
     print(json.dumps(response), flush=True)
 "#.replace("__SCENARIO__", scenario));
             // Default launches must also work after discarding the entire Host,
             // without a version check or historical protocol evidence.
-            let attempts = if scenario == "default" { 2 } else { 1 };
+            let attempts = if scenario == "default" { 3 } else { 1 };
             for attempt in 0..attempts {
                 let (incoming, _receiver) = mpsc::unbounded_channel();
                 let result =
@@ -2668,20 +2614,21 @@ for line in sys.stdin:
                         "unknown_option" => json!({"unadvertised":"low"}),
                         _ => json!({"reasoning_effort":"low"}),
                     };
-                    let validation = if authenticated && scenario != "default" {
-                        runtime
-                            .validate_explicit_model(
-                                if scenario == "missing" {
-                                    "gone"
-                                } else {
-                                    "selected"
-                                },
-                                &options,
-                            )
-                            .await
-                    } else {
-                        Ok(())
-                    };
+                    let validation =
+                        if authenticated && !matches!(scenario, "default" | "fast_rejected") {
+                            runtime
+                                .validate_explicit_model(
+                                    if scenario == "missing" {
+                                        "gone"
+                                    } else {
+                                        "selected"
+                                    },
+                                    &options,
+                                )
+                                .await
+                        } else {
+                            Ok(())
+                        };
                     let expected_error = match scenario {
                         "missing" => Some("runtime_model_unavailable"),
                         "invalid_option" => Some("runtime_model_option_invalid"),
@@ -2713,13 +2660,54 @@ for line in sys.stdin:
                             )
                             .await
                             .unwrap();
-                        runtime
-                            .start_turn_with_config("task-body", None, None, None)
-                            .await
-                            .unwrap();
+                        let turn = runtime
+                            .start_turn_with_config(
+                                "task-body",
+                                None,
+                                None,
+                                if scenario == "fast_rejected" {
+                                    Some("default")
+                                } else {
+                                    [None, Some("priority"), Some("default")][attempt]
+                                },
+                            )
+                            .await;
+                        if scenario == "fast_rejected" {
+                            assert!(
+                                turn.unwrap_err()
+                                    .to_string()
+                                    .contains("serviceTierForTurn was rejected")
+                            );
+                        } else {
+                            turn.unwrap();
+                        }
                     }
                     host.shutdown().await;
                 }
+            }
+            if scenario == "default" {
+                let turns = std::fs::read_to_string(root.join("turns")).unwrap();
+                for (line, expected) in turns.lines().zip([None, Some("priority"), Some("default")])
+                {
+                    let params: Value = serde_json::from_str(line).unwrap();
+                    assert_eq!(
+                        params.get("serviceTierForTurn").and_then(Value::as_str),
+                        expected
+                    );
+                    assert!(params.get("serviceTier").is_none());
+                }
+                assert_eq!(
+                    turns.lines().count(),
+                    3,
+                    "one input per Host, no replay for missing optional feedback"
+                );
+            }
+            if scenario == "fast_rejected" {
+                let turns = std::fs::read_to_string(root.join("turns")).unwrap();
+                assert_eq!(turns.lines().count(), 1, "never replay ambiguous input");
+                let params: Value = serde_json::from_str(turns.lines().next().unwrap()).unwrap();
+                assert_eq!(params["serviceTierForTurn"], "default");
+                assert!(params.get("serviceTier").is_none());
             }
             let requests = std::fs::read_to_string(root.join("requests")).unwrap();
             assert_eq!(
@@ -2734,10 +2722,20 @@ for line in sys.stdin:
                     .lines()
                     .filter(|method| *method == "turn/start")
                     .count(),
-                attempts * usize::from(matches!(scenario, "default" | "explicit"))
+                attempts
+                    * usize::from(matches!(scenario, "default" | "explicit" | "fast_rejected"))
             );
-            if scenario == "default" {
+            if matches!(scenario, "default" | "fast_rejected") {
                 assert!(!requests.contains("model/list"));
+                assert!(!requests.contains("config/read"));
+                assert_eq!(
+                    requests
+                        .lines()
+                        .filter(|method| *method == "account/read")
+                        .count(),
+                    attempts,
+                    "only existing Host authentication, no extra Fast account check"
+                );
             }
             std::fs::remove_dir_all(root).unwrap();
         }

@@ -13,11 +13,10 @@ type FastEntry = {
 
 export type ThreadMemberFastControls = {
   get(agentId: string): { value: ThreadMemberFastView | null | undefined; pending: boolean } | undefined
-  check(agentId: string): Promise<void>
-  save(agentId: string, fastOverride: boolean): Promise<void>
+  save(agentId: string, fastOverride: boolean | null): Promise<void>
 }
 
-// One workspace owns both surfaces. Metadata and writes are coalesced per Thread/member,
+// One workspace owns both surfaces. Writes are coalesced per Thread/member,
 // while entry identity fences late results after a binding, projection or Thread change.
 export function useThreadMemberFast(
   snapshot: ThreadSnapshot,
@@ -28,7 +27,6 @@ export function useThreadMemberFast(
   const client = useThreadClient()
   const [, refresh] = useState(0)
   const entries = useRef(new Map<string, FastEntry>())
-  const checks = useRef(new Set<string>())
   const saves = useRef(new Set<string>())
   const mounted = useRef(false)
   const targets = new Map(snapshot.members.flatMap(member => {
@@ -39,11 +37,8 @@ export function useThreadMemberFast(
     const installation = runtimeEditorInstallation(installations, runtime.adapterKind)
     const scope = JSON.stringify([
       snapshot.thread.id, snapshot.thread.projectPath, member.membershipStatus, member.profilePresence,
-      member.fast?.runtimeBindingRevision, profile?.version, runtime.adapterKind, runtime.model,
-      installation?.id, installation?.authScope, installation?.executablePath, installation?.enabled,
-      installation?.generation, installation?.snapshot?.executableFingerprint,
-      installation?.snapshot?.authenticationStatus, installation?.snapshot?.probeStatus,
-      installation?.snapshot?.lastSuccessfulProbeAt, installation?.snapshot?.staleAt
+      member.fast?.runtimeBindingRevision, runtime.adapterKind,
+      installation?.id, installation?.authScope, installation?.executablePath
     ])
     return [[member.agentId, { scope, projection: JSON.stringify(member.fast ?? null), value: member.fast }]] as const
   }))
@@ -69,25 +64,6 @@ export function useThreadMemberFast(
       })
     }
   })
-  const check: ThreadMemberFastControls['check'] = async agentId => {
-    const entry = entries.current.get(agentId)
-    const key = requestKey(agentId)
-    if (!entry || checks.current.has(key)) return
-    checks.current.add(key)
-    changed()
-    try {
-      const value = await client.request<ThreadMemberFastView | null>('threads.members.fast.check', {
-        threadId: snapshot.thread.id, agentId
-      })
-      if (!mounted.current || entries.current.get(agentId) !== entry) return
-      entry.value = value
-      if (!value) onNotify('当前未确认 Fast 资格，可继续使用默认响应模式。')
-    } catch (error) {
-      if (mounted.current && entries.current.get(agentId) === entry) {
-        onNotify(readErrorMessage(error, 'Fast 资格检查失败，可再次尝试。'))
-      }
-    } finally { checks.current.delete(key); changed() }
-  }
   const get: ThreadMemberFastControls['get'] = agentId => {
     const target = targets.get(agentId)
     if (!target) return undefined
@@ -96,7 +72,7 @@ export function useThreadMemberFast(
       ? entry.value
       : entry && entry.scope !== target.scope && entry.projection === target.projection
         ? undefined : target.value
-    return { value, pending: saves.current.has(requestKey(agentId)) || checks.current.has(requestKey(agentId)) }
+    return { value, pending: saves.current.has(requestKey(agentId)) }
   }
   const save: ThreadMemberFastControls['save'] = async (agentId, fastOverride) => {
     const value = get(agentId)?.value
@@ -119,5 +95,5 @@ export function useThreadMemberFast(
       }
     } finally { saves.current.delete(key); changed() }
   }
-  return { get, check, save }
+  return { get, save }
 }

@@ -36,7 +36,7 @@ Core 先检查平台、工作区授权、执行目标及文件完整性，再启
 - Pi：真实 RPC state、extension、工作区及模型/选项确认先于 prompt；默认模型不查询完整模型目录。
 - Antigravity：正文只能通过 `--print` argv 发送，缺少正文前的独立协议握手。仅该 Adapter 保留有界 `--help/models`
   检查原生 flags、登录及显式模型，不运行 `--version`；取消中止预检并在 spawn 前再次检查。
-- 显式 Fast 属于可选兼容性例外，见 [Camp Member Fast v2](camp-member-fast-v2.md)。普通任务不触发其元数据进程。
+- Fast 直接传递冻结偏好，不增加资格预检或可选反馈屏障，见 [Camp Member Fast v3](camp-member-fast-v3.md)。
 
 已有 IdleWarm、Run/epoch/lease、工作区隔离、恢复兼容与身份摘要保持；不跨任务并行共享会话。
 CLI 更新允许同一逻辑 Installation 有界重新解析及原子 rebind，然后接受本次 Host 验证，不先启动独立深检 Host。
@@ -61,7 +61,7 @@ fingerprint 与轻量文件身份必须来自同次稳定内容验证，不能�
 
 ## 诊断与验收
 
-主动诊断、主动模型 Picker 与主动 Fast 检查可使用既有有界 Check Manager；它们不是运行授权步骤。
+主动诊断与主动模型 Picker 可使用既有有界 Check Manager；它们不是运行授权步骤。
 页面打开、切换 Runtime、普通任务及空闲不触发批量深检，不新增重试调度器或定期轮询。
 合成进程矩阵验证 version 故障而实际初始化成功、首次安装/无快照、历史失败后重试、同 Host 执行、
 认证/模型/权限/协议失败零正文、取消零正文、错误投影和接收未知不重放。真实 CLI/账户兼容性仍需单独记录实测证据。

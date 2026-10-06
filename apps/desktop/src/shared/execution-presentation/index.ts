@@ -183,6 +183,7 @@ export type ExecutionProgressItem =
   | { key: string; kind: 'narration'; body: string }
   | { key: string; kind: 'plan'; explanation: string; plan: ExecutionPlanStep[] }
   | { key: string; kind: 'diagnostic'; diagnostic: RuntimeDiagnostic }
+  | { key: string; kind: 'fast'; state: 'unknown' | 'standard' | 'fast' | 'cooldown'; disabledReason: string | null }
   | { key: string; kind: 'compaction'; compaction: RuntimeCompactionDisplayItem }
   | { key: string; kind: 'tool'; step: ExecutionStep }
 
@@ -340,6 +341,7 @@ const LIVE_RUNTIME_EVENT_TYPES = new Set([
   'runtime.plan',
   'runtime.plan.delta',
   'runtime.diagnostic',
+  'runtime.fast.observed',
   'runtime.compaction.display',
   'runtime.action',
   'agent_run.runtime_phase_changed'
@@ -557,6 +559,7 @@ export function buildLiveExecutionProgress(
   let plan: ExecutionPlanStep[] = []
   let runtimePhase: LiveExecutionProgress['runtimePhase']
   const diagnosticsById = new Map<string, RuntimeDiagnostic>()
+  const fastById = new Map<string, Extract<ExecutionProgressItem, { kind: 'fast' }>>()
   const compactionsById = new Map<string, RuntimeCompactionDisplayItem>()
   const steps: ExecutionStep[] = []
   const stepIndexes = new Map<string, number>()
@@ -679,6 +682,16 @@ export function buildLiveExecutionProgress(
       rememberItem('plan')
       const delta = stringField(payload, 'delta') ?? ''
       if (delta) planExplanation += delta
+      continue
+    }
+
+    if (event.eventType === 'runtime.fast.observed') {
+      const native = stringField(payload, 'state')
+      const key = `fast:${event.id}`
+      rememberItem(key)
+      fastById.set(key, { key, kind: 'fast',
+        state: native === 'fast' || native === 'standard' || native === 'cooldown' ? native : 'unknown',
+        disabledReason: stringField(payload, 'disabledReason') })
       continue
     }
 
@@ -875,6 +888,10 @@ export function buildLiveExecutionProgress(
       return safeMarkdownHasRenderableContent(body)
         ? [{ key, kind: 'narration', body }]
         : []
+    }
+    if (key.startsWith('fast:')) {
+      const fast = fastById.get(key)
+      return fast ? [fast] : []
     }
     if (key.startsWith('diagnostic:')) {
       const diagnostic = diagnosticsById.get(key.slice('diagnostic:'.length))

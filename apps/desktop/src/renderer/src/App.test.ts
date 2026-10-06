@@ -5898,6 +5898,26 @@ describe('task event projections', () => {
     expect(markup).not.toContain('private-key')
   })
 
+  it('keeps native Fast feedback scoped to its Run without inferring missing state', () => {
+    const states = ['unknown', 'fast', 'standard', 'cooldown'] as const
+    const events = states.map((state, i) => liveRuntimeEventFromCore({ method: 'runtime.fast.observed',
+      params: { agentRunId: 'fast-run', payload: { state, disabledReason: i === 3 ? 'Native cooldown reason' : null } }
+    }, `fast-${i}`)!).filter(Boolean)
+    const progress = buildLiveExecutionProgress(events, 'fast-run')
+    expect(progress.items.map(item => item.kind === 'fast' ? item.state : null)).toEqual(states)
+    expect(buildLiveExecutionProgress(events, 'another-run').items).toEqual([])
+    const markup = renderToStaticMarkup(createElement(RunExecutionDisclosure, {
+      run: { id: 'fast-run', status: 'running', executionEpoch: 1, executionEvidenceCount: 4,
+        hasUnsettledExternalEffects: false, failure: null } as AgentRunView,
+      progress, threadId: 'camp-1', focused: true
+    }))
+    for (const label of ['Fast 实际状态未确认', '原生反馈：Fast', '原生反馈：标准速度', '原生反馈：Fast 冷却中', 'Native cooldown reason']) {
+      expect(markup).toContain(label)
+    }
+    expect(markup).not.toContain('已按标准模式执行')
+    expect(markup).not.toContain('正在重试')
+  })
+
   it('keeps the complete Tool chronology after more than twelve operations', () => {
     const progress = buildLiveExecutionProgress(Array.from({ length: 15 }, (_, index) => ({
       id: `tool-evidence-${index + 1}`,

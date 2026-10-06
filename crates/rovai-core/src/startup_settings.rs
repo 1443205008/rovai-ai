@@ -269,7 +269,6 @@ impl Core {
         self.runtime_check_requests
             .send(RuntimeCheckRequest {
                 search: self.runtime_search_environment.read().await.clone(),
-                fast_target: None,
                 startup_preview: Some(preview.clone()),
                 runtime_kind: kind,
                 purpose: RuntimeLaunchPurpose::AvailabilityCheck,

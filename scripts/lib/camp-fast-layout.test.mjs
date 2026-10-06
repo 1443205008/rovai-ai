@@ -14,7 +14,7 @@ const root = resolve(import.meta.dirname, '../..')
 const fixtureSource = join(root, 'scripts/fixtures/camp-fast-layout')
 
 test(process.env.ROVAI_FAST_CHECK_ONLY === '1'
-  ? 'production Camp Fast launch checks preserve intent without automatic probes'
+  ? 'production Camp Fast preferences and observations require no qualification probes'
   : 'production Camp Fast keeps scope, focus and Composer access through native input', { timeout: 60_000 }, async (t) => {
   if (!admitElectronIntegrationTest(t)) return
   const fixture = await mkdtemp(join(tmpdir(), 'rovai-camp-fast-layout-test-'))
