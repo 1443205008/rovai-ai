@@ -2651,6 +2651,7 @@
   "· 与{0}单聊": "· One-on-one chat with {0}",
   "{0} 当前值暂时无法重新读取。": "{0} Current value cannot be re-read at this time.",
   "{0} 返回错误": "{0} returned an error",
+  "{0} 模型目录暂时不可用": "{0} model catalog is temporarily unavailable",
   "{0} 与当前 Rovai 版本不兼容": "{0} is incompatible with the current Rovai version",
   "{0} 的本机运行环境不可用": "The local execution environment for {0} is unavailable",
   "{0} 未能完成运行": "{0} failed to run",

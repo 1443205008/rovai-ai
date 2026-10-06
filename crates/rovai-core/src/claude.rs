@@ -46,6 +46,28 @@ use crate::{
 const MAX_CAPTURE_BYTES: usize = 2 * 1024 * 1024;
 const CLAUDE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 
+// The catalog is advisory. Validate only options this adapter can transmit;
+// the native CLI owns acceptance of model IDs and future effort values.
+fn claude_model_effort(options: &Value) -> Result<Option<&str>> {
+    let options = options
+        .as_object()
+        .context("Claude Code model options must be an object")?;
+    for key in options.keys() {
+        if key != "effort" {
+            anyhow::bail!("Claude Code cannot transmit model option: {key}");
+        }
+    }
+    options
+        .get("effort")
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| !value.trim().is_empty() && !value.chars().any(char::is_control))
+                .context("Claude Code effort must be a non-empty string without control characters")
+        })
+        .transpose()
+}
+
 // Keep prompt/settings bytes out of argv, including for Windows command shims.
 // Only a pre-spawn guard removes a file on drop. After spawn the registered run
 // owns its path until the process tree has been confirmed empty.
@@ -519,6 +541,7 @@ impl ClaudeCodeCliRuntimeAdapter {
         }
         let mut inline_settings = serde_json::json!({});
         rovai_core::camp_fast::merge_claude_inline_settings(&mut inline_settings, fast_override)?;
+        let effort = claude_model_effort(&request.runtime.model.options)?;
         let mut command = Command::new(executable);
         rovai_core::runtime_discovery::configure_runtime_command(
             rovai_core::agent_profile::AdapterKind::ClaudeCodeCli,
@@ -553,14 +576,7 @@ impl ClaudeCodeCliRuntimeAdapter {
         {
             command.args(["--model", request.runtime.model.model_id.as_str()]);
         }
-        if let Some(effort) = request
-            .runtime
-            .model
-            .options
-            .get("effort")
-            .and_then(serde_json::Value::as_str)
-        {
-            // Core already validated this value against the Runtime's model catalog.
+        if let Some(effort) = effort {
             command.args(["--effort", effort]);
         }
         let bootstrap_file = request
@@ -748,12 +764,8 @@ impl ClaudeCodeCliRuntimeAdapter {
                 protocol.initialize().await?;
                 let initialize = tokio::time::timeout(claude_control::INITIALIZE_TIMEOUT, initialized).await
                     .context("Claude Code protocol initialization timed out")??;
-                if request.runtime.model.source == "explicit" {
-                    let models = rovai_core::agent_runtime_adapter::claude_code_models(&initialize)?;
-                    rovai_core::agent_runtime_adapter::validate_live_model_selection(
-                        &models, &request.runtime.model.model_id, &request.runtime.model.options,
-                    )?;
-                }
+                // A missing, stale or restricted catalog cannot reject saved intent.
+                // initialize still verifies the protocol and permission handshake.
                 if let Some(events) = &request.runtime_events {
                     let enabled = initialize.get("fast_mode_state")
                         .and_then(rovai_core::camp_fast::ObservedFastState::from_claude)
@@ -2540,6 +2552,28 @@ mod tests {
     use serde_json::json;
     use tokio::io::AsyncWriteExt;
 
+    #[test]
+    fn model_options_must_be_transmittable_without_a_catalog() {
+        assert_eq!(claude_model_effort(&json!({})).unwrap(), None);
+        assert_eq!(
+            claude_model_effort(&json!({"effort":"future-level"})).unwrap(),
+            Some("future-level")
+        );
+        for options in [
+            json!(null),
+            json!([]),
+            json!({"effort":1}),
+            json!({"effort":""}),
+            json!({"effort":"high\n"}),
+            json!({"unknown":"value"}),
+        ] {
+            assert!(
+                claude_model_effort(&options).is_err(),
+                "must not silently drop {options}"
+            );
+        }
+    }
+
     fn fake_claude_request(
         workspace: &Path,
         executable: &Path,
@@ -3334,6 +3368,13 @@ mod tests {
             let fast_field = native_fast
                 .map(|state| format!(r#"\"fast_mode_state\":\"{state}\","#))
                 .unwrap_or_default();
+            // Existing process matrix also proves saved models/options reach the
+            // CLI when initialization omits, empties or disagrees with the catalog.
+            let models_field = match fast {
+                None => r#"\"models\":[],"#,
+                Some(true) => r#"\"models\":[{\"value\":\"another-model\"}],"#,
+                Some(false) => "",
+            };
             std::fs::write(
                 &executable,
                 format!(
@@ -3348,7 +3389,7 @@ mod tests {
     done
     IFS= read -r init
     init_id=$(printf '%s' "$init" | /usr/bin/sed -E 's/.*"request_id":"([^"]+)".*/\1/')
-    printf '%s\n' "{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"$init_id\",\"response\":{{{fast_field}\"models\":[{{\"value\":\"provider/custom[extended]\",\"displayName\":\"Custom\",\"supportedEffortLevels\":[\"future-level\"]}}]}}}}}}"
+    printf '%s\n' "{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"$init_id\",\"response\":{{{fast_field}{models_field}\"commands\":[]}}}}}}"
     IFS= read -r prompt
     printf '%s\n' "$prompt" >> "$0.prompts"
     printf '%s\n' '{{"type":"stream_event","session_id":"{session_id}","event":{{"type":"message_start"}}}}'
