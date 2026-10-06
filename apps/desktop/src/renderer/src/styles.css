@@ -9404,3 +9404,5 @@ button.skill-file-current:hover, .skill-file-current[aria-expanded="true"] { bac
   .member-joined-configure { min-height: 44px; }
 }
 .member-joined-card time { white-space: nowrap; }
+
+.execution-fast-observation { display: flex; flex-wrap: wrap; gap: 4px 8px; color: var(--muted); font-size: 10.5px; line-height: 1.6; overflow-wrap: anywhere; }

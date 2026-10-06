@@ -819,3 +819,44 @@ Windows 既有 shim owner 在 `slow-tests` 下增加目标内容更新、npm pla
 `cargo check --workspace --all-targets --features slow-tests`、文档两道门禁和格式检查通过。
 本轮重新执行 `pnpm test:rust:pr`：453 通过、0 失败、1 项原有人工 Runtime smoke 忽略。
 Clippy 与首轮基线比较仍是原有 10 项错误，本切片没有新增 lint、抑制规则或全局健康机制。
+
+
+## 2026-10-06 Fast 偏好直接应用
+
+- 基线：`0baa74144ba52de257c98656e72b445c9bc43d4e`；分支 `rovai/fast-runtime-preference`。
+- 现有偏好表支持首次事务写入，控制投影不读资格/健康；保存、绑定与 Run 冻结沿用原边界。
+- 删除 Claude/Codex Fast 专用资格与额外子进程路径，保留通用诊断及真实 Host 的必要验证。
+- 控件直接保存三态，原生反馈进入现有 Run Evidence；缺失字段为 unknown、禁用原因经过脱敏，不反写偏好。
+- `pnpm test:rust:pr` 通过：workspace 451 项通过、1 项既有人工 Runtime smoke 忽略。
+- `extended-tests` 定向 owner 通过：`camp_fast::` 2 项、`claude::` 33 项、`codex::` 22 项及 1 项原有忽略、
+  `execution_evidence::tests::` 17 项、`runtime::tests::scheduler_rebinds_one_compatible_runtime_drift_and_preserves_initial_audit` 1 项。
+  在既有 owner 中验证三态首次写入、新连接读取、真实进程的新建/恢复与显式模型参数、未知版本零资格子进程、
+  明确关闭、拒绝单 Turn 参数后零重放，以及 Run 逻辑窗口可见的脱敏反馈。
+- `pnpm test` 最终通过：Vitest 238 个文件、2601 项通过，后续 Node 脚本 334 项通过、2 项平台跳过。
+  首轮飞书附件恢复测试超时；该文件独立 81 项通过后，完整命令重跑通过，未改动该模块。
+- `pnpm check:rust`、`pnpm typecheck`、`pnpm build:desktop`、`cargo fmt --all --check`、`git diff --check`、
+  `pnpm docs:test`、`pnpm docs:check` 及以上述基线运行的 `pnpm docs:check:ci` 通过。
+- `ROVAI_FAST_CHECK_ONLY=1 pnpm test:camp-fast-layout` 通过，覆盖真实 Renderer 的双入口、三态、保存并发与迟到回执隔离、
+  原生反馈不反写偏好、零资格请求；日夜截图已检查。完整 `pnpm test:camp-fast-layout` 仍在上轮已记录的
+  执行 disclosure `.open` 旧断言失败，未修改或跳过该断言，不能算整套布局/Stop 验收通过。
+- 未执行真实 CLI 账户、实体 Windows、实际计费或日常 App 安装验收；合成进程与隔离 Renderer 结果不替代这些验证。
+
+## 2026-10-06 Fast 二态与初始化值
+
+- 基线：`4099bc3843eb3b6bdbe51d9bb09c3df2fdc2d347`；分支 `rovai/fast-native-baseline`。
+- 保留现有 Thread 队员偏好表、nullable override、绑定代次和 Run 冻结，不改成 Session 级存储。
+  真实初始化值复用现有默认列，只用于控件显示；历史诊断 fingerprint 记录不充当原生默认。
+- Codex 正常 start/resume 响应读取 `serviceTier`，Claude 正常 control initialize 读取
+  `fast_mode_state`；缺失保持内部未知。两者不新增请求、子进程、配置文件解析或正文等待。
+- Fast 控件恢复单按钮、固定文字和二态 ARIA，保存明确布尔值。已有选择优先于 baseline，
+  保存期间仅初值刷新的投影不能丢掉回执；普通运行观察保持独立。
+- 扩展既有 `camp_fast`、Claude/Codex 启动测试及隔离 Renderer owner，不增加框架或独立测试 owner。
+  覆盖默认来源、历史诊断隔离、保存/重绑、缺字段继续输入、无额外 RPC/进程及新建/恢复参数。
+- `pnpm typecheck`、`pnpm check:rust`、`pnpm build:desktop` 通过；`pnpm test` 包含文档/Skill 门禁，
+  Vitest 2601 项通过，末轮 Node 334 项通过、2 项平台限定跳过。
+  固定上述 base 的 `pnpm docs:check:ci` 通过。
+- `pnpm test:rust:pr` 451 项通过、1 项真实 Runtime smoke 保持忽略；启用 `extended-tests` 的
+  `camp_fast::` / `claude::` / `codex::` 定向回归分别通过 2 / 33 / 22 项，Codex 1 项真实 smoke 保持忽略。
+- `ROVAI_FAST_CHECK_ONLY=1 pnpm test:camp-fast-layout` 通过，日夜截图已检查；验证二态、初始化值、
+  明确关闭、双入口同步及保存期间迟到刷新。未增加或退役 Rust owner。
+- 不执行真实账户计费、实体 Windows 或日常 App 安装验收；沿用上一节完整布局测试的已知限制。

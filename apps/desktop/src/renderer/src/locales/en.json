@@ -2321,7 +2321,7 @@
   "确认删除任务": "Confirm delete task",
   "任务列表宽度 {0} 像素": "Task list width {0} pixels",
   "执行，{0}": "Run, {0}",
-  "{0}的 Fast，{1}": "{0} Fast, {1}",
+  "{0}的 Fast": "{0} Fast",
   "记忆，{0} 条普通提案待确认": "Memory, {0} regular proposals pending confirmation",
   "记忆 · {0} 条普通提案待确认": "Memory · {0} regular proposals pending confirmation",
   "使命板，{0} 个使命有未读回复": "Mission Board, {0} missions have unread replies",
@@ -3499,11 +3499,14 @@
   "尚未检测到可执行入口。": "No executable entry has been detected.",
   "已检测到可执行入口；启动任务时验证登录、模型与所需能力。": "Executable detected. Sign-in, model and required capabilities are checked when a task starts.",
   "已检测到": "Detected",
-  "启动任务时验证登录、模型与权限；修复环境后可直接重试。": "Sign-in, model and permissions are checked at launch. Retry after fixing the environment.",
-  "可尝试运行": "Ready to try",
   "检查 Fast": "Check Fast",
   "检查中…": "Checking…",
   "正在初始化 Runtime": "Initializing runtime",
   "当前未确认 Fast 资格，可继续使用默认响应模式。": "Fast eligibility could not be confirmed. You can continue with the default response mode.",
-  "Fast 资格检查失败，可再次尝试。": "Fast eligibility check failed. You can try again."
+  "Fast 资格检查失败，可再次尝试。": "Fast eligibility check failed. You can try again.",
+  "跟随 Runtime 默认": "Follow Runtime default",
+  "原生反馈：Fast": "Runtime reports Fast",
+  "原生反馈：标准速度": "Runtime reports standard speed",
+  "原生反馈：Fast 冷却中": "Runtime reports Fast cooldown",
+  "Fast 实际状态未确认": "Actual Fast state unconfirmed"
 }

@@ -14,14 +14,12 @@ export function ThreadMemberFastToggle({
   onToggle(next: boolean): void
 }): React.JSX.Element {
   const enabled = effectiveThreadMemberFast(value)
-  const unknown = value.fastOverride === null && value.runtimeDefaultFast === null
-  const stateLabel = unknown ? uiAttribute('跟随智能体默认') : enabled ? uiAttribute('后续执行请求 Fast') : uiAttribute('后续执行请求标准速度')
   return <span className="camp-fast-control">
     <button
       type="button"
       className={`camp-fast-toggle ${enabled ? 'is-on' : ''}`}
-      aria-label={uiAttribute("{0}的 Fast，{1}", String(displayName), String(stateLabel))}
-      aria-pressed={unknown ? 'mixed' : enabled}
+      aria-label={uiAttribute("{0}的 Fast", displayName)}
+      aria-pressed={enabled}
       aria-disabled={pending}
       aria-busy={pending}
       onClick={() => { if (!pending) onToggle(!enabled) }}
@@ -32,16 +30,4 @@ export function ThreadMemberFastToggle({
       </span>
     </button>
   </span>
-}
-
-export function ThreadMemberFastCheck({ displayName, pending, onCheck }: {
-  displayName: string
-  pending: boolean
-  onCheck(): void
-}): React.JSX.Element {
-  return <span className="camp-fast-control"><button type="button" className="camp-fast-toggle camp-fast-check"
-    aria-label={uiAttribute('检查 {0} 的 Fast 资格', displayName)} aria-busy={pending}
-    disabled={pending} onClick={onCheck}>
-    <span className="camp-fast-pill">{uiAttribute(pending ? '检查中…' : '检查 Fast')}</span>
-  </button></span>
 }
