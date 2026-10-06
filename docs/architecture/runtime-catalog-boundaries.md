@@ -14,7 +14,7 @@ last_updated: 2026-10-06
 [Runtime Platform Admission v2](../contracts/runtime-platform-admission-v2.md)拥有；Runtime 启动与延迟验证边界见
 [Runtime 进程与校验不变量](foundational-invariants.md#runtime-process-verification)、
 [Runtime 恢复与关闭不变量](foundational-invariants.md#runtime-recovery-shutdown)及
-[Runtime Launch and Verification v48](../contracts/runtime-launch-and-verification-v48.md)。实测版本和能力只由
+[Runtime Launch and Verification v49](../contracts/runtime-launch-and-verification-v49.md)。实测版本和能力只由
 [Runtime 兼容性清单](../runtime-compatibility.md)记录。
 
 ## 四层权威
@@ -72,7 +72,7 @@ Desktop 只编辑草稿，不拥有第二份有效配置。SQLite 保存与旧 m
 显式程序路径失效时保持缺失，不能换用自动候选；用户恢复自动后再使用原有发现来源。
 草稿浅检不写安装，草稿深检复用 Check Manager 的并发、deadline 与清理 owner，结果只回到编辑器。
 环境只传入对应 Runtime 进程与原生配置读取，既不修改系统环境，也不投影到公共上下文。
-字段、CAS、迁移和错误边界由 [Runtime Launch v48](../contracts/runtime-launch-and-verification-v48.md)拥有。
+字段、CAS、迁移和错误边界由 [Runtime Launch v49](../contracts/runtime-launch-and-verification-v49.md)拥有。
 
 主动正式检查在后端先读取最新基础环境、加载已保存启动设置，再将不可变环境快照交给 Check Manager。
 刷新后的请求不与旧搜索代数合并；结果写回与保存/刷新共用更新锁并重验代数和程序身份。
@@ -107,7 +107,7 @@ Claude 认证依据原生结构化身份，Codex `auto` 继续由原生运行时
 登录状态是展示信息，不以订阅、重新登录或真实账号验收作为功能前置，不增加执行时的身份／有效连接检查；
 缺失或未登录的身份不增加执行门槛；认证结果由原生既有检查和正常调用负责。
 保存只做本地校验；目录、协议初始化和真实接口能力分别验收。字段与限制见
-[Runtime Launch v48](../contracts/runtime-launch-and-verification-v48.md)，实际版本／平台见
+[Runtime Launch v49](../contracts/runtime-launch-and-verification-v49.md)，实际版本／平台见
 [原生连接验收](../versions/v1.72/runtime-custom-api-verification.md)。
 
 <a id="浅检测与按需深检"></a>
@@ -124,7 +124,7 @@ Claude 认证依据原生结构化身份，Codex `auto` 继续由原生运行时
 
 主动诊断沿用有界 Runtime Check Manager 和进程清理，Probe 前后仍校验目标身份；其结果不授权运行。
 Antigravity 的正文只能进入 argv，因此保留有界 help/models 无正文预检；Fast 可选偏好直接进入真实 Host，不再进行资格预检。
-特例和字段由 [Runtime Launch v48](../contracts/runtime-launch-and-verification-v48.md)拥有，不扩展为统一健康门禁。
+特例和字段由 [Runtime Launch v49](../contracts/runtime-launch-and-verification-v49.md)拥有，不扩展为统一健康门禁。
 
 ### Machine Ready 与 Adapter 行为证据
 
@@ -195,7 +195,7 @@ Claude、ACP、Codex 模型／初始化及 Codex 原生配置查询，不删除�
 本期不增加任意模型 ID 输入。正式会话仍完成 initialize 协议／权限握手，但不再据其目录拒绝已有配置。
 显式模型 ID 原样传给 `--model`，effort 原样传给 `--effort`；不能传递的键或非字符串选项明确拒绝，
 不把未知原生枚举值静默删除。运行时默认省略模型参数。字段与错误边界见
-[Runtime Launch v48](../contracts/runtime-launch-and-verification-v48.md)。
+[Runtime Launch v49](../contracts/runtime-launch-and-verification-v49.md)。
 
 ## 内部诊断与公开 Runtime failure
 
@@ -217,7 +217,7 @@ ACP matching Prompt error 至少保留安全数字 JSON-RPC error code 和有界
 `AgentRunView.failure` 和 `ProductRuntimeAvailability.failure` 只投影该安全对象。显式检查可以持久化 Probe
 Attempt failure；启动浅检测的瞬时 version failure 仍只用于内部发现，不升级为产品级 failure，也不覆盖
 last-known-good。此增量不修改其他 Runtime 的执行路径或 Availability 状态集合。字段级合同见
-[Runtime Launch and Verification v48](../contracts/runtime-launch-and-verification-v48.md)。
+[Runtime Launch and Verification v49](../contracts/runtime-launch-and-verification-v49.md)。
 
 ## TRAE CLI CN 当前边界
 
@@ -267,7 +267,7 @@ Cursor Host 完成 Run 后停止，不跨 Run 延伸未证明的进程状态。
 项目 `.cursor/skills` 是 Rovai managed delivery target；该结论只建立可清理文件投影，不把上游文档中的
 Skill 扫描能力冒充真实 load/invocation pass。当前所有平台未准入，因此普通产品路径不会实际投影或启动
 Cursor。Settings 的 Agent Runtime 目录默认不展示 Cursor；closed identity 只用于内部兼容、历史读取和后续实现。
-字段级行为见 [Runtime Launch and Verification v48](../contracts/runtime-launch-and-verification-v48.md)，
+字段级行为见 [Runtime Launch and Verification v49](../contracts/runtime-launch-and-verification-v49.md)，
 证据状态见 [Runtime 兼容性清单](../runtime-compatibility.md)。
 
 ## ACP Client Terminal 边界
@@ -296,7 +296,7 @@ output 与 error 不进入 Camp message 或 durable Evidence。字段与幂等�
 三者的普通检查沿用正式运行的原生 Home 选择，包括未设置的 Home override；Grok BYOK 不再复制配置。
 临时 cwd、Kiro additive agent、既有非交互认证、无消息 Session 检查和有界进程清理保留，不发送 Prompt。
 只清理 Probe 自有资源；原生初始化可能联网或落盘，检查不保证模型生成、余额或任意项目配置。
-自动化回归与真实模型 smoke 继续由调用方提供隔离环境，详见 [Runtime Launch v48](../contracts/runtime-launch-and-verification-v48.md)。
+自动化回归与真实模型 smoke 继续由调用方提供隔离环境，详见 [Runtime Launch v49](../contracts/runtime-launch-and-verification-v49.md)。
 
 仍保留两项独立差异：Kiro 通过临时 `.kiro/agents/rovai.json` 与 `--agent rovai` 追加 MCP；Kimi 通过
 Rovai 专属 env 文件提供进程级模型配置。两者分别评估，本次不改变默认 Agent、MCP 或 Provider 投递机制。
@@ -348,7 +348,7 @@ lease fencing、exact successor read 与 logical/native continuation 全部通�
 因此 snapshot 声明 built-in transport。macOS arm64、macOS x64 与 Windows x64 当前均为 digest-bound
 `qualified`：arm64 由完整 Kimi 资格矩阵准入，macOS x64 由维护者完成平台验收后的独立发布确认准入，Windows
 x64 由独立 Windows 资格证据准入。三者都进入普通 discovery、检查、成员配置和 AgentRun 路径。字段级行为见
-[Runtime Launch and Verification v48](../contracts/runtime-launch-and-verification-v48.md)，证据状态见
+[Runtime Launch and Verification v49](../contracts/runtime-launch-and-verification-v49.md)，证据状态见
 [Runtime 兼容性清单](../runtime-compatibility.md)。
 
 ## Grok Build 当前边界
@@ -447,7 +447,7 @@ Pi Prompt images 已通过原生 RPC 接入，但结构化 Web Search 与 Camp F
 macOS x64 和 Windows x64 各自绑定 Pi 专属 immutable evidence revision，均为 `qualified / reasonCode=null`；普通
 discovery、检查、成员选择、Diagnostics 与 AgentRun 对三平台开放，UI 走正式 Runtime 展示且不再标记实验性。
 平台晋升不新增 Pi 已明确 unsupported/hidden 的能力。字段级行为见
-[Runtime Launch and Verification v48](../contracts/runtime-launch-and-verification-v48.md)，
+[Runtime Launch and Verification v49](../contracts/runtime-launch-and-verification-v49.md)，
 证据状态见[Runtime 兼容性清单](../runtime-compatibility.md)。
 
 ## 队员最高权限默认
@@ -474,7 +474,7 @@ Runtime-managed AgentRun 通过标准 ACP `session/set_config_option` 投递冻�
 `CoreEnforcedV1 + read_only Workspace` 恢复路径仍强制 `plan`。descriptor 的 `recommendedValue=default` 只是
 保守提示，不改变 Product default；已有成员保存的
 `default`、`auto` 或 `plan` 不由 discovery、升级或 migration 静默扩权。十二种 Runtime 的 exact 默认矩阵见
-[Runtime Launch and Verification v48](../contracts/runtime-launch-and-verification-v48.md)。
+[Runtime Launch and Verification v49](../contracts/runtime-launch-and-verification-v49.md)。
 复用 Kimi Host 时从当前 AgentRun 的冻结配置设置 Session 模式，不继承原 Host 创建时的模式；注入 Host 的
 Provider 环境按生效键值计算私有兼容摘要，注释或无关文件格式变化不触发替换，环境值变化则替换 Host。
 CodeBuddy 的显式模型通过 Host 启动参数 `--model` 选择，因此它参与进程兼容；Runtime-default

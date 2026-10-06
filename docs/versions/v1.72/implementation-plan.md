@@ -868,6 +868,119 @@ Clippy 与首轮基线比较仍是原有 10 项错误，本切片没有新增 li
 - 不执行真实账户计费、实体 Windows 或日常 App 安装验收；沿用上一节完整布局测试的已知限制。
 
 
+## 2026-10-06 Codex Host 失败恢复
+
+基线 `4099bc3843eb3b6bdbe51d9bb09c3df2fdc2d347`，worktree `rovai-ai-codex-host-recovery`，分支 `rovai/codex-host-recovery`。
+本次不需要主线先行治理提交；状态与验证以本节和分支最终提交为准。
+
+- `application.rs`：原生终态与业务交付分别判定；成功先做安全释放，失败事务建门禁后交既有 worker；未确认回收不解锁。
+- `runtime.rs` / `delivery_queue.rs`：复用现有清理意图、ACK 与 claim 事务；新增内部显式需要清理的终态入口，保留原生来源。
+  输入未知的 Codex 失败接入既有 abortive settlement，默认轮换原生绑定。
+- `codex.rs`：进程先交 Fleet，再 initialize / account / model 验证；显式释放策略；thread/resume 校验 ID，不隐式回退空 Thread。
+- `runtime_fleet.rs`：四种释放结果、迟到检查防止误停后继、停止未确认保留租约/容量；现有 owner record 延长到数据库清理 ACK，
+  记录 Run/epoch 与停止回执以支持重启对账。没有新增认证、调度、恢复管理器或后台健康轮询。
+- `runtime_failure.rs`：仅可信 Codex 失败对象进入结构化优先分类，认证拒绝不等于未登录。
+
+测试 owner 与准入：扩展 Codex 真实 Host 验证 fixture，初始化/认证/模型失败均断言零正文和已回收；新增假 Runtime
+进程测试拥有 warm→失败→换 Host→精确冷恢复的跨进程合同，覆盖失败前/后更新假凭据。原生状态和错误分类矩阵由
+小型 parser/policy 测试拥有。复用 Fleet 清理超时及 runtime 未知结果测试，补齐回收回执跨重启的唯一 owner。
+Core 并发 seam 测试实际执行终态事务、Delivery claim 和带停止屏障的 Fleet worker，验证已排队输入不被领取，
+且无关会话能推进；这一竞态不能仅用纯函数或源码字符串测试证明。
+
+Adapter 审计：
+
+| Adapter | 状态 | 本次结论 |
+| --- | --- | --- |
+| Codex | 已接入，受控验证通过 | 本次闭环范围；不操作日常故障会话 |
+| ACP | 已审计，发现缺口，未接入 | prepare_agent_run_terminal_visibility 在持久终态前释放；多数 Adapter 仍申请 Reusable。ZCode 后台任务归属必须单独处理 |
+| Pi | 已审计，发现缺口，未接入 | 失败已有 Stop 路径，但仍以业务输出判断完成且忽略清理结果；需独立接入原生终态策略 |
+
+验证命令与证据（macOS arm64；`slow-tests` 包含 `extended-tests`）：
+
+| 命令 / filter | 结果 |
+| --- | --- |
+| `cargo fmt --all --check`、`cargo check --workspace` | 通过 |
+| `pnpm test:rust:pr` | workspace 452 项通过；1 项现有人工验证按声明跳过 |
+| `cargo test -p rovai-core --lib --features slow-tests codex::` | 24 项通过；1 项真实 Runtime smoke 按声明跳过 |
+| 同上 `runtime_fleet::` / `runtime::tests::` / `runtime_failure::` | 分别 23 / 34 / 5 项通过 |
+| 同上 `acp::` / `pi::` | 74 / 21 项通过；Pi 真实安装 smoke 按声明跳过 |
+| 同上 `native_failure_gates_already_queued_input_until_managed_reap` | 已排队输入、暂停回收、无关 lane、ACK 后单次 claim 通过 |
+| 同上 `codex_native_terminal_controls_host_independently_of_business_delivery` | 实际回调覆盖 completed 缺少回复、失败、取消、中断、中间 error、旧终态及绑定保留 |
+| 同上 `runtime_cleanup_dispatch_is_non_blocking_and_deduplicated` / `cancellation_covers_launch_without_a_handle_and_has_one_total_deadline` | 均通过 |
+| `pnpm docs:test`、`pnpm docs:check`、`DOCS_BASE_REF=4099bc3843eb3b6bdbe51d9bb09c3df2fdc2d347 pnpm docs:check:ci` | 通过 |
+
+状态：ready，独立 worktree 保留供后续审查，下一步为人工审阅远程分支；本次不自动创建 PR。
+所有 Runtime 测试使用临时目录、受控假进程和假凭据，不访问用户账号，不重启日常 Core/Host。
+真实 Runtime 与 Windows 运行验证未执行；不能将夹具成功描述为故障会话已经现场恢复。
+
+## 2026-10-06 Windows owner record 与重启回执修复
+
+基线 `088fbfc1d3772653c0599cc7fb25491002670428`，继续提交到 `rovai/codex-host-recovery`。
+平台为实体 Windows 10 Pro 22H2 x64（build 19045），Rust/Cargo 1.97.1。
+
+- 修复 fresh Fleet owner 目录由普通 mkdir 创建、继承 DACL 导致原子私有写入拒绝全部 Host 登记的问题。
+  `runtime-fleet/owners` 使用原生私有创建；已准入 Core 根下的旧目录/JSON 只迁移精确继承的 user/SYSTEM ACL。
+  更宽 ACL、未知 owner、reparse 和错误类型继续阻断，初始化错误向 Core 返回，不再静默停用持久记录。
+- Windows Managed Process 创建私有、不可继承、禁止 breakaway 的唯一全局 Job；Codex owner record 保存 Job 身份
+  和进程创建时间。该轮曾以“Job 消失且根实例退出”补齐重启证明；下节记录 2026-10-07 审查发现及修正，
+  此旧推导不再作为当前回收准入。不补杀无关进程。
+  当前代际的 Codex bounded reap 等待整个 Job 为空，再写回已回收凭据；回执保留到精确 Run/epoch 的数据库 ACK。
+- 兼容边界：旧 `reaped=true` 回执继续有效；旧匿名 Job 的未确认 scoped 记录缺少树退出证据，继续保留门禁。
+  本次不凭裸 PID 缺失为这些旧记录补造 ACK，不处理日常故障会话。
+- 默认 workspace 首轮暴露既有 Claude permission 夹具将 `/tmp/project` 当作 Windows 绝对路径的问题；改用本机
+  临时目录下的绝对路径，保留其原生 request/input/approval 全部正向、拒绝与防串用断言，完整命令重跑通过。
+
+测试准入：扩展既有 `scoped_cleanup_receipt_survives_restart_until_durable_ack`，覆盖真实原生进程的重启回执、
+同一 Run 的 live/dead 多记录、PID 身份差异、非法/缺失 Job 身份及旧 epoch ACK。扩展既有 Job 孙进程与 Core
+强杀 owner，证明可重新查询的生命周期。新增 `windows_owner_registration_admits_only_private_or_legacy_inherited_storage`
+拥有独立的私有目录/旧 ACL 迁移 seam；纯策略测试不能证明生产 Fleet 准备全部父目录、成功私有写入及保留旧回执。
+全部进程/文件 fixture 隔离在临时目录，新增 owner 属于 `extended-tests`，没有新增真实账号 smoke 或重复数据库 fixture。
+
+| 命令 / owner | Windows 结果 |
+| --- | --- |
+| `cargo test --workspace` | 492 项通过，8 项按声明忽略 |
+| `cargo check --workspace --all-targets --features slow-tests` | 全部目标编译通过 |
+| `cargo test -p rovai-core --features extended-tests --lib runtime_fleet::tests:: -- --test-threads=1` | 23 项通过，含两处缺陷的回归 |
+| 扩展 libtest `managed_process::tests::windows_` / `codex::tests::` / `runtime_failure::tests::` | 分别 12 / 21 / 5 项通过；7 个子进程 helper 和 1 个真实账号 smoke 按声明忽略，helper 由 native owner 显式调用 |
+| 扩展 libtest 的 Runtime loss/provenance、startup accepted-unknown、network no-replay 与两个 Delivery cleanup gate owner | 6 项精确用例通过，保留 ACK 前门禁及跨 execution-root 隔离 |
+| `cargo fmt --all --check`、`git diff --check` | 通过 |
+| `pnpm docs:test`、`pnpm docs:check`、以上述修复基线运行 `pnpm docs:check:ci` | 通过 |
+
+本节补充上一节的 Windows 证据；未运行 Windows 11、真实 CLI 账户/计费或日常 App 验收。
+当前修补不扩大 ACP/Pi 的原生终态接入范围，也不把受控进程验证描述为用户已有故障会话已经恢复。
+
+## 2026-10-07 Windows Job 回收证明修正
+
+基线 `396c6a01ba1b5594f83e26827f5163238d76bbfe`；User 授权修复、创建 PR 并合入 main。
+先合入主线 `520320a8`，保留原生 API 配置与 Fast 初始化改动；主线已使用 Runtime Launch v48，
+因此 Codex Host 恢复增量顺延至 [v49](../../contracts/runtime-launch-and-verification-v49.md)，继承完整 v48。
+
+- 删除“Job 名称不存在时查询根 PID”的捷径。Windows 原生 CI 随后在持有同一孙进程 handle 的条件下
+  复现 `ActiveProcesses=0` 先于 handle signaled（run `37495892005`，提交 `cd25153a`），因此也撤销
+  “重新打开空 Job 即可证明回收”的推导。跨 Core 只接受已有精确 Run/epoch 的持久回执。
+- 当前 Windows Managed Process 在空 Job 上绑定私有 IOCP，按去重成员通知保留进程 handle；全部确认退出后，
+  最后核对 Job 生命周期总成员数与活跃数，才允许既有 `tree_is_empty()` 成功。丢通知、重复 PID 少计、
+  查询未知均保留门禁；通知读取与成员核验均有单轮预算。只增加本 owner 的退出证据，不新增恢复管理器或后台轮询。
+- 扩展既有 Fleet receipt owner：即使真实 Job 可查询为空，未持久回执时仍未确认；owner 确认退出并持久回执后，
+  关闭 handle 再重启仍可精确 ACK。缺失 Job、根仍活、PID 不存在与复用均不能补造回执。
+  既有 Managed Process 孙进程 owner 保持精确 handle，增加首次观察后创建后代、丢成员通知、重复通知与
+  非法通知后再次轮询的负向断言；强杀 owner 的实际退出与跨 Core 可用证明分别由两层 owner 验证。
+  没有新增或退役 Rust 测试。
+- 手动 Full check 增加 `windows-runtime` scope 复用既有 Windows job；显式运行 extended Fleet/Codex owner，
+  不以 default-feature 过滤到 0 项的结果替代跨平台验证。
+
+最小定向命令为 `cargo test -p rovai-core --lib --features extended-tests runtime_fleet::tests::`、
+同参数的 `codex::tests::`，以及 `cargo test -p rovai-core --lib managed_process::tests::windows_`。
+后者仅 Windows 有有效用例；Unix/macOS 限定的冷恢复、初始化零正文与两条 Core 集成用例在 macOS 独立执行。
+本轮 macOS 验证：默认 workspace 455 项通过、1 项真实 Runtime 按声明忽略；slow-tests 下 Fleet 23 项、
+Codex 24 项通过（另 1 项真实账号 smoke 忽略），两条 Core 原生终态／已排队输入门禁 owner 各 1 项通过。
+`cargo check --workspace`、format、文档单测 10 项与以 `520320a8` 为 base 的全部文档门禁通过。
+Fleet/Codex 采用独立 CI step，避免 PowerShell 后续成功覆盖前一失败码。Windows 新增句柄边界修正的
+两路静态复核已通过；追加修正后 workspace 编译、Fleet 23 项、format 和全部文档门禁再次通过。
+上列默认套件、Codex/Core 的 macOS 数量属于追加 Windows 句柄修正前的验证，不冒充后续原生结果。
+Windows 原生运行结果归档于 [PR #652](https://github.com/murray17/rovai-ai/pull/652) 的检查记录；
+既有 Windows 10 的 492 项结果只覆盖上一节提交，不能代替本轮修复。本轮不运行真实账号或日常 App。
+
 ## Member CLI 最小增量
 
 - 工作分支 `rovai/member-cli`，复用独立 worktree；提示词 r1 的确认消息为 `d283c49e-6894-4274-a584-ce449b544d44`。
