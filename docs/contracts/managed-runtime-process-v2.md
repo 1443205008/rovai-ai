@@ -3,7 +3,7 @@ document_type: contract
 contract: managed-runtime-process-v2
 status: accepted
 source_version: v1.58
-last_updated: 2026-10-06
+last_updated: 2026-10-07
 ---
 
 # Managed Runtime Process v2
@@ -138,9 +138,11 @@ Windows Managed Process 为每次启动创建带随机身份的 `Global\Rovai.Ru
 受保护的当前用户/SYSTEM DACL，拒绝复用已有名字；不设置 breakaway。全局 namespace 防止 Core 换 Windows
 登录 Session 后把旧 Session 中仍存在的 Job 误判为不存在。控制 handle 仍由启动代际拥有、不可继承。
 Fleet 只保存内部 Job 身份，重启后通过 Managed Process 瞬时打开不可继承的 query/read-control handle；
-存活 Job 必须查询到零 active processes；Job 不存在时还要求根进程实例已退出，才能结合 kill-on-close 证明确认退出。
-根进程创建时间用于识别 PID 复用，恢复只查询/等待，不能终止已复用该 PID 的无关进程。
-访问拒绝、ACL 不符、非法身份或其他查询失败保持未确认；根 PID 退出、PID 复用或终止请求成功均不能替代 Job 证据。
+存活 Job 必须查询到零 active processes；Job 不存在时保持未确认，不能结合根进程退出或 PID 复用补造回收凭据。
+临时 Job 的最后 handle 关闭即可使名称从 namespace 移除，不能据此推导后代已完成异步终止及在途 I/O 取消。
+恢复只查询 Job，不按记录中的 PID 终止进程；访问拒绝、ACL 不符、非法身份或其他查询失败同样保持未确认。
+已有持久化、精确 Run/epoch 的已回收凭据在 Job 消失后继续有效；缺少该证据的崩溃执行继续阻塞相关后继输入，
+不通过等待固定时长、轮换 Native Session 或重新登录解除门禁。本期不增加跨 Core 的 Job handle 保活服务。
 Codex 在当前代际的 bounded reap 同样等待 Job 为空，再提交已回收凭据。
 
 Unix 直接启动目标进程并保留 process group、stdio、环境快照与退出回收语义；Windows 保留原子 Job、
@@ -202,3 +204,5 @@ pipe handle。Main 被强制终止后，Core 必须在 deadline 内通过 stdin 
 - [Planned Shutdown](../architecture/planned-shutdown.md)
 - [Windows Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
 - [Windows Kernel Object Namespaces](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces)
+- [Windows Object Lifecycle](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/life-cycle-of-an-object)
+- [TerminateProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess)

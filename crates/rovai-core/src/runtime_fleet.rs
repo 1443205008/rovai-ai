@@ -1174,8 +1174,6 @@ impl RuntimeOwnerRecordStore {
                         || _record.windows_job_name.as_deref().is_some_and(|job_name| {
                             crate::managed_process::ManagedProcess::recorded_windows_tree_is_empty(
                                 job_name,
-                                _record.pid,
-                                _record.process_start_identity,
                             )
                             .unwrap_or(false)
                         });
@@ -3835,7 +3833,8 @@ mod tests {
                     .unwrap()
                     .success()
             );
-            drop(child);
+            // Keep the empty Job queryable until its receipt has been persisted.
+            assert!(child.tree_is_empty().unwrap());
             let handshake = root.join("live.pid");
             let mut live_command = tokio::process::Command::new(std::env::current_exe().unwrap());
             live_command
@@ -3906,7 +3905,13 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            drop(live_child);
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !live_child.tree_is_empty().unwrap() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("native Job did not finish descendant cleanup");
             assert_eq!(
                 restarted
                     .stop_agent_run_until_with_outcome(
@@ -3931,40 +3936,68 @@ mod tests {
             let retained: RuntimeOwnerRecord =
                 serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
             assert!(retained.reaped);
+            drop(child);
+            drop(live_child);
+            // Durable positive evidence remains valid after the Job disappears.
+            assert_eq!(
+                restarted
+                    .stop_agent_run_until_with_outcome(
+                        "old-run",
+                        7,
+                        Instant::now() + Duration::from_secs(1),
+                    )
+                    .await,
+                FleetReleaseOutcome::Reaped
+            );
             restarted.acknowledge_cleanup("old-run", 6).await;
             assert!(path.exists());
             restarted.acknowledge_cleanup("old-run", 7).await;
             assert!(!path.exists());
             assert!(!live_path.exists());
 
-            // A missing name is insufficient while the recorded root instance
-            // is still alive; access failures likewise remain unconfirmed.
-            crashed_record.pid = std::process::id();
-            crashed_record.process_start_identity =
-                owner_process_start_identity(std::process::id());
-            crashed_record.windows_job_name =
-                Some(format!("Global\\Rovai.Runtime.{}", uuid::Uuid::new_v4()));
-            crate::platform::atomic_write_private_bytes(
-                &path,
-                &serde_json::to_vec(&crashed_record).unwrap(),
-            )
-            .unwrap();
-            assert_eq!(
-                restarted
-                    .stop_agent_run_until_with_outcome(
-                        "old-run",
-                        7,
-                        Instant::now() + Duration::from_secs(1)
-                    )
-                    .await,
-                FleetReleaseOutcome::NoMatchingLease
-            );
-            assert!(
-                !serde_json::from_slice::<RuntimeOwnerRecord>(&std::fs::read(&path).unwrap())
-                    .unwrap()
-                    .reaped
-            );
-            store.remove("crashed-host");
+            // The real Job above is now gone. Neither a live root, an absent
+            // PID, nor PID reuse can replace the missing tree-exit evidence.
+            // These cases used to falsely grant Reaped for the last two rows.
+            for (pid, start_identity) in [
+                (
+                    std::process::id(),
+                    owner_process_start_identity(std::process::id()),
+                ),
+                (u32::MAX, None),
+                (std::process::id(), crashed_record.process_start_identity),
+            ] {
+                crashed_record.pid = pid;
+                crashed_record.process_start_identity = start_identity;
+                crate::platform::atomic_write_private_bytes(
+                    &path,
+                    &serde_json::to_vec(&crashed_record).unwrap(),
+                )
+                .unwrap();
+                let restarted = AgentRuntimeFleetManager::new_with_builtin_tools(
+                    Default::default(),
+                    &root,
+                    Arc::new(BuiltinToolLeaseRegistry::default()),
+                )
+                .unwrap();
+                assert_eq!(
+                    restarted
+                        .stop_agent_run_until_with_outcome(
+                            "old-run",
+                            7,
+                            Instant::now() + Duration::from_secs(1)
+                        )
+                        .await,
+                    FleetReleaseOutcome::NoMatchingLease
+                );
+                assert!(
+                    !serde_json::from_slice::<RuntimeOwnerRecord>(&std::fs::read(&path).unwrap())
+                        .unwrap()
+                        .reaped,
+                    "Job name absence must retain the scoped cleanup obligation"
+                );
+                assert!(path.exists());
+                store.remove("crashed-host");
+            }
 
             // Old anonymous Jobs and invalid identities cannot prove a tree
             // empty. Absence of a root PID alone must never grant a receipt.

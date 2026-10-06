@@ -922,7 +922,8 @@ Adapter 审计：
   `runtime-fleet/owners` 使用原生私有创建；已准入 Core 根下的旧目录/JSON 只迁移精确继承的 user/SYSTEM ACL。
   更宽 ACL、未知 owner、reparse 和错误类型继续阻断，初始化错误向 Core 返回，不再静默停用持久记录。
 - Windows Managed Process 创建私有、不可继承、禁止 breakaway 的唯一全局 Job；Codex owner record 保存 Job 身份
-  和进程创建时间。重启时查询 Job；Job 消失还需确认原根进程实例已退出，PID 复用只作身份查询，不补杀无关进程。
+  和进程创建时间。该轮曾以“Job 消失且根实例退出”补齐重启证明；下节记录 2026-10-07 审查发现及修正，
+  此旧推导不再作为当前回收准入。不补杀无关进程。
   当前代际的 Codex bounded reap 等待整个 Job 为空，再写回已回收凭据；回执保留到精确 Run/epoch 的数据库 ACK。
 - 兼容边界：旧 `reaped=true` 回执继续有效；旧匿名 Job 的未确认 scoped 记录缺少树退出证据，继续保留门禁。
   本次不凭裸 PID 缺失为这些旧记录补造 ACK，不处理日常故障会话。
@@ -947,3 +948,25 @@ Adapter 审计：
 
 本节补充上一节的 Windows 证据；未运行 Windows 11、真实 CLI 账户/计费或日常 App 验收。
 当前修补不扩大 ACP/Pi 的原生终态接入范围，也不把受控进程验证描述为用户已有故障会话已经恢复。
+
+## 2026-10-07 Windows Job 缺失不确认回收
+
+基线 `396c6a01ba1b5594f83e26827f5163238d76bbfe`；User 授权修复、创建 PR 并合入 main。
+先合入主线 `520320a8`，保留原生 API 配置与 Fast 初始化改动；主线已使用 Runtime Launch v48，
+因此 Codex Host 恢复增量顺延至 [v49](../../contracts/runtime-launch-and-verification-v49.md)，继承完整 v48。
+
+- 删除“Job 名称不存在时查询根 PID”的回收捷径，查询入口只接收 Job 身份；名称缺失始终不提供树退出证明。
+  根退出、PID 复用与 kill-on-close 均不能替代后代完成退出；已有精确 Run/epoch 的持久化回收凭据仍可 ACK。
+- 不新增恢复管理器、定时放行或跨 Core handle 保活服务。Core 崩溃后若未留下回收凭据且 Job 已消失，
+  相关后继 Delivery 会继续 waiting；本次不声称这个缺证据场景可以自动恢复。
+- 扩展既有 Fleet receipt owner：真实 Job 可查询为空时先持久回执，再关闭 handle，证明凭据仍可精确 ACK；
+  对未确认记录覆盖 Job 消失后的根仍活、PID 不存在、PID 复用三种情况，重启后均不得写入 reaped。
+  Managed Process 既有孙进程与强杀 owner 区分实际退出和可用证明；查询报告空时核对后代已退出，最后 handle
+  关闭后的名称缺失不能再视为正向结果。没有新增或退役 Rust 测试。
+- 手动 Full check 增加 `windows-runtime` scope 复用既有 Windows job；显式运行 extended Fleet/Codex owner，
+  不以 default-feature 过滤到 0 项的结果替代跨平台验证。
+
+最小定向命令为 `cargo test -p rovai-core --lib --features extended-tests runtime_fleet::tests::`、
+同参数的 `codex::tests::`，以及 `cargo test -p rovai-core --lib managed_process::tests::windows_`。
+后者仅 Windows 有有效用例；Unix/macOS 限定的冷恢复、初始化零正文与两条 Core 集成用例在 macOS 独立执行。
+本轮验证结果随 PR 检查记录补齐；既有 Windows 10 的 492 项结果只覆盖上一节提交，不能代替本轮修复。

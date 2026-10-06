@@ -417,6 +417,10 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 pnpm test:rust:full
 ```
 
+Windows Runtime 改动可用 `Full check` 的 `windows-runtime` scope 单独执行既有 Windows 原生 job，
+其中 Fleet 回收凭据及 Codex 释放策略显式启用 `extended-tests`。该 runner 证据不替代实体 Windows 10/11、
+真实 CLI 账号，或仍由 Unix/macOS 条件编译限定的 Codex/Core 集成测试。
+
 默认 fast suite 保留纯 parser/serde、确定性 policy、常量和最小原子 regression，并以 400 项作为当前
 反馈预算。`extended-tests` 承担大型模块矩阵、SQLite、子进程、并发与跨边界 owner；`slow-tests`
 承担需要完整 SQLite/Camp/Runtime fixture 的显式慢速场景，并隐式启用扩展层。每个数据库测试仍使用

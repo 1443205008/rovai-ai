@@ -16,7 +16,7 @@ last_updated: 2026-10-06
 按用户确认，删除 256 KiB 单行与 4 MiB 累计 stdout 探测门槛，改为默认 64 MiB、按需增长、可调的单帧容量。
 Claude 优先 list_models，仅明确不支持才兼容 initialize，两者共享超时和进程回收。目录失败保留已有模型、
 选项和缓存标识，不阻止原样保存／执行；保留原生默认选择，不纳入任意模型 ID 输入、能力缓存、复杂重试或资源调度。
-正式握手与真实原生拒绝保持有效。规范见 [Runtime Launch v49](../../contracts/runtime-launch-and-verification-v49.md#模型发现与探测容量)，
+正式握手与真实原生拒绝保持有效。规范见 [Runtime Launch v49](../../contracts/runtime-launch-and-verification-v48.md#模型发现与探测容量)，
 实现与环境证据见[验收记录](runtime-probe-availability-verification.md)。本地完整前端／默认 Rust 回归通过，
 Claude 2.1.280 专用查询与 2.1.100 旧协议回退分别实测通过；Windows 2.1.289 未实测，不推断通过。
 

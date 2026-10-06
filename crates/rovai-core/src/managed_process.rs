@@ -592,12 +592,8 @@ impl ManagedProcess {
     }
 
     #[cfg(windows)]
-    pub(crate) fn recorded_windows_tree_is_empty(
-        job_name: &str,
-        pid: u32,
-        start_identity: Option<u64>,
-    ) -> Result<bool> {
-        windows::recorded_tree_is_empty(job_name, pid, start_identity)
+    pub(crate) fn recorded_windows_tree_is_empty(job_name: &str) -> Result<bool> {
+        windows::recorded_tree_is_empty(job_name)
     }
 
     #[cfg(windows)]
@@ -1467,8 +1463,6 @@ mod tests {
         .unwrap();
         let mut process = ManagedProcess::spawn(spec).unwrap();
         let job_name = process.windows_job_name().to_owned();
-        let root_pid = process.id().unwrap();
-        let root_start = ManagedProcess::windows_process_start_identity(root_pid);
         let mut stdout = process.take_stdout().unwrap();
         let mut stderr = process.take_stderr().unwrap();
         let stdout_reader = tokio::spawn(async move {
@@ -1492,16 +1486,16 @@ mod tests {
             .parse::<u32>()
             .expect("grandchild handshake PID was invalid");
         assert!(windows::process_is_running_for_test(grandchild_pid).unwrap());
-        assert!(
-            !ManagedProcess::recorded_windows_tree_is_empty(&job_name, root_pid, root_start)
-                .unwrap()
-        );
+        assert!(!ManagedProcess::recorded_windows_tree_is_empty(&job_name).unwrap());
 
         process.force_terminate_tree().unwrap();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         while windows::process_is_running_for_test(grandchild_pid).unwrap()
             && tokio::time::Instant::now() < deadline
         {
+            if ManagedProcess::recorded_windows_tree_is_empty(&job_name).unwrap() {
+                assert!(!windows::process_is_running_for_test(grandchild_pid).unwrap());
+            }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         assert!(!windows::process_is_running_for_test(grandchild_pid).unwrap());
@@ -1513,28 +1507,22 @@ mod tests {
             process.tree_is_empty().unwrap(),
             "Cleanup confirmation must observe the owned Job, not a kill request"
         );
-        assert!(
-            ManagedProcess::recorded_windows_tree_is_empty(&job_name, root_pid, root_start)
-                .unwrap()
-        );
+        assert!(ManagedProcess::recorded_windows_tree_is_empty(&job_name).unwrap());
         tokio::time::timeout(Duration::from_secs(2), stderr_reader)
             .await
             .expect("stderr handle remained inherited after Job termination")
             .unwrap();
         drop(process);
         assert!(
-            ManagedProcess::recorded_windows_tree_is_empty(&job_name, root_pid, root_start)
-                .unwrap()
+            !ManagedProcess::recorded_windows_tree_is_empty(&job_name).unwrap(),
+            "A missing Job cannot provide recovery evidence, even after the root exited"
         );
         for invalid in [
             "",
             "Local\\Rovai.Runtime.00000000-0000-4000-8000-000000000000",
             "Global\\Rovai.Runtime.not-a-uuid",
         ] {
-            assert!(
-                ManagedProcess::recorded_windows_tree_is_empty(invalid, root_pid, root_start)
-                    .is_err()
-            );
+            assert!(ManagedProcess::recorded_windows_tree_is_empty(invalid).is_err());
         }
         let _ = std::fs::remove_file(handshake);
     }
@@ -1642,30 +1630,20 @@ mod tests {
             .expect("owned Runtime handshake PID was invalid");
         assert!(windows::process_is_running_for_test(runtime_pid).unwrap());
         let job_name = std::fs::read_to_string(&job_receipt).unwrap();
-        let start_identity = ManagedProcess::windows_process_start_identity(runtime_pid);
-        assert!(
-            !ManagedProcess::recorded_windows_tree_is_empty(&job_name, runtime_pid, start_identity)
-                .unwrap()
-        );
+        assert!(!ManagedProcess::recorded_windows_tree_is_empty(&job_name).unwrap());
 
         owner.kill().expect("failed to force-kill Job owner");
         owner.wait().expect("failed to reap Job owner");
         let termination_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while (!ManagedProcess::recorded_windows_tree_is_empty(
-            &job_name,
-            runtime_pid,
-            start_identity,
-        )
-        .unwrap()
-            || windows::process_is_running_for_test(runtime_pid).unwrap())
+        while windows::process_is_running_for_test(runtime_pid).unwrap()
             && tokio::time::Instant::now() < termination_deadline
         {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         assert!(!windows::process_is_running_for_test(runtime_pid).unwrap());
         assert!(
-            ManagedProcess::recorded_windows_tree_is_empty(&job_name, runtime_pid, start_identity)
-                .unwrap()
+            !ManagedProcess::recorded_windows_tree_is_empty(&job_name).unwrap(),
+            "Core death and a vanished Job must not manufacture a cleanup receipt"
         );
         let _ = std::fs::remove_file(handshake);
         let _ = std::fs::remove_file(job_receipt);

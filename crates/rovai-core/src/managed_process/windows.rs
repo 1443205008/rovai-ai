@@ -18,9 +18,9 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use windows_sys::Win32::{
     Foundation::{
-        ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_INVALID_PARAMETER, FILETIME,
-        GENERIC_READ, GetLastError, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
-        SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, FILETIME, GENERIC_READ, GetLastError, HANDLE,
+        HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation, WAIT_OBJECT_0,
+        WAIT_TIMEOUT,
     },
     Globalization::{CSTR_EQUAL, CSTR_GREATER_THAN, CSTR_LESS_THAN, CompareStringOrdinal},
     Security::SECURITY_ATTRIBUTES,
@@ -42,10 +42,15 @@ use windows_sys::Win32::{
             DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess,
             GetProcessTimes, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
             OpenProcess, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST,
-            PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
-            STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
+            PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, STARTF_USESTDHANDLES,
+            STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
         },
     },
+};
+
+#[cfg(test)]
+use windows_sys::Win32::{
+    Foundation::ERROR_INVALID_PARAMETER, System::Threading::PROCESS_SYNCHRONIZE,
 };
 
 use super::{
@@ -335,13 +340,10 @@ fn create_kill_on_close_job(name: &str) -> Result<OwnedHandle> {
 }
 
 /// Only identities issued for our private, non-breakaway, kill-on-close Jobs
-/// are admitted. The OS terminates their members when the last owner closes;
-/// querying a surviving Job also covers a leader that exited before its tools.
-pub(super) fn recorded_tree_is_empty(
-    name: &str,
-    pid: u32,
-    start_identity: Option<u64>,
-) -> Result<bool> {
+/// are admitted. Only a surviving Job's accounting can prove the tree empty.
+/// Closing the last handle removes its name before all descendants necessarily
+/// finish termination; neither name absence nor the root's exit proves reaping.
+pub(super) fn recorded_tree_is_empty(name: &str) -> Result<bool> {
     let suffix = name
         .strip_prefix(RUNTIME_JOB_NAME_PREFIX)
         .context("managed_process.invalid_job_identity: unexpected namespace")?;
@@ -359,7 +361,7 @@ pub(super) fn recorded_tree_is_empty(
     if raw.is_null() {
         let error = io::Error::last_os_error();
         return if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) {
-            recorded_process_has_exited(pid, start_identity)
+            Ok(false)
         } else {
             Err(error.into())
         };
@@ -395,40 +397,6 @@ fn process_creation_time(process: &OwnedHandle) -> io::Result<u64> {
         return Err(io::Error::last_os_error());
     }
     Ok((u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime))
-}
-
-fn recorded_process_has_exited(pid: u32, expected_start: Option<u64>) -> Result<bool> {
-    if pid <= 1 {
-        bail!("managed_process.invalid_process_identity: invalid root PID");
-    }
-    let raw = unsafe {
-        // SAFETY: the non-inheritable handle is only used for query/wait. No
-        // process, including a reused PID, is ever signaled by recovery.
-        OpenProcess(
-            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-            0,
-            pid,
-        )
-    };
-    if raw.is_null() {
-        let error = io::Error::last_os_error();
-        return if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
-            Ok(true)
-        } else {
-            Err(error.into())
-        };
-    }
-    let process = owned_handle(raw, "managed_process.process_query_failed")?;
-    if let Some(expected) = expected_start {
-        if process_creation_time(&process)? != expected {
-            return Ok(true);
-        }
-    }
-    match unsafe { WaitForSingleObject(raw_handle(&process), 0) } {
-        WAIT_OBJECT_0 => Ok(true),
-        WAIT_TIMEOUT => Ok(false),
-        _ => Err(io::Error::last_os_error().into()),
-    }
 }
 
 fn job_is_empty(job: &OwnedHandle) -> io::Result<bool> {
