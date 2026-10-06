@@ -757,3 +757,7 @@ CLI 保留原始 `avatarFile`，Core 认证 Run 后复用 `agent_file_ingress_sc
 PR 和 main 合并，并在 PR 中保留真实模型验证未运行的事实；不记为 Gate 通过，不继承其他工作的豁免。
 已批准的 r1 提示词文本与二次确认保持不变。合入当前主线 `520320a8` 后继续执行本地回归、
 独立代码复核及远端 CI，结果写入实施计划。
+
+最终独立复核以 `520320a8...33547860` 为固定比较：Standards 代码检查与 Spec 均通过。
+Standards 发现的当前文档版本漂移已补正并复核关闭（入口统一 Transport v36，Charter revision 20），
+最终两轴未关闭问题均为 0。复核不等同于真实模型 Gate 通过。

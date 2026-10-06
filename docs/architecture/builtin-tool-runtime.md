@@ -563,7 +563,7 @@ AgentRun Formatter/Manifest binding contract，并由 Migration 89 clean break �
 v1.23 不修改 Bootstrap wrapper、Formatter 或数据库，而是在 Native Binding context contract 中加入
 `sessionCharterRevision: 2`；该字段只进入每个 Adapter 的 Binding compatibility digest，使新 Run 轮换旧
 Native Session 并投递完整新 Charter，历史 Bootstrap Evidence 保留原 bytes/digest。
-当前 Charter revision 为 19，User 通知主 flag 为 `--to-user`，结构化用户提及投影为 `@User`。
+当前 Charter revision 为 20，User 通知主 flag 为 `--to-user`，结构化用户提及投影为 `@User`。
 这些兼容教学更新保留 Binding compatibility 16；既有 Session 继续使用自身冻结的 Bootstrap，不因新 Charter
 revision 轮换。新 Session 才冻结新模板，既有 Evidence 保持原 bytes/digest。
 `MEMBER_IDENTITY` 是该 Native Session 唯一的 self identity，包含最新已提交的完整六字段；它只在
