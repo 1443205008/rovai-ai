@@ -1,7 +1,7 @@
 ---
 document_type: development-guide
 authority: test-policy-and-command-routing
-last_updated: 2026-09-30
+last_updated: 2026-10-04
 ---
 
 # 测试与 Smoke Test
@@ -145,6 +145,15 @@ Electron 覆盖同页换目录／程序、已有 API 草稿、确认期间普通
 ## 测试层级
 
 ### DeepSeek Harness ACP
+
+Responses 工具兼容由 `dsh::tests::responses_tool_defaults_preserve_native_overrides_and_private_settings`
+拥有：此前显式 `openai-responses` 路由缺少兼容默认值，工具定义省略 `strict`；测试只用临时 settings，
+覆盖默认投影、Provider / Model 显式开关不复制或改写、其他协议不投影、私有字段不进入 patch、解析错误脱敏。
+既有权限 owner 不拥有 Provider 配置投影，因此增加这一个独立 owner；无需数据库或真实模型。
+最小命令：`cargo test -p rovai-core --lib dsh::tests::`。
+构建 Debug Core/CLI 后运行 `node scripts/smoke-dsh-responses-tools.mjs`，用已安装 DSH 与受控本机 Responses
+端点验证实际 wire `strict: false`、原生 Provider / Model 覆盖优先级、真实 shell 副作用与非法空理由仍拒绝。
+该 Smoke 自动隔离 Core data、Skills、MCP 与 DSH Home，不使用真实凭据或远端模型；模型行为仍需真实调用验证。
 
 新增 owner 均使用临时目录，不读取真实凭据、不启动模型；最小命令为
 `cargo test -p rovai-core --lib dsh` 和
@@ -674,8 +683,8 @@ Team Case 可在密封 manifest 中声明 `collaboration` 合同。Runner 将它
 `pnpm test:camp-fast-layout` 使用生产 CampWorkspace/CSS 的独立 Electron fixture，无需打包或 Core。
 关闭的模拟 API 只提供成员偏好与 Draft；临时 userData 与日常 App 完全分离，不调用模型。
 它拥有 Fast 的 1280×720/窄屏/大屏布局、日夜主题、键盘焦点、失败保留、直接静默切换、旧观测不影响偏好与初始默认。
-同一 owner 还验证打开队员浮层后的静默自动检测、正负结果复用、失败重开重试、同成员请求去重、切换绑定自动重测与旧响应隔离；
-其他 Runtime 不检测，非官方认证的拒绝结果不显示入口，菜单不再暴露手动检测。
+同一 owner 验证打开/切换零资格请求、三态保存、同成员保存去重、跨成员并发、绑定与迟到回执隔离；
+Claude/Codex 无历史证据仍有入口，其他 Runtime 不显示，原生反馈在 Run 中展示且不反写偏好。
 `ROVAI_KEEP_FAST_FIXTURE=1` 保留本次临时截图供排错；成功默认自动清理。手动 Full check 的 Linux job 通过 `xvfb-run -a` 执行。
 
 以下命令使用已打包 App 和隔离 `userData`，不调用模型：
@@ -948,3 +957,47 @@ owner，覆盖已安装指标 schema 129 和 main Thread schema 128 两条路径
 `fresh_schema_database_at`，沿用 `extended-tests`；不新增 Rust owner。既有 Session Context 迁移
 owner 继续拥有指标数量保留与 127/128 升级；默认 workspace 与字段级回归另行执行。
 最低命令：`cargo test -p rovai-core --features extended-tests --lib thread_upgrade_preserves_existing_tables_and_rolls_back_on_receipt_failure`。
+
+## Runtime 轻量启动回归 owner
+
+首轮轻量启动改造复用既有 Rust 测试 owner。原 light-ready uniform preflight owner 改为
+`agent_profile::slow_tests::discovered_entry_configures_and_freezes_without_health_evidence`，覆盖无快照配置、
+精确意图及 hash/file identity 不一致拒绝。原 Codex live-model owner 扩展为
+`codex::tests::real_host_validates_before_input_and_executes_in_the_same_process`，以合成协议进程验证启动次数、
+默认模型零目录、version 超时无关，以及初始化/登录/模型选项失败零正文。
+`delivery_queue` 既有 claim owner 扩展历史状态矩阵、公开错误、原终止原因优先、未知错误不公开、失败不循环及修复后新任务；
+`collaboration` 原多目标无 Runtime owner 改为每个目标产生具体失败 Run，保留消息与 Delivery 数量及原子准入断言。
+Antigravity 原取消 owner 同时覆盖初始化期间取消及接收后终止，保留原有进程树和私有日志清理。
+原诊断成功、失败、身份漂移与快照保留测试继续拥有诊断语义，不删除权限、取消、Session 或去重断言。
+最小命令为 `cargo test -p rovai-core --features slow-tests --lib agent_profile::`、
+`cargo test -p rovai-core --features extended-tests --lib codex::`、
+`cargo test -p rovai-core --lib delivery_queue::` 与 `cargo test -p rovai-core --lib antigravity::`。
+完整切片结果记录在当前版本实施计划，合成测试不替代真实账户、CLI 与跨平台验收。
+
+`ROVAI_FAST_CHECK_ONLY=1 pnpm test:camp-fast-layout` 使用原隔离 Electron fixture 验证零资格检查、直接三态保存、
+绑定与迟到响应 fence、保存去重、两处界面共享偏好及原生键鼠/主题/响应式布局。默认无此变量时继续执行原有完整布局与 Stop 回归，
+不将旧夹具的其他失败静默跳过；两种范围的结果分别记录。
+
+PR #642 的身份读取/锁边界修复继续扩展以上 owner：无健康快照和旧指纹快照下必须读取当前文件身份并得到
+`ExecutableIntegrityStatus::Unchanged`，旧 hash 与 Installation 路径漂移仍拒绝；locator 在没有快照或文件身份失效时
+仍可用于重新解析。Windows 既有 `resolved_npm_shim_content_change_invalidates_locator_identity_and_snapshot_key`
+在 `slow-tests` 下增加无快照的目标升级和 npm platform package 搬迁回归，必须在 Windows 执行，不能由 macOS 结果代替。
+Codex 既有真实 Host owner 增加销毁 Host 后的第二次默认模型执行，保留版本命令挂起及每个 Host 仅一次任务输入断言。
+
+新增唯一 owner `application::tests::discovered_runtime_verification_keeps_database_available_and_identity_after_restart`
+拥有文件 worker / 全局数据库锁的异步边界；原同步校验不能在阻塞线程池暂停时让出 executor，或若先取数据库锁再等待 worker，
+并行 SQL 会被挡住。现有纯身份测试和诊断 manager owner 不拥有这项并发合同，因此复用 `runtime_resolution_test_core`
+而单列此 owner；纯函数无法证明真实 Core 锁和持久化重开。测试以单线程阻塞池和 channel 屏障确定顺序，不依赖文件大小、
+磁盘速度、sleep 或性能阈值；并在 Core 重开后验证同一安装身份的元数据快速路径。最小命令为
+`cargo test -p rovai-core --features slow-tests --lib application::tests::discovered_runtime_verification`。
+
+
+Fast v3 复用 `camp_fast::tests` 的持久化/冻结 owner，新增无快照首次写入、receipt 重放不覆盖新选择和旧缓存不准入的输入；
+同一 SQLite fixture 保留绑定切换、模型/权限变化、两 Thread 隔离和冻结摘要验证，并进入 `extended-tests`。
+原 Claude auth/version 与 Codex eligibility parser/metadata 进程测试随其生产资格路径退出；临时 settings 三态映射仍由
+`native_overrides_preserve_three_states_without_qualification` 拥有。通用 schema 诊断测试保留。
+Claude 既有真实进程错误 owner 扩展新建/恢复、显式/默认模型和三态参数矩阵，验证实际临时文件、权限独立、
+version/auth 零调用及一次正文/零重放。Codex 既有真实 Host owner 扩展三态单 Turn、零持久档位、缺失反馈仍执行，
+以及关闭参数被原生协议拒绝时返回错误且不重放。
+最小命令：`cargo test -p rovai-core --features extended-tests --lib camp_fast::`、相同参数的 `claude::`、`codex::`，
+以及 `execution_evidence::tests::` 的字段脱敏、Run/epoch 所属和逻辑执行窗口回归。

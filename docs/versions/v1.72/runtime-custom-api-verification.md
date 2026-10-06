@@ -3,13 +3,13 @@ document_type: implementation-verification
 version: v1.72
 source_version: v1.72
 status: implemented
-last_updated: 2026-10-05
+last_updated: 2026-10-06
 ---
 
 # Claude Code / Codex 原生连接编辑验收
 
-当前实现以 [Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md) 和
-[V1.72-D13](decisions.md#v1-72-d13) 为准：Rovai 只在保存时编辑原生连接；正常执行由原生 CLI 读取配置、认证及发送请求。
+当前实现以 [Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md) 和
+[V1.72-D15](decisions.md#v1-72-d15) 为准：Rovai 只在保存时编辑原生连接；正常执行由原生 CLI 读取配置、认证及发送请求。
 先前为永久保留两套连接引入的启动覆盖、临时 provider 和额外身份核对已退出，历史验收不能代表当前行为。
 范围仅包含 Claude Code、Codex；不增加表单字段、账户系统、探活、能力认证或版本白名单。
 
@@ -272,6 +272,28 @@ macOS arm64 验证结果：
   shell 和 npm 式 Node 包装入口均在修改普通环境变量后复用已确认位置，完成原生写回、模型选择与正常调用。
 - Rust workspace 455 passed／1 既有 ignored；完整 `pnpm test` 为 237 个 Vitest 文件／2588 项，Node 334 passed／2 平台 skipped。
   类型检查、全 workspace 编译、桌面构建、格式及通用文档门禁通过；界面收尾保护再次运行对应验收。
+
+## 主分支集成验收（2026-10-06）
+
+将主分支 `23b989c1` 合入原有 `rovai/runtime-custom-api` 工作树，保留主分支的真实 Host 初始化、
+静态安装发现、Fast 偏好和 v0.4.5 发布元数据；原生连接编辑、脱敏、模型列表所有权及恢复摘要继续保留。
+主分支已使用 Runtime Launch v47 和 V1.72-D12／D13，故 API 合同顺延为 v48，相关理由顺延为 D14／D15，
+继承原 v47 内容，不覆盖主分支既有规范。
+
+macOS arm64 合并后验证：
+
+- 默认 `pnpm test:rust:pr`：454 passed／1 既有 ignored；`cargo check --workspace --all-targets` 与格式检查通过。
+- 定向 `slow-tests`：原生配置 5 项、启动设置 3 项、冻结／重绑定 1 项、发现文件身份 1 项、Codex 真实 Host 协议夹具 1 项通过。
+  主分支新增的文件身份测试夹具补齐两个可选原生配置字段；没有新增独立 Rust owner。
+- `pnpm test`：238 个 Vitest 文件／2603 项，Node 334 passed／2 平台 skipped；类型检查、桌面构建和通用文档门禁通过。
+  首轮后台评测用例等待超时；该文件单独 5 项及随后完整套件均通过，未修改相关生产代码或测试等待时间。
+- 隔离 Electron 正式设置组件通过，证据目录 `/private/tmp/rovai-pr632-merge-ui-20261006`，
+  使用其独立 `user-data` 和 `managed-skill-library`，不启动 Core 或真实 Runtime。
+
+Codex 原有缺失显式模型的单场景测试由主分支的
+`real_host_validates_before_input_and_executes_in_the_same_process` 接替，继续验证缺失模型零正文，
+并保留认证、选项、初始化、Fast 反馈与同进程执行场景。没有以禁用测试解决冲突。
+本轮未重复真实 CLI／账号调用，之前的本地假服务证据与未实测边界保持独立，不等同于真实 OAuth 或中转验收。
 
 ## 测试准入与退役
 

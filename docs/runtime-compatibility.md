@@ -1,7 +1,7 @@
 ---
 document_type: runtime-compatibility-register
 authority: runtime-validation-evidence
-last_updated: 2026-09-30
+last_updated: 2026-10-04
 ---
 
 # Agent Runtime 兼容性清单
@@ -35,6 +35,14 @@ Grok Build 在 adapter-scoped 证据分别覆盖的 macOS arm64、macOS x64 与 
 Cursor identity 仅保留内部兼容与历史读取，默认不进入 discovery/check/AgentRun；Settings 的 Agent Runtime
 目录不展示该项。DeepSeek Harness 使用官方 ACP，macOS arm64、macOS x64、Windows x64 与 Linux x64 均为
 digest-bound qualified。Machine Ready、实现与 First-Class 资格分别记录。
+
+### 2026-10-04 DeepSeek Harness Responses 工具参数
+
+DSH `0.1.5-rc.3` / sub2api / `gpt-6.1-sol` 在 macOS arm64 验证 Host 自动补齐 Responses
+兼容默认值：原生配置未指定开关时，普通工具显式发送 `strict: false`。新构建真实回合两次 shell
+与公开发送成功；本机受控端点另外验证 Provider / Model 显式覆盖，以及非法空理由仍由原生拒绝。
+原生 settings 不改写，无精确版本白名单或权限放宽。范围与复现见
+[Responses 工具兼容验收](research/deepseek-harness-runtime/responses-tools-2026-10-04.md)。
 
 ### 2026-09-15 DeepSeek Harness 0.1.5-rc.2 ACP
 

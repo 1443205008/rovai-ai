@@ -10,24 +10,24 @@ async fn claude_catalog_initializes_without_user_input_and_reaps_on_failure() {
     fs::create_dir_all(&root).unwrap();
     let executable = root.join("claude-fixture");
     fs::write(&executable, r#"#!/bin/sh
-root=$(dirname "$0")
+root=$(/usr/bin/dirname "$0")
 printf '%s\n' "$@" > "$root/argv"
 printf '%s\n' "$PWD" > "$root/cwd"
 printf '%s\n' "${HOME-__UNSET__}" "${CLAUDE_CONFIG_DIR-__UNSET__}" "${ANTHROPIC_MODEL-__UNSET__}" > "$root/environment"
 printf '%s\n' "$$" > "$root/pid"
 IFS= read -r request || exit 1
 printf '%s\n' "$request" > "$root/requests"
-id=$(printf '%s' "$request" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+id=$(printf '%s' "$request" | /usr/bin/sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
 printf '%s\n' '{"type":"system","subtype":"init","model":"current-is-not-the-catalog"}'
 printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"unrelated","response":{"models":[{"value":"wrong-correlation"}]}}}'
-case "$(cat "$root/case")" in
+case "$(/bin/cat "$root/case")" in
   success) printf '%s\n' "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"$id\",\"response\":{\"models\":[{\"value\":\"provider/new-alias[extended]\",\"displayName\":\"Native model\",\"description\":\"Native description\"}]}}}" ;;
   missing) printf '%s\n' "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"$id\",\"response\":{\"model\":\"only-current\"}}}" ;;
   rejected) printf '%s\n' "{\"type\":\"control_response\",\"response\":{\"subtype\":\"error\",\"request_id\":\"$id\",\"error\":\"unsupported initialize\"}}" ;;
   interaction) printf '%s\n' '{"type":"control_request","request_id":"permission","request":{"subtype":"can_use_tool"}}' ;;
   malformed) printf '%s\n' 'not json' ;;
   eof) exit 0 ;;
-  timeout) sleep 60 & wait ;;
+  timeout) /bin/sleep 60 & wait ;;
 esac
 while IFS= read -r request; do printf '%s\n' "$request" >> "$root/requests"; done
 "#).unwrap();

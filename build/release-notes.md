@@ -1,31 +1,26 @@
-# Rovai AI v0.4.3
+# Rovai AI v0.4.5
 
 <!-- lang:en -->
 
-This release makes teammates easier to create and configure, improves conversation navigation and long execution records, and adds a system tray on Windows.
+This release simplifies runtime startup and Fast settings, improves first-run setup and the update page, and fixes executions getting stuck in recovery.
 
 ### What's changed
 
-- [Feature] **Create teammates through a conversation.** The Add action opens a conversation with an available teammate and an editable starter request. Three prompts help you explore a character, a work partner, or an original companion. Nothing is sent automatically, and manual creation remains available.
-- [Feature] **Apply a saved runtime configuration to other teammates.** Copy the agent, model, parameters, and permissions to selected teammates. Review replacements before applying them, preserve unsaved runtime drafts, and retry only failed items.
-- [Feature] **See the model and reasoning effort beside replies.** Conversation message headers and teammate details show model information directly. Historical replies use the configuration recorded for that execution, not the teammate's current settings.
-- [Feature] **Keep Rovai running in the Windows system tray.** Choose whether closing the window minimizes to the tray or quits the app, and optionally remember the choice. Tray mode preserves the window and background work; change the behavior in Settings → General → Window.
-- [Interaction] **Jump back to your questions.** Wider conversation views show a compact rail of user-message anchors. Hover to preview a question and its first reply, then click or use the keyboard to return to that message.
-- [Interaction] **Use context menus and unread reminders in the sidebar.** Open project and conversation actions with a right-click, keyboard shortcut, or long press. Mark conversations read or unread, copy project paths, and reveal project folders in the desktop file manager.
-- [Interaction] **Reorder teammates directly.** Drag teammate rows on desktop or their avatars in the mobile layout. Keyboard reordering remains available.
-- [Performance] **Load long execution records in complete content blocks.** Folded command groups count as one block and load their operations separately. Short initial views fill automatically, while paging and live updates preserve reading position, expanded results, and focus. Streaming text and older execution records remain visible through updates.
-- [Interface] **Give the first execution preview a narrower starting width.** A new conversation's first automatic execution preview leaves more room for the conversation. Existing file tabs and manually chosen widths are preserved.
-- [Interaction] **Clarify permission and sandbox choices.** Menus identify recommended options and include brief guidance. Permission switches use consistent sizing without changing existing selections.
-- [Fix] **Keep newly created teammate cards with their creating execution.** Cards appear below that execution's last reply, align with file-change cards, and link directly to agent configuration.
-- [Interaction] **Show when you stopped an execution.** A subtle "Stopped by you" marker appears beside an interrupted execution’s existing replies or artifacts. Activate it to inspect that exact execution. Stopping before any reply or artifact no longer creates an empty teammate row.
-- [Fix] **Restore navigation from execution notifications.** Clicking a notification can now locate its execution even when the target is not in the current cache, rather than failing with an incompatible-contract error.
-- [Feature] **Let teammates inspect execution and queued work.** The built-in `rovai thread runs` command lists a conversation's execution states and queued messages, with filtering and pagination. Message reads also expose their recipients and structured mentions. Long-history queries now bound the returned candidate set in SQL.
-- [Improvement] **Standardize built-in collaboration terminology.** Built-in commands and agent guidance use Thread and User, while preserving compatibility aliases, historical records, and frozen session recovery.
-- [Documentation] **Add a collaboration demo video.** Both READMEs include a workflow demonstration, and the website homepage uses a clearer workspace overview.
+- [Interaction] **Simpler Fast settings.** Claude Code and Codex can switch Fast on or off without a separate eligibility check. The choice applies to subsequent executions, including an explicit off setting that could previously be ignored. When no choice has been saved, the button reflects the runtime's initialization response; actual Fast, standard, or cooldown feedback appears separately during execution.
+- [Performance] **Less checking before a task starts.** App startup and rescanning no longer launch every installed runtime for probing. Installed runtimes can be configured and used without being blocked by a version-query timeout or a historical failed check. Required validation happens during the actual task's initialization.
+- [Interaction] **Clearer initialization and configuration errors.** Executions show when the runtime is initializing and report specific installation, model, or permission problems. After correcting the configuration, start another task without first running a manual check to clear an old status.
+- [Feature] **Apply first-run settings to the other unconfigured built-in teammates.** The runtime, model parameters, and default permissions selected during onboarding are also applied to the remaining unconfigured built-in teammates. Existing configurations are preserved, and the first conversation still includes only the selected teammate.
+- [Interface] **Rework the update entry and About & Updates page.** The sidebar shows update, download, and installation states more clearly. The page groups the installed version with its actions, labels release notes with their version, places check history below the notes, and improves narrow-window layouts.
+- [Interface] **Reduce routine runtime hints on teammate surfaces.** Teammate cards, member lists, and configuration forms no longer repeat ordinary readiness and startup explanations. Unconfigured, checking, and actionable failure feedback remains.
+- [Fix] **Stop executions remaining in recovery after their runtime process exits.** Executions that cannot safely continue are settled while preserving existing output. After cleanup, the next message can run without restarting the app. Inputs with an unknown outcome are not automatically sent again.
+
+### Thanks
+
+Thanks to [@arschlochnop](https://github.com/arschlochnop) for reporting executions stuck in recovery and tasks stuck in the queue after restarting, with detailed analysis and screenshots in [#635](https://github.com/murray17/rovai-ai/issues/635) and [#636](https://github.com/murray17/rovai-ai/issues/636).
 
 ### Upgrading
 
-Mac users on v0.4.1 or later can update in the app. Users on v0.4.0 or earlier need to download the DMG and replace the installed app once. Keep your existing user data.
+Mac users on v0.4.1 or later can update in the app. Users on v0.4.0 or earlier need to download the DMG, quit the old app, and replace the installed app once. Keep your existing user data.
 
 Server users on v0.4.1 or later can update through "About & Updates" in the web interface. For earlier versions, back up your data, stop Server, and run the updated official installer while keeping the same data directory.
 
@@ -35,30 +30,25 @@ Windows x64 remains an unsigned preview. SmartScreen may show "Unknown publisher
 
 <!-- lang:zh-CN -->
 
-本次更新让队员创建和配置更方便，改善会话定位与长执行记录的阅读体验，并为 Windows 增加系统托盘。
+本次更新简化智能体启动和 Fast 设置，改善首次配置与更新页面，并修复执行卡在“恢复中”的问题。
 
 ### 更新内容
 
-- 【功能】**可以通过对话创建队员。** 点击添加后，与已有队员一起确定新队员的角色、职责和性格；提供角色、工作伙伴、原创搭档三个起步方向。预填内容可修改，不会自动发送，仍可选择手动创建。
-- 【功能】**批量应用队员的运行时配置。** 将已保存的智能体、模型、参数和权限应用到选中的其他队员，替换前可确认内容；保留未保存的配置草稿，失败后可只重试失败项。
-- 【功能】**回复旁可查看模型与思考强度。** 在消息头和队员信息中直接查看模型信息；历史回复显示当次执行记录的配置，不会跟随队员当前设置变化。
-- 【功能】**Windows 支持系统托盘。** 关闭窗口时可选择最小化到托盘或退出，并记住选择。托盘模式保留窗口与后台工作，可在“设置 → 通用 → 窗口”中调整。
-- 【交互】**快速回到之前的问题。** 较宽的会话窗口会显示用户消息定位栏，悬浮可预览问题和首条回复，点击或使用键盘即可跳转。
-- 【交互】**侧栏支持右键菜单与未读标记。** 可通过右键、快捷键或长按打开项目和会话操作，手动标记已读或未读、复制项目路径；桌面端可直接在文件管理器中打开项目目录。
-- 【交互】**拖动调整队员顺序。** 桌面端可拖动队员列表，移动端可拖动头像，同时保留键盘排序操作。
-- 【性能】**长执行记录按完整内容块加载。** 折叠的命令组作为一个内容块，其内部操作单独加载；首屏内容不足时自动补齐。翻页和实时更新会保留阅读位置、已展开的结果与焦点，并修复流式文本和旧记录在更新时丢失的问题。
-- 【界面】**首次执行预览为会话留出更多空间。** 新会话第一次自动展开执行预览时采用较窄的初始宽度，已有文件标签页和手动调整的宽度保持不变。
-- 【交互】**权限与沙箱选项更清楚。** 菜单标注推荐项并补充简短说明，权限开关统一尺寸，不改变已有选择。
-- 【修复】**新队员卡片跟随创建它的执行显示。** 卡片放在对应执行的最后一条回复下方，与文件变更卡片对齐，并可直接打开智能体配置。
-- 【交互】**手动停止执行后显示“你已中断”。** 中断标记显示在该次执行已有的回复或成果旁，点击可查看对应执行过程；在产生任何回复或成果前停止，不再创建空白队员行。
-- 【修复】**修复点击执行通知无法跳转的问题。** 即使目标执行尚未载入当前缓存，也能定位到它，不再因接口版本不一致而报错。
-- 【功能】**队员可查看执行状态与排队消息。** 新增内置命令 `rovai thread runs`，支持筛选和分页；读取消息时可查看接收对象与结构化提及，同时减少长历史查询中的无效读取。
-- 【改进】**统一内置协作命令与说明中的术语。** 使用 Thread 和 User，保留旧命令兼容入口、历史记录与原有会话恢复能力。
-- 【文档】**新增协作演示视频。** 中英文 README 均提供工作流程演示，官网首页换用更清楚的工作台总览图。
+- 【交互】**简化 Fast 设置。** Claude Code 和 Codex 可以直接选择开启或关闭，不再需要前置资格检查；选择用于后续执行，修复关闭选择可能被忽略的问题。未手动设置时，按智能体初始化返回的状态显示，实际响应档位和冷却状态在执行过程中单独呈现。
+- 【性能】**减少智能体启动前的等待。** 应用启动和重新检测时不再批量启动智能体进行探测。已安装的智能体可直接配置并发起任务，不再因版本查询超时或历史检查失败被拦住；必要校验在实际任务初始化时完成。
+- 【交互】**执行的初始化状态和失败原因更清楚。** 启动期间显示“正在初始化 Runtime”；安装、模型或权限配置有问题时显示对应原因，修复后可重新发起任务，无需先手动检测来解除历史状态。
+- 【功能】**首次配置会同步到其他未配置的内置队员。** 新手引导中选定的智能体、模型参数和默认权限，会应用到其余未配置的内置队员，不覆盖已有配置；首次会话仍只加入选中的队员。
+- 【界面】**调整更新入口和“关于与更新”页面。** 侧栏更清楚地显示更新、下载和安装状态；页面集中展示当前版本与操作按钮，更新日志标明具体版本，检查记录移至日志下方，并改善窄窗口下的布局。
+- 【界面】**精简队员的运行状态提示。** 队员卡片、成员列表和配置页减少重复的状态与启动说明，保留未配置、检查中及需要处理的故障提示。
+- 【修复】**修复智能体进程退出后，执行一直显示“恢复中”的问题。** 无法安全恢复的执行会结束并保留已有输出，清理完成后可继续发送下一条消息，无需重启应用；不会自动重复发送结果不明的旧消息。
+
+### 感谢
+
+感谢 [@arschlochnop](https://github.com/arschlochnop) 在 [#635](https://github.com/murray17/rovai-ai/issues/635) 和 [#636](https://github.com/murray17/rovai-ai/issues/636) 中反馈执行卡在“恢复中”、重启后任务停在队列中的问题，并提供详细分析和截图，帮助我们定位和修复。
 
 ### 升级提醒
 
-Mac v0.4.1 及更新版本可在应用内升级；v0.4.0 及更早版本需要手动下载 DMG 并替换已安装应用一次。保留原有用户数据。
+Mac v0.4.1 及更新版本可在应用内升级；v0.4.0 及更早版本需要下载 DMG、退出旧应用并手动替换已安装应用一次。保留原有用户数据。
 
 Server v0.4.1 及更新版本可在网页的“关于与更新”中升级；更早版本请先备份数据、停止 Server，再使用新版官方安装脚本，并保持原有数据目录。
 

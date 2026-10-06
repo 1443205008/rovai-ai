@@ -13,7 +13,7 @@ last_updated: 2026-10-05
 
 - 状态：accepted
 - 日期：2026-09-30
-- 当前权威：[Runtime Launch and Verification v46](../../contracts/runtime-launch-and-verification-v46.md) 与 [Built-in Tool Runtime](../../architecture/builtin-tool-runtime.md#claude-code-权限审批回调)
+- 当前权威：[Runtime Launch and Verification v48](../../contracts/runtime-launch-and-verification-v48.md) 与 [Built-in Tool Runtime](../../architecture/builtin-tool-runtime.md#claude-code-权限审批回调)
 
 ### 背景
 
@@ -268,11 +268,55 @@ User 要求恢复一键新对话在消息模型重构前的草稿行为，并明
 AI 创建队员的专项窗口内生命周期继续由 D09 对应合同约束。
 
 <a id="v1-72-d12"></a>
-## V1.72-D12：连接编辑以原生来源为权威，不另建 Key 副本
+## V1.72-D12：安装发现与真实启动验证解耦
+
+- 状态：accepted
+- 日期：2026-10-05
+- 当前权威：[Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md)、[Runtime 边界](../../architecture/runtime-catalog-boundaries.md)、[Camp Member Fast v2](../../contracts/camp-member-fast-v2.md)
+
+### 背景
+
+版本展示和历史探测状态进入配置冻结、队列及派发门禁，CLI 实际可启动时也可能等待手动检测。
+独立 Probe 成功并不能保证下一进程可执行，却增加冷启动成本和两个状态来源。
+
+### 选择
+
+发现只保存安装入口及安全身份；协议、模型与权限在实际执行 Host 的正文屏障内验证。
+保留 Adapter 无法在正文前握手时的最小特例及主动诊断，不以历史健康结果授权运行。
+
+### 后果与替代方案
+
+保留现有字段和快照便于诊断，无 schema 迁移；旧 Ready 不再是调度通行证。
+取消必须覆盖初始化等待，配置失败也须产生可见 Run，模型选择延迟到真实 Host 确认。
+未选择 LKG、额外健康快照、重试调度或后台轮询，因为它们保留双重准入并增加状态复杂度；
+也不直接删除门禁后发送正文，实际初始化验证必须先于输入。
+
+
+<a id="v1-72-d13"></a>
+## V1.72-D13：Fast 偏好直接交给真实 Runtime
+
+- 状态：accepted
+- 日期：2026-10-06
+- 当前权威：[Camp Member Fast v3](../../contracts/camp-member-fast-v3.md)、[Runtime 边界](../../architecture/runtime-catalog-boundaries.md#camp-队员-fast-边界)
+
+### 背景与选择
+
+可选速度偏好依赖资格预测，增加子进程并可能把明确关闭值丢弃、意外继承原生 Fast 默认。
+沿用现有三态存储、绑定代次及冻结，删除资格授权；关闭语义由支持路径的明确参数和开发回归保证，
+不以每次运行观察确认或历史成功为条件。真实反馈只描述当前 Run，不反写偏好。
+
+### 后果与替代方案
+
+旧资格列无需立即迁移；不可靠的原生默认保持未知，部分 Runtime 会拒绝或忽略可选设置。
+明确拒绝按原错误处理，不做兼容重启或重放。未选择恢复自动资格检查、扩展能力缓存或维护旧版参数回退，
+因为它们继续混淆用户意图与实际生效，并可能扩大费用范围或污染后续 Turn。
+
+<a id="v1-72-d14"></a>
+## V1.72-D14：连接编辑以原生来源为权威，不另建 Key 副本
 
 - 状态：accepted
 - 日期：2026-10-04
-- 当前权威：[Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md)、[Runtime Catalog](../../architecture/runtime-catalog-boundaries.md#claude-code-与-codex-原生连接编辑)与[启动设置 UI](../../ui/components/app-shell-navigation.md#原生连接设置)
+- 当前权威：[Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md)、[Runtime Catalog](../../architecture/runtime-catalog-boundaries.md#claude-code-与-codex-原生连接编辑)与[启动设置 UI](../../ui/components/app-shell-navigation.md#原生连接设置)
 
 ### 背景与选择
 
@@ -286,16 +330,16 @@ AI 创建队员的专项窗口内生命周期继续由 D09 对应合同约束。
 保留凭据副本可使旧快照更易重放，却会创造迁移、同步和清理责任，故拒绝该方案。复制整个 Home 会影响
 Skills、MCP 和会话，亦不采用。字段级合并及原生文件原子写入是必要边界，不扩成通用供应商平台。
 
-<a id="v1-72-d13"></a>
-## V1.72-D13：保存切换原生连接，撤回双路径保留与启动覆盖
+<a id="v1-72-d15"></a>
+## V1.72-D15：保存切换原生连接，撤回双路径保留与启动覆盖
 
 - 状态：accepted
 - 日期：2026-10-04
-- 当前权威：[Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md)、[Runtime Catalog](../../architecture/runtime-catalog-boundaries.md#claude-code-与-codex-原生连接编辑)与[启动设置 UI](../../ui/components/app-shell-navigation.md#原生连接设置)
+- 当前权威：[Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md)、[Runtime Catalog](../../architecture/runtime-catalog-boundaries.md#claude-code-与-codex-原生连接编辑)与[启动设置 UI](../../ui/components/app-shell-navigation.md#原生连接设置)
 
 ### 背景与选择
 
-D12 的原生来源权威继续保留；用户进一步撤回“保存官方后仍须保留另一套 API”的承诺。选择只在用户保存时
+D14 的原生来源权威继续保留；用户进一步撤回“保存官方后仍须保留另一套 API”的承诺。选择只在用户保存时
 修改原生配置，未保存的完整表单与新 Key 仅留在编辑会话内。正常执行交给 CLI 自己读取连接和认证，不再持久化
 独立模式或启动时重建 provider、临时文件与认证屏蔽。已有队员参数、权限、协作及恢复兼容性继续沿用。
 原生托管存储可能保存 API Key，不能把不透明凭据直接当作官方账号。设置时复用原生账号类型读取，未知保持未知；观察与文件基线分离，保存不等待账号状态；

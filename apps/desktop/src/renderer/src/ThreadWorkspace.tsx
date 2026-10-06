@@ -1548,6 +1548,7 @@ export function emptyThreadRuntimeSummary(
   const readyCount = profiles.filter((profile) => (
     profile?.runtimeReadiness.status === 'ready'
     || profile?.runtimeReadiness.status === 'light_ready'
+    || profile?.runtimeReadiness.status === 'installed_unverified'
   )).length
   if (readyCount === activeMembers.length) return uiAttribute("智能体可用")
   if (readyCount === 0) return uiAttribute("智能体不可用")
@@ -2183,8 +2184,7 @@ export function ThreadWorkspace({
     () => new Map(agents.map((agent) => [agent.agentId, agent])),
     [agents]
   )
-  const memberFast = useThreadMemberFast(snapshot, profileById, installations,
-    inspectorVisible && inspectorSurfaceTab === 'members' ? 'members' : executionDrawerAgentId, onNotify)
+  const memberFast = useThreadMemberFast(snapshot, profileById, installations, onNotify)
   const composerRosterMembers = useMemo(
     () => snapshot.members.map((member) => ({
       agentId: member.agentId,
@@ -7584,9 +7584,9 @@ function ExecutionDrawer({
                     {runtimeConfiguration && (
                       <span className="execution-model-params" title={runtimeConfiguration.summary}>{runtimeConfiguration.summary}</span>
                     )}
-                    {fastControl && <span className="execution-drawer-fast-slot">
-                      {fastControl.value && <ThreadMemberFastToggle value={fastControl.value} displayName={displayName}
-                        pending={fastControl.pending} onToggle={next => { void memberFast.save(process.agentId, next) }} />}
+                    {fastControl?.value && <span className="execution-drawer-fast-slot">
+                      <ThreadMemberFastToggle value={fastControl.value} displayName={displayName}
+                        pending={fastControl.pending} onToggle={next => { void memberFast.save(process.agentId, next) }} />
                     </span>}
                   </span>
                 )}
@@ -8180,10 +8180,10 @@ function mentionPresenceLabel(presence: AgentProfile['presence']): string {
 }
 
 function mentionRuntimeLabel(profile: AgentProfile): string {
+  if (!profile.runtimeConfiguration) return uiAttribute('未配置智能体')
+  const runtime = runtimeAdapterLabel(profile.runtimeConfiguration.adapterKind)
   const readiness = runtimeReadinessLabel(profile.runtimeReadiness.status)
-  return profile.runtimeConfiguration
-    ? `${runtimeAdapterLabel(profile.runtimeConfiguration.adapterKind)} · ${readiness}`
-    : readiness
+  return readiness ? `${runtime} · ${readiness}` : runtime
 }
 
 export function RuntimeRecoveryDock({
@@ -8528,7 +8528,7 @@ function ThreadMembersPanel({
                   <svg aria-hidden="true" viewBox="0 0 16 16"><path d="m6 4 4 4-4 4" /></svg>
                 </button>}
               </span>
-              {!mobile && fast && <ThreadMemberFastToggle value={fast} displayName={member.displayName} pending={fastControl!.pending}
+              {!mobile && fastControl && fast && <ThreadMemberFastToggle value={fast} displayName={member.displayName} pending={fastControl.pending}
                 onToggle={next => { void memberFast.save(member.agentId, next) }} />}
               <span className={`camp-inspector-member-state ${present ? '' : 'is-away'}`}>
                 <strong>{presenceLabel}</strong>
@@ -10443,6 +10443,15 @@ function RunExecutionContent({
               onFileOpenError={onFileOpenError}
             />
           )
+        }
+        if (item.kind === 'fast') {
+          const label = item.state === 'fast' ? uiAttribute('原生反馈：Fast')
+            : item.state === 'standard' ? uiAttribute('原生反馈：标准速度')
+              : item.state === 'cooldown' ? uiAttribute('原生反馈：Fast 冷却中')
+                : uiAttribute('Fast 实际状态未确认')
+          return <div className="execution-fast-observation" key={item.key}>
+            <span>{label}</span>{item.disabledReason && <span>{item.disabledReason}</span>}
+          </div>
         }
         if (item.kind === 'diagnostic') {
           return nonTerminal

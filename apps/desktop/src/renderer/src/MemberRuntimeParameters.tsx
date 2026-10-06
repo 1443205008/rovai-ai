@@ -23,7 +23,7 @@ export type MemberRuntimeDraft = {
 type RuntimeParameterProps = {
   adapterKind: AdapterKind
   installation: AdapterInstallation
-  snapshot: NonNullable<AdapterInstallation['snapshot']>
+  permissionOptions: PermissionOptionDescriptor[]
   draft: MemberRuntimeDraft
   disabled: boolean
   onOpenModelCatalog?: () => Promise<RuntimeModelCatalogView>
@@ -52,16 +52,8 @@ export function runtimeModelSelectionAvailable(
 ): boolean {
   if (!installation?.memberRuntimeDefaults || !model) return false
   if (model.mode === 'runtime_default') return true
-  if (!installation.modelCatalog || !modelCatalogIsServiceable(installation.modelCatalog)) {
-    return false
-  }
-  const descriptor = installation.snapshot?.models.find((candidate) => (
-    candidate.id === model.modelId
-    && !candidate.hidden
-    && !candidate.deprecated
-    && !candidate.id.endsWith('://runtime-default')
-  ))
-  return descriptor !== undefined
+  return model.modelId.trim().length > 0 && typeof model.options === 'object' && model.options !== null
+
 }
 
 export function runtimeDraftForMember(
@@ -130,19 +122,19 @@ export function MemberRuntimeParameters({
 }): React.JSX.Element {
   useInterfaceLanguage()
   const titleId = useId()
-  const snapshot = installation?.snapshot ?? null
-  const content = installation && snapshot && draft
+  const permissionOptions = installation?.permissionOptions ?? installation?.snapshot?.permissionOptions ?? []
+  const content = installation && draft
     ? runtimeParametersFor(adapterKind, {
         adapterKind,
         installation,
-        snapshot,
+        permissionOptions,
         draft,
         disabled,
         onOpenModelCatalog,
         onChange
       })
     : (
-        <p className="runtime-parameter-empty"><UiText zh={"当前还没有可编辑的能力快照。你仍可保存智能体选择；检查完成后需要回来保存运行参数。"} /></p>
+        <p className="runtime-parameter-empty"><UiText zh={"请先选择已安装的智能体。运行时会验证模型和权限设置。"} /></p>
       )
   return (
     <section className={inline ? 'member-runtime-parameters member-editor-runtime-fields' : 'member-runtime-parameters'} aria-label={inline ? uiAttribute("运行参数") : undefined} aria-labelledby={inline ? undefined : titleId}>
@@ -172,9 +164,9 @@ export function MemberModelParameters({
   onOpenModelCatalog?: () => Promise<RuntimeModelCatalogView>
   onChange(model: ModelSelection): void
 }): React.JSX.Element {
-  const snapshot = installation?.snapshot ?? null
+  const permissionOptions = installation?.permissionOptions ?? installation?.snapshot?.permissionOptions ?? []
   const defaults = installation?.memberRuntimeDefaults ?? null
-  if (!installation || !snapshot || !defaults || !model) {
+  if (!installation || !defaults || !model) {
     return (
       <p className="runtime-parameter-empty"><UiText zh={"当前没有可编辑的模型目录；如果智能体已准备好，将使用它的默认模型。"} /></p>
     )
@@ -188,7 +180,7 @@ export function MemberModelParameters({
       {modelFieldsFor(adapterKind, {
         adapterKind,
         installation,
-        snapshot,
+        permissionOptions,
         draft,
         disabled,
         onOpenModelCatalog,
@@ -428,7 +420,6 @@ function modelFieldsFor(
 function ModelFields({
   adapterKind,
   installation,
-  snapshot,
   draft,
   disabled,
   onOpenModelCatalog,
@@ -751,7 +742,7 @@ export function explicitSelection(
 
 function PermissionSelect({
   installation,
-  snapshot,
+  permissionOptions,
   draft,
   disabled,
   onChange,
@@ -763,7 +754,7 @@ function PermissionSelect({
   label: string
   choiceDescriptions?: Record<string, string>
 }): React.JSX.Element {
-  const descriptor = permissionDescriptor(snapshot.permissionOptions, fieldKey)
+  const descriptor = permissionDescriptor(permissionOptions, fieldKey)
   if (!descriptor) {
     return <p className="runtime-parameter-unavailable"><UiText zh={"当前能力快照未提供“"} />{label}”。</p>
   }
@@ -792,7 +783,7 @@ function PermissionSelect({
 
 function PermissionSwitch({
   installation,
-  snapshot,
+  permissionOptions,
   draft,
   disabled,
   onChange,
@@ -804,7 +795,7 @@ function PermissionSwitch({
 }): React.JSX.Element {
   const language = useInterfaceLanguage()
   const hintId = useId()
-  const descriptor = permissionDescriptor(snapshot.permissionOptions, fieldKey)
+  const descriptor = permissionDescriptor(permissionOptions, fieldKey)
   const checked = draft.permissions.values[fieldKey] === 'on'
   const recommendEnabling = descriptor?.choices.some(choice => choice.value === 'on') === true
     && installation.memberRuntimeDefaults?.permissions.values[fieldKey] === 'on'

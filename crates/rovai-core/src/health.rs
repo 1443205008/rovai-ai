@@ -258,7 +258,7 @@ pub async fn claude_code_capability_probe_at(path: &Path) -> ClaudeCodeCapabilit
 }
 
 pub async fn antigravity_capability_probe_at(path: &Path) -> AntigravityCapabilityProbe {
-    antigravity_probe_at(path).await
+    antigravity_probe_at(path, true).await
 }
 
 /// Only the existing verified snapshot authorizes omitting full checks. Session
@@ -811,7 +811,13 @@ async fn claude_code_probe_at(path: &Path) -> ClaudeCodeCapabilityProbe {
     }
 }
 
-async fn antigravity_probe_at(path: &Path) -> AntigravityCapabilityProbe {
+/// Antigravity sends input in argv and cannot initialize without it. Its launch
+/// exception checks CLI flags and account/model access, never the display version.
+pub async fn antigravity_launch_preflight_at(path: &Path) -> AntigravityCapabilityProbe {
+    antigravity_probe_at(path, false).await
+}
+
+async fn antigravity_probe_at(path: &Path, include_version: bool) -> AntigravityCapabilityProbe {
     let probed_at = chrono::Utc::now().to_rfc3339();
     let path_text = path.to_string_lossy().to_string();
     if !path.is_file() {
@@ -837,61 +843,65 @@ async fn antigravity_probe_at(path: &Path) -> AntigravityCapabilityProbe {
     }
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let fingerprint = executable_fingerprint_async(canonical.clone()).await;
-    let mut version_command = runtime_command(&canonical, Some(AdapterKind::AntigravityApp));
-    version_command.arg("--version");
-    let version = bounded_output(&mut version_command, Duration::from_secs(15)).await;
-    let reported_version = match version {
-        Ok(output) if output.status.success() => {
-            first_nonempty_line(&output.stdout.bytes, &output.stderr.bytes)
+    let reported_version = if include_version {
+        let mut version_command = runtime_command(&canonical, Some(AdapterKind::AntigravityApp));
+        version_command.arg("--version");
+        let version = bounded_output(&mut version_command, Duration::from_secs(15)).await;
+        match version {
+            Ok(output) if output.status.success() => {
+                first_nonempty_line(&output.stdout.bytes, &output.stderr.bytes)
+            }
+            Ok(output) => {
+                let raw_detail = bounded_probe_text(&output.stdout.bytes, &output.stderr.bytes);
+                let failure = public_probe_failure(
+                    AdapterKind::AntigravityApp,
+                    RuntimeFailureOrigin::Runtime,
+                    RuntimeFailurePhase::Execution,
+                    "runtime_process_failed",
+                    "Antigravity 版本检查失败",
+                    &raw_detail,
+                    &canonical,
+                    true,
+                );
+                return antigravity_probe_failure(
+                    path_text,
+                    fingerprint,
+                    None,
+                    AgentRuntimeProbeStatus::ProbeFailed,
+                    format!(
+                        "Antigravity companion version check failed with {} (outputDigest={})",
+                        output.status,
+                        probe_output_digest(&output.stdout.bytes, &output.stderr.bytes)
+                    ),
+                    failure,
+                    probed_at,
+                );
+            }
+            Err(error) => {
+                let raw_detail = error.to_string();
+                let failure = public_probe_failure(
+                    AdapterKind::AntigravityApp,
+                    RuntimeFailureOrigin::Environment,
+                    RuntimeFailurePhase::Spawn,
+                    "runtime_spawn_failed",
+                    "无法启动 Antigravity 检查",
+                    &raw_detail,
+                    &canonical,
+                    true,
+                );
+                return antigravity_probe_failure(
+                    path_text,
+                    fingerprint,
+                    None,
+                    AgentRuntimeProbeStatus::ProbeFailed,
+                    format!("failed to inspect Antigravity companion CLI: {error}"),
+                    failure,
+                    probed_at,
+                );
+            }
         }
-        Ok(output) => {
-            let raw_detail = bounded_probe_text(&output.stdout.bytes, &output.stderr.bytes);
-            let failure = public_probe_failure(
-                AdapterKind::AntigravityApp,
-                RuntimeFailureOrigin::Runtime,
-                RuntimeFailurePhase::Execution,
-                "runtime_process_failed",
-                "Antigravity 版本检查失败",
-                &raw_detail,
-                &canonical,
-                true,
-            );
-            return antigravity_probe_failure(
-                path_text,
-                fingerprint,
-                None,
-                AgentRuntimeProbeStatus::ProbeFailed,
-                format!(
-                    "Antigravity companion version check failed with {} (outputDigest={})",
-                    output.status,
-                    probe_output_digest(&output.stdout.bytes, &output.stderr.bytes)
-                ),
-                failure,
-                probed_at,
-            );
-        }
-        Err(error) => {
-            let raw_detail = error.to_string();
-            let failure = public_probe_failure(
-                AdapterKind::AntigravityApp,
-                RuntimeFailureOrigin::Environment,
-                RuntimeFailurePhase::Spawn,
-                "runtime_spawn_failed",
-                "无法启动 Antigravity 检查",
-                &raw_detail,
-                &canonical,
-                true,
-            );
-            return antigravity_probe_failure(
-                path_text,
-                fingerprint,
-                None,
-                AgentRuntimeProbeStatus::ProbeFailed,
-                format!("failed to inspect Antigravity companion CLI: {error}"),
-                failure,
-                probed_at,
-            );
-        }
+    } else {
+        None
     };
 
     let mut help_command = runtime_command(&canonical, Some(AdapterKind::AntigravityApp));
@@ -2802,145 +2812,6 @@ pub async fn codex_model_catalog(path: &Path) -> Result<Value> {
     }
 }
 
-/// Metadata-only checks, invoked by the Runtime Check Manager or the admitted Run.
-/// Do not persist raw account/config responses (they may contain personal data).
-pub async fn claude_fast_eligibility(
-    runtime: &rovai_core::agent_profile::FrozenAgentRuntimeConfig,
-    cwd: &Path,
-) -> Result<rovai_core::camp_fast::NativeFastEligibility> {
-    use rovai_core::camp_fast::{NativeFastEligibility, claude_fast_version_supported};
-    if runtime
-        .custom_api
-        .as_ref()
-        .is_some_and(|api| api.configuration.enabled())
-    {
-        return Ok(NativeFastEligibility::default());
-    }
-    if !claude_fast_version_supported(runtime.reported_version.as_deref())
-        || custom_fast_environment(AdapterKind::ClaudeCodeCli)
-    {
-        return Ok(NativeFastEligibility::default());
-    }
-    claude_fast_auth(Path::new(&runtime.executable_path), cwd).await
-}
-
-async fn claude_fast_auth(
-    path: &Path,
-    cwd: &Path,
-) -> Result<rovai_core::camp_fast::NativeFastEligibility> {
-    use rovai_core::camp_fast::{NativeFastEligibility, claude_subscription_auth};
-    let mut command = runtime_command(path, Some(AdapterKind::ClaudeCodeCli));
-    command.args(["auth", "status"]).current_dir(cwd);
-    let output = bounded_output(&mut command, Duration::from_secs(15)).await?;
-    let eligible = output.status.success()
-        && serde_json::from_slice::<Value>(&output.stdout.bytes)
-            .is_ok_and(|status| claude_subscription_auth(&status));
-    Ok(NativeFastEligibility {
-        eligible,
-        runtime_default_fast: None,
-    })
-}
-
-pub fn custom_fast_environment(kind: AdapterKind) -> bool {
-    let keys: &[&str] = match kind {
-        AdapterKind::ClaudeCodeCli => &[
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_AUTH_TOKEN",
-            "ANTHROPIC_BASE_URL",
-            "CLAUDE_CODE_USE_BEDROCK",
-            "CLAUDE_CODE_USE_VERTEX",
-            "CLAUDE_CODE_USE_FOUNDRY",
-            "CLAUDE_CODE_USE_AWS",
-            "CLAUDE_CODE_DISABLE_FAST_MODE",
-        ],
-        AdapterKind::CodexCli => &["OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY"],
-        _ => return true,
-    };
-    keys.iter().any(|key| {
-        rovai_core::runtime_discovery::runtime_environment_variable(kind, key)
-            .is_some_and(|value| !value.is_empty() && value != "0")
-    })
-}
-
-pub async fn codex_fast_eligibility(
-    runtime: &rovai_core::agent_profile::FrozenAgentRuntimeConfig,
-    cwd: &Path,
-) -> Result<rovai_core::camp_fast::NativeFastEligibility> {
-    use rovai_core::camp_fast::{CODEX_FAST_TURN_CAPABILITY, NativeFastEligibility};
-    if runtime
-        .custom_api
-        .as_ref()
-        .is_some_and(|api| api.configuration.enabled())
-    {
-        return Ok(NativeFastEligibility::default());
-    }
-    if !runtime
-        .capabilities
-        .iter()
-        .any(|capability| capability == CODEX_FAST_TURN_CAPABILITY)
-        || custom_fast_environment(AdapterKind::CodexCli)
-    {
-        return Ok(NativeFastEligibility::default());
-    }
-    codex_fast_metadata(
-        Path::new(&runtime.executable_path),
-        cwd,
-        (runtime.model.source == "explicit").then_some(runtime.model.model_id.as_str()),
-    )
-    .await
-}
-
-async fn codex_fast_metadata(
-    path: &Path,
-    cwd: &Path,
-    explicit_model: Option<&str>,
-) -> Result<rovai_core::camp_fast::NativeFastEligibility> {
-    use rovai_core::camp_fast::codex_eligibility;
-    let mut command = runtime_command(path, Some(AdapterKind::CodexCli));
-    command
-        .args(["app-server", "--listen", "stdio://"])
-        .current_dir(cwd);
-    let mut process = RuntimeProbeProcess::spawn(
-        &mut command,
-        ACP_STDOUT_LIMIT,
-        DEFAULT_CAPTURE_LIMIT,
-        DEFAULT_LINE_LIMIT,
-        DEFAULT_CLEANUP_TIMEOUT,
-    )?;
-    let result = {
-        let (stdin, lines) = process.split_io()?;
-        timeout(Duration::from_secs(30), async {
-            write_json_line(stdin, &json!({"id": 1, "method": "initialize", "params": {
-                "clientInfo": {"name": "rovai_fast_check", "version": env!("CARGO_PKG_VERSION")},
-                "capabilities": {"experimentalApi": true}
-            }})).await?;
-            read_rpc_result(lines, 1).await?;
-            write_json_line(stdin, &json!({"method": "initialized", "params": {}})).await?;
-            write_json_line(stdin, &json!({"id": 2, "method": "account/read", "params": {"refreshToken": false}})).await?;
-            let account = read_rpc_result(lines, 2).await?;
-            write_json_line(stdin, &json!({"id": 3, "method": "config/read", "params": {"cwd": cwd, "includeLayers": true}})).await?;
-            let config = read_rpc_result(lines, 3).await?;
-            let mut models = Vec::new();
-            let mut cursor: Option<String> = None;
-            for id in 4..104 {
-                write_json_line(stdin, &json!({"id": id, "method": "model/list", "params": {
-                    "cursor": cursor, "includeHidden": true, "limit": 100
-                }})).await?;
-                let page = read_rpc_result(lines, id).await?;
-                models.extend(page.get("data").and_then(Value::as_array).context("model/list omitted data")?.iter().cloned());
-                cursor = page.get("nextCursor").and_then(Value::as_str).map(str::to_owned);
-                if cursor.is_none() {
-                    return Ok(codex_eligibility(&account, &config, &json!({"data": models}),
-                        explicit_model));
-                }
-            }
-            bail!("model/list exceeded pagination limit")
-        }).await.context("Fast metadata check timed out")?
-    };
-    process.finish().await?;
-    result
-}
-
 async fn write_json_line(stdin: &mut ManagedChildStdin, value: &Value) -> Result<()> {
     stdin
         .write_all(serde_json::to_string(value)?.as_bytes())
@@ -3830,81 +3701,6 @@ esac
                 .is_err()
         );
     }
-    #[tokio::test]
-    async fn native_fast_checks_use_the_selected_executable_and_execution_directory() {
-        let directory =
-            env::temp_dir().join(format!("rovai-fast-metadata-{}", uuid::Uuid::new_v4()));
-        let _cleanup = ProbeRootCleanup(directory.clone());
-        let cwd = directory.join("actual workspace 中文");
-        fs::create_dir_all(&cwd).unwrap();
-        let executable = directory.join("selected-runtime");
-        fs::write(&executable, r#"#!/bin/sh
-printf '%s\n' "$PWD" > native-cwd
-printf '%s\n' "$@" > native-argv
-if [ "$1:$2" = 'auth:status' ]; then
-  printf '%s\n' '{"loggedIn":true,"authMethod":"oauth_token","apiProvider":"firstParty","subscriptionType":null}'
-  exit 0
-fi
-while IFS= read -r request; do
-  printf '%s\n' "$request" >> native-requests
-  case "$request" in
-    *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}' ;;
-    *'"method":"account/read"'*) printf '%s\n' '{"id":2,"result":{"account":{"type":"chatgpt"}}}' ;;
-    *'"method":"config/read"'*) printf '%s\n' '{"id":3,"result":{"config":{"model":"selected-model","service_tier":"priority"}}}' ;;
-    *'"cursor":"next"'*) printf '%s\n' '{"id":5,"result":{"data":[{"id":"selected-model","serviceTiers":[{"id":"priority"}],"defaultServiceTier":"default"}],"nextCursor":null}}' ;;
-    *'"method":"model/list"'*) printf '%s\n' '{"id":4,"result":{"data":[],"nextCursor":"next"}}' ;;
-  esac
-done
-"#).unwrap();
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(claude_fast_auth(&executable, &cwd).await.unwrap().eligible);
-        assert_eq!(
-            fs::read_to_string(cwd.join("native-argv")).unwrap(),
-            "auth\nstatus\n"
-        );
-        let eligibility = codex_fast_metadata(&executable, &cwd, None).await.unwrap();
-        assert!(eligibility.eligible);
-        assert_eq!(
-            eligibility.runtime_default_fast,
-            Some(true),
-            "effective project config wins over model default"
-        );
-        let native_cwd = fs::read_to_string(cwd.join("native-cwd")).unwrap();
-        assert_eq!(
-            Path::new(native_cwd.trim()).canonicalize().unwrap(),
-            cwd.canonicalize().unwrap()
-        );
-        assert_eq!(
-            fs::read_to_string(cwd.join("native-argv")).unwrap(),
-            "app-server\n--listen\nstdio://\n"
-        );
-        let requests: Vec<Value> = fs::read_to_string(cwd.join("native-requests"))
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        let methods: Vec<_> = requests
-            .iter()
-            .map(|request| request["method"].as_str().unwrap())
-            .collect();
-        assert_eq!(
-            methods,
-            [
-                "initialize",
-                "initialized",
-                "account/read",
-                "config/read",
-                "model/list",
-                "model/list"
-            ]
-        );
-        assert_eq!(requests[2]["params"]["refreshToken"], false);
-        assert_eq!(
-            requests[3]["params"],
-            json!({"cwd": cwd, "includeLayers": true})
-        );
-    }
-
     #[tokio::test]
     async fn git_health_uses_only_a_resolved_absolute_executable() {
         let directory = env::temp_dir().join(format!("rovai-git-health-{}", uuid::Uuid::new_v4()));
