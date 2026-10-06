@@ -198,7 +198,13 @@ use rovai_core::{
     },
     mcp_import::McpImportScanner,
     mcp_projection::{McpProjectionRequest, McpProjectionService, PreparedMcpProjection},
-    member_studio::{MEMBER_CREATE_TOOL_NAME, MemberCreateError, MemberCreateInput, create_member},
+    member_studio::{
+        MEMBER_CREATE_TOOL_NAME, MemberCreateInput, MemberOperationError, create_member,
+    },
+    member_tool::{
+        MEMBER_GET_TOOL_NAME, MEMBER_LIST_TOOL_NAME, MEMBER_UPDATE_TOOL_NAME, MemberGetInput,
+        MemberUpdateInput, authorize_member_target, get_member, list_members, update_member,
+    },
     memory::{
         AcceptHearthReviewItemCommand, CreateMemoryCommand, ForgetMemoryCommand, MemoryService,
         ReactivateMemoryCommand, RejectHearthReviewItemCommand, RetireMemoryCommand,
@@ -5402,7 +5408,7 @@ impl Core {
                 "Built-in Tool IPC protocol version is unsupported",
             );
         }
-        let invocation_guard = self.builtin_tool_leases.invocation_guard().await;
+        let mut invocation_guard = Some(self.builtin_tool_leases.invocation_guard().await);
         let authorized = match self.builtin_tool_leases.authenticate(&auth).await {
             Ok(authorized) => authorized,
             Err(error) => return BuiltinToolIpcResponse::ipc_error(error.code, error.message),
@@ -5475,6 +5481,47 @@ impl Core {
                         );
                     }
                 }
+                if matches!(
+                    operation.as_str(),
+                    MEMBER_LIST_TOOL_NAME | MEMBER_GET_TOOL_NAME | MEMBER_UPDATE_TOOL_NAME
+                ) {
+                    if operation == MEMBER_UPDATE_TOOL_NAME
+                        && input["requestId"].as_str() != Some(request_id.as_str())
+                    {
+                        return builtin_tool_rejection(
+                            &operation,
+                            &request_id,
+                            "builtin_tool.invalid_input",
+                            "requestId must match the invocation identity",
+                        );
+                    }
+                    let authorization: Result<()> = {
+                        let database = self.database.lock().await;
+                        (|| {
+                            let run = TeamToolService::default().authenticate_attested_binding(
+                                &database,
+                                &authorized.native_binding.native_binding_id,
+                                &authorized.native_binding.binding_credential,
+                                &format!("builtin-cli:{request_id}"),
+                                &authorized.agent_run_id,
+                                authorized.execution_epoch,
+                            )?;
+                            if let Some(agent_id) = input["agentId"].as_str() {
+                                authorize_member_target(
+                                    database.connection(),
+                                    &run,
+                                    agent_id,
+                                    operation == MEMBER_UPDATE_TOOL_NAME,
+                                )?;
+                            }
+                            Ok(())
+                        })()
+                    };
+                    if let Err(error) = authorization {
+                        let (code, message, _) = classify_builtin_operation_error(&error);
+                        return builtin_tool_rejection(&operation, &request_id, &code, &message);
+                    }
+                }
                 let digest = match request_digest(&operation, &input) {
                     Ok(digest) => digest,
                     Err(error) => {
@@ -5490,9 +5537,15 @@ impl Core {
                     .replay(&auth, &request_id, &digest)
                     .await
                 {
-                    Ok(Some(envelope)) => {
+                    Ok(Some(envelope))
+                        if !matches!(
+                            operation.as_str(),
+                            MEMBER_LIST_TOOL_NAME | MEMBER_GET_TOOL_NAME | MEMBER_UPDATE_TOOL_NAME
+                        ) =>
+                    {
                         return BuiltinToolIpcResponse::Envelope { envelope };
                     }
+                    Ok(Some(_)) => {}
                     Ok(None) => {}
                     Err(error) => {
                         return builtin_tool_rejection(
@@ -5544,7 +5597,7 @@ impl Core {
                             );
                         }
                     };
-                    drop(invocation_guard);
+                    drop(invocation_guard.take());
                     if let Some((_camp_id, workspace)) = scope {
                         let files = send_input.files;
                         source_files = match tokio::task::spawn_blocking(move || {
@@ -5572,8 +5625,11 @@ impl Core {
                             }
                         };
                     }
-                } else {
-                    drop(invocation_guard);
+                } else if !matches!(
+                    operation.as_str(),
+                    MEMBER_GET_TOOL_NAME | MEMBER_UPDATE_TOOL_NAME
+                ) {
+                    drop(invocation_guard.take());
                 }
                 if !source_files.is_empty() {
                     let reauthorized = self.builtin_tool_leases.authenticate(&auth).await;
@@ -5604,6 +5660,7 @@ impl Core {
                         Some((authorized.agent_run_id, authorized.execution_epoch)),
                         Some(request_id.clone()),
                         source_files,
+                        &authorized.run_tmp,
                     )
                     .await;
                 if domain_response.error.as_ref().is_some_and(|error| {
@@ -5908,6 +5965,7 @@ impl Core {
         attested_run: Option<(String, i64)>,
         evidence_request_id: Option<String>,
         source_files: Vec<rovai_core::local_attachment_source::LocalAttachmentSourceRef>,
+        run_tmp: &Path,
     ) -> TeamToolIpcResponse {
         let evidence_tool_name = request.tool_name.clone();
         let evidence_input = request.input.clone();
@@ -6016,6 +6074,9 @@ impl Core {
                     &started_evidence,
                 )?
                 .context("Built-in Tool start evidence was not durably admitted")?;
+            rovai_core::member_studio::resolve_member_avatar_input(
+                &database, &authenticated_run, &request.tool_name, &mut request.input,
+            )?;
             let operation_result = match request.tool_name.as_str() {
                 CAMP_MESSAGE_SEND_TOOL_NAME => {
                     let input = serde_json::from_value::<ThreadMessageSendInput>(request.input)
@@ -6044,6 +6105,18 @@ impl Core {
                     evidence_receipt_id = execution.result.payload["messageId"]
                         .as_str()
                         .map(str::to_string);
+                    command_execution_payload(execution)
+                }
+                MEMBER_LIST_TOOL_NAME => list_members(database.connection(),&authenticated_run),
+                MEMBER_GET_TOOL_NAME => {
+                    let input = serde_json::from_value::<MemberGetInput>(request.input)?;
+                    get_member(database.connection(),&self.data_dir,run_tmp,&authenticated_run,&input)
+                }
+                MEMBER_UPDATE_TOOL_NAME => {
+                    let input = serde_json::from_value::<MemberUpdateInput>(request.input)?;
+                    let execution = update_member(&mut database,&self.data_dir,&authenticated_run,input)?;
+                    evidence_replayed = execution.replayed;
+                    member_roster_changed = !execution.replayed && execution.result.payload["changed"] == true;
                     command_execution_payload(execution)
                 }
                 MEMBER_CREATE_TOOL_NAME => {
@@ -6729,8 +6802,11 @@ impl Core {
         }
         .await;
         if result.is_ok() && member_roster_changed {
-            emit_member_roster_invalidated(&self.output, MEMBER_CREATE_TOOL_NAME);
-            if let Some(authenticated_run) = evidence_run.as_ref() {
+            emit_member_roster_invalidated(&self.output, &evidence_tool_name);
+            if let Some(authenticated_run) = evidence_run
+                .as_ref()
+                .filter(|_| evidence_tool_name == MEMBER_CREATE_TOOL_NAME)
+            {
                 emit(
                     &self.output,
                     "camp.memberCreated",
@@ -24742,7 +24818,7 @@ fn command_rejection_details(code: &str, payload: &Value) -> Option<Value> {
 }
 
 fn classify_builtin_operation_error(error: &anyhow::Error) -> (String, String, Option<Value>) {
-    if let Some(error) = error.downcast_ref::<MemberCreateError>() {
+    if let Some(error) = error.downcast_ref::<MemberOperationError>() {
         return (
             error.code.to_string(),
             error.message.to_string(),

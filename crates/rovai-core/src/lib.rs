@@ -73,6 +73,7 @@ pub mod mcp_import;
 pub mod mcp_projection;
 pub mod member_avatar;
 pub mod member_studio;
+pub mod member_tool;
 pub mod memory;
 pub mod memory_retrieval;
 pub mod memory_secret;

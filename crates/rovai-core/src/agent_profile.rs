@@ -4729,13 +4729,13 @@ fn probe_diagnostic_code(probe_status: &str, failure_class: &str) -> Option<&'st
 }
 
 #[derive(Debug)]
-struct NormalizedMemberIdentity {
-    display_name: String,
-    team_role: String,
-    professional_responsibilities: String,
-    personality_traits: Vec<String>,
-    working_principles: String,
-    growth_topic: String,
+pub(crate) struct NormalizedMemberIdentity {
+    pub(crate) display_name: String,
+    pub(crate) team_role: String,
+    pub(crate) professional_responsibilities: String,
+    pub(crate) personality_traits: Vec<String>,
+    pub(crate) working_principles: String,
+    pub(crate) growth_topic: String,
 }
 
 pub(crate) fn validate_stored_member_identity(
@@ -4785,7 +4785,7 @@ pub(crate) fn validate_member_identity_input(
     Ok(())
 }
 
-fn normalize_member_identity(
+pub(crate) fn normalize_member_identity(
     display_name: &str,
     team_role: &str,
     professional_responsibilities: &str,
@@ -5299,7 +5299,7 @@ fn legacy_trae_permission_schema_can_normalize(
     }))
 }
 
-fn profile_display_name_exists(
+pub(crate) fn profile_display_name_exists(
     transaction: &Transaction<'_>,
     display_name: &str,
     except_id: Option<&str>,

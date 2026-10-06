@@ -3,7 +3,7 @@ document_type: implementation-plan
 version: v1.72
 authority: version-implementation-and-acceptance
 status: in_progress
-last_updated: 2026-10-06
+last_updated: 2026-10-07
 ---
 
 # v1.72 实施与验收
@@ -866,3 +866,53 @@ Clippy 与首轮基线比较仍是原有 10 项错误，本切片没有新增 li
 - `ROVAI_FAST_CHECK_ONLY=1 pnpm test:camp-fast-layout` 通过，日夜截图已检查；验证二态、初始化值、
   明确关闭、双入口同步及保存期间迟到刷新。未增加或退役 Rust owner。
 - 不执行真实账户计费、实体 Windows 或日常 App 安装验收；沿用上一节完整布局测试的已知限制。
+
+
+## Member CLI 最小增量
+
+- 工作分支 `rovai/member-cli`，复用独立 worktree；提示词 r1 的确认消息为 `d283c49e-6894-4274-a584-ce449b544d44`。
+- 仅 list/get/update；封闭读取、事务内 PATCH、文字与资产引用原子提交，create 及 Single Chat allowlist 保持。
+- 无持久字段扩展：现有创建快照支持同 Thread 原创建者；requestId 显式传递解决重启 CLI 的重放身份；现有复合资产保存与 Run tmp 生命周期复用。
+- 内置 portrait 原先只在 renderer AVIF 包中，Core 无法读取或复用 PNG/JPEG 裁切流程；最小补充为同源 PNG 编译资源，不增加运行期解码依赖或资产服务。
+- 最终集成基线 `5421fed778fcdd62f3b2c0e7f517a6e3e2b86c51`；同步上游仅解决版本概览文本冲突，保留并行工作的记录。
+- `pnpm test:rust:pr`：454 项通过、1 项原有 Runtime smoke 忽略；`cargo fmt --all --check` 通过。
+  定向回归全部通过：`member_` 18 项、租约生命周期 2 项、Bootstrap/冻结补发/新 Session 4 项。
+- 重建 CLI 的根帮助与四项 member 帮助、Bootstrap 资源、cli-operations 正文均与 r1 逐字一致；
+  独立 tmp 中的 stdin/输入文件封闭拒绝行为一致，不连接日常 Core。
+- 文档测试 10 项、Skill 测试 3 项及 12 项 Skill 校验通过；`docs:check` 与以上述基线运行的 `docs:check:ci` 通过。
+  Standards 与 Spec 独立复核的代码问题均已关闭，完整记录见[实施证据](model-context-change-member-cli.md#2026-10-06-实施与验收记录)。
+- 真实任务 Gate：等待具体 Runtime/model 与固定快照 Judge 配置，尚未运行或声明通过；不沿用其他工作项的豁免。
+
+- 复核修正：列表沿用 `member_order,id`；图片更新复用创建流程的请求绑定不可变资产。原 Run 源文件消失后先匹配既有领域回执，未提交请求仍拒绝；源文件存在时验证规范化内容，避免同路径换图被租约缓存吞掉。无新表或第二份请求结果。
+- 后续复核修正：等价 source/crop/icon 保留原引用和版本；有持久回执时只验证准备资产，缺失或损坏不得重新发布该资产 ID。两项均在原 PATCH owner 中补回归。
+- User 针对 `c069b3f5` 的追加复核确认两项 P2：Lead 为 null 时列表报错；相对图片路径在 Core cwd 下解析。
+  扩展原 Member 与 CLI owner 后均先复现失败；修复使用 SQL `COALESCE` 与 CLI 三路共用出口的绝对路径转换，
+  不自动任命 Lead，不提前检查图片是否仍存在。隔离的双进程 IPC 夹具在不同 cwd 各放一张不同内容的同名 PNG，
+  直接参数、JSON 文件、stdin 修复前均选中接收端图片，修复后均选中调用者图片，请求 ID 保持一致。
+  本夹具证明实际 CLI 的输入／IPC 边界，不冒充真实 Core/Runtime 或模型 Gate。
+- 追加修复后：Member 18 项、CLI 29 项、默认 workspace 454 项通过，原有 1 项 Runtime smoke 仍忽略；
+  格式、文档测试 10 项、文档治理及提示词／帮助逐字对照通过。没有新增或退役 Rust owner。
+
+- 2026-10-07 按 User 追加要求统一文件语义，取代上一阶段的 CLI cwd 方案：CLI 保留原始
+  `avatarFile`，Core 认证 Run 后使用现有 `agent_file_ingress_scope` 读取冻结的 `execution_root`。
+  create/update 共用输入入口，绝对路径原样保留；与 Agent 附件共享纯路径 helper，既不 canonicalize
+  也不提前检查文件存在性。头像仍即时导入 immutable asset，无新增字段、授权／幂等机制或附件记录。
+- 定向验证：Member 18、CLI 29、附件 5 项通过，沿用原测试 owner。隔离 CLI IPC 夹具覆盖
+  create/update × 直接参数／JSON 文件／stdin × 相对／绝对路径共 12 种组合，路径和命令身份原样传输；
+  Core 入口与真实 SQLite fixture 的两个 owner 另在隔离子进程 cwd 下执行，同名 PNG 内容不同，
+  最终导入的像素来自冻结 Run 根目录。此证据不等同于真实 Core/Runtime 端到端或模型 Gate。
+  失效 epoch／缺失 workspace 拒绝、绝对路径不变、symlink 拒绝和缺失源回放均已覆盖。
+  Bootstrap、Skill 与 CLI help 继续逐字符合已批准文本。
+- 本轮最终默认 workspace 回归：454 项通过、1 项既有 Runtime smoke 忽略；格式、文档测试 10 项及
+  diff-aware 文档治理通过。没有新增或退役 Rust owner；真实模型 Gate 仍待配置和验收。
+
+- 2026-10-07：User 在已收到 Gate 缺口说明后，通过消息
+  `10a0a3f7-2d2b-478f-bb99-6726b07d37cb` 再次明确要求“pr main merge”；据此推进本项交付，
+  真实模型 Gate 保持未运行，不记为通过。已合入主线 `520320a8`；版本概览冲突保留 Member CLI
+  与 Runtime 探测修复两段记录，未改动后者的实现或验收结论。
+- 合入 `520320a8` 后最终验证：默认 workspace 454 项通过、1 项既有 Runtime smoke 忽略；
+  扩展 Member 18 项、租约 2 项通过（均先确认非空清单）；重建 CLI 后 12 种文件输入组合、
+  封闭输入拒绝与已批准 Bootstrap／Skill／help 逐字对照通过。格式、文档测试 10 项、Skill 测试 3 项、
+  12 个 Skill 规范检查和以该 main SHA 为 base 的通用文档门禁通过。
+- 独立复核：Spec 未关闭问题 0 项；Standards 的当前版本文档漂移修正并复核后，未关闭问题 0 项。
+  复核与上述确定性检查不代表真实模型 Gate 通过；按已记录的 User 后续合并指令推进 PR。
