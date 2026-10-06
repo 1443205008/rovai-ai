@@ -36,6 +36,7 @@ use crate::{
     execution_budget::{PRODUCT_MAX_ACCEPTED_A2A, camp_turn_execution_budget_now},
     local_attachment_source::LocalAttachmentSourceRef,
     member_studio::MEMBER_CREATE_TOOL_NAME,
+    member_tool::{MEMBER_GET_TOOL_NAME, MEMBER_LIST_TOOL_NAME, MEMBER_UPDATE_TOOL_NAME},
     message_delivery::{
         AgentAddressingMode, CAMP_MESSAGE_SEND_MAX_BODY_BYTES, CAMP_MESSAGE_SEND_TOOL_NAME,
         SendQueuedAgentMessage, persist_queued_agent_message,
@@ -48,7 +49,7 @@ pub const TEAM_CREATE_TASK_TOOL_NAME: &str = "team.create_task";
 pub const TEAM_GET_TASK_TOOL_NAME: &str = "team.get_task";
 pub const TEAM_UPDATE_TASK_TOOL_NAME: &str = "team.update_task";
 pub const TEAM_LIST_TASKS_TOOL_NAME: &str = "team.list_tasks";
-pub const TEAM_TOOL_NAMES: [&str; 27] = [
+pub const TEAM_TOOL_NAMES: [&str; 30] = [
     "mission.list",
     "mission.get",
     "mission.update",
@@ -62,6 +63,9 @@ pub const TEAM_TOOL_NAMES: [&str; 27] = [
     AUTOMATION_DELETE_TOOL_NAME,
     CAMP_MESSAGE_SEND_TOOL_NAME,
     MEMBER_CREATE_TOOL_NAME,
+    MEMBER_LIST_TOOL_NAME,
+    MEMBER_GET_TOOL_NAME,
+    MEMBER_UPDATE_TOOL_NAME,
     TEAM_CREATE_TASK_TOOL_NAME,
     TEAM_GET_TASK_TOOL_NAME,
     TEAM_UPDATE_TASK_TOOL_NAME,
@@ -2426,6 +2430,262 @@ mod tests {
         }
     }
 
+    // Owns the Agent CLI's global Profile PATCH and scoped read seam, using
+    // the existing authenticated-Run fixture (not a second authorization store).
+    #[test]
+    fn member_profile_reads_and_patches_preserve_scope_atomicity_and_replay() {
+        use crate::builtin_tool_cli_output::validate_schema;
+        use crate::member_tool::*;
+        let mut fixture = Fixture::new();
+        let run = AuthenticatedTeamToolRun {
+            camp_id: fixture.camp_id.clone(),
+            agent_id: "agent_1".into(),
+            agent_run_id: fixture.source_run_id.clone(),
+            execution_epoch: fixture.source_epoch,
+        };
+        let tmp = fixture.directory.join("member-run-tmp");
+        std::fs::create_dir(&tmp).unwrap();
+        let read = |db: &Database, target: &str| {
+            get_member(
+                db.connection(),
+                &fixture.directory,
+                &tmp,
+                &run,
+                &MemberGetInput {
+                    agent_id: target.into(),
+                },
+            )
+            .unwrap()
+        };
+        fixture
+            .database
+            .connection()
+            .execute(
+                "UPDATE agent_profile SET profile_status='away' WHERE id='agent_2'",
+                [],
+            )
+            .unwrap();
+        let list = list_members(fixture.database.connection(), &run).unwrap();
+        validate_schema(&list, &member_list_output_schema()).unwrap();
+        assert_eq!(list["items"].as_array().unwrap().len(), 3);
+        assert!(
+            list["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["agentId"] == "agent_1" && m["isDefaultLead"] == true)
+        );
+        assert!(
+            list["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["agentId"] == "agent_2")
+        );
+        assert!(
+            authorize_member_target(fixture.database.connection(), &run, "agent_4", false).is_err()
+        );
+        let before = read(&fixture.database, "agent_2");
+        validate_schema(&before, &member_get_output_schema()).unwrap();
+        for variant in ["icon", "portrait"] {
+            let path = std::path::Path::new(before["images"][variant].as_str().unwrap());
+            assert!(path.starts_with(&tmp) && path.is_file());
+            std::fs::remove_file(path).unwrap();
+        }
+        let refreshed = read(&fixture.database, "agent_2");
+        for variant in ["icon", "portrait"] {
+            assert!(std::path::Path::new(refreshed["images"][variant].as_str().unwrap()).is_file());
+        }
+        let parse_patch = |value: Value| {
+            crate::team_tool_catalog::validate_builtin_tool_input(MEMBER_UPDATE_TOOL_NAME, &value)
+                .unwrap();
+            serde_json::from_value::<MemberUpdateInput>(value).unwrap()
+        };
+        let patch = parse_patch(
+            json!({"agentId":"agent_2","requestId":Uuid::new_v4().to_string(),"expectedVersion":before["version"],"teamRole":"Updated role"}),
+        );
+        let first = update_member(
+            &mut fixture.database,
+            &fixture.directory,
+            &run,
+            patch.clone(),
+        )
+        .unwrap();
+        assert_eq!(first.result.status, CommandResultStatus::Applied);
+        validate_schema(&first.result.payload, &member_update_output_schema()).unwrap();
+        let updated = read(&fixture.database, "agent_2");
+        assert_eq!(updated["teamRole"], "Updated role");
+        for field in [
+            "displayName",
+            "professionalResponsibilities",
+            "personalityTraits",
+            "workingPrinciples",
+            "growthTopic",
+        ] {
+            assert_eq!(updated[field], before[field]);
+        }
+        assert_eq!(
+            updated["version"].as_i64().unwrap(),
+            before["version"].as_i64().unwrap() + 1
+        );
+        // Simulate a lost response: a fresh gateway instance returns the committed
+        // result, without a second version increment (even after another patch).
+        let replay = update_member(
+            &mut fixture.database,
+            &fixture.directory,
+            &run,
+            patch.clone(),
+        )
+        .unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.result.payload, first.result.payload);
+        let mut reused = patch.clone();
+        reused.team_role = Some("Different request".into());
+        assert!(
+            update_member(&mut fixture.database, &fixture.directory, &run, reused)
+                .unwrap_err()
+                .downcast_ref::<CommandGatewayError>()
+                .is_some()
+        );
+        let mut stale = patch.clone();
+        stale.request_id = Uuid::new_v4().to_string();
+        assert_eq!(
+            update_member(&mut fixture.database, &fixture.directory, &run, stale)
+                .unwrap()
+                .result
+                .code,
+            "version_conflict"
+        );
+        let mut noop = patch.clone();
+        noop.request_id = Uuid::new_v4().to_string();
+        noop.expected_version = updated["version"].as_i64().unwrap();
+        let no_change =
+            update_member(&mut fixture.database, &fixture.directory, &run, noop).unwrap();
+        assert_eq!(no_change.result.payload["changed"], false);
+        assert_eq!(no_change.result.payload["version"], updated["version"]);
+        let mut invalid_image = patch.clone();
+        invalid_image.request_id = Uuid::new_v4().to_string();
+        invalid_image.expected_version = updated["version"].as_i64().unwrap();
+        invalid_image.team_role = Some("Must not save".into());
+        invalid_image.avatar_file = Some(tmp.join("missing.png").to_str().unwrap().into());
+        assert!(
+            update_member(
+                &mut fixture.database,
+                &fixture.directory,
+                &run,
+                invalid_image
+            )
+            .is_err()
+        );
+        assert_eq!(
+            read(&fixture.database, "agent_2")["teamRole"],
+            "Updated role"
+        );
+        let source = tmp.join("new-source.png");
+        image::DynamicImage::new_rgba8(400, 500)
+            .save(&source)
+            .unwrap();
+        let image_patch = parse_patch(
+            json!({"agentId":"agent_2","requestId":Uuid::new_v4().to_string(),"expectedVersion":updated["version"],"teamRole":"Image and text","avatarFile":source.to_str().unwrap()}),
+        );
+        // Force SQL failure after image preparation: no partial Profile commit.
+        fixture.database.connection().execute_batch("CREATE TEMP TRIGGER reject_patch BEFORE UPDATE ON agent_profile BEGIN SELECT RAISE(ABORT,'patch failure'); END").unwrap();
+        assert!(
+            update_member(
+                &mut fixture.database,
+                &fixture.directory,
+                &run,
+                image_patch.clone()
+            )
+            .is_err()
+        );
+        fixture
+            .database
+            .connection()
+            .execute_batch("DROP TRIGGER reject_patch")
+            .unwrap();
+        assert_eq!(
+            read(&fixture.database, "agent_2")["version"],
+            updated["version"]
+        );
+        update_member(&mut fixture.database, &fixture.directory, &run, image_patch).unwrap();
+        let image_updated = read(&fixture.database, "agent_2");
+        assert_eq!(image_updated["teamRole"], "Image and text");
+        let original_source =
+            std::fs::read(image_updated["images"]["portrait"].as_str().unwrap()).unwrap();
+        let crop_patch = parse_patch(
+            json!({"agentId":"agent_2","requestId":Uuid::new_v4().to_string(),"expectedVersion":image_updated["version"],"avatarCenterX":0.5,"avatarCenterY":0.5,"avatarSize":0.5}),
+        );
+        update_member(
+            &mut fixture.database,
+            &fixture.directory,
+            &run,
+            crop_patch.clone(),
+        )
+        .unwrap();
+        assert!(
+            update_member(&mut fixture.database, &fixture.directory, &run, crop_patch)
+                .unwrap()
+                .replayed
+        );
+        let cropped = read(&fixture.database, "agent_2");
+        assert_eq!(
+            std::fs::read(cropped["images"]["portrait"].as_str().unwrap()).unwrap(),
+            original_source
+        );
+        let clear_patch = parse_patch(
+            json!({"agentId":"agent_2","requestId":Uuid::new_v4().to_string(),"expectedVersion":cropped["version"],"teamRole":"","personalityTraits":[],"clearAvatar":true}),
+        );
+        update_member(&mut fixture.database, &fixture.directory, &run, clear_patch).unwrap();
+        let cleared = read(&fixture.database, "agent_2");
+        assert_eq!(cleared["images"], json!({"icon":null,"portrait":null}));
+        assert_eq!(
+            cleared["imageStatus"],
+            json!({"icon":"absent","portrait":"absent"})
+        );
+        assert_eq!(cleared["teamRole"], "");
+        assert_eq!(cleared["personalityTraits"], json!([]));
+        assert!(
+            update_member(
+                &mut fixture.database,
+                &fixture.directory,
+                &run,
+                patch.clone()
+            )
+            .unwrap()
+            .replayed
+        );
+        fixture
+            .database
+            .connection()
+            .execute(
+                "UPDATE camp_member SET status='left' WHERE camp_id=?1 AND agent_id='agent_2'",
+                [&fixture.camp_id],
+            )
+            .unwrap();
+        assert!(update_member(&mut fixture.database, &fixture.directory, &run, patch).is_err());
+        fixture
+            .database
+            .connection()
+            .execute(
+                "UPDATE agent_profile SET profile_status='removed',removed_at='2026-10-06T00:00:00Z' WHERE id='agent_3'",
+                [],
+            )
+            .unwrap();
+        let list = list_members(fixture.database.connection(), &run).unwrap();
+        assert_eq!(list["items"].as_array().unwrap().len(), 1);
+        assert!(
+            authorize_member_target(fixture.database.connection(), &run, "agent_3", false).is_err()
+        );
+        fixture.database.connection().execute("UPDATE camp_message SET author_type='agent',author_id='agent_2' WHERE id IN (SELECT message_id FROM agent_run_input WHERE agent_run_id=?1)",[&fixture.source_run_id]).unwrap();
+        assert!(
+            authorize_member_target(fixture.database.connection(), &run, "agent_1", true).is_err()
+        );
+        assert!(
+            authorize_member_target(fixture.database.connection(), &run, "agent_1", false).is_ok()
+        );
+    }
+
     #[test]
     fn confirmed_user_input_can_create_one_idempotent_member_but_agent_input_cannot() {
         let mut fixture = Fixture::new();
@@ -2565,6 +2825,62 @@ mod tests {
                 .unwrap(),
             0
         );
+        let created_get = crate::member_tool::MemberGetInput {
+            agent_id: created_id.into(),
+        };
+        let created_profile = crate::member_tool::get_member(
+            fixture.database.connection(),
+            &fixture.directory,
+            &fixture.directory,
+            &authenticated_run,
+            &created_get,
+        )
+        .unwrap();
+        assert_eq!(created_profile["displayName"], "Nova Test Member");
+        let changed_profile = crate::member_tool::update_member(&mut fixture.database,&fixture.directory,&authenticated_run,serde_json::from_value(json!({"requestId":Uuid::new_v4().to_string(),"agentId":created_id,"expectedVersion":1,"growthTopic":"Revised after creation"})).unwrap()).unwrap();
+        assert_eq!(changed_profile.result.payload["version"], 2);
+        assert_eq!(
+            crate::member_studio::list_member_creations(
+                fixture.database.connection(),
+                &fixture.camp_id
+            )
+            .unwrap()[0]
+                .display_name,
+            "Nova Test Member"
+        );
+        for scope in [
+            AuthenticatedTeamToolRun {
+                agent_id: "agent_2".into(),
+                ..authenticated_run.clone()
+            },
+            AuthenticatedTeamToolRun {
+                camp_id: "other-thread".into(),
+                ..authenticated_run.clone()
+            },
+        ] {
+            assert!(
+                crate::member_tool::authorize_member_target(
+                    fixture.database.connection(),
+                    &scope,
+                    created_id,
+                    false
+                )
+                .is_err()
+            );
+        }
+        let subsequent_run = AuthenticatedTeamToolRun {
+            agent_run_id: "later-authenticated-run".into(),
+            ..authenticated_run.clone()
+        };
+        assert!(
+            crate::member_tool::authorize_member_target(
+                fixture.database.connection(),
+                &subsequent_run,
+                created_id,
+                false
+            )
+            .is_ok()
+        );
         fixture.database.connection().execute("UPDATE agent_profile SET display_name='Changed later', profile_status='away' WHERE id=?1", [created_id]).unwrap();
         assert_eq!(
             crate::member_studio::list_member_creations(
@@ -2601,7 +2917,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             changed
-                .downcast_ref::<crate::member_studio::MemberCreateError>()
+                .downcast_ref::<crate::member_studio::MemberOperationError>()
                 .unwrap()
                 .code,
             "member.creation_key_conflict"
@@ -2638,7 +2954,7 @@ mod tests {
         )
         .unwrap_err();
         let blocked = blocked
-            .downcast_ref::<crate::member_studio::MemberCreateError>()
+            .downcast_ref::<crate::member_studio::MemberOperationError>()
             .unwrap();
         assert_eq!(blocked.code, "member.user_confirmation_required");
         assert_eq!(

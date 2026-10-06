@@ -2,13 +2,17 @@
 document_type: model-context-change
 version: v1.72
 revision: 1
-confirmation_status: pending
+confirmation_status: confirmed
+confirmed_revision: 1
+confirmed_by: local_user
+confirmed_at: 2026-10-06
+confirmation_message_id: d283c49e-6894-4274-a584-ce449b544d44
 last_updated: 2026-10-06
 ---
 
 # Member CLI 提示词与帮助前后对比 r1
 
-本文是待确认提案，不表示下列命令已经实现。用户已确认 Member CLI 的功能边界及最小增量原则；本次单独提交模型可见文本供二次审阅。
+本文 r1 已由 User 在完整对比方案交付后确认实施、创建 PR 并合入 main；确认不代表实现或验收已经完成。以下前后文本保持批准时原文。
 
 ## 基线与范围
 
@@ -18,8 +22,8 @@ last_updated: 2026-10-06
 | 当前版本 | [版本索引](../README.md)中的 v1.72，不切换版本 |
 | 分支 | `rovai/member-cli` |
 | Worktree | `/Users/murray.xue/VSCodeProjects/opensource/rovai-ai-member-cli` |
-| Governance | 本提案待 User 确认；无治理文档必须先合入 main 的额外要求 |
-| 工作状态 | active：提示词提案可审阅，功能实现尚未开始 |
+| Governance | User 已确认 r1；无治理文档必须先合入 main 的额外要求 |
+| 工作状态 | active：已确认 r1，功能实施中 |
 | 需求依据 | Thread 输入 `9917638a-cf75-4fbb-ada0-95e3bdd4e939` 的最小增量约束，及 `de3ec357-6d61-4adb-9902-b46ab6029eb6` 的完整前后对比要求 |
 
 仅新增 `member list/get/update`；保留 `member create`。更新六个身份字段及同一个 `avatarRef` 的 source/portrait 与裁切 icon。
@@ -598,9 +602,7 @@ description 不变，冻结的 Skill 索引仍准确指向同一文件；不为�
 
 ## 二次确认
 
-本稿 revision 为 1，confirmation_status 为 pending。用户此前确认的是功能范围与最小增量原则，不代替对本稿精确文本和新增 flags 的审阅。
-待 User 明确确认 r1 后，按实际记录补入 confirmed_by、confirmed_at、confirmed_revision=1 及确认消息 ID，并把状态改为 confirmed。
-不由实现者自行填写确认事实。
+本稿 revision 为 1，confirmation_status 为 confirmed。User `local_user` 于 2026-10-06 在完整 r1 交付后明确要求“执行完pr到main merge”（Thread 消息 `d283c49e-6894-4274-a584-ce449b544d44`），据此记录本次实施及 PR 合并授权。
 
 [核心模型上下文变更治理](../../development/model-context-change-governance.md)要求：
 

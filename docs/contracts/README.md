@@ -329,7 +329,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Memory Capture v3（当前）](memory-capture-v3.md) | v2 边界加 complete exact-Scope View、copyable Revision target、active body aggregate quota、64 KiB production projection limit 与 Memory-domain clean break |
 | [Memory Capture v2 (historical)](memory-capture-v2.md) | v1 捕获/Review/Forget 边界加 flat Agent-relative Scope identity、revise target assertion、durable domain rejection 与 Supersession 原子顺序 |
 | [Memory Capture v1 (historical)](memory-capture-v1.md) | 初版 best-effort 在线捕获、actor-bounded add/revise、隔离 Hearth Review Item、双 CAS、候选清除与 Forget safeguard；不含 Scope-identified revise |
-| [Built-in Tool Transport v35（当前）](builtin-tool-transport-v35.md) | thread.runs、read addressing、Agent Output 8；旧 Session 和 Bootstrap 保持 |
+| [Built-in Tool Transport v36（当前）](builtin-tool-transport-v36.md) | 封闭 member list/get/update、Core PATCH、复合图片与现有请求幂等；无 Runtime 或成员关系扩权 |
+| [Built-in Tool Transport v35（历史）](builtin-tool-transport-v35.md) | thread.runs、read addressing、Agent Output 8；旧 Session 和 Bootstrap 保持 |
 | [Built-in Tool Transport v34（历史）](builtin-tool-transport-v34.md) | User 主称呼与双别名；新 Agent Output 7，旧 receipt 原字节复用 |
 | [Built-in Tool Transport v33（历史）](builtin-tool-transport-v33.md) | Thread 命名与冻结 Session 身份保持 |
 | [Built-in Tool Transport v32（历史）](builtin-tool-transport-v32.md) | Task 无版本更新，四类 Agent 结果删除 availableActions，CLI/输出版本轮换 |

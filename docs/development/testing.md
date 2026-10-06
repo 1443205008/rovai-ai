@@ -90,6 +90,19 @@ Rust owner 分成四个可执行层级；feature gating 只改变日常路由，
 `slow-tests`，则使用 `--features slow-tests`。过滤命令显示 `0 tests` 不构成验证证据，提交前先用
 `-- --list` 确认目标 owner 实际进入清单。
 
+## Member CLI
+
+复用 `team_tool::tests` 的真实 Run/数据库 fixture。新增扩展 owner
+`member_profile_reads_and_patches_preserve_scope_atomicity_and_replay`：既有创建 owner 不拥有
+全局 PATCH 的事务合并、版本、图文原子提交及输出路径边界；修复前这三个操作不存在。
+创建后编辑与原创建者/跨 Thread 限制扩展既有
+`confirmed_user_input_can_create_one_idempotent_member_but_agent_input_cannot`，不新增数据库 fixture。
+图片矩阵扩展 `member_avatar::tests::imports_four_by_five_image_with_lightweight_crop_and_deterministic_identity`；
+封闭输入和 null/空 PATCH 扩展既有 `member_studio` schema owner。
+
+最小验证：先 `cargo test -p rovai-core --features extended-tests --lib member_ -- --list` 确认 owner 非零，
+再执行同命令去掉 `-- --list`；默认 workspace 回归仍执行 `pnpm test:rust:pr`。
+
 ## Thread 执行查询
 
 `thread_runs::tests` 拥有新的输入/游标封闭边界与 Unicode 预览语义；现有 owner 没有执行游标或该截断约定，

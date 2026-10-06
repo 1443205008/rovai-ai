@@ -11,6 +11,14 @@ last_updated: 2026-10-03
 
 # Rovai-ai v1.72：Lark 独立渠道
 
+## 并行实施：Member CLI
+
+User 于 2026-10-06 确认[提示词与接口 r1](model-context-change-member-cli.md)，授权实施、PR 和合入 main。
+仅新增 member list/get/update，保留 create；六个身份字段和同一复合头像资产由 Core 原子 PATCH。
+复用创建记录授权、命令幂等、版本、Run tmp 和失效通知，无数据库迁移、Runtime 配置或成员关系扩权。
+当前字段合同见 [Transport v36](../../contracts/builtin-tool-transport-v36.md)。确定性回归与真实任务 Gate 状态
+记录在[实施计划](implementation-plan.md#member-cli-最小增量)。
+
 ## 并行修复：HTML 内部诊断 CSP 归因
 
 保留作品安全策略，预览器只将当前内部诊断请求的明确 CSP 拒绝转为中性诊断不可用，并停止该文档的无效重试。

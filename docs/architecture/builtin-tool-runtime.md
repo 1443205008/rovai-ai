@@ -11,7 +11,7 @@ last_updated: 2026-09-24
 人类用户的主称呼、双别名、结构化搜索与冻结投影边界见 [User Naming v1](../contracts/user-naming-v1.md)。
 
 本文件说明 Rovai built-in operations 的长期组件结构。当前字段与版本以
-[Built-in Tool Transport v35](../contracts/builtin-tool-transport-v35.md)、
+[Built-in Tool Transport v36](../contracts/builtin-tool-transport-v36.md)、
 [Built-in Tool Agent Output Projection v1](../contracts/builtin-tool-agent-output-projection-v1.md)、
 [Camp History v11](../contracts/camp-history-v11.md)、
 [Durable Task v5](../contracts/durable-task-v5.md) 和
@@ -131,7 +131,7 @@ Agent Runtime 没有 `rovai tool list`、`rovai tool describe`、隐藏 discover
 
 ```text
 rovai send
-rovai member create
+rovai member list|get|create|update
 rovai task create|get|update|list
 rovai camp list|search|read
 rovai history search
@@ -140,6 +140,13 @@ rovai mission list|get|update|status
 rovai single-chat history    Single Chat only
 rovai automation list|get|create|run|close|update|delete
 ```
+
+Member 身份读取通过封闭 DTO 与桌面全量 Profile 分离。`list` 只列当前 Thread；`get/update`
+复用当前 Run 身份，并用现有 `member_creation` 验证同 Thread 原创建者的后续访问。
+`update` 只在直接 User 输入下按明确要求执行全局 Profile PATCH；Core 事务内合并并一次提交文字与
+复合头像引用。版本、`command.result` 幂等和 roster invalidation 沿用现有机制。
+内置素材与 managed 图片在授权 Run tmp 中物化，复用 lease 清理；每次 get 重验权限和重取文件。
+完整字段、裁切及错误见 [Transport v36](../contracts/builtin-tool-transport-v36.md)。
 
 Mission read uses a distinct global read seam: every effective authenticated AgentRun may list all Missions or
 read one opaque internal `rvm_...` ID, including saved structured attachment paths. Omitted-ID `get` resolves only the
@@ -197,9 +204,9 @@ Domain Service 保留 line-leading 连续有效 mention 的兼容 parser，未�
 CLI、Runtime Adapter、Bootstrap 与 Skill 都不重写正文或教学该 grammar。`--public-only` 在任何 alias/member lookup 前绕过正文寻址，并与显式
 `to/taskId` 原子冲突；`agentAddressingMode` 表达 caller intent，`effectiveRecipients/deliveryIds` 表达实际结果。
 该 schema 继续进入当前 catalog digest。
-当前 Contract/CLI 为 35、Agent Output 为 8、capability 为 `builtin_cli.transport.v35`，IPC 仍为 2。
+当前 Contract/CLI 为 36、Agent Output 为 9、capability 为 `builtin_cli.transport.v36`，IPC 仍为 2。
 [Thread Runs v1](../contracts/thread-runs-v1.md) 复用公开读取范围，用一个事务组合实际 Run 和按队员聚合的等待消息；不进入调度写路径。
-Camp History 当前使用 v11。新 Charter revision 为 19；Binding compatibility 保持 16 及原冻结 context tuple，
+Camp History 当前使用 v11。新 Charter revision 为 20；Binding compatibility 保持 16 及原冻结 context tuple，
 Antigravity 继续使用既有固定工具兼容身份。当前目录变化不轮换旧 Session；恢复和压缩补发复用原 Bootstrap。
 新 Binding 使用 Bootstrap v5/Formatter 5，新公开批次 Formatter/Manifest 32、非批次 28 保持。
 Skill 正文与 reference 通过现有受管同步更新原路径；旧、新 Session 后续读取均可使用新版。

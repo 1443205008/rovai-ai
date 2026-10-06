@@ -860,3 +860,13 @@ Clippy 与首轮基线比较仍是原有 10 项错误，本切片没有新增 li
 - `ROVAI_FAST_CHECK_ONLY=1 pnpm test:camp-fast-layout` 通过，日夜截图已检查；验证二态、初始化值、
   明确关闭、双入口同步及保存期间迟到刷新。未增加或退役 Rust owner。
 - 不执行真实账户计费、实体 Windows 或日常 App 安装验收；沿用上一节完整布局测试的已知限制。
+
+
+## Member CLI 最小增量
+
+- 工作分支 `rovai/member-cli`，复用独立 worktree；提示词 r1 的确认消息为 `d283c49e-6894-4274-a584-ce449b544d44`。
+- 仅 list/get/update；封闭读取、事务内 PATCH、文字与资产引用原子提交，create 及 Single Chat allowlist 保持。
+- 无持久字段扩展：现有创建快照支持同 Thread 原创建者；requestId 显式传递解决重启 CLI 的重放身份；现有复合资产保存与 Run tmp 生命周期复用。
+- 内置 portrait 原先只在 renderer AVIF 包中，Core 无法读取或复用 PNG/JPEG 裁切流程；最小补充为同源 PNG 编译资源，不增加运行期解码依赖或资产服务。
+- 验证进行中：Rust 默认层、定向边界 owner、CLI 精确文本/输入、Skills、文档门禁及代码复核。
+- 真实任务 Gate：等待具体 Runtime/model 与固定快照 Judge 配置，尚未运行或声明通过；不沿用其他工作项的豁免。
