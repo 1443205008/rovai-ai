@@ -201,7 +201,9 @@ pub async fn codex_runtime_probe_at(path: &Path) -> AgentRuntimeProbeResult {
     }
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let fingerprint = executable_fingerprint_async(path.clone()).await;
-    codex_runtime_probe_uncached(path, path_text, fingerprint, probed_at).await
+    let mut result = codex_runtime_probe_uncached(path, path_text, fingerprint, probed_at).await;
+    redact_probe(AdapterKind::CodexCli, &mut result);
+    result
 }
 
 pub async fn acp_capability_probe_at_for_purpose(
@@ -209,7 +211,32 @@ pub async fn acp_capability_probe_at_for_purpose(
     kind: AdapterKind,
     purpose: RuntimeLaunchPurpose,
 ) -> AcpCapabilityProbe {
-    acp_probe_at(path, kind, acp_deep_session_probe_enabled(kind), purpose).await
+    let mut probe = acp_probe_at(path, kind, acp_deep_session_probe_enabled(kind), purpose).await;
+    redact_probe(kind, &mut probe.result);
+    if let Some(redactor) = probe_redactor(kind) {
+        for value in [&mut probe.initialize_result, &mut probe.session_result]
+            .into_iter()
+            .flatten()
+        {
+            redactor.value(value);
+        }
+    }
+    probe
+}
+
+fn probe_redactor(kind: AdapterKind) -> Option<rovai_core::runtime_custom_api::CredentialRedactor> {
+    rovai_core::runtime_discovery::custom_api_snapshot(kind)
+        .ok()
+        .flatten()
+        .and_then(|api| api.redactor().ok())
+}
+
+fn redact_probe(kind: AdapterKind, result: &mut AgentRuntimeProbeResult) {
+    if let Some(redactor) = probe_redactor(kind) {
+        let mut value = serde_json::to_value(&*result).expect("serializable probe");
+        redactor.value(&mut value);
+        *result = serde_json::from_value(value).expect("redaction preserves the probe shape");
+    }
 }
 
 fn runtime_launch_disallowed_detail(purpose: RuntimeLaunchPurpose) -> String {
@@ -225,7 +252,9 @@ fn runtime_launch_disallowed_detail(purpose: RuntimeLaunchPurpose) -> String {
 }
 
 pub async fn claude_code_capability_probe_at(path: &Path) -> ClaudeCodeCapabilityProbe {
-    claude_code_probe_at(path).await
+    let mut probe = claude_code_probe_at(path).await;
+    redact_probe(AdapterKind::ClaudeCodeCli, &mut probe.result);
+    probe
 }
 
 pub async fn antigravity_capability_probe_at(path: &Path) -> AntigravityCapabilityProbe {
@@ -630,8 +659,26 @@ async fn claude_code_probe_at(path: &Path) -> ClaudeCodeCapabilityProbe {
     }
 
     let mut auth_command = runtime_command(&canonical, Some(AdapterKind::ClaudeCodeCli));
-    auth_command.args(["auth", "status"]);
-    let auth = bounded_output(&mut auth_command, Duration::from_secs(15)).await;
+    let auth: Result<BoundedCommandOutput> = async {
+        auth_command.args(["auth", "status"]);
+        let output = bounded_output(&mut auth_command, Duration::from_secs(15)).await?;
+        Ok(output)
+    }
+    .await;
+    if let Ok(output) = &auth
+        && let Ok(value) = serde_json::from_slice::<Value>(&output.stdout.bytes)
+    {
+        let snapshot =
+            rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::ClaudeCodeCli)
+                .ok()
+                .flatten();
+        rovai_core::runtime_custom_api::native::record_claude_login(
+            &value,
+            snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.context.directory.as_path()),
+        );
+    }
     let authenticated = match auth {
         Ok(output) if output.status.success() => {
             serde_json::from_slice::<Value>(&output.stdout.bytes)
@@ -1258,7 +1305,7 @@ fn public_probe_status(
 }
 
 /// Uses the same inherited environment and active PATH overlay as an AgentRun.
-/// No model, permission, settings or provider override is installed by discovery.
+/// The same effective custom connection is used by checks and execution.
 async fn claude_code_model_catalog(
     path: &Path,
     deadline: Duration,
@@ -1321,7 +1368,8 @@ async fn claude_code_model_catalog(
                             .unwrap_or("unknown control error")
                     );
                 }
-                return claude_code_models(&response["response"]);
+                let models = claude_code_models(&response["response"])?;
+                return Ok(models);
             }
             anyhow::bail!("Claude Code exited before returning the initialization model catalog")
         };
@@ -2673,6 +2721,7 @@ fn classify_acp_probe_failure(detail: &str) -> AgentRuntimeProbeStatus {
 
 pub async fn codex_model_catalog(path: &Path) -> Result<Value> {
     let mut command = runtime_command(path, Some(AdapterKind::CodexCli));
+    let custom_api = rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::CodexCli)?;
     command.args(["app-server", "--listen", "stdio://"]);
     let mut process = RuntimeProbeProcess::spawn(
         &mut command,
@@ -2737,6 +2786,15 @@ pub async fn codex_model_catalog(path: &Path) -> Result<Value> {
                 if request_id > 101 {
                     bail!("model/list exceeded the pagination safety limit");
                 }
+            }
+            if let Some(api) = &custom_api {
+                models.retain(|model| {
+                    model
+                        .get("model")
+                        .or_else(|| model.get("id"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| api.model_is_configured(id))
+                });
             }
             Ok::<_, anyhow::Error>(json!({"data": models}))
         };

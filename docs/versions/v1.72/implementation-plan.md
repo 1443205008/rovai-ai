@@ -433,7 +433,7 @@ ACP 原生标签和 Codex 的固定英文决定标签原样展示；Claude 同�
 记忆决定原样回填 selected suggestion，Claude 负责规则保存与未来匹配；suppression 或无效/未支持建议
 不会产生记忆选项。控制 writer 与转换层共用建议准入，只保存未决请求有效记忆响应的 digest，完成、取消和
 断线时清理；响应的范围、destination 或 input 改动不能通过校验。当前合同见
-[Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md)。
+[Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md)。
 
 | 验证 | 结果与边界 |
 | --- | --- |
@@ -703,6 +703,12 @@ User 于 2026-10-03 明确豁免本次真实任务 Gate；其余本地检查、�
 全量第二轮曾遇到既有 Lark 附件流用例等待超时；该文件独立 81 项及随后完整套件均通过，未改该用例或渠道代码。
 界面夹具使用内存服务替身，Core 持久化/清理由 SQLite 测试独立验证；未安装或重启日常 App，未运行真实模型。
 
+## Claude Code 与 Codex 原生连接编辑
+
+User 已确认原生配置复用、共享影响范围、两张简单表单及字段级冲突交互，并要求 worktree 实施后推送分支。
+不重复保存 Key，不新增探活。按 [D15](decisions.md#v1-72-d15) 收窄为保存时原生切换、完整内存草稿与直接原生执行。
+实施与验证统一见[验收记录](runtime-custom-api-verification.md)，
+字段以 [Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md) 为准。
 ### 2026-10-04 Context 运行中可用性
 
 按用户确认的 [Execution Metrics v7](../../contracts/runtime-execution-metrics-v7.md) 移除输入 accepted

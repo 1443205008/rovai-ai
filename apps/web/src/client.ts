@@ -66,6 +66,7 @@ export const WEB_OPERATIONS = [
   'mcp.import.scan',
   'mcp.import.commit',
   'runtime.startup.get',
+  'runtime.startup.observe',
   'runtime.startup.save',
   'runtime.startup.inspect',
   'runtime.startup.check',
