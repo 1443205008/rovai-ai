@@ -18,7 +18,8 @@ use crate::{
     db::Database,
     member_avatar::{
         MemberAvatarCrop, MemberAvatarImportError, MemberAvatarImportErrorKind,
-        materialize_member_avatar, prepare_member_avatar, recrop_member_avatar,
+        materialize_member_avatar, member_avatar_content_matches, prepare_member_avatar,
+        recrop_member_avatar,
     },
     member_studio::{MemberOperationError, has_direct_user_input},
     team_tool::AuthenticatedTeamToolRun,
@@ -263,10 +264,11 @@ pub fn update_member(
         },
     };
     let gateway = DomainCommandGateway::default();
+    let recorded = gateway.replay_if_recorded(database, &envelope)?;
     if let Some(path) = envelope.payload.input.avatar_file.as_deref() {
         let path = Path::new(path);
         if !path.try_exists().map_err(|_| invalid_image())? {
-            if let Some(recorded) = gateway.replay_if_recorded(database, &envelope)? {
+            if let Some(recorded) = recorded {
                 return Ok(recorded);
             }
             return Err(invalid_image().into());
@@ -276,6 +278,7 @@ pub fn update_member(
             Uuid::parse_str(&envelope.payload.input.request_id)?,
             path,
             envelope.payload.input.crop(),
+            recorded.is_some(),
         )
         .map_err(|error| {
             if error
@@ -291,6 +294,37 @@ pub fn update_member(
                 invalid_image()
             }
         })?;
+    }
+    if let Some(recorded) = recorded {
+        return Ok(recorded);
+    }
+    // Prepare against a versioned snapshot before opening the write transaction.
+    // The transaction checks that version again before using this reference.
+    let input = &envelope.payload.input;
+    let snapshot = identity_snapshot(database.connection(), &input.agent_id)?;
+    let mut next_avatar_ref = snapshot.avatar_ref.clone();
+    if snapshot.version == input.expected_version {
+        next_avatar_ref = if input.clear_avatar == Some(true) {
+            None
+        } else if let Some(prepared) = envelope.payload.prepared_avatar_ref.as_ref() {
+            Some(prepared.clone())
+        } else if let Some(crop) = input.crop() {
+            let source = snapshot.avatar_ref.as_deref().ok_or_else(invalid_image)?;
+            Some(
+                recrop_member_avatar(data_dir, source, crop)
+                    .map_err(|_| invalid_image())?
+                    .avatar_ref,
+            )
+        } else {
+            snapshot.avatar_ref.clone()
+        };
+        if let (Some(current), Some(next)) =
+            (snapshot.avatar_ref.as_deref(), next_avatar_ref.as_deref())
+        {
+            if member_avatar_content_matches(data_dir, current, next).unwrap_or(false) {
+                next_avatar_ref = snapshot.avatar_ref.clone();
+            }
+        }
     }
     gateway.execute(database, &envelope, |transaction| {
         let input = &envelope.payload.input;
@@ -321,23 +355,14 @@ pub fn update_member(
                 json!({ "displayName": next.display_name }),
             ));
         }
-        let avatar_ref = if input.clear_avatar == Some(true) {
-            None
-        } else if let Some(prepared) = envelope.payload.prepared_avatar_ref.as_ref() {
-            Some(prepared.clone())
-        } else if let Some(crop) = input.crop() {
-            let source = current.avatar_ref.as_deref().ok_or_else(invalid_image)?;
-            Some(recrop_member_avatar(data_dir, source, crop).map_err(|_| invalid_image())?.avatar_ref)
-        } else {
-            current.avatar_ref.clone()
-        };
+        let avatar_ref = &next_avatar_ref;
         let changed = next.display_name != current.display_name
             || next.team_role != current.team_role
             || next.professional_responsibilities != current.professional_responsibilities
             || next.personality_traits != current.personality_traits
             || next.working_principles != current.working_principles
             || next.growth_topic != current.growth_topic
-            || avatar_ref != current.avatar_ref;
+            || avatar_ref != &current.avatar_ref;
         if changed {
             transaction.execute(
                 "UPDATE agent_profile

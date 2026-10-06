@@ -102,7 +102,8 @@ owns these files; consumers reacquire them with `get` in later Runs. No base64 i
 PATCH omission preserves a field. `""` clears optional text, `[]` clears traits, and name
 cannot be empty. At least one effective change field must be supplied; `clearAvatar:false`
 alone is not a patch. Supplying values already stored returns `changed:false` with the
-same version and no roster invalidation.
+same version and no roster invalidation. Equivalent normalized source, crop and icon
+preserve the existing managed reference even when the upload uses a new request ID.
 
 `avatarFile` accepts the same local PNG/JPEG import as creation. Normalized source is the
 portrait; its crop produces the icon. All three crop fields are supplied together:
@@ -129,8 +130,10 @@ request-bound immutable asset identity; the source locator participates only as 
 When the original local source is gone, only an already recorded matching command can
 replay. A missing source cannot initiate a new update. When present, the source is checked
 against the immutable prepared asset before replay, so replacing bytes at the same path
-cannot bypass a semantic conflict through the lease cache. Exact replay returns the original result without
-another version increment or invalidation. Changed input under the same identity fails.
+cannot bypass a semantic conflict through the lease cache. This check never publishes
+an asset: a missing or corrupt prepared asset fails closed instead of rebinding its ID.
+Exact replay returns the original result without another version increment or
+invalidation. Changed input under the same identity fails.
 
 `member.access_denied`, `member.user_confirmation_required` and idempotency conflicts
 stop. `version_conflict` uses `refresh_then_decide`; invalid identity/patch/image and name

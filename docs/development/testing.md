@@ -99,9 +99,14 @@ Rust owner 分成四个可执行层级；feature gating 只改变日常路由，
 `confirmed_user_input_can_create_one_idempotent_member_but_agent_input_cannot`，不新增数据库 fixture。
 图片矩阵扩展 `member_avatar::tests::imports_four_by_five_image_with_lightweight_crop_and_deterministic_identity`；
 封闭输入和 null/空 PATCH 扩展既有 `member_studio` schema owner。
+PATCH owner 同时覆盖相同图片的新请求无版本变化、源文件消失后的持久回放、同路径换图冲突，
+以及已提交资产缺失时不得重建其 ID。Run tmp 轮换删除与图片重取扩展既有
+`builtin_tool_runtime::tests::lease_rotates_fences_and_replays_exact_request`。
 
 最小验证：先 `cargo test -p rovai-core --features extended-tests --lib member_ -- --list` 确认 owner 非零，
-再执行同命令去掉 `-- --list`；默认 workspace 回归仍执行 `pnpm test:rust:pr`。
+再执行同命令去掉 `-- --list`；租约 owner 使用
+`cargo test -p rovai-core --features extended-tests --lib builtin_tool_runtime::tests::`，
+同样先核对清单；默认 workspace 回归仍执行 `pnpm test:rust:pr`。
 
 ## Thread 执行查询
 

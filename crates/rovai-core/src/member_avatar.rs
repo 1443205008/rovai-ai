@@ -299,10 +299,17 @@ pub fn prepare_member_avatar(
     asset_id: Uuid,
     selected_file: &Path,
     crop: Option<MemberAvatarCrop>,
+    verify_existing_only: bool,
 ) -> Result<ManagedMemberAvatarSummary> {
     let source = normalize_selected_avatar(selected_file)?;
     let source_png = encode_png(&source)?;
-    save_cropped_source(data_dir, &source_png, source, crop, Some(asset_id))
+    save_cropped_source(
+        data_dir,
+        &source_png,
+        source,
+        crop,
+        Some((asset_id, verify_existing_only)),
+    )
 }
 
 pub fn recrop_member_avatar(
@@ -329,7 +336,7 @@ fn save_cropped_source(
     source_png: &[u8],
     source: DynamicImage,
     crop: Option<MemberAvatarCrop>,
-    asset_id: Option<Uuid>,
+    asset_id: Option<(Uuid, bool)>,
 ) -> Result<ManagedMemberAvatarSummary> {
     let (width, height) = source.dimensions();
     let crop = crop.unwrap_or_else(|| default_member_avatar_crop(width, height));
@@ -349,13 +356,61 @@ fn save_cropped_source(
         source_png.len() <= NORMALIZED_SOURCE_BYTES && icon_png.len() <= ICON_BYTES,
         "Normalized avatar exceeds the managed asset limit"
     );
-    if let Some(asset_id) = asset_id {
+    if let Some((asset_id, verify_existing_only)) = asset_id {
+        if verify_existing_only {
+            let directory = data_dir.join("member-avatars").join(asset_id.to_string());
+            if !existing_asset_matches(
+                &directory,
+                &asset_id.to_string(),
+                &manifest_file("source.png", width, height, source_png),
+                &manifest_file("icon-192.png", ICON_EDGE, ICON_EDGE, &icon_png),
+                &crop,
+            )
+            .unwrap_or(false)
+            {
+                return Err(MemberAvatarImportError::conflict().into());
+            }
+            return Ok(ManagedMemberAvatarSummary {
+                avatar_ref: format!("rovai://member-avatar/managed/{asset_id}"),
+                source_width: width,
+                source_height: height,
+                crop,
+            });
+        }
         Ok(publish_managed_member_avatar(
             data_dir, asset_id, source_png, &icon_png, width, height, crop,
         )?)
     } else {
         save_managed_member_avatar(data_dir, source_png, &icon_png, width, height, crop)
     }
+}
+
+/// Content equivalence preserves a Profile reference for a visual no-op even
+/// when the upload has its own immutable request-bound preparation asset.
+pub(crate) fn member_avatar_content_matches(
+    data_dir: &Path,
+    left: &str,
+    right: &str,
+) -> Result<bool> {
+    if left == right {
+        return Ok(true);
+    }
+    let (Some(left_source), Some(right_source)) = (
+        read_managed_member_avatar(data_dir, left, true)?,
+        read_managed_member_avatar(data_dir, right, true)?,
+    ) else {
+        return Ok(false);
+    };
+    if left_source.base64 != right_source.base64 || left_source.crop != right_source.crop {
+        return Ok(false);
+    }
+    let (Some(left_icon), Some(right_icon)) = (
+        read_managed_member_avatar(data_dir, left, false)?,
+        read_managed_member_avatar(data_dir, right, false)?,
+    ) else {
+        return Ok(false);
+    };
+    Ok(left_icon.base64 == right_icon.base64)
 }
 
 /// Core-packaged renditions of the same built-in artwork as the renderer.

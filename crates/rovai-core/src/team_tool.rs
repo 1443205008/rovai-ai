@@ -2637,6 +2637,50 @@ mod tests {
         let image_updated = read(&fixture.database, "agent_2");
         assert_eq!(image_updated["teamRole"], "Image and text");
         let original_input = std::fs::read(&source).unwrap();
+        let mut duplicate_upload = image_patch.clone();
+        duplicate_upload.request_id = Uuid::new_v4().to_string();
+        duplicate_upload.expected_version = image_updated["version"].as_i64().unwrap();
+        let duplicate_result = update_member(
+            &mut fixture.database,
+            &fixture.directory,
+            &run,
+            duplicate_upload,
+        )
+        .unwrap();
+        assert_eq!(duplicate_result.result.payload["changed"], false);
+        assert_eq!(
+            duplicate_result.result.payload["version"],
+            image_updated["version"]
+        );
+        let bound_asset = fixture
+            .directory
+            .join("member-avatars")
+            .join(&image_patch.request_id);
+        let saved_asset = fixture.directory.join("asset-retained-for-test");
+        std::fs::rename(&bound_asset, &saved_asset).unwrap();
+        image::DynamicImage::ImageRgba8(image::ImageBuffer::from_pixel(
+            400,
+            500,
+            image::Rgba([99, 88, 77, 255]),
+        ))
+        .save(&source)
+        .unwrap();
+        assert!(
+            update_member(
+                &mut fixture.database,
+                &fixture.directory,
+                &run,
+                image_patch.clone()
+            )
+            .is_err()
+        );
+        assert!(
+            !bound_asset.exists(),
+            "replay must never rebind a missing immutable asset"
+        );
+        std::fs::rename(&saved_asset, &bound_asset).unwrap();
+        std::fs::write(&source, &original_input).unwrap();
+
         image::DynamicImage::ImageRgba8(image::ImageBuffer::from_pixel(
             400,
             500,
