@@ -1,5 +1,6 @@
 use std::{
     cmp::Ordering,
+    collections::{BTreeMap, VecDeque},
     ffi::{OsStr, OsString, c_void},
     fs::File,
     io,
@@ -12,14 +13,15 @@ use std::{
     path::Path,
     process::ExitStatus,
     ptr::{null, null_mut},
+    sync::Mutex,
     time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use windows_sys::Win32::{
     Foundation::{
-        ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, FILETIME, GENERIC_READ, GetLastError, HANDLE,
-        HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation, WAIT_OBJECT_0,
+        ERROR_ALREADY_EXISTS, ERROR_INVALID_PARAMETER, FILETIME, GENERIC_READ, GetLastError,
+        HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation, WAIT_OBJECT_0,
         WAIT_TIMEOUT,
     },
     Globalization::{CSTR_EQUAL, CSTR_GREATER_THAN, CSTR_LESS_THAN, CompareStringOrdinal},
@@ -27,13 +29,15 @@ use windows_sys::Win32::{
     Storage::FileSystem::{
         CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO, FILE_ID_INFO, FILE_SHARE_READ,
         FILE_STANDARD_INFO, FILE_TYPE_DISK, FileBasicInfo, FileIdInfo, FileStandardInfo,
-        GetFileInformationByHandleEx, GetFileType, OPEN_EXISTING, READ_CONTROL,
+        GetFileInformationByHandleEx, GetFileType, OPEN_EXISTING,
     },
     System::{
+        IO::{CreateIoCompletionPort, GetQueuedCompletionStatus},
         JobObjects::{
             CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation, OpenJobObjectW,
+            JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectAssociateCompletionPortInformation,
+            JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
             QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
         },
         Pipes::CreatePipe,
@@ -42,15 +46,10 @@ use windows_sys::Win32::{
             DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess,
             GetProcessTimes, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
             OpenProcess, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST,
-            PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, STARTF_USESTDHANDLES,
-            STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
+            PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+            STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
         },
     },
-};
-
-#[cfg(test)]
-use windows_sys::Win32::{
-    Foundation::ERROR_INVALID_PARAMETER, System::Threading::PROCESS_SYNCHRONIZE,
 };
 
 use super::{
@@ -66,12 +65,14 @@ use crate::windows_runtime_entrypoint::{
 const WINDOWS_COMMAND_LINE_LIMIT: usize = 32_767;
 const WINDOWS_ENVIRONMENT_BLOCK_LIMIT: usize = 32_767;
 const MANAGED_PROCESS_TERMINATION_CODE: u32 = 1;
-// A recovered Core can run in another logon session. Session-local lookup
-// would turn an existing old Job into a false absence in that session.
+// Keep launch identities independent of the Windows logon session. The name
+// is diagnostic ownership metadata, never an exit receipt.
 const RUNTIME_JOB_NAME_PREFIX: &str = "Global\\Rovai.Runtime.";
-// winnt.h JOB_OBJECT_QUERY; windows-sys exposes this in SystemServices rather
-// than JobObjects. Keeping the SDK bit here avoids enabling that entire module.
-const JOB_OBJECT_QUERY_ACCESS: u32 = 0x0004;
+// winnt.h JOB_OBJECT_MSG_NEW_PROCESS; windows-sys exposes this in SystemServices rather
+// than JobObjects. Keeping the SDK constant here avoids enabling that entire module.
+const JOB_OBJECT_MSG_NEW_PROCESS: u32 = 6;
+const MAX_JOB_NOTIFICATIONS_PER_POLL: usize = 1024;
+const MAX_PROCESS_EXIT_CHECKS_PER_POLL: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct WindowsApplicationIdentity {
@@ -86,12 +87,70 @@ pub(super) struct WindowsApplicationIdentity {
 pub(super) struct WindowsManagedProcess {
     process: OwnedHandle,
     job: OwnedHandle,
+    completion_port: OwnedHandle,
+    exit_witnesses: Mutex<JobExitEvidence>,
     job_name: String,
     pid: u32,
     stdin: Option<ManagedChildStdin>,
     stdout: Option<ManagedChildStdout>,
     stderr: Option<ManagedChildStderr>,
     exit_code: Option<u32>,
+}
+
+#[derive(Default)]
+struct JobExitEvidence {
+    members: BTreeMap<u32, ProcessExitWitness>,
+    pending_checks: VecDeque<u32>,
+    last_total: u32,
+    invalid: bool,
+}
+
+impl JobExitEvidence {
+    fn observe_total(&mut self, total: u32) -> io::Result<()> {
+        if total < self.last_total || total == u32::MAX {
+            self.invalid = true;
+            return Err(io::Error::other(
+                "managed_process.job_query_failed: process count overflow",
+            ));
+        }
+        self.last_total = total;
+        Ok(())
+    }
+}
+
+enum ProcessExitWitness {
+    Pending,
+    Handle(OwnedHandle),
+    ObjectGone,
+}
+
+impl ProcessExitWitness {
+    fn has_exited(&mut self, pid: u32) -> io::Result<bool> {
+        if matches!(self, Self::Pending) {
+            let raw = unsafe {
+                // SAFETY: non-inheritable observation only. Even a recycled
+                // PID is waited, never killed or treated as the old process.
+                OpenProcess(PROCESS_SYNCHRONIZE, 0, pid)
+            };
+            if raw.is_null() {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() != Some(ERROR_INVALID_PARAMETER as i32) {
+                    return Err(error);
+                }
+                *self = Self::ObjectGone;
+            } else {
+                *self = Self::Handle(unsafe {
+                    // SAFETY: OpenProcess transferred this unique handle.
+                    OwnedHandle::from_raw_handle(raw)
+                });
+            }
+        }
+        match self {
+            Self::Handle(handle) => process_has_exited(handle),
+            Self::ObjectGone => Ok(true),
+            Self::Pending => unreachable!("opened process must retain an exit witness"),
+        }
+    }
 }
 
 impl WindowsManagedProcess {
@@ -165,6 +224,8 @@ impl WindowsManagedProcess {
         };
         let job_name = format!("{RUNTIME_JOB_NAME_PREFIX}{}", uuid::Uuid::new_v4());
         let job = create_kill_on_close_job(&job_name)?;
+        // Associate while empty, before any process can run or create children.
+        let completion_port = associate_exit_notifications(&job)?;
 
         let (child_stdin, parent_stdin) = child_read_pipe()?;
         let parent_stdin = match spec.stdin_policy() {
@@ -235,6 +296,8 @@ impl WindowsManagedProcess {
         Ok(Self {
             process,
             job,
+            completion_port,
+            exit_witnesses: Mutex::new(JobExitEvidence::default()),
             job_name,
             pid: process_information.dwProcessId,
             stdin: parent_stdin.map(tokio_file),
@@ -285,7 +348,94 @@ impl WindowsManagedProcess {
     }
 
     pub(super) fn tree_is_empty(&self) -> io::Result<bool> {
-        job_is_empty(&self.job)
+        let mut witnesses = self.exit_witnesses.lock().map_err(|_| {
+            io::Error::other("managed_process.job_query_failed: exit witnesses poisoned")
+        })?;
+        if witnesses.invalid {
+            return Err(io::Error::other(
+                "managed_process.job_query_failed: incomplete evidence",
+            ));
+        }
+        let mut drained = false;
+        for _ in 0..MAX_JOB_NOTIFICATIONS_PER_POLL {
+            let mut message = 0;
+            let mut key = 0;
+            let mut value = null_mut();
+            let received = unsafe {
+                // SAFETY: this private port only receives Job notifications.
+                // `value` is an opaque PID, never an OVERLAPPED to dereference.
+                GetQueuedCompletionStatus(
+                    raw_handle(&self.completion_port),
+                    &mut message,
+                    &mut key,
+                    &mut value,
+                    0,
+                )
+            };
+            if received == 0 {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() != Some(WAIT_TIMEOUT as i32) || !value.is_null() {
+                    witnesses.invalid = true;
+                    return Err(error);
+                }
+                drained = true;
+                break;
+            }
+            if key != raw_handle(&self.job) as usize {
+                witnesses.invalid = true;
+                return Err(io::Error::other(
+                    "managed_process.job_query_failed: unexpected Job",
+                ));
+            }
+            if message == JOB_OBJECT_MSG_NEW_PROCESS {
+                let Some(pid) = u32::try_from(value as usize).ok().filter(|pid| *pid != 0) else {
+                    witnesses.invalid = true;
+                    return Err(io::Error::other(
+                        "managed_process.job_query_failed: invalid PID",
+                    ));
+                };
+                // Duplicate/recycled PIDs may undercount, never manufacture
+                // evidence for a missed process notification.
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    witnesses.members.entry(pid)
+                {
+                    entry.insert(ProcessExitWitness::Pending);
+                    witnesses.pending_checks.push_back(pid);
+                }
+            }
+        }
+        if !drained {
+            return Ok(false);
+        }
+        witnesses.observe_total(job_accounting(&self.job)?.TotalProcesses)?;
+        let checks = witnesses
+            .pending_checks
+            .len()
+            .min(MAX_PROCESS_EXIT_CHECKS_PER_POLL);
+        for _ in 0..checks {
+            let Some(pid) = witnesses.pending_checks.pop_front() else {
+                break;
+            };
+            let result = witnesses
+                .members
+                .get_mut(&pid)
+                .expect("pending check must retain its member")
+                .has_exited(pid);
+            if !matches!(result, Ok(true)) {
+                witnesses.pending_checks.push_back(pid);
+                result?;
+            }
+        }
+        if !witnesses.pending_checks.is_empty() {
+            return Ok(false);
+        }
+        // Read total LAST: a child created before an observed parent exits must
+        // increase it. Missing notifications cannot be hidden by Active=0.
+        // All observed instances are now gone/signaled, so none can create more.
+        let accounting = job_accounting(&self.job)?;
+        witnesses.observe_total(accounting.TotalProcesses)?;
+        Ok(accounting.ActiveProcesses == 0
+            && usize::try_from(accounting.TotalProcesses).ok() == Some(witnesses.members.len()))
     }
 
     pub(super) fn terminate_job(&mut self) -> io::Result<()> {
@@ -303,6 +453,42 @@ impl WindowsManagedProcess {
                 Err(termination_error)
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn discard_exit_witness_for_test(&self, pid: u32) {
+        assert!(
+            self.exit_witnesses
+                .lock()
+                .unwrap()
+                .members
+                .remove(&pid)
+                .is_some()
+        );
+    }
+
+    #[cfg(test)]
+    pub(super) fn post_member_notification_for_test(&self, pid: u32) {
+        let posted = unsafe {
+            // SAFETY: inject into the fixture's private port, using an opaque
+            // PID payload exactly as a Job notification does (no dereference).
+            windows_sys::Win32::System::IO::PostQueuedCompletionStatus(
+                raw_handle(&self.completion_port),
+                JOB_OBJECT_MSG_NEW_PROCESS,
+                raw_handle(&self.job) as usize,
+                pid as usize as *mut _,
+            )
+        };
+        assert_ne!(posted, 0);
+    }
+
+    #[cfg(test)]
+    pub(super) fn repeat_pending_exit_check_for_test(&self, pid: u32) {
+        let mut evidence = self.exit_witnesses.lock().unwrap();
+        assert!(evidence.pending_checks.is_empty());
+        // Repeat a real signaled handle to exercise the per-poll budget without
+        // launching dozens of redundant subprocess fixtures.
+        evidence.pending_checks = vec![pid; MAX_PROCESS_EXIT_CHECKS_PER_POLL + 1].into();
     }
 }
 
@@ -339,36 +525,32 @@ fn create_kill_on_close_job(name: &str) -> Result<OwnedHandle> {
     Ok(job)
 }
 
-/// Only identities issued for our private, non-breakaway, kill-on-close Jobs
-/// are admitted. Only a surviving Job's accounting can prove the tree empty.
-/// Closing the last handle removes its name before all descendants necessarily
-/// finish termination; neither name absence nor the root's exit proves reaping.
-pub(super) fn recorded_tree_is_empty(name: &str) -> Result<bool> {
-    let suffix = name
-        .strip_prefix(RUNTIME_JOB_NAME_PREFIX)
-        .context("managed_process.invalid_job_identity: unexpected namespace")?;
-    let identity = uuid::Uuid::parse_str(suffix)
-        .context("managed_process.invalid_job_identity: invalid launch identity")?;
-    if identity.to_string() != suffix || identity.get_version() != Some(uuid::Version::Random) {
-        bail!("managed_process.invalid_job_identity: invalid launch identity");
-    }
-    let name = wide_nul(OsStr::new(name), "Job name")?;
+fn associate_exit_notifications(job: &OwnedHandle) -> Result<OwnedHandle> {
     let raw = unsafe {
-        // SAFETY: name is NUL-terminated. This query-only handle is not inherited
-        // or retained, and cannot attach or terminate any process.
-        OpenJobObjectW(JOB_OBJECT_QUERY_ACCESS | READ_CONTROL, 0, name.as_ptr())
+        // SAFETY: create a private, non-inheritable port without file handles.
+        // Polling can move between Tokio workers; the local mutex serializes it,
+        // so no IOCP concurrency throttle should strand another worker's poll.
+        CreateIoCompletionPort(INVALID_HANDLE_VALUE, null_mut(), 0, u32::MAX)
     };
-    if raw.is_null() {
-        let error = io::Error::last_os_error();
-        return if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) {
-            Ok(false)
-        } else {
-            Err(error.into())
-        };
+    let port = owned_handle(raw, "managed_process.job_create_failed")?;
+    let association = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+        CompletionKey: raw_handle(job),
+        CompletionPort: raw_handle(&port),
+    };
+    if unsafe {
+        // SAFETY: Job is empty, privately owned, and association has the exact
+        // structure and size required by the information class.
+        SetInformationJobObject(
+            raw_handle(job),
+            JobObjectAssociateCompletionPortInformation,
+            (&association as *const JOBOBJECT_ASSOCIATE_COMPLETION_PORT).cast(),
+            size_of::<JOBOBJECT_ASSOCIATE_COMPLETION_PORT>() as u32,
+        )
+    } == 0
+    {
+        return Err(last_os_error("managed_process.job_create_failed"));
     }
-    let job = owned_handle(raw, "managed_process.job_query_failed")?;
-    PrivateSecurityDescriptor::new(PrivateObjectKind::Job)?.verify_job_handle(raw_handle(&job))?;
-    Ok(job_is_empty(&job)?)
+    Ok(port)
 }
 
 pub(super) fn process_start_identity(pid: u32) -> Option<u64> {
@@ -399,7 +581,7 @@ fn process_creation_time(process: &OwnedHandle) -> io::Result<u64> {
     Ok((u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime))
 }
 
-fn job_is_empty(job: &OwnedHandle) -> io::Result<bool> {
+fn job_accounting(job: &OwnedHandle) -> io::Result<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION> {
     let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
     let queried = unsafe {
         // SAFETY: job is an owned Job handle with query access and accounting is
@@ -415,7 +597,7 @@ fn job_is_empty(job: &OwnedHandle) -> io::Result<bool> {
     if queried == 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(accounting.ActiveProcesses == 0)
+    Ok(accounting)
 }
 
 fn open_application_for_launch(application: &[u16]) -> Result<OwnedHandle> {

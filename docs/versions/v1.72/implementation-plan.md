@@ -949,20 +949,23 @@ Adapter 审计：
 本节补充上一节的 Windows 证据；未运行 Windows 11、真实 CLI 账户/计费或日常 App 验收。
 当前修补不扩大 ACP/Pi 的原生终态接入范围，也不把受控进程验证描述为用户已有故障会话已经恢复。
 
-## 2026-10-07 Windows Job 缺失不确认回收
+## 2026-10-07 Windows Job 回收证明修正
 
 基线 `396c6a01ba1b5594f83e26827f5163238d76bbfe`；User 授权修复、创建 PR 并合入 main。
 先合入主线 `520320a8`，保留原生 API 配置与 Fast 初始化改动；主线已使用 Runtime Launch v48，
 因此 Codex Host 恢复增量顺延至 [v49](../../contracts/runtime-launch-and-verification-v49.md)，继承完整 v48。
 
-- 删除“Job 名称不存在时查询根 PID”的回收捷径，查询入口只接收 Job 身份；名称缺失始终不提供树退出证明。
-  根退出、PID 复用与 kill-on-close 均不能替代后代完成退出；已有精确 Run/epoch 的持久化回收凭据仍可 ACK。
-- 不新增恢复管理器、定时放行或跨 Core handle 保活服务。Core 崩溃后若未留下回收凭据且 Job 已消失，
-  相关后继 Delivery 会继续 waiting；本次不声称这个缺证据场景可以自动恢复。
-- 扩展既有 Fleet receipt owner：真实 Job 可查询为空时先持久回执，再关闭 handle，证明凭据仍可精确 ACK；
-  对未确认记录覆盖 Job 消失后的根仍活、PID 不存在、PID 复用三种情况，重启后均不得写入 reaped。
-  Managed Process 既有孙进程与强杀 owner 区分实际退出和可用证明；查询报告空时核对后代已退出，最后 handle
-  关闭后的名称缺失不能再视为正向结果。没有新增或退役 Rust 测试。
+- 删除“Job 名称不存在时查询根 PID”的捷径。Windows 原生 CI 随后在持有同一孙进程 handle 的条件下
+  复现 `ActiveProcesses=0` 先于 handle signaled（run `37495892005`，提交 `cd25153a`），因此也撤销
+  “重新打开空 Job 即可证明回收”的推导。跨 Core 只接受已有精确 Run/epoch 的持久回执。
+- 当前 Windows Managed Process 在空 Job 上绑定私有 IOCP，按去重成员通知保留进程 handle；全部确认退出后，
+  最后核对 Job 生命周期总成员数与活跃数，才允许既有 `tree_is_empty()` 成功。丢通知、重复 PID 少计、
+  查询未知均保留门禁；通知读取与成员核验均有单轮预算。只增加本 owner 的退出证据，不新增恢复管理器或后台轮询。
+- 扩展既有 Fleet receipt owner：即使真实 Job 可查询为空，未持久回执时仍未确认；owner 确认退出并持久回执后，
+  关闭 handle 再重启仍可精确 ACK。缺失 Job、根仍活、PID 不存在与复用均不能补造回执。
+  既有 Managed Process 孙进程 owner 保持精确 handle，增加首次观察后创建后代、丢成员通知、重复通知与
+  非法通知后再次轮询的负向断言；强杀 owner 的实际退出与跨 Core 可用证明分别由两层 owner 验证。
+  没有新增或退役 Rust 测试。
 - 手动 Full check 增加 `windows-runtime` scope 复用既有 Windows job；显式运行 extended Fleet/Codex owner，
   不以 default-feature 过滤到 0 项的结果替代跨平台验证。
 
@@ -972,6 +975,8 @@ Adapter 审计：
 本轮 macOS 验证：默认 workspace 455 项通过、1 项真实 Runtime 按声明忽略；slow-tests 下 Fleet 23 项、
 Codex 24 项通过（另 1 项真实账号 smoke 忽略），两条 Core 原生终态／已排队输入门禁 owner 各 1 项通过。
 `cargo check --workspace`、format、文档单测 10 项与以 `520320a8` 为 base 的全部文档门禁通过。
-两路独立复核确认 P1 回收判定及 P2 PowerShell 失败码覆盖均已关闭；Fleet/Codex 采用独立 CI step。
+Fleet/Codex 采用独立 CI step，避免 PowerShell 后续成功覆盖前一失败码。Windows 新增句柄边界修正的
+两路静态复核已通过；追加修正后 workspace 编译、Fleet 23 项、format 和全部文档门禁再次通过。
+上列默认套件、Codex/Core 的 macOS 数量属于追加 Windows 句柄修正前的验证，不冒充后续原生结果。
 Windows 原生运行结果归档于 [PR #652](https://github.com/murray17/rovai-ai/pull/652) 的检查记录；
 既有 Windows 10 的 492 项结果只覆盖上一节提交，不能代替本轮修复。本轮不运行真实账号或日常 App。

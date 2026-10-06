@@ -135,15 +135,20 @@ Job handle 非 inheritable，并由 Core generation 独占。planned shutdown �
 后关闭/终止 Job 并有界等待 reap。Core crash/force-kill 导致最后 Job handle 关闭时，OS 收口受管后代。
 
 Windows Managed Process 为每次启动创建带随机身份的 `Global\Rovai.Runtime.<UUID>` Job，创建时使用
-受保护的当前用户/SYSTEM DACL，拒绝复用已有名字；不设置 breakaway。全局 namespace 防止 Core 换 Windows
-登录 Session 后把旧 Session 中仍存在的 Job 误判为不存在。控制 handle 仍由启动代际拥有、不可继承。
-Fleet 只保存内部 Job 身份，重启后通过 Managed Process 瞬时打开不可继承的 query/read-control handle；
-存活 Job 必须查询到零 active processes；Job 不存在时保持未确认，不能结合根进程退出或 PID 复用补造回收凭据。
-临时 Job 的最后 handle 关闭即可使名称从 namespace 移除，不能据此推导后代已完成异步终止及在途 I/O 取消。
-恢复只查询 Job，不按记录中的 PID 终止进程；访问拒绝、ACL 不符、非法身份或其他查询失败同样保持未确认。
-已有持久化、精确 Run/epoch 的已回收凭据在 Job 消失后继续有效；缺少该证据的崩溃执行继续阻塞相关后继输入，
-不通过等待固定时长、轮换 Native Session 或重新登录解除门禁。本期不增加跨 Core 的 Job handle 保活服务。
-Codex 在当前代际的 bounded reap 同样等待 Job 为空，再提交已回收凭据。
+受保护的当前用户/SYSTEM DACL，拒绝复用已有名字；不设置 breakaway。全局 namespace 使 launch 身份不依赖 Windows
+登录 Session；名称不承担退出证明。控制 handle 仍由启动代际拥有、不可继承。
+Job 活跃数归零、名称消失、根进程退出均不能单独证明后代已完成异步终止及在途 I/O 取消。
+当前 owner 在空 Job 上、启动任何进程前关联私有 IOCP；既有 `tree_is_empty()` 在有界清理期间读取成员通知，
+保留不可继承的进程 handle，并确认这些 handle 已 signaled，或通知对应的进程对象已不存在。
+去重成员数必须严格等于最后读取的 Job 生命周期 `TotalProcesses`，且 `ActiveProcesses` 为零，才提交回收凭据。
+最终计数在所有观察成员退出后读取，防止先前快照遗漏清理期间新建的后代；重复通知不能抵消缺失成员。
+每轮通知读取及成员退出核验分别有数量上限，不占用全局调度锁，也不新增后台轮询。通知丢失、Job 内 PID 复用导致少计、
+计数异常或无法查询退出时保持未确认；不以等待次数或固定延时补齐证据。
+
+Fleet 只保存内部 Job 身份用于归属定位；跨 Core 无法继承完整成员与退出证明，只接受已有持久化、精确 Run/epoch
+的已回收凭据。没有凭据的 scoped 记录，即使 Job 可查询且活跃数为零，也继续阻塞相关后继输入。
+恢复不按记录中的 PID 终止进程，不通过轮换 Native Session 或重新登录解除门禁。
+本期不增加跨 Core 的 Job handle 保活服务。Codex 当前代际的 bounded reap 使用上述证明，再提交既有回收凭据。
 
 Unix 直接启动目标进程并保留 process group、stdio、环境快照与退出回收语义；Windows 保留原子 Job、
 handle list 与受控 entrypoint。所有 Runtime/Probe/derived child 都不经过 Rovai 的 `sandbox-exec` 包装。
@@ -204,5 +209,6 @@ pipe handle。Main 被强制终止后，Core 必须在 deadline 内通过 stdin 
 - [Planned Shutdown](../architecture/planned-shutdown.md)
 - [Windows Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
 - [Windows Kernel Object Namespaces](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces)
+- [Windows Job Completion Notifications](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_associate_completion_port)
 - [Windows Object Lifecycle](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/life-cycle-of-an-object)
 - [TerminateProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess)

@@ -38,7 +38,7 @@ Codex 使用内部释放结果：可复用、已确认回收、无匹配租约�
 
 Windows Codex owner record 额外保存 Managed Process 的内部 Job 身份；重启退出证据由
 [Managed Runtime Process](managed-runtime-process-v2.md#4-ownership-and-termination) 拥有。
-已有确认回收的标记继续有效；Job 身份缺失或已无法打开的未确认 scoped 记录保持门禁，不能仅凭根 PID 不存在补造回执。
+已有确认回收的标记继续有效；没有该标记的 Windows scoped 记录保持门禁，不能仅凭 Job 活跃数归零、名称消失或根 PID 不存在补造回执。
 owner record 目录及原子写入必须满足私有存储准入；初始化失败阻止 Core 启动，不能静默关闭持久 owner 记录。
 
 已获取的 Codex 进程先由 Fleet 持有，再执行 initialize、认证及必要选模验证。任何验证失败均不发送任务正文，

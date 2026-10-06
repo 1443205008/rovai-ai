@@ -1170,13 +1170,11 @@ impl RuntimeOwnerRecordStore {
                 }
                 #[cfg(windows)]
                 {
-                    remove_record = _record.run_lease.is_none()
-                        || _record.windows_job_name.as_deref().is_some_and(|job_name| {
-                            crate::managed_process::ManagedProcess::recorded_windows_tree_is_empty(
-                                job_name,
-                            )
-                            .unwrap_or(false)
-                        });
+                    // Neither a missing Job nor ActiveProcesses=0 proves that
+                    // every process handle has signaled. A restarted Core lacks
+                    // the original owner's complete membership/exit witnesses.
+                    // Scoped records require the durable receipt above.
+                    remove_record = _record.run_lease.is_none();
                 }
                 #[cfg(not(any(unix, windows)))]
                 {
@@ -3833,7 +3831,7 @@ mod tests {
                     .unwrap()
                     .success()
             );
-            // Keep the empty Job queryable until its receipt has been persisted.
+            // Even an observable empty Job is not a cross-Core exit receipt.
             assert!(child.tree_is_empty().unwrap());
             let handshake = root.join("live.pid");
             let mut live_command = tokio::process::Command::new(std::env::current_exe().unwrap());
@@ -3896,10 +3894,12 @@ mod tests {
                     .reaped
             );
             assert!(
-                serde_json::from_slice::<RuntimeOwnerRecord>(&std::fs::read(&path).unwrap())
+                !serde_json::from_slice::<RuntimeOwnerRecord>(&std::fs::read(&path).unwrap())
                     .unwrap()
                     .reaped
             );
+            // Only the owner with complete process-exit evidence persists this.
+            store.finish_stop("crashed-host");
             live_child.force_terminate_tree().unwrap();
             tokio::time::timeout(Duration::from_secs(5), live_child.wait())
                 .await
@@ -3912,6 +3912,7 @@ mod tests {
             })
             .await
             .expect("native Job did not finish descendant cleanup");
+            store.finish_stop("live-host");
             assert_eq!(
                 restarted
                     .stop_agent_run_until_with_outcome(
