@@ -4382,13 +4382,6 @@ button.task-event-card:focus-visible .task-card-chevron { color: var(--brand-ink
 .camp-fast-toggle.is-on .camp-fast-pill { border-color: currentColor; background: var(--surface-selected); }
 .camp-fast-toggle:hover .camp-fast-pill { background: var(--surface-hover); }
 .camp-fast-toggle[aria-disabled="true"] { opacity: .65; cursor: wait; }
-.camp-fast-options { display: inline-flex; min-width: 28px; min-height: 28px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
-.camp-fast-options svg, .camp-fast-option svg { width: 12px; height: 12px; }
-.camp-fast-options:hover { background: var(--surface-hover); }
-.camp-fast-options:focus-visible { outline: 2px solid var(--conversation-focus); outline-offset: 1px; }
-.camp-fast-options:disabled { opacity: .65; cursor: wait; }
-.camp-fast-menu { min-width: 160px; }
-.camp-fast-option { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .camp-inspector-member-avatar { position: relative; display: block; width: 32px; height: 32px; }
 .camp-inspector-member-avatar > i { position: absolute; right: -2px; bottom: -2px; width: 9px; height: 9px; border: 2px solid var(--surface); border-radius: 50%; background: var(--success); }
 .camp-inspector-member-avatar > i.is-away { background: var(--neutral); }

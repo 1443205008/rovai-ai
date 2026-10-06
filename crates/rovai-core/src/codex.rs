@@ -729,6 +729,7 @@ pub struct CodexRuntime {
     host: Arc<CodexHost>,
     thread_id: RwLock<Option<String>>,
     observed_model_id: RwLock<Option<String>>,
+    native_fast_default: RwLock<Option<bool>>,
     action_items: Mutex<HashMap<String, Value>>,
     streamed_agent_text: Mutex<String>,
     completed_agent_message: RwLock<Option<String>>,
@@ -775,6 +776,7 @@ impl CodexRuntime {
             host,
             thread_id: RwLock::new(None),
             observed_model_id: RwLock::new(None),
+            native_fast_default: RwLock::new(None),
             action_items: Mutex::new(HashMap::new()),
             streamed_agent_text: Mutex::new(String::new()),
             completed_agent_message: RwLock::new(None),
@@ -923,6 +925,11 @@ impl CodexRuntime {
         self.host.bind_thread(&thread_id, &self.owner).await?;
         *self.thread_id.write().await = Some(thread_id.clone());
         *self.observed_model_id.write().await = observed_model_id;
+        *self.native_fast_default.write().await = result
+            .get("serviceTier")
+            .and_then(Value::as_str)
+            .and_then(rovai_core::camp_fast::ObservedFastState::from_tier)
+            .and_then(rovai_core::camp_fast::ObservedFastState::fast_default);
 
         Ok(thread_id)
     }
@@ -1003,6 +1010,10 @@ impl CodexRuntime {
 
     pub async fn observed_model_id(&self) -> Option<String> {
         self.observed_model_id.read().await.clone()
+    }
+
+    pub async fn native_fast_default(&self) -> Option<bool> {
+        *self.native_fast_default.read().await
     }
 
     pub async fn turn_id(&self) -> Option<String> {
@@ -2579,7 +2590,10 @@ for line in sys.stdin:
         response['result'] = {'account': None, 'requiresOpenaiAuth': scenario == 'auth_required'}
     elif method == 'model/list':
         response['result'] = {'data': [{'id': 'selected', 'supportedReasoningEfforts': [{'reasoningEffort': 'low'}]}]}
-    elif method == 'thread/start': response['result'] = {'thread': {'id': 'thread-fixture'}}
+    elif method in ('thread/start', 'thread/resume'):
+        response['result'] = {'thread': {'id': 'thread-fixture'}}
+        if scenario == 'default':
+            response['result']['serviceTier'] = 'priority' if method == 'thread/start' else 'default'
     elif method == 'turn/start':
         with open(os.path.join(root, 'turns'), 'a') as log: log.write(json.dumps(request['params']) + '\n')
         if scenario == 'fast_rejected':
@@ -2647,7 +2661,7 @@ for line in sys.stdin:
                         runtime
                             .start_or_resume_thread_with_config(
                                 &root,
-                                None,
+                                (attempt == 1).then_some("thread-fixture"),
                                 CodexThreadStartOptions {
                                     developer_instructions: None,
                                     sandbox: "workspace-write",
@@ -2660,6 +2674,12 @@ for line in sys.stdin:
                             )
                             .await
                             .unwrap();
+                        assert_eq!(
+                            runtime.native_fast_default().await,
+                            (scenario == "default").then_some(attempt != 1),
+                            "start/resume baseline arrives before the single task input"
+                        );
+                        assert!(!root.join("turns").exists() || attempt > 0);
                         let turn = runtime
                             .start_turn_with_config(
                                 "task-body",

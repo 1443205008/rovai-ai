@@ -268,3 +268,7 @@ Claude 直接传临时 settings，Codex 直接传单 Turn 档位；不再启动 
 关闭值不被资格过滤，运行反馈只在对应 Run 中展示，不写回偏好。无迁移、资格管理器、兼容重启或 #642 链路重做。
 当前规范见 [Camp Member Fast v3](../../contracts/camp-member-fast-v3.md)，理由见 [V1.72-D13](decisions.md#v1-72-d13)。
 验证范围与限制见[实施记录](implementation-plan.md#2026-10-06-fast-偏好直接应用)。
+
+后续收口保留 Thread 队员级存储与冻结，控件恢复二态；正常 Claude/Codex Host 初始化返回值补充
+未覆盖时的显示初值，不解析原生配置、不启动额外探测，也不回写用户选择。
+本轮验证见[二态与初始化值实施记录](implementation-plan.md#2026-10-06-fast-二态与初始化值)。
