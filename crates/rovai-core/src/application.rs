@@ -5533,7 +5533,7 @@ impl Core {
                     Ok(Some(envelope))
                         if !matches!(
                             operation.as_str(),
-                            MEMBER_LIST_TOOL_NAME | MEMBER_GET_TOOL_NAME
+                            MEMBER_LIST_TOOL_NAME | MEMBER_GET_TOOL_NAME | MEMBER_UPDATE_TOOL_NAME
                         ) =>
                     {
                         return BuiltinToolIpcResponse::Envelope { envelope };

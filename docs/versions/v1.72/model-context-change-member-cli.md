@@ -21,7 +21,7 @@ last_updated: 2026-10-06
 | 源码基线 | `0baa74144ba52de257c98656e72b445c9bc43d4e`，已与 `origin/main` 核对 |
 | 当前版本 | [版本索引](../README.md)中的 v1.72，不切换版本 |
 | 分支 | `rovai/member-cli` |
-| Worktree | `/Users/murray.xue/VSCodeProjects/opensource/rovai-ai-member-cli` |
+| Worktree | `../rovai-ai-member-cli`（仓库同级独立 worktree） |
 | Governance | User 已确认 r1；无治理文档必须先合入 main 的额外要求 |
 | 工作状态 | active：已确认 r1，功能实施中 |
 | 需求依据 | Thread 输入 `9917638a-cf75-4fbb-ada0-95e3bdd4e939` 的最小增量约束，及 `de3ec357-6d61-4adb-9902-b46ab6029eb6` 的完整前后对比要求 |

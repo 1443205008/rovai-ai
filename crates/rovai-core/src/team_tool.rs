@@ -2465,7 +2465,10 @@ mod tests {
                 [],
             )
             .unwrap();
+        fixture.database.connection().execute("UPDATE agent_profile SET member_order=CASE id WHEN 'agent_2' THEN 4000 WHEN 'agent_1' THEN 5000 ELSE 6000 END",[]).unwrap();
         let list = list_members(fixture.database.connection(), &run).unwrap();
+        assert_eq!(list["items"][0]["agentId"], "agent_2");
+
         validate_schema(&list, &member_list_output_schema()).unwrap();
         assert_eq!(list["items"].as_array().unwrap().len(), 3);
         assert!(
@@ -2486,6 +2489,22 @@ mod tests {
             authorize_member_target(fixture.database.connection(), &run, "agent_4", false).is_err()
         );
         let before = read(&fixture.database, "agent_2");
+        let unavailable = get_member(
+            fixture.database.connection(),
+            &fixture.directory,
+            &tmp.join("unavailable"),
+            &run,
+            &MemberGetInput {
+                agent_id: "agent_2".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(unavailable["images"], json!({"icon":null,"portrait":null}));
+        assert_eq!(
+            unavailable["imageStatus"],
+            json!({"icon":"unavailable","portrait":"unavailable"})
+        );
+
         validate_schema(&before, &member_get_output_schema()).unwrap();
         for variant in ["icon", "portrait"] {
             let path = std::path::Path::new(before["images"][variant].as_str().unwrap());
@@ -2608,9 +2627,75 @@ mod tests {
             read(&fixture.database, "agent_2")["version"],
             updated["version"]
         );
-        update_member(&mut fixture.database, &fixture.directory, &run, image_patch).unwrap();
+        let image_execution = update_member(
+            &mut fixture.database,
+            &fixture.directory,
+            &run,
+            image_patch.clone(),
+        )
+        .unwrap();
         let image_updated = read(&fixture.database, "agent_2");
         assert_eq!(image_updated["teamRole"], "Image and text");
+        let original_input = std::fs::read(&source).unwrap();
+        image::DynamicImage::ImageRgba8(image::ImageBuffer::from_pixel(
+            400,
+            500,
+            image::Rgba([32, 64, 96, 255]),
+        ))
+        .save(&source)
+        .unwrap();
+        let changed_source = update_member(
+            &mut fixture.database,
+            &fixture.directory,
+            &run,
+            image_patch.clone(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            changed_source
+                .downcast_ref::<crate::member_studio::MemberOperationError>()
+                .unwrap()
+                .code,
+            "builtin_tool.idempotency_conflict"
+        );
+        std::fs::write(&source, &original_input).unwrap();
+        assert!(
+            update_member(
+                &mut fixture.database,
+                &fixture.directory,
+                &run,
+                image_patch.clone()
+            )
+            .unwrap()
+            .replayed
+        );
+        std::fs::remove_file(&source).unwrap();
+        let missing_source_replay = update_member(
+            &mut fixture.database,
+            &fixture.directory,
+            &run,
+            image_patch.clone(),
+        )
+        .unwrap();
+        assert!(missing_source_replay.replayed);
+        assert_eq!(
+            missing_source_replay.result.payload,
+            image_execution.result.payload
+        );
+        let mut different_missing_path = image_patch.clone();
+        different_missing_path.avatar_file =
+            Some(tmp.join("different-missing.png").to_str().unwrap().into());
+        assert!(
+            update_member(
+                &mut fixture.database,
+                &fixture.directory,
+                &run,
+                different_missing_path
+            )
+            .unwrap_err()
+            .downcast_ref::<CommandGatewayError>()
+            .is_some()
+        );
         let original_source =
             std::fs::read(image_updated["images"]["portrait"].as_str().unwrap()).unwrap();
         let crop_patch = parse_patch(
@@ -2632,6 +2717,27 @@ mod tests {
         assert_eq!(
             std::fs::read(cropped["images"]["portrait"].as_str().unwrap()).unwrap(),
             original_source
+        );
+        let invalid_crop = parse_patch(
+            json!({"agentId":"agent_2","requestId":Uuid::new_v4().to_string(),"expectedVersion":cropped["version"],"teamRole":"Must roll back crop","avatarCenterX":0.0,"avatarCenterY":0.0,"avatarSize":1.0}),
+        );
+        assert!(
+            update_member(
+                &mut fixture.database,
+                &fixture.directory,
+                &run,
+                invalid_crop
+            )
+            .is_err()
+        );
+        assert_eq!(
+            read(&fixture.database, "agent_2")["teamRole"],
+            "Image and text"
+        );
+        assert!(
+            update_member(&mut fixture.database, &fixture.directory, &run, image_patch)
+                .unwrap()
+                .replayed
         );
         let clear_patch = parse_patch(
             json!({"agentId":"agent_2","requestId":Uuid::new_v4().to_string(),"expectedVersion":cropped["version"],"teamRole":"","personalityTraits":[],"clearAvatar":true}),

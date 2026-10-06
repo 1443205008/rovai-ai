@@ -227,11 +227,7 @@ pub fn import_managed_member_avatar(
             "Normalized avatar exceeds the managed asset limit",
         ));
     }
-    let crop = MemberAvatarCrop {
-        center_x: (f64::from(crop_x) + f64::from(crop_edge) / 2.0) / f64::from(source_width),
-        center_y: (f64::from(crop_y) + f64::from(crop_edge) / 2.0) / f64::from(source_height),
-        size: f64::from(crop_edge) / f64::from(source_width.min(source_height)),
-    };
+    let crop = default_member_avatar_crop(source_width, source_height);
     publish_managed_member_avatar(
         data_dir,
         asset_id,
@@ -300,12 +296,13 @@ fn normalize_selected_avatar(
 /// Reuses creation's decoder and normalization, with an optional explicit crop.
 pub fn prepare_member_avatar(
     data_dir: &Path,
+    asset_id: Uuid,
     selected_file: &Path,
     crop: Option<MemberAvatarCrop>,
 ) -> Result<ManagedMemberAvatarSummary> {
     let source = normalize_selected_avatar(selected_file)?;
     let source_png = encode_png(&source)?;
-    save_cropped_source(data_dir, &source_png, source, crop)
+    save_cropped_source(data_dir, &source_png, source, crop, Some(asset_id))
 }
 
 pub fn recrop_member_avatar(
@@ -315,7 +312,16 @@ pub fn recrop_member_avatar(
 ) -> Result<ManagedMemberAvatarSummary> {
     let source_png = member_avatar_bytes(data_dir, avatar_ref, true)?;
     let source = image::load_from_memory_with_format(&source_png, ImageFormat::Png)?;
-    save_cropped_source(data_dir, &source_png, source, Some(crop))
+    save_cropped_source(data_dir, &source_png, source, Some(crop), None)
+}
+
+fn default_member_avatar_crop(width: u32, height: u32) -> MemberAvatarCrop {
+    let (x, y, edge) = default_avatar_crop(width, height);
+    MemberAvatarCrop {
+        center_x: (f64::from(x) + f64::from(edge) / 2.0) / f64::from(width),
+        center_y: (f64::from(y) + f64::from(edge) / 2.0) / f64::from(height),
+        size: f64::from(edge) / f64::from(width.min(height)),
+    }
 }
 
 fn save_cropped_source(
@@ -323,16 +329,10 @@ fn save_cropped_source(
     source_png: &[u8],
     source: DynamicImage,
     crop: Option<MemberAvatarCrop>,
+    asset_id: Option<Uuid>,
 ) -> Result<ManagedMemberAvatarSummary> {
     let (width, height) = source.dimensions();
-    let crop = crop.unwrap_or_else(|| {
-        let (x, y, edge) = default_avatar_crop(width, height);
-        MemberAvatarCrop {
-            center_x: (f64::from(x) + f64::from(edge) / 2.0) / f64::from(width),
-            center_y: (f64::from(y) + f64::from(edge) / 2.0) / f64::from(height),
-            size: f64::from(edge) / f64::from(width.min(height)),
-        }
-    });
+    let crop = crop.unwrap_or_else(|| default_member_avatar_crop(width, height));
     validate_crop(&crop, width, height)?;
     let edge = (crop.size * f64::from(width.min(height))).round().max(1.0) as u32;
     let x = (crop.center_x * f64::from(width) - f64::from(edge) / 2.0)
@@ -344,14 +344,18 @@ fn save_cropped_source(
     let icon = source
         .crop_imm(x.min(width - edge), y.min(height - edge), edge, edge)
         .resize_exact(ICON_EDGE, ICON_EDGE, image::imageops::FilterType::Lanczos3);
-    save_managed_member_avatar(
-        data_dir,
-        source_png,
-        &encode_png(&icon)?,
-        width,
-        height,
-        crop,
-    )
+    let icon_png = encode_png(&icon)?;
+    anyhow::ensure!(
+        source_png.len() <= NORMALIZED_SOURCE_BYTES && icon_png.len() <= ICON_BYTES,
+        "Normalized avatar exceeds the managed asset limit"
+    );
+    if let Some(asset_id) = asset_id {
+        Ok(publish_managed_member_avatar(
+            data_dir, asset_id, source_png, &icon_png, width, height, crop,
+        )?)
+    } else {
+        save_managed_member_avatar(data_dir, source_png, &icon_png, width, height, crop)
+    }
 }
 
 /// Core-packaged renditions of the same built-in artwork as the renderer.

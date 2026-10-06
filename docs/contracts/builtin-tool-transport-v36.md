@@ -124,7 +124,12 @@ lifecycle; there is no filesystem/database transaction framework or schema migra
 transport request identity and reused as `member-update:<requestId>` at the domain gateway.
 The existing semantic digest and durable `command.result` own replay; there is no second
 key store. The command binds caller, Thread, target, expected version, supplied fields and
-prepared source identity/crop intent. Exact replay returns the original result without
+prepared source identity/crop intent. Uploads reuse the existing creation importer's
+request-bound immutable asset identity; the source locator participates only as a digest.
+When the original local source is gone, only an already recorded matching command can
+replay. A missing source cannot initiate a new update. When present, the source is checked
+against the immutable prepared asset before replay, so replacing bytes at the same path
+cannot bypass a semantic conflict through the lease cache. Exact replay returns the original result without
 another version increment or invalidation. Changed input under the same identity fails.
 
 `member.access_denied`, `member.user_confirmation_required` and idempotency conflicts

@@ -12,12 +12,13 @@ use crate::{
     agent_profile::{normalize_member_identity, profile_display_name_exists},
     command::{
         ActorRef, CommandEnvelope, CommandExecution, CommandHandlerResult, DomainCommand,
-        DomainCommandGateway, EntityReference, sealed,
+        DomainCommandGateway, EntityReference, canonical_json_digest, sealed,
     },
     current_user::CURRENT_USER_ID,
     db::Database,
     member_avatar::{
-        MemberAvatarCrop, materialize_member_avatar, prepare_member_avatar, recrop_member_avatar,
+        MemberAvatarCrop, MemberAvatarImportError, MemberAvatarImportErrorKind,
+        materialize_member_avatar, prepare_member_avatar, recrop_member_avatar,
     },
     member_studio::{MemberOperationError, has_direct_user_input},
     team_tool::AuthenticatedTeamToolRun,
@@ -99,6 +100,7 @@ struct PatchMemberCommand {
     caller_agent_id: String,
     input: MemberUpdateInput,
     prepared_avatar_ref: Option<String>,
+    avatar_input_digest: Option<String>,
 }
 impl sealed::Sealed for PatchMemberCommand {}
 impl DomainCommand for PatchMemberCommand {
@@ -157,7 +159,7 @@ pub fn list_members(connection: &Connection, run: &AuthenticatedTeamToolRun) -> 
         "SELECT p.id,p.display_name,p.team_role,p.professional_responsibilities,p.id=c.default_lead_agent_id
          FROM camp_member m JOIN agent_profile p ON p.id=m.agent_id JOIN camp c ON c.id=m.camp_id
          WHERE m.camp_id=?1 AND m.status='active' AND m.leave_requested_at IS NULL AND p.profile_status!='removed'
-         ORDER BY p.id")?;
+         ORDER BY p.member_order,p.id")?;
     let items = statement.query_map([&run.camp_id], |row| Ok(json!({
         "agentId": row.get::<_,String>(0)?, "displayName": row.get::<_,String>(1)?,
         "teamRole": row.get::<_,String>(2)?, "professionalResponsibilities": row.get::<_,String>(3)?,
@@ -233,15 +235,18 @@ pub fn update_member(
 ) -> Result<CommandExecution> {
     input.validate()?;
     authorize_member_target(database.connection(), run, &input.agent_id, true)?;
+    // Bind an upload to the existing immutable asset format using this same
+    // request identity, just as create binds its source to creationKey. This
+    // lets durable replay survive cleanup of the original Run-readable file.
     let prepared_avatar_ref = input
         .avatar_file
-        .as_deref()
-        .map(|path| {
-            prepare_member_avatar(data_dir, Path::new(path), input.crop())
-                .map(|asset| asset.avatar_ref)
-        })
-        .transpose()
-        .map_err(|_| invalid_image())?;
+        .as_ref()
+        .map(|_| format!("rovai://member-avatar/managed/{}", input.request_id));
+    let avatar_input_digest = input
+        .avatar_file
+        .as_ref()
+        .map(|path| canonical_json_digest(&json!(path)))
+        .transpose()?;
     let envelope = CommandEnvelope {
         command_id: format!("member-update:{}", input.request_id),
         actor: ActorRef::User {
@@ -254,9 +259,40 @@ pub fn update_member(
             caller_agent_id: run.agent_id.clone(),
             input,
             prepared_avatar_ref,
+            avatar_input_digest,
         },
     };
-    DomainCommandGateway::default().execute(database, &envelope, |transaction| {
+    let gateway = DomainCommandGateway::default();
+    if let Some(path) = envelope.payload.input.avatar_file.as_deref() {
+        let path = Path::new(path);
+        if !path.try_exists().map_err(|_| invalid_image())? {
+            if let Some(recorded) = gateway.replay_if_recorded(database, &envelope)? {
+                return Ok(recorded);
+            }
+            return Err(invalid_image().into());
+        }
+        prepare_member_avatar(
+            data_dir,
+            Uuid::parse_str(&envelope.payload.input.request_id)?,
+            path,
+            envelope.payload.input.crop(),
+        )
+        .map_err(|error| {
+            if error
+                .downcast_ref::<MemberAvatarImportError>()
+                .is_some_and(|error| error.kind == MemberAvatarImportErrorKind::CreationKeyConflict)
+            {
+                MemberOperationError {
+                    code: "builtin_tool.idempotency_conflict",
+                    message: "requestId is already bound to a different image",
+                    details: None,
+                }
+            } else {
+                invalid_image()
+            }
+        })?;
+    }
+    gateway.execute(database, &envelope, |transaction| {
         let input = &envelope.payload.input;
         authorize_member_target(transaction, run, &input.agent_id, true)?;
         let current = identity_snapshot(transaction, &input.agent_id)?;
