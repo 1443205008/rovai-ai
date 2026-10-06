@@ -925,6 +925,8 @@ struct RuntimeOwnerRecord {
     executable_path: String,
     #[serde(default)]
     process_start_identity: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    windows_job_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -934,23 +936,36 @@ struct RuntimeOwnerRecordStore {
 }
 
 impl RuntimeOwnerRecordStore {
-    fn new(data_dir: &Path) -> Option<Self> {
-        let root = data_dir.join("runtime-fleet").join("owners");
-        if std::fs::create_dir_all(&root).is_err() {
-            eprintln!("failed to create Runtime Fleet owner record directory");
-            return None;
-        }
-        #[cfg(unix)]
+    fn new(data_dir: &Path) -> Result<Self> {
+        let fleet_root = data_dir.join("runtime-fleet");
+        let root = fleet_root.join("owners");
+        #[cfg(windows)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700));
+            use crate::platform::private_storage::{
+                admit_private_directory, prepare_legacy_managed_private_directory,
+                repair_legacy_managed_private_file,
+            };
+            admit_private_directory(data_dir)?;
+            prepare_legacy_managed_private_directory(&fleet_root)?;
+            prepare_legacy_managed_private_directory(&root)?;
+            for entry in std::fs::read_dir(&root)? {
+                let path = entry?.path();
+                if path.extension().is_some_and(|ext| ext == "json") {
+                    repair_legacy_managed_private_file(&path)?;
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            crate::platform::prepare_private_directory(&fleet_root)?;
+            crate::platform::prepare_private_directory(&root)?;
         }
         let store = Self {
             root,
             core_generation: uuid::Uuid::new_v4().to_string(),
         };
         store.cleanup_stale();
-        Some(store)
+        Ok(store)
     }
 
     fn record_path(&self, process_id: &str) -> PathBuf {
@@ -983,6 +998,19 @@ impl RuntimeOwnerRecordStore {
             process_start_identity: owner_process_start_identity(
                 host.pid().context("Runtime process has no root PID")?,
             ),
+            windows_job_name: {
+                #[cfg(windows)]
+                {
+                    match host {
+                        RuntimeProcessHost::Codex(host) => Some(host.windows_job_name().to_owned()),
+                        _ => None,
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    None
+                }
+            },
         };
         rovai_core::platform::private_storage::atomic_write_private_bytes(
             &self.record_path(process_id),
@@ -1140,7 +1168,19 @@ impl RuntimeOwnerRecordStore {
                 if unsafe { libc::getpgid(_record.pid as i32) == -1 } {
                     remove_record = true;
                 }
-                #[cfg(not(unix))]
+                #[cfg(windows)]
+                {
+                    remove_record = _record.run_lease.is_none()
+                        || _record.windows_job_name.as_deref().is_some_and(|job_name| {
+                            crate::managed_process::ManagedProcess::recorded_windows_tree_is_empty(
+                                job_name,
+                                _record.pid,
+                                _record.process_start_identity,
+                            )
+                            .unwrap_or(false)
+                        });
+                }
+                #[cfg(not(any(unix, windows)))]
                 {
                     // Legacy records have no scoped cleanup obligation. A new
                     // scoped record needs positive process-exit evidence.
@@ -1224,7 +1264,12 @@ fn owner_process_start_identity(pid: u32) -> Option<u64> {
     fields.get(19)?.parse().ok()
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn owner_process_start_identity(pid: u32) -> Option<u64> {
+    crate::managed_process::ManagedProcess::windows_process_start_identity(pid)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn owner_process_start_identity(_pid: u32) -> Option<u64> {
     None
 }
@@ -1338,12 +1383,15 @@ impl AgentRuntimeFleetManager {
         config: AgentRuntimeFleetConfig,
         data_dir: &Path,
         builtin_tool_leases: Arc<BuiltinToolLeaseRegistry>,
-    ) -> Self {
-        Self::with_owner_records(
+    ) -> Result<Self> {
+        Ok(Self::with_owner_records(
             config,
-            RuntimeOwnerRecordStore::new(data_dir),
+            Some(
+                RuntimeOwnerRecordStore::new(data_dir)
+                    .context("failed to prepare Runtime Fleet owner records")?,
+            ),
             builtin_tool_leases,
-        )
+        ))
     }
 
     fn with_owner_records(
@@ -3680,11 +3728,8 @@ mod tests {
     async fn scoped_cleanup_receipt_survives_restart_until_durable_ack() {
         let root =
             std::env::temp_dir().join(format!("rovai-stop-receipt-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
-        let store = RuntimeOwnerRecordStore {
-            root: root.clone(),
-            core_generation: "new-core".into(),
-        };
+        crate::platform::prepare_private_directory(&root).unwrap();
+        let store = RuntimeOwnerRecordStore::new(&root).unwrap();
         let key = RunLeaseKey {
             agent_run_id: "old-run".into(),
             execution_epoch: 7,
@@ -3697,10 +3742,11 @@ mod tests {
             process_group_id: -1,
             executable_path: "fixture".into(),
             process_start_identity: None,
+            windows_job_name: None,
         };
-        std::fs::write(
-            store.record_path("old-host"),
-            serde_json::to_vec(&record).unwrap(),
+        crate::platform::atomic_write_private_bytes(
+            &store.record_path("old-host"),
+            &serde_json::to_vec(&record).unwrap(),
         )
         .unwrap();
         let fleet = AgentRuntimeFleetManager::with_owner_records(
@@ -3741,6 +3787,296 @@ mod tests {
                 .await,
             FleetReleaseOutcome::NoMatchingLease
         );
+
+        #[cfg(windows)]
+        {
+            use crate::managed_process::{
+                ManagedProcess, ManagedProcessLaunchSpec, ManagedProcessPurpose,
+                ManagedStdinPolicy, ManagedWindowsArgvDialect,
+            };
+            // Reuse the native Managed Process helper rather than cmd.exe,
+            // whose command-line grammar is not the Microsoft CRT dialect.
+            let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "managed_process::tests::windows_owned_runtime_helper",
+                    "--ignored",
+                ])
+                .env_remove("ROVAI_MANAGED_PROCESS_HELPER_MODE")
+                .current_dir(&root);
+            let spec = ManagedProcessLaunchSpec::capture(
+                &command,
+                ManagedProcessPurpose::RuntimeHost,
+                ManagedStdinPolicy::Null,
+                ManagedWindowsArgvDialect::MicrosoftCrt,
+                "runtime-owner:receipt-test",
+            )
+            .unwrap();
+            let mut child = ManagedProcess::spawn(spec).unwrap();
+            let mut crashed_record = record.clone();
+            crashed_record.reaped = false;
+            // Deliberately use a live unrelated PID: only the persisted launch's
+            // Job can prove cleanup, independently of PID reuse.
+            crashed_record.pid = std::process::id();
+            crashed_record.process_start_identity =
+                owner_process_start_identity(child.id().unwrap());
+            crashed_record.windows_job_name = Some(child.windows_job_name().to_owned());
+            let path = store.record_path("crashed-host");
+            crate::platform::atomic_write_private_bytes(
+                &path,
+                &serde_json::to_vec(&crashed_record).unwrap(),
+            )
+            .unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_secs(5), child.wait())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .success()
+            );
+            drop(child);
+            let handshake = root.join("live.pid");
+            let mut live_command = tokio::process::Command::new(std::env::current_exe().unwrap());
+            live_command
+                .args([
+                    "--exact",
+                    "managed_process::tests::windows_owned_runtime_helper",
+                    "--ignored",
+                ])
+                .env("ROVAI_MANAGED_PROCESS_HELPER_MODE", "owned-runtime")
+                .env("ROVAI_MANAGED_PROCESS_HELPER_FILE", &handshake)
+                .current_dir(&root);
+            let live_spec = ManagedProcessLaunchSpec::capture(
+                &live_command,
+                ManagedProcessPurpose::RuntimeHost,
+                ManagedStdinPolicy::Piped,
+                ManagedWindowsArgvDialect::MicrosoftCrt,
+                "runtime-owner:live-receipt-test",
+            )
+            .unwrap();
+            let mut live_child = ManagedProcess::spawn(live_spec).unwrap();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while std::fs::read_to_string(&handshake)
+                    .ok()
+                    .and_then(|pid| pid.trim().parse::<u32>().ok())
+                    != live_child.id()
+                {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("native helper did not enter its live state");
+            let mut live_record = crashed_record.clone();
+            live_record.windows_job_name = Some(live_child.windows_job_name().to_owned());
+            let live_path = store.record_path("live-host");
+            crate::platform::atomic_write_private_bytes(
+                &live_path,
+                &serde_json::to_vec(&live_record).unwrap(),
+            )
+            .unwrap();
+            let restarted = AgentRuntimeFleetManager::new_with_builtin_tools(
+                Default::default(),
+                &root,
+                Arc::new(BuiltinToolLeaseRegistry::default()),
+            )
+            .unwrap();
+            assert_eq!(
+                restarted
+                    .stop_agent_run_until_with_outcome(
+                        "old-run",
+                        7,
+                        Instant::now() + Duration::from_secs(1),
+                    )
+                    .await,
+                FleetReleaseOutcome::NoMatchingLease
+            );
+            assert!(
+                !serde_json::from_slice::<RuntimeOwnerRecord>(&std::fs::read(&live_path).unwrap())
+                    .unwrap()
+                    .reaped
+            );
+            assert!(
+                serde_json::from_slice::<RuntimeOwnerRecord>(&std::fs::read(&path).unwrap())
+                    .unwrap()
+                    .reaped
+            );
+            live_child.force_terminate_tree().unwrap();
+            tokio::time::timeout(Duration::from_secs(5), live_child.wait())
+                .await
+                .unwrap()
+                .unwrap();
+            drop(live_child);
+            assert_eq!(
+                restarted
+                    .stop_agent_run_until_with_outcome(
+                        "old-run",
+                        6,
+                        Instant::now() + Duration::from_secs(1),
+                    )
+                    .await,
+                FleetReleaseOutcome::NoMatchingLease
+            );
+            assert_eq!(
+                restarted
+                    .stop_agent_run_until_with_outcome(
+                        "old-run",
+                        7,
+                        Instant::now() + Duration::from_secs(1),
+                    )
+                    .await,
+                FleetReleaseOutcome::Reaped
+            );
+            assert!(path.exists());
+            let retained: RuntimeOwnerRecord =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert!(retained.reaped);
+            restarted.acknowledge_cleanup("old-run", 6).await;
+            assert!(path.exists());
+            restarted.acknowledge_cleanup("old-run", 7).await;
+            assert!(!path.exists());
+            assert!(!live_path.exists());
+
+            // A missing name is insufficient while the recorded root instance
+            // is still alive; access failures likewise remain unconfirmed.
+            crashed_record.pid = std::process::id();
+            crashed_record.process_start_identity =
+                owner_process_start_identity(std::process::id());
+            crashed_record.windows_job_name =
+                Some(format!("Global\\Rovai.Runtime.{}", uuid::Uuid::new_v4()));
+            crate::platform::atomic_write_private_bytes(
+                &path,
+                &serde_json::to_vec(&crashed_record).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                restarted
+                    .stop_agent_run_until_with_outcome(
+                        "old-run",
+                        7,
+                        Instant::now() + Duration::from_secs(1)
+                    )
+                    .await,
+                FleetReleaseOutcome::NoMatchingLease
+            );
+            assert!(
+                !serde_json::from_slice::<RuntimeOwnerRecord>(&std::fs::read(&path).unwrap())
+                    .unwrap()
+                    .reaped
+            );
+            store.remove("crashed-host");
+
+            // Old anonymous Jobs and invalid identities cannot prove a tree
+            // empty. Absence of a root PID alone must never grant a receipt.
+            for job_name in [None, Some("invalid-job".to_string())] {
+                crashed_record.windows_job_name = job_name;
+                crashed_record.pid = u32::MAX;
+                crate::platform::atomic_write_private_bytes(
+                    &path,
+                    &serde_json::to_vec(&crashed_record).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    restarted
+                        .stop_agent_run_until_with_outcome(
+                            "old-run",
+                            7,
+                            Instant::now() + Duration::from_secs(1),
+                        )
+                        .await,
+                    FleetReleaseOutcome::NoMatchingLease
+                );
+                assert!(
+                    !serde_json::from_slice::<RuntimeOwnerRecord>(&std::fs::read(&path).unwrap())
+                        .unwrap()
+                        .reaped
+                );
+                store.remove("crashed-host");
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_owner_registration_admits_only_private_or_legacy_inherited_storage() {
+        // This owner covers the private-storage migration seam. The receipt
+        // owner above covers lifecycle/ACK; lower-level ACL tests cannot prove
+        // that Fleet prepares every parent and preserves legacy scoped records.
+        for legacy in [false, true] {
+            let root =
+                std::env::temp_dir().join(format!("rovai-owner-storage-{}", uuid::Uuid::new_v4()));
+            crate::platform::prepare_private_directory(&root).unwrap();
+            let owners = root.join("runtime-fleet").join("owners");
+            let key = RunLeaseKey {
+                agent_run_id: "old-run".into(),
+                execution_epoch: 7,
+            };
+            if legacy {
+                std::fs::create_dir_all(&owners).unwrap();
+                std::fs::write(
+                    owners.join("legacy.json"),
+                    serde_json::to_vec(&RuntimeOwnerRecord {
+                        run_lease: Some(key.clone()),
+                        reaped: true,
+                        core_generation: "old-core".into(),
+                        pid: u32::MAX,
+                        process_group_id: 0,
+                        executable_path: "fixture".into(),
+                        process_start_identity: None,
+                        windows_job_name: None,
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+                assert!(crate::platform::prepare_private_directory(&owners).is_err());
+            }
+            let store = RuntimeOwnerRecordStore::new(&root).unwrap();
+            store
+                .register(
+                    "new-host",
+                    &fake_host("new-host"),
+                    Some(RunLeaseKey {
+                        agent_run_id: "new-run".into(),
+                        execution_epoch: 8,
+                    }),
+                )
+                .unwrap();
+            crate::platform::prepare_private_directory(&root.join("runtime-fleet")).unwrap();
+            crate::platform::prepare_private_directory(&owners).unwrap();
+            crate::platform::open_private_read_file(&store.record_path("new-host")).unwrap();
+            if legacy {
+                assert!(store.confirmed_stop(&key));
+                assert!(store.record_path("legacy").exists());
+                store.acknowledge_cleanup(&key);
+                assert!(!store.record_path("legacy").exists());
+            }
+            std::fs::remove_dir_all(root).unwrap();
+        }
+        // A broader ACL under the private Core root is not a legacy managed
+        // child and must not be rewritten or silently ignored. Grant Everyone
+        // explicitly so this case does not depend on the machine's TEMP ACL.
+        let root =
+            std::env::temp_dir().join(format!("rovai-owner-untrusted-{}", uuid::Uuid::new_v4()));
+        crate::platform::prepare_private_directory(&root).unwrap();
+        let destination = root.join("runtime-fleet");
+        crate::platform::prepare_private_directory(&destination).unwrap();
+        use std::os::windows::process::CommandExt;
+        let icacls = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32")
+            .join("icacls.exe");
+        let grant = std::process::Command::new(icacls)
+            .arg(&destination)
+            .args(["/grant", "*S-1-1-0:(OI)(CI)F", "/Q"])
+            .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
+            .output()
+            .unwrap();
+        assert!(
+            grant.status.success(),
+            "failed to establish the explicit broad-ACL fixture"
+        );
+        assert!(RuntimeOwnerRecordStore::new(&root).is_err());
+        assert!(crate::platform::prepare_private_directory(&destination).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -3786,6 +4122,7 @@ mod tests {
                 process_group_id: unsafe { libc::getpgid(current_pid as i32) },
                 executable_path: current_executable,
                 process_start_identity: owner_process_start_identity(current_pid),
+                windows_job_name: None,
             })
             .unwrap(),
         )
@@ -3800,6 +4137,7 @@ mod tests {
                 process_group_id: unsafe { libc::getpgid(foreign_pid as i32) },
                 executable_path: foreign_executable,
                 process_start_identity: owner_process_start_identity(foreign_pid),
+                windows_job_name: None,
             })
             .unwrap(),
         )
@@ -3814,6 +4152,7 @@ mod tests {
                 process_group_id: unsafe { libc::getpgid(mismatched_pid as i32) },
                 executable_path: "/bin/not-the-owned-runtime".to_string(),
                 process_start_identity: owner_process_start_identity(mismatched_pid),
+                windows_job_name: None,
             })
             .unwrap(),
         )

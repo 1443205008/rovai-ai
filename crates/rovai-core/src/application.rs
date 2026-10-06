@@ -17500,7 +17500,7 @@ async fn run_core(
         AgentRuntimeFleetConfig::default(),
         &data_dir,
         builtin_tool_leases.clone(),
-    ));
+    )?);
     let planned_shutdown = PlannedShutdownCoordinator::new(uuid::Uuid::new_v4().to_string());
     let core = Arc::new(Core {
         database: Mutex::new(database),
@@ -25485,7 +25485,7 @@ mod tests {
         let data_dir = root.join("data");
         let skill_library_root = root.join("skills");
         let runtime_camp_files_root = root.join("runtime-files");
-        std::fs::create_dir_all(&data_dir)?;
+        rovai_core::platform::prepare_private_directory(&data_dir)?;
         rovai_core::platform::prepare_private_directory(&skill_library_root)?;
         let attachment_views =
             ThreadAttachmentViewStore::for_isolated_test_root(&runtime_camp_files_root)?;
@@ -25510,7 +25510,7 @@ mod tests {
             AgentRuntimeFleetConfig::default(),
             &data_dir,
             builtin_tool_leases.clone(),
-        ));
+        )?);
 
         Ok(Core {
             database: Mutex::new(database),

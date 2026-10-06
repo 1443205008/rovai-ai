@@ -886,3 +886,38 @@ Adapter 审计：
 状态：ready，独立 worktree 保留供后续审查，下一步为人工审阅远程分支；本次不自动创建 PR。
 所有 Runtime 测试使用临时目录、受控假进程和假凭据，不访问用户账号，不重启日常 Core/Host。
 真实 Runtime 与 Windows 运行验证未执行；不能将夹具成功描述为故障会话已经现场恢复。
+
+## 2026-10-06 Windows owner record 与重启回执修复
+
+基线 `088fbfc1d3772653c0599cc7fb25491002670428`，继续提交到 `rovai/codex-host-recovery`。
+平台为实体 Windows 10 Pro 22H2 x64（build 19045），Rust/Cargo 1.97.1。
+
+- 修复 fresh Fleet owner 目录由普通 mkdir 创建、继承 DACL 导致原子私有写入拒绝全部 Host 登记的问题。
+  `runtime-fleet/owners` 使用原生私有创建；已准入 Core 根下的旧目录/JSON 只迁移精确继承的 user/SYSTEM ACL。
+  更宽 ACL、未知 owner、reparse 和错误类型继续阻断，初始化错误向 Core 返回，不再静默停用持久记录。
+- Windows Managed Process 创建私有、不可继承、禁止 breakaway 的唯一全局 Job；Codex owner record 保存 Job 身份
+  和进程创建时间。重启时查询 Job；Job 消失还需确认原根进程实例已退出，PID 复用只作身份查询，不补杀无关进程。
+  当前代际的 Codex bounded reap 等待整个 Job 为空，再写回已回收凭据；回执保留到精确 Run/epoch 的数据库 ACK。
+- 兼容边界：旧 `reaped=true` 回执继续有效；旧匿名 Job 的未确认 scoped 记录缺少树退出证据，继续保留门禁。
+  本次不凭裸 PID 缺失为这些旧记录补造 ACK，不处理日常故障会话。
+- 默认 workspace 首轮暴露既有 Claude permission 夹具将 `/tmp/project` 当作 Windows 绝对路径的问题；改用本机
+  临时目录下的绝对路径，保留其原生 request/input/approval 全部正向、拒绝与防串用断言，完整命令重跑通过。
+
+测试准入：扩展既有 `scoped_cleanup_receipt_survives_restart_until_durable_ack`，覆盖真实原生进程的重启回执、
+同一 Run 的 live/dead 多记录、PID 身份差异、非法/缺失 Job 身份及旧 epoch ACK。扩展既有 Job 孙进程与 Core
+强杀 owner，证明可重新查询的生命周期。新增 `windows_owner_registration_admits_only_private_or_legacy_inherited_storage`
+拥有独立的私有目录/旧 ACL 迁移 seam；纯策略测试不能证明生产 Fleet 准备全部父目录、成功私有写入及保留旧回执。
+全部进程/文件 fixture 隔离在临时目录，新增 owner 属于 `extended-tests`，没有新增真实账号 smoke 或重复数据库 fixture。
+
+| 命令 / owner | Windows 结果 |
+| --- | --- |
+| `cargo test --workspace` | 492 项通过，8 项按声明忽略 |
+| `cargo check --workspace --all-targets --features slow-tests` | 全部目标编译通过 |
+| `cargo test -p rovai-core --features extended-tests --lib runtime_fleet::tests:: -- --test-threads=1` | 23 项通过，含两处缺陷的回归 |
+| 扩展 libtest `managed_process::tests::windows_` / `codex::tests::` / `runtime_failure::tests::` | 分别 12 / 21 / 5 项通过；7 个子进程 helper 和 1 个真实账号 smoke 按声明忽略，helper 由 native owner 显式调用 |
+| 扩展 libtest 的 Runtime loss/provenance、startup accepted-unknown、network no-replay 与两个 Delivery cleanup gate owner | 6 项精确用例通过，保留 ACK 前门禁及跨 execution-root 隔离 |
+| `cargo fmt --all --check`、`git diff --check` | 通过 |
+| `pnpm docs:test`、`pnpm docs:check`、以上述修复基线运行 `pnpm docs:check:ci` | 通过 |
+
+本节补充上一节的 Windows 证据；未运行 Windows 11、真实 CLI 账户/计费或日常 App 验收。
+当前修补不扩大 ACP/Pi 的原生终态接入范围，也不把受控进程验证描述为用户已有故障会话已经恢复。

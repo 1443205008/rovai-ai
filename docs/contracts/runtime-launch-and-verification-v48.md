@@ -36,6 +36,11 @@ Codex 使用内部释放结果：可复用、已确认回收、无匹配租约�
 清理超时保留 Host、租约、容量和 owner record，后续扫描继续清理。既有 owner record 增补 Run/epoch 和已回收标记，
 跨 Core 重启保留清理证明，直到数据库 ACK；不创建第二套恢复或原生结果状态机。
 
+Windows Codex owner record 额外保存 Managed Process 的内部 Job 身份；重启退出证据由
+[Managed Runtime Process](managed-runtime-process-v2.md#4-ownership-and-termination) 拥有。
+旧记录中的已回收标记继续有效；没有 Job 身份且尚未确认回收的旧 scoped 记录保持门禁，不能仅凭根 PID 不存在补造回执。
+owner record 目录及原子写入必须满足私有存储准入；初始化失败阻止 Core 启动，不能静默关闭持久 owner 记录。
+
 已获取的 Codex 进程先由 Fleet 持有，再执行 initialize、认证及必要选模验证。任何验证失败均不发送任务正文，
 停止未确认不能抹去受管记录。未取得 Host 的失败仍通过原有 launch barrier 证明没有在途创建。
 

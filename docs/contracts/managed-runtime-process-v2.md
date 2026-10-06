@@ -3,7 +3,7 @@ document_type: contract
 contract: managed-runtime-process-v2
 status: accepted
 source_version: v1.58
-last_updated: 2026-09-23
+last_updated: 2026-10-06
 ---
 
 # Managed Runtime Process v2
@@ -134,6 +134,15 @@ shim locator 改写也必须递增 Installation generation、撤销旧 Ready sna
 Job handle 非 inheritable，并由 Core generation 独占。planned shutdown 先执行既有 graceful protocol；deadline
 后关闭/终止 Job 并有界等待 reap。Core crash/force-kill 导致最后 Job handle 关闭时，OS 收口受管后代。
 
+Windows Managed Process 为每次启动创建带随机身份的 `Global\Rovai.Runtime.<UUID>` Job，创建时使用
+受保护的当前用户/SYSTEM DACL，拒绝复用已有名字；不设置 breakaway。全局 namespace 防止 Core 换 Windows
+登录 Session 后把旧 Session 中仍存在的 Job 误判为不存在。控制 handle 仍由启动代际拥有、不可继承。
+Fleet 只保存内部 Job 身份，重启后通过 Managed Process 瞬时打开不可继承的 query/read-control handle；
+存活 Job 必须查询到零 active processes；Job 不存在时还要求根进程实例已退出，才能结合 kill-on-close 证明确认退出。
+根进程创建时间用于识别 PID 复用，恢复只查询/等待，不能终止已复用该 PID 的无关进程。
+访问拒绝、ACL 不符、非法身份或其他查询失败保持未确认；根 PID 退出、PID 复用或终止请求成功均不能替代 Job 证据。
+Codex 在当前代际的 bounded reap 同样等待 Job 为空，再提交已回收凭据。
+
 Unix 直接启动目标进程并保留 process group、stdio、环境快照与退出回收语义；Windows 保留原子 Job、
 handle list 与受控 entrypoint。所有 Runtime/Probe/derived child 都不经过 Rovai 的 `sandbox-exec` 包装。
 Runtime 可以自行创建原生沙箱，其可用性由 Runtime 配置和实际宿主环境决定。
@@ -191,3 +200,5 @@ pipe handle。Main 被强制终止后，Core 必须在 deadline 内通过 stdin 
 - [V1.39-D09](../versions/v1.39/decisions.md#v1-39-d09)
 - [Windows Desktop Platform](../architecture/windows-desktop-platform.md)
 - [Planned Shutdown](../architecture/planned-shutdown.md)
+- [Windows Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+- [Windows Kernel Object Namespaces](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces)

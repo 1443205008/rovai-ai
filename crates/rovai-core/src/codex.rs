@@ -145,6 +145,8 @@ pub(crate) struct CodexHost {
     incoming: mpsc::UnboundedSender<CodexIncoming>,
     alive: AtomicBool,
     executable_path: PathBuf,
+    #[cfg(windows)]
+    windows_job_name: String,
     builtin_tools: Option<BuiltinToolProcessConfig>,
 }
 
@@ -390,6 +392,8 @@ impl CodexHost {
         let host = Arc::new(Self {
             initialized: tokio::sync::OnceCell::new(),
             host_instance_id: uuid::Uuid::new_v4().to_string(),
+            #[cfg(windows)]
+            windows_job_name: child.windows_job_name().to_owned(),
             child: Mutex::new(child),
             stdin: Mutex::new(stdin),
             pending: Mutex::new(HashMap::new()),
@@ -610,6 +614,11 @@ impl CodexHost {
         &self.executable_path
     }
 
+    #[cfg(windows)]
+    pub(crate) fn windows_job_name(&self) -> &str {
+        &self.windows_job_name
+    }
+
     pub(crate) fn builtin_tool_process_config(&self) -> Option<&BuiltinToolProcessConfig> {
         self.builtin_tools.as_ref()
     }
@@ -628,10 +637,30 @@ impl CodexHost {
             return false;
         };
         let _ = child.force_terminate_tree();
-        matches!(
+        if !matches!(
             tokio::time::timeout_at(deadline, child.wait()).await,
             Ok(Ok(_))
-        )
+        ) {
+            return false;
+        }
+        #[cfg(windows)]
+        {
+            tokio::time::timeout_at(deadline, async {
+                loop {
+                    match child.tree_is_empty() {
+                        Ok(true) => return true,
+                        Ok(false) => tokio::time::sleep(Duration::from_millis(10)).await,
+                        Err(_) => return false,
+                    }
+                }
+            })
+            .await
+            .unwrap_or(false)
+        }
+        #[cfg(not(windows))]
+        {
+            true
+        }
     }
 
     pub(crate) async fn shutdown_and_reap(&self) {

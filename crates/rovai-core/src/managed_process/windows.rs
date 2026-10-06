@@ -15,47 +15,44 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use windows_sys::Win32::{
     Foundation::{
-        GENERIC_READ, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
-        WAIT_OBJECT_0, WAIT_TIMEOUT,
+        ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_INVALID_PARAMETER, FILETIME,
+        GENERIC_READ, GetLastError, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+        SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
     },
     Globalization::{CSTR_EQUAL, CSTR_GREATER_THAN, CSTR_LESS_THAN, CompareStringOrdinal},
     Security::SECURITY_ATTRIBUTES,
     Storage::FileSystem::{
         CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO, FILE_ID_INFO, FILE_SHARE_READ,
         FILE_STANDARD_INFO, FILE_TYPE_DISK, FileBasicInfo, FileIdInfo, FileStandardInfo,
-        GetFileInformationByHandleEx, GetFileType, OPEN_EXISTING,
+        GetFileInformationByHandleEx, GetFileType, OPEN_EXISTING, READ_CONTROL,
     },
     System::{
         JobObjects::{
             CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
             JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+            JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation, OpenJobObjectW,
             QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
         },
         Pipes::CreatePipe,
         Threading::{
             CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
             DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess,
-            InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
-            PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST, PROCESS_INFORMATION,
+            GetProcessTimes, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+            OpenProcess, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+            PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
             STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
         },
     },
-};
-
-#[cfg(test)]
-use windows_sys::Win32::{
-    Foundation::ERROR_INVALID_PARAMETER,
-    System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE},
 };
 
 use super::{
     ManagedChildStderr, ManagedChildStdin, ManagedChildStdout, ManagedProcessLaunchSpec,
     ManagedStdinPolicy, ManagedWindowsArgvDialect, WindowsRuntimeEntrypoint,
 };
+use crate::platform::windows_security::{PrivateObjectKind, PrivateSecurityDescriptor};
 use crate::windows_runtime_entrypoint::{
     capture_windows_command_shim, command_shim_working_directory,
     serialize_command_shim_command_line,
@@ -64,6 +61,12 @@ use crate::windows_runtime_entrypoint::{
 const WINDOWS_COMMAND_LINE_LIMIT: usize = 32_767;
 const WINDOWS_ENVIRONMENT_BLOCK_LIMIT: usize = 32_767;
 const MANAGED_PROCESS_TERMINATION_CODE: u32 = 1;
+// A recovered Core can run in another logon session. Session-local lookup
+// would turn an existing old Job into a false absence in that session.
+const RUNTIME_JOB_NAME_PREFIX: &str = "Global\\Rovai.Runtime.";
+// winnt.h JOB_OBJECT_QUERY; windows-sys exposes this in SystemServices rather
+// than JobObjects. Keeping the SDK bit here avoids enabling that entire module.
+const JOB_OBJECT_QUERY_ACCESS: u32 = 0x0004;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct WindowsApplicationIdentity {
@@ -78,6 +81,7 @@ pub(super) struct WindowsApplicationIdentity {
 pub(super) struct WindowsManagedProcess {
     process: OwnedHandle,
     job: OwnedHandle,
+    job_name: String,
     pid: u32,
     stdin: Option<ManagedChildStdin>,
     stdout: Option<ManagedChildStdout>,
@@ -154,7 +158,8 @@ impl WindowsManagedProcess {
                 Some(lock)
             }
         };
-        let job = create_kill_on_close_job()?;
+        let job_name = format!("{RUNTIME_JOB_NAME_PREFIX}{}", uuid::Uuid::new_v4());
+        let job = create_kill_on_close_job(&job_name)?;
 
         let (child_stdin, parent_stdin) = child_read_pipe()?;
         let parent_stdin = match spec.stdin_policy() {
@@ -225,6 +230,7 @@ impl WindowsManagedProcess {
         Ok(Self {
             process,
             job,
+            job_name,
             pid: process_information.dwProcessId,
             stdin: parent_stdin.map(tokio_file),
             stdout: Some(tokio_file(parent_stdout)),
@@ -235,6 +241,10 @@ impl WindowsManagedProcess {
 
     pub(super) fn id(&self) -> u32 {
         self.pid
+    }
+
+    pub(super) fn job_name(&self) -> &str {
+        &self.job_name
     }
 
     pub(super) fn take_stdin(&mut self) -> Option<ManagedChildStdin> {
@@ -270,22 +280,7 @@ impl WindowsManagedProcess {
     }
 
     pub(super) fn tree_is_empty(&self) -> io::Result<bool> {
-        let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
-        // SAFETY: this non-inheritable handle owns this launch's Job. The buffer
-        // has exactly the type and size required by the selected query class.
-        let queried = unsafe {
-            QueryInformationJobObject(
-                raw_handle(&self.job),
-                JobObjectBasicAccountingInformation,
-                (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
-                size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
-                null_mut(),
-            )
-        };
-        if queried == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(accounting.ActiveProcesses == 0)
+        job_is_empty(&self.job)
     }
 
     pub(super) fn terminate_job(&mut self) -> io::Result<()> {
@@ -306,13 +301,21 @@ impl WindowsManagedProcess {
     }
 }
 
-fn create_kill_on_close_job() -> Result<OwnedHandle> {
+fn create_kill_on_close_job(name: &str) -> Result<OwnedHandle> {
+    let name = wide_nul(OsStr::new(name), "Job name")?;
+    let policy = PrivateSecurityDescriptor::new(PrivateObjectKind::Job)?;
+    let attributes = policy.attributes();
     let job = unsafe {
-        // SAFETY: a null SECURITY_ATTRIBUTES pointer creates a non-inheritable,
-        // unnamed Job owned solely by this launcher.
-        CreateJobObjectW(null(), null())
+        // SAFETY: the protected descriptor and NUL-terminated random name remain
+        // alive through creation. The Job handle is never inheritable.
+        CreateJobObjectW(&attributes, name.as_ptr())
     };
+    let creation_error = unsafe { GetLastError() };
     let job = owned_handle(job, "managed_process.job_create_failed")?;
+    if creation_error == ERROR_ALREADY_EXISTS {
+        bail!("managed_process.job_create_failed: Job identity already exists");
+    }
+    policy.verify_job_handle(raw_handle(&job))?;
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     let configured = unsafe {
@@ -329,6 +332,122 @@ fn create_kill_on_close_job() -> Result<OwnedHandle> {
         return Err(last_os_error("managed_process.job_create_failed"));
     }
     Ok(job)
+}
+
+/// Only identities issued for our private, non-breakaway, kill-on-close Jobs
+/// are admitted. The OS terminates their members when the last owner closes;
+/// querying a surviving Job also covers a leader that exited before its tools.
+pub(super) fn recorded_tree_is_empty(
+    name: &str,
+    pid: u32,
+    start_identity: Option<u64>,
+) -> Result<bool> {
+    let suffix = name
+        .strip_prefix(RUNTIME_JOB_NAME_PREFIX)
+        .context("managed_process.invalid_job_identity: unexpected namespace")?;
+    let identity = uuid::Uuid::parse_str(suffix)
+        .context("managed_process.invalid_job_identity: invalid launch identity")?;
+    if identity.to_string() != suffix || identity.get_version() != Some(uuid::Version::Random) {
+        bail!("managed_process.invalid_job_identity: invalid launch identity");
+    }
+    let name = wide_nul(OsStr::new(name), "Job name")?;
+    let raw = unsafe {
+        // SAFETY: name is NUL-terminated. This query-only handle is not inherited
+        // or retained, and cannot attach or terminate any process.
+        OpenJobObjectW(JOB_OBJECT_QUERY_ACCESS | READ_CONTROL, 0, name.as_ptr())
+    };
+    if raw.is_null() {
+        let error = io::Error::last_os_error();
+        return if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) {
+            recorded_process_has_exited(pid, start_identity)
+        } else {
+            Err(error.into())
+        };
+    }
+    let job = owned_handle(raw, "managed_process.job_query_failed")?;
+    PrivateSecurityDescriptor::new(PrivateObjectKind::Job)?.verify_job_handle(raw_handle(&job))?;
+    Ok(job_is_empty(&job)?)
+}
+
+pub(super) fn process_start_identity(pid: u32) -> Option<u64> {
+    let raw = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let process = owned_handle(raw, "managed_process.process_query_failed").ok()?;
+    process_creation_time(&process).ok()
+}
+
+fn process_creation_time(process: &OwnedHandle) -> io::Result<u64> {
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    if unsafe {
+        // SAFETY: process is owned with query access and every FILETIME output
+        // remains valid through the native call.
+        GetProcessTimes(
+            raw_handle(process),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime))
+}
+
+fn recorded_process_has_exited(pid: u32, expected_start: Option<u64>) -> Result<bool> {
+    if pid <= 1 {
+        bail!("managed_process.invalid_process_identity: invalid root PID");
+    }
+    let raw = unsafe {
+        // SAFETY: the non-inheritable handle is only used for query/wait. No
+        // process, including a reused PID, is ever signaled by recovery.
+        OpenProcess(
+            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+            0,
+            pid,
+        )
+    };
+    if raw.is_null() {
+        let error = io::Error::last_os_error();
+        return if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+            Ok(true)
+        } else {
+            Err(error.into())
+        };
+    }
+    let process = owned_handle(raw, "managed_process.process_query_failed")?;
+    if let Some(expected) = expected_start {
+        if process_creation_time(&process)? != expected {
+            return Ok(true);
+        }
+    }
+    match unsafe { WaitForSingleObject(raw_handle(&process), 0) } {
+        WAIT_OBJECT_0 => Ok(true),
+        WAIT_TIMEOUT => Ok(false),
+        _ => Err(io::Error::last_os_error().into()),
+    }
+}
+
+fn job_is_empty(job: &OwnedHandle) -> io::Result<bool> {
+    let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+    let queried = unsafe {
+        // SAFETY: job is an owned Job handle with query access and accounting is
+        // the exact structure and size required by this information class.
+        QueryInformationJobObject(
+            raw_handle(job),
+            JobObjectBasicAccountingInformation,
+            (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+            size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+            null_mut(),
+        )
+    };
+    if queried == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(accounting.ActiveProcesses == 0)
 }
 
 fn open_application_for_launch(application: &[u16]) -> Result<OwnedHandle> {
