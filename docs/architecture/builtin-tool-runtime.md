@@ -3,7 +3,7 @@ document_type: architecture
 architecture: builtin-tool-runtime
 authority: builtin-tool-component-boundaries
 status: accepted
-last_updated: 2026-09-24
+last_updated: 2026-10-07
 ---
 
 # Built-in Tool Runtime Architecture
@@ -145,6 +145,9 @@ Member 身份读取通过封闭 DTO 与桌面全量 Profile 分离。`list` 只�
 复用当前 Run 身份，并用现有 `member_creation` 验证同 Thread 原创建者的后续访问。
 `update` 只在直接 User 输入下按明确要求执行全局 Profile PATCH；Core 事务内合并并一次提交文字与
 复合头像引用。版本、`command.result` 幂等和 roster invalidation 沿用现有机制。
+create/update 的 `avatarFile` 由 CLI 原样传入；Core 在 Run 认证后复用文件 ingress scope，
+用冻结的 `execution_root` 解析相对路径，绝对路径原样保留。路径 helper 与 Agent 附件共用，
+头像继续直接导入 immutable asset，不创建附件记录或新增路径授权机制。
 内置素材与 managed 图片在授权 Run tmp 中物化，复用 lease 清理；每次 get 重验权限和重取文件。
 完整字段、裁切及错误见 [Transport v36](../contracts/builtin-tool-transport-v36.md)。
 

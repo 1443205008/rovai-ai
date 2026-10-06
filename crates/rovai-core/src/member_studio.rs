@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -16,7 +16,8 @@ use crate::{
     member_avatar::{
         MemberAvatarImportError, MemberAvatarImportErrorKind, import_managed_member_avatar,
     },
-    team_tool::AuthenticatedTeamToolRun,
+    runtime::resolve_agent_local_path,
+    team_tool::{AuthenticatedTeamToolRun, TeamToolService},
 };
 
 pub const MEMBER_CREATE_TOOL_NAME: &str = "member.create";
@@ -87,6 +88,32 @@ pub fn member_create_input_schema() -> Value {
             }
         }
     })
+}
+
+/// Called by Core after authenticating the Run, before create/update import.
+pub fn resolve_member_avatar_input(
+    database: &Database,
+    run: &AuthenticatedTeamToolRun,
+    operation: &str,
+    input: &mut Value,
+) -> Result<()> {
+    if !matches!(
+        operation,
+        MEMBER_CREATE_TOOL_NAME | crate::member_tool::MEMBER_UPDATE_TOOL_NAME
+    ) {
+        return Ok(());
+    }
+    let Some(Value::String(path)) = input.get_mut("avatarFile") else {
+        return Ok(());
+    };
+    let (_, workspace) = TeamToolService::default()
+        .agent_file_ingress_scope(database, &run.agent_run_id, run.execution_epoch)?
+        .context("AgentRun file ingress is unavailable")?;
+    *path = resolve_agent_local_path(Path::new(path), workspace.path())
+        .into_os_string()
+        .into_string()
+        .map_err(|_| anyhow::anyhow!("AgentRun avatar path must be UTF-8"))?;
+    Ok(())
 }
 
 pub fn create_member(

@@ -563,21 +563,10 @@ fn parse_and_validate_operation_input(
     args: &[String],
 ) -> std::result::Result<Value, CliInputFailure> {
     let input = parse_operation_input(description, args).map_err(|_| CliInputFailure::generic())?;
-    let mut input = rovai_core::thread_compat::normalize_builtin_input(&description.name, input)
+    let input = rovai_core::thread_compat::normalize_builtin_input(&description.name, input)
         .map_err(|_| CliInputFailure::generic())?;
     if validate_schema(&input, &description.input_schema).is_err() {
         return Err(explain_input_validation_failure(description, &input));
-    }
-    if description.name == "member.update"
-        && let Some(Value::String(path)) = input.get_mut("avatarFile")
-    {
-        // Fix the caller's cwd before IPC/digest creation, without requiring the
-        // source to survive a durable replay or changing symlink validation.
-        *path = std::path::absolute(&*path)
-            .map_err(|_| CliInputFailure::generic())?
-            .into_os_string()
-            .into_string()
-            .map_err(|_| CliInputFailure::generic())?;
     }
     Ok(input)
 }
@@ -2211,14 +2200,11 @@ mod tests {
         assert_eq!(direct["avatarSize"], 0.5);
         assert_eq!(direct["expectedVersion"], 3);
         assert!(direct.get("teamRole").is_none());
-        // Resolving a caller-relative source must not require its existence:
-        // exact replay remains valid after the original Run file is cleaned up.
-        let absolute_avatar = env::current_dir().unwrap().join("missing-avatar.png");
-        assert_eq!(direct["avatarFile"], json!(absolute_avatar));
+        // Core resolves against the authenticated Run, not the CLI or JSON cwd.
+        // Passing the source through must not require its existence.
+        assert_eq!(direct["avatarFile"], "./missing-avatar.png");
         let path = std::env::temp_dir().join(format!("member-update-{}.json", Uuid::new_v4()));
-        let mut relative_input = direct.clone();
-        relative_input["avatarFile"] = json!("./missing-avatar.png");
-        std::fs::write(&path, serde_json::to_vec(&relative_input).unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&direct).unwrap()).unwrap();
         let from_file = parse_and_validate_operation_input(
             &update,
             &["--input-file".into(), path.to_string_lossy().into_owned()],
@@ -2237,6 +2223,41 @@ mod tests {
             )
             .is_err()
         );
+        let create = builtin_tool_description("member.create").unwrap();
+        let create_input = parse_and_validate_operation_input(
+            &create,
+            &[
+                "--creation-key".into(),
+                "51d668e1-6dc7-4f39-80b2-0555f823715a".into(),
+                "--display-name".into(),
+                "Avatar path fixture".into(),
+                "--avatar-file".into(),
+                "./missing-avatar.png".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(create_input["avatarFile"], "./missing-avatar.png");
+        std::fs::write(&path, serde_json::to_vec(&create_input).unwrap()).unwrap();
+        assert_eq!(
+            parse_and_validate_operation_input(
+                &create,
+                &["--input-file".into(), path.to_string_lossy().into_owned()],
+            )
+            .unwrap(),
+            create_input
+        );
+        for (description, mut input) in [(update, direct), (create, create_input)] {
+            input["avatarFile"] = json!(path.with_file_name("missing-avatar.png"));
+            std::fs::write(&path, serde_json::to_vec(&input).unwrap()).unwrap();
+            assert_eq!(
+                parse_and_validate_operation_input(
+                    &description,
+                    &["--input-file".into(), path.to_string_lossy().into_owned()],
+                )
+                .unwrap(),
+                input
+            );
+        }
         std::fs::remove_file(path).unwrap();
     }
 

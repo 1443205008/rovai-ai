@@ -4,7 +4,7 @@ contract: builtin-tool-transport-v36
 authority: builtin-tool-transport
 status: accepted
 version: 36
-last_updated: 2026-10-06
+last_updated: 2026-10-07
 ---
 
 # Built-in Tool Transport v36
@@ -13,7 +13,8 @@ Inherits [v35](builtin-tool-transport-v35.md). Contract/CLI are 36, Agent Output
 and capability is `builtin_cli.transport.v36`. The catalog has 30 operations. IPC 2,
 Envelope 1, receipt 1 and evidence projection schema 4 are unchanged.
 
-Adds only `member.list/get/update`; `member.create` is unchanged. New Charter revision 20
+Adds only `member.list/get/update`; `member.create` retains its input/result and confirmation
+rules, with the same Run-relative upload-path resolution as update. New Charter revision 20
 expands the member command index. Bootstrap v5/Formatter 5, native binding compatibility
 v4/4/16/26/26, ordinary context 28 and public batch 32 remain unchanged. Existing Sessions
 retain their frozen Bootstrap and identity; managed cli-operations updates its existing
@@ -107,11 +108,15 @@ same version and no roster invalidation. Equivalent normalized source, crop and 
 preserve the existing managed reference even when the upload uses a new request ID.
 
 `avatarFile` accepts the same local PNG/JPEG import as creation. Normalized source is the
-portrait; its crop produces the icon. For update, the CLI resolves a relative path against
-its own working directory, for every input source, before IPC and request digest creation.
-The input JSON file's directory and Core's working directory do not change that base.
-Making the path absolute does not require the file to exist, preserving durable replay
-after source cleanup. All three crop fields are supplied together:
+portrait; its crop produces the icon. For create and update, the CLI preserves `avatarFile`
+from flags, stdin or an input file. After authenticating the AgentRun, Core resolves a
+relative path against that Run's frozen `execution_root`; an absolute path stays unchanged.
+The CLI cwd, input JSON directory and Core cwd do not change that base. Core reuses the
+existing Run/epoch file-ingress scope and the same path helper as Agent source attachments;
+it does not register an attachment. Missing or invalid Run scope fails closed.
+Resolution does not canonicalize, follow symlinks or require the source to exist. The
+avatar importer still owns file/image safety checks; update retains durable replay after
+source cleanup. All three crop fields are supplied together:
 centers 0–1, size 0.12–1 of the source's shorter edge, fully inside the source. Without
 crop fields a source replacement uses the existing default crop. Crop fields without a
 file crop the current source, preserving its bytes in a new immutable compound asset.

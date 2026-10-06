@@ -6073,6 +6073,9 @@ impl Core {
                     &started_evidence,
                 )?
                 .context("Built-in Tool start evidence was not durably admitted")?;
+            rovai_core::member_studio::resolve_member_avatar_input(
+                &database, &authenticated_run, &request.tool_name, &mut request.input,
+            )?;
             let operation_result = match request.tool_name.as_str() {
                 CAMP_MESSAGE_SEND_TOOL_NAME => {
                     let input = serde_json::from_value::<ThreadMessageSendInput>(request.input)

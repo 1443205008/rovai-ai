@@ -3,7 +3,7 @@ document_type: implementation-plan
 version: v1.72
 authority: version-implementation-and-acceptance
 status: in_progress
-last_updated: 2026-10-06
+last_updated: 2026-10-07
 ---
 
 # v1.72 实施与验收
@@ -892,3 +892,16 @@ Clippy 与首轮基线比较仍是原有 10 项错误，本切片没有新增 li
   本夹具证明实际 CLI 的输入／IPC 边界，不冒充真实 Core/Runtime 或模型 Gate。
 - 追加修复后：Member 18 项、CLI 29 项、默认 workspace 454 项通过，原有 1 项 Runtime smoke 仍忽略；
   格式、文档测试 10 项、文档治理及提示词／帮助逐字对照通过。没有新增或退役 Rust owner。
+
+- 2026-10-07 按 User 追加要求统一文件语义，取代上一阶段的 CLI cwd 方案：CLI 保留原始
+  `avatarFile`，Core 认证 Run 后使用现有 `agent_file_ingress_scope` 读取冻结的 `execution_root`。
+  create/update 共用输入入口，绝对路径原样保留；与 Agent 附件共享纯路径 helper，既不 canonicalize
+  也不提前检查文件存在性。头像仍即时导入 immutable asset，无新增字段、授权／幂等机制或附件记录。
+- 定向验证：Member 18、CLI 29、附件 5 项通过，沿用原测试 owner。隔离 CLI IPC 夹具覆盖
+  create/update × 直接参数／JSON 文件／stdin × 相对／绝对路径共 12 种组合，路径和命令身份原样传输；
+  Core 入口与真实 SQLite fixture 的两个 owner 另在隔离子进程 cwd 下执行，同名 PNG 内容不同，
+  最终导入的像素来自冻结 Run 根目录。此证据不等同于真实 Core/Runtime 端到端或模型 Gate。
+  失效 epoch／缺失 workspace 拒绝、绝对路径不变、symlink 拒绝和缺失源回放均已覆盖。
+  Bootstrap、Skill 与 CLI help 继续逐字符合已批准文本。
+- 本轮最终默认 workspace 回归：454 项通过、1 项既有 Runtime smoke 忽略；格式、文档测试 10 项及
+  diff-aware 文档治理通过。没有新增或退役 Rust owner；真实模型 Gate 仍待配置和验收。

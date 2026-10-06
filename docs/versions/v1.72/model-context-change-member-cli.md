@@ -7,7 +7,7 @@ confirmed_revision: 1
 confirmed_by: local_user
 confirmed_at: 2026-10-06
 confirmation_message_id: d283c49e-6894-4274-a584-ce449b544d44
-last_updated: 2026-10-06
+last_updated: 2026-10-07
 ---
 
 # Member CLI 提示词与帮助前后对比 r1
@@ -735,3 +735,17 @@ User 在消息 `8472d677-5582-4a97-b941-7aef594d043c` 指出 `c069b3f5` 的两�
 沿用两个已有 Rust owner 补断言，未新增持久字段、授权／资产机制或测试 owner。
 双进程验证使用隔离 IPC 接收夹具，没有启动真实 Core/Runtime，也不替代真实模型 Gate。
 本次修复的最终回归结果记录在[实施计划](implementation-plan.md#member-cli-最小增量)。
+
+### 2026-10-07：create/update 统一 AgentRun 文件语义
+
+User 在消息 `21d8d8c4-2789-4b96-9f84-a34c98639337` 要求撤销上述 CLI cwd 转换，
+create/update 都使用普通 Agent 文件的 Run-relative 语义；这取代上一阶段的调用者 cwd 方案。
+CLI 保留原始 `avatarFile`，Core 认证 Run 后复用 `agent_file_ingress_scope` 读取冻结 workspace，
+相对路径由 `resolve_agent_local_path` 与 `execution_root` 拼接，绝对路径原样保留。
+附件入口共用该小 helper；头像只做即时导入，不生成附件 ID／记录，也不新增持久字段或机制。
+
+原 CLI、创建、PATCH 与附件 owner 补充边界，覆盖原始路径保留、冻结 Run 根目录优先、
+同名异图、失效 epoch／缺失 workspace、缺失源回放、绝对路径及 symlink 拒绝。
+规范化不做 canonicalize 或提前存在性检查；安全检查继续由头像 importer 执行。
+本次不改输入／结果字段或已批准的 Bootstrap、Skill、CLI help 文本，真实模型 Gate 仍待验收。
+修复后的验证结果记录在[实施计划](implementation-plan.md#member-cli-最小增量)。
