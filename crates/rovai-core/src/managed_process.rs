@@ -1485,20 +1485,23 @@ mod tests {
             .trim()
             .parse::<u32>()
             .expect("grandchild handshake PID was invalid");
-        assert!(windows::process_is_running_for_test(grandchild_pid).unwrap());
+        let grandchild = windows::TestProcess::open(grandchild_pid).unwrap();
+        assert!(grandchild.is_running().unwrap());
         assert!(!ManagedProcess::recorded_windows_tree_is_empty(&job_name).unwrap());
 
         process.force_terminate_tree().unwrap();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while windows::process_is_running_for_test(grandchild_pid).unwrap()
-            && tokio::time::Instant::now() < deadline
-        {
+        while grandchild.is_running().unwrap() && tokio::time::Instant::now() < deadline {
             if ManagedProcess::recorded_windows_tree_is_empty(&job_name).unwrap() {
-                assert!(!windows::process_is_running_for_test(grandchild_pid).unwrap());
+                assert!(
+                    !grandchild.is_running().unwrap(),
+                    "Job active count is zero but the retained process handle is unsignaled: pid={grandchild_pid}, created={}",
+                    grandchild.creation_time
+                );
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        assert!(!windows::process_is_running_for_test(grandchild_pid).unwrap());
+        assert!(!grandchild.is_running().unwrap());
         tokio::time::timeout(Duration::from_secs(2), stdout_reader)
             .await
             .expect("stdout handle remained inherited after Job termination")

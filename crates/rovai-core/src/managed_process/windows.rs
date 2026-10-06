@@ -767,6 +767,39 @@ fn process_has_exited(process: &OwnedHandle) -> io::Result<bool> {
 }
 
 #[cfg(test)]
+#[derive(Debug)]
+pub(super) struct TestProcess {
+    handle: OwnedHandle,
+    pub(super) creation_time: u64,
+}
+
+#[cfg(test)]
+impl TestProcess {
+    pub(super) fn open(pid: u32) -> io::Result<Self> {
+        let raw = unsafe {
+            // SAFETY: the helper owns this PID before termination. Keeping this
+            // non-inheritable handle pins that exact process, including its PID.
+            OpenProcess(
+                PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                pid,
+            )
+        };
+        let handle = owned_handle(raw, "managed_process.process_query_failed")
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let creation_time = process_creation_time(&handle)?;
+        Ok(Self {
+            handle,
+            creation_time,
+        })
+    }
+
+    pub(super) fn is_running(&self) -> io::Result<bool> {
+        process_has_exited(&self.handle).map(|exited| !exited)
+    }
+}
+
+#[cfg(test)]
 pub(super) fn process_is_running_for_test(pid: u32) -> io::Result<bool> {
     let process = unsafe {
         // SAFETY: this opens a non-inheritable synchronization handle for a PID
