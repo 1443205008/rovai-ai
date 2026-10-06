@@ -4034,6 +4034,10 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_owner_registration_admits_only_private_or_legacy_inherited_storage() {
+        use std::os::windows::process::CommandExt;
+        let icacls = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32")
+            .join("icacls.exe");
         // This owner covers the private-storage migration seam. The receipt
         // owner above covers lifecycle/ACK; lower-level ACL tests cannot prove
         // that Fleet prepares every parent and preserves legacy scoped records.
@@ -4041,16 +4045,22 @@ mod tests {
             let root =
                 std::env::temp_dir().join(format!("rovai-owner-storage-{}", uuid::Uuid::new_v4()));
             crate::platform::prepare_private_directory(&root).unwrap();
-            let owners = root.join("runtime-fleet").join("owners");
+            let fleet_root = root.join("runtime-fleet");
+            let owners = fleet_root.join("owners");
             let key = RunLeaseKey {
                 agent_run_id: "old-run".into(),
                 execution_epoch: 7,
             };
             if legacy {
-                std::fs::create_dir_all(&owners).unwrap();
-                std::fs::write(
-                    owners.join("legacy.json"),
-                    serde_json::to_vec(&RuntimeOwnerRecord {
+                // Elevated Windows runners can default ordinary child ownership
+                // to Administrators. This migration admits only current-user
+                // ownership: establish that explicitly, then reset only DACLs
+                // to the private parent's inherited policy.
+                crate::platform::prepare_private_directory(&fleet_root).unwrap();
+                crate::platform::prepare_private_directory(&owners).unwrap();
+                crate::platform::atomic_write_private_bytes(
+                    &owners.join("legacy.json"),
+                    &serde_json::to_vec(&RuntimeOwnerRecord {
                         run_lease: Some(key.clone()),
                         reaped: true,
                         core_generation: "old-core".into(),
@@ -4063,6 +4073,16 @@ mod tests {
                     .unwrap(),
                 )
                 .unwrap();
+                let reset = std::process::Command::new(&icacls)
+                    .arg(&fleet_root)
+                    .args(["/reset", "/T", "/Q"])
+                    .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
+                    .output()
+                    .unwrap();
+                assert!(
+                    reset.status.success(),
+                    "failed to establish inherited-ACL fixture"
+                );
                 assert!(crate::platform::prepare_private_directory(&owners).is_err());
             }
             let store = RuntimeOwnerRecordStore::new(&root).unwrap();
@@ -4095,10 +4115,6 @@ mod tests {
         crate::platform::prepare_private_directory(&root).unwrap();
         let destination = root.join("runtime-fleet");
         crate::platform::prepare_private_directory(&destination).unwrap();
-        use std::os::windows::process::CommandExt;
-        let icacls = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
-            .join("System32")
-            .join("icacls.exe");
         let grant = std::process::Command::new(icacls)
             .arg(&destination)
             .args(["/grant", "*S-1-1-0:(OI)(CI)F", "/Q"])
