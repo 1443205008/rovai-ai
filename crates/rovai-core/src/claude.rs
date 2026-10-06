@@ -514,6 +514,9 @@ impl ClaudeCodeCliRuntimeAdapter {
             .camp_fast
             .as_ref()
             .and_then(|fast| fast.fast_override);
+        if let Some(api) = &request.runtime.custom_api {
+            api.assert_current()?;
+        }
         let mut inline_settings = serde_json::json!({});
         rovai_core::camp_fast::merge_claude_inline_settings(&mut inline_settings, fast_override)?;
         let mut command = Command::new(executable);
@@ -692,11 +695,19 @@ impl ClaudeCodeCliRuntimeAdapter {
         let stdin = child
             .take_stdin()
             .context("Claude Code stdin was unavailable")?;
-        let (protocol, initialized, writes) = ClaudeControl::new(
+        let (mut protocol, initialized, writes) = ClaudeControl::new(
             native_session_id.clone(),
             permission_mode.to_string(),
             request.runtime_events.clone(),
         );
+        let redactor = request
+            .runtime
+            .custom_api
+            .as_ref()
+            .and_then(|api| api.redactor().ok());
+        Arc::get_mut(&mut protocol)
+            .expect("unshared protocol")
+            .set_credential_redactor(redactor);
         *process_control.protocol.lock().unwrap() = Some(protocol.clone());
         let _protocol_guard = ControlReadGuard(protocol.clone());
         let stdout = child
@@ -756,6 +767,7 @@ impl ClaudeCodeCliRuntimeAdapter {
                     .context("failed to deliver structured input to Claude Code stdin")
             } => {
                 if let Err(error) = delivered {
+                    let error = anyhow::anyhow!(protocol.redact_text(&format!("{error:#}")));
                     let failure = claude_public_failure(request, private_runtime_dir,
                         RuntimeFailureOrigin::Compatibility, RuntimeFailurePhase::Execution,
                         "runtime_control_initialization_failed", "Claude Code 双向协议初始化或输入投递失败",
@@ -836,7 +848,7 @@ impl ClaudeCodeCliRuntimeAdapter {
         let stdout = stdout.expect("Claude Code stdout was collected");
         let stderr = stderr.expect("Claude Code stderr was collected");
         if !status.success() {
-            let raw_stderr = String::from_utf8_lossy(&stderr.bytes);
+            let raw_stderr = protocol.redact_text(&String::from_utf8_lossy(&stderr.bytes));
             let exit_diagnostic = format!(
                 "Claude Code process exited with {} (stderrBytes={}, stderrDigest={})",
                 status, stderr.total_bytes, stderr.digest
@@ -1308,8 +1320,9 @@ fn process_claude_protocol_line(
         if protocol.route(&event)? {
             return Ok(());
         }
+        let public_line = protocol.redact_frame(&event)?;
         process_claude_stream_line(
-            line,
+            &public_line,
             expected_session_id,
             native_turn_id,
             input_accepted,
@@ -2547,6 +2560,7 @@ mod tests {
             },
             permission_semantics: PermissionSemantics::RuntimeManagedV2,
             runtime: FrozenAgentRuntimeConfig {
+                custom_api: None,
                 camp_fast: None,
                 adapter_kind: AdapterKind::ClaudeCodeCli,
                 installation_id: "claude-test".to_string(),

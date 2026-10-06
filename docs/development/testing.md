@@ -143,6 +143,23 @@ Open API grant 兑换、独立 CDN 请求无 token、取消与丢失 grant 的 s
 飞书下载测试继续覆盖。Host 既有 fixture 扩展文件成功、folder 明确失败和 receiving Bot 选择，不运行真实模型
 或使用日常账号凭据。真实租户收发与权限验收仍须单独记录。
 
+## 原生连接编辑收尾
+
+继续扩展 `runtime_custom_api` 的五个既有 owner，不新增独立 Rust fixture：文件 owner 增加普通启动忽略历史 selector、
+确认旧格式／独立层读写、来源文件相对路径、继承凭据替换及包装入口解析；SQLite owner 增加身份成功后失败仍能保存名称、
+真实 provider 变更冲突及名称不触发重连；目录 owner 增加 API 可见性并保留内部条目。
+失败输入分别为旧 profile 取错根模型、身份推断模式造成伪冲突、`supported_in_api=false` 模型被原生过滤。
+纯目录与投影不建立数据库；文件到配置发布的状态转换由既有隔离 SQLite owner 负责。最小命令：
+`cargo test -p rovai-core --features slow-tests --lib runtime_custom_api::`。
+真实 CLI 使用 `scripts/smoke-runtime-custom-api.py` 的固定假 Key／本地服务入口，不混入普通单元测试。
+首屏／辅助识别收尾仍扩展既有 owner：`application::runtime_check_environment::tests` 用受控子进程屏障验证
+辅助读取等待时本地 get 和独立启动字段 save 已返回；未知目标不误写默认文件。文件 owner 验证固定默认模型
+不阻断地址／Key、已确认来源暂时失败仍可写、受限字段保护。请求队列 owner 保证补充读取不占交互队列；
+Electron 正式组件覆盖迟到结果、输入中草稿与保存后失败隔离。无新增独立 Rust 测试函数。
+来源缓存回归继续扩展原生文件／SQLite owner：普通环境变化不失去已确认目标；新入口或目录不借用旧目标写入。
+Electron 覆盖同页换目录／程序、已有 API 草稿、确认期间普通字段保存；草稿单元测试覆盖只重放真实编辑。
+显式 CLI Smoke 增加 npm 式 Node 启动脚本，确认环境编辑后仍写入实际来源并可执行；该夹具不等同于安装官方 npm 包。
+
 ## 测试层级
 
 ### DeepSeek Harness ACP

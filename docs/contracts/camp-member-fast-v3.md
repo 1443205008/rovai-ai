@@ -11,7 +11,7 @@ last_updated: 2026-10-06
 
 本版替换 [v2](camp-member-fast-v2.md) 及其继承的资格、默认推断和控件准入流程。
 配置表达 User 意图，真实 Runtime 应用参数，当前 Run 的原生反馈描述实际结果。
-[Runtime Launch v47](runtime-launch-and-verification-v47.md) 的初始化、权限、显式模型、身份、会话与输入去重边界不变。
+[Runtime Launch v48](runtime-launch-and-verification-v48.md) 的初始化、权限、显式模型、身份、会话与输入去重边界不变。
 
 ## 持久化、绑定与冻结
 

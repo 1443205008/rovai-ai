@@ -129,5 +129,5 @@ brief 只拥有具体 surface 的信息优先级和构图；它不能覆盖全�
 智能体名称保留，配置区可显示已知版本，未配置、检查中及需要处理的问题按需提示。不暗示认证或协议已验证。
 正在启动的 Run 显示“正在初始化 Runtime”，配置及启动失败显示具体可操作原因，修复后正常重试。
 Fast 直接保存三态偏好，运行时传递原生参数；页面、浮层及切换不启动资格检查。
-行为由 [Runtime Launch v47](../contracts/runtime-launch-and-verification-v47.md)与
+行为由 [Runtime Launch v48](../contracts/runtime-launch-and-verification-v48.md)与
 [Camp Member Fast v3](../contracts/camp-member-fast-v3.md)拥有。
