@@ -121,6 +121,7 @@ Object.assign(window, { rovai: {
   request: async (method, params = {}) => {
     await request(method, params)
     if (method === 'runtime.startup.get') return clone(state.startup[params.runtimeKind] ?? { runtimeKind: params.runtimeKind, revision: 0, configuration: { programPath: null, environment: [] } })
+    if (method === 'runtime.startup.observe') return clone(state.startup[params.runtimeKind])
     if (method === 'runtime.startup.save') {
       const settings = { runtimeKind: params.runtimeKind, revision: params.expectedRevision + 1, configuration: clone(params.configuration) }
       state.startup[params.runtimeKind] = settings

@@ -992,7 +992,11 @@ function MemberDetailHeader({
               className={`member-header-runtime status-${runtime.status}`}
               type="button"
               onClick={onRuntime}
-              aria-label={agent.runtimeConfiguration?.adapterKind ? uiAttribute("{0}，{1}；打开运行配置", String(adapterLabel(agent.runtimeConfiguration.adapterKind)), String(runtime.label)) : uiAttribute("未配置智能体；打开运行配置")}
+              aria-label={agent.runtimeConfiguration?.adapterKind
+                ? uiAttribute("{0}，{1}；打开运行配置",
+                    runtime.status === 'available' ? agent.displayName : adapterLabel(agent.runtimeConfiguration.adapterKind),
+                    runtime.status === 'available' ? adapterLabel(agent.runtimeConfiguration.adapterKind) : runtime.label)
+                : uiAttribute("未配置智能体；打开运行配置")}
               title={uiAttribute("打开运行配置")}
             >
               <i aria-hidden="true" />
@@ -1325,21 +1329,21 @@ export const MemberRuntimeForm = forwardRef<
             }}
           />
 
-          <div
+          {(runtimeStatus.status !== 'available' || reportedVersion) && <div
             className={`member-editor-runtime-health-wrap status-${runtimeStatus.status}`}
             role="status"
             aria-live="polite"
           >
             <div className="member-editor-runtime-health">
-              <span
+              {runtimeStatus.status !== 'available' && <span
                 className={`member-editor-runtime-status status-${runtimeStatus.status}`}
               >
                 <i aria-hidden="true" />
                 {runtimeStatus.label}
-              </span>
+              </span>}
               {reportedVersion && <code>{reportedVersion}</code>}
             </div>
-            {runtimeStatus.detail && (
+            {runtimeStatus.status !== 'available' && runtimeStatus.detail && (
               <small className="runtime-status-detail">
                 {runtimeStatus.detail}
               </small>
@@ -1357,7 +1361,7 @@ export const MemberRuntimeForm = forwardRef<
                   ><UiText zh={"前往智能体"} /></button>
                 </div>
               )}
-          </div>
+          </div>}
         </div>
 
         {selectedKind && (

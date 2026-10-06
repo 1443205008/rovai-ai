@@ -433,7 +433,7 @@ ACP 原生标签和 Codex 的固定英文决定标签原样展示；Claude 同�
 记忆决定原样回填 selected suggestion，Claude 负责规则保存与未来匹配；suppression 或无效/未支持建议
 不会产生记忆选项。控制 writer 与转换层共用建议准入，只保存未决请求有效记忆响应的 digest，完成、取消和
 断线时清理；响应的范围、destination 或 input 改动不能通过校验。当前合同见
-[Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md)。
+[Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md)。
 
 | 验证 | 结果与边界 |
 | --- | --- |
@@ -703,6 +703,12 @@ User 于 2026-10-03 明确豁免本次真实任务 Gate；其余本地检查、�
 全量第二轮曾遇到既有 Lark 附件流用例等待超时；该文件独立 81 项及随后完整套件均通过，未改该用例或渠道代码。
 界面夹具使用内存服务替身，Core 持久化/清理由 SQLite 测试独立验证；未安装或重启日常 App，未运行真实模型。
 
+## Claude Code 与 Codex 原生连接编辑
+
+User 已确认原生配置复用、共享影响范围、两张简单表单及字段级冲突交互，并要求 worktree 实施后推送分支。
+不重复保存 Key，不新增探活。按 [D15](decisions.md#v1-72-d15) 收窄为保存时原生切换、完整内存草稿与直接原生执行。
+实施与验证统一见[验收记录](runtime-custom-api-verification.md)，
+字段以 [Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md) 为准。
 ### 2026-10-04 Context 运行中可用性
 
 按用户确认的 [Execution Metrics v7](../../contracts/runtime-execution-metrics-v7.md) 移除输入 accepted
@@ -840,6 +846,26 @@ Clippy 与首轮基线比较仍是原有 10 项错误，本切片没有新增 li
   原生反馈不反写偏好、零资格请求；日夜截图已检查。完整 `pnpm test:camp-fast-layout` 仍在上轮已记录的
   执行 disclosure `.open` 旧断言失败，未修改或跳过该断言，不能算整套布局/Stop 验收通过。
 - 未执行真实 CLI 账户、实体 Windows、实际计费或日常 App 安装验收；合成进程与隔离 Renderer 结果不替代这些验证。
+
+## 2026-10-06 Fast 二态与初始化值
+
+- 基线：`4099bc3843eb3b6bdbe51d9bb09c3df2fdc2d347`；分支 `rovai/fast-native-baseline`。
+- 保留现有 Thread 队员偏好表、nullable override、绑定代次和 Run 冻结，不改成 Session 级存储。
+  真实初始化值复用现有默认列，只用于控件显示；历史诊断 fingerprint 记录不充当原生默认。
+- Codex 正常 start/resume 响应读取 `serviceTier`，Claude 正常 control initialize 读取
+  `fast_mode_state`；缺失保持内部未知。两者不新增请求、子进程、配置文件解析或正文等待。
+- Fast 控件恢复单按钮、固定文字和二态 ARIA，保存明确布尔值。已有选择优先于 baseline，
+  保存期间仅初值刷新的投影不能丢掉回执；普通运行观察保持独立。
+- 扩展既有 `camp_fast`、Claude/Codex 启动测试及隔离 Renderer owner，不增加框架或独立测试 owner。
+  覆盖默认来源、历史诊断隔离、保存/重绑、缺字段继续输入、无额外 RPC/进程及新建/恢复参数。
+- `pnpm typecheck`、`pnpm check:rust`、`pnpm build:desktop` 通过；`pnpm test` 包含文档/Skill 门禁，
+  Vitest 2601 项通过，末轮 Node 334 项通过、2 项平台限定跳过。
+  固定上述 base 的 `pnpm docs:check:ci` 通过。
+- `pnpm test:rust:pr` 451 项通过、1 项真实 Runtime smoke 保持忽略；启用 `extended-tests` 的
+  `camp_fast::` / `claude::` / `codex::` 定向回归分别通过 2 / 33 / 22 项，Codex 1 项真实 smoke 保持忽略。
+- `ROVAI_FAST_CHECK_ONLY=1 pnpm test:camp-fast-layout` 通过，日夜截图已检查；验证二态、初始化值、
+  明确关闭、双入口同步及保存期间迟到刷新。未增加或退役 Rust owner。
+- 不执行真实账户计费、实体 Windows 或日常 App 安装验收；沿用上一节完整布局测试的已知限制。
 
 
 ## 2026-10-06 Codex Host 失败恢复

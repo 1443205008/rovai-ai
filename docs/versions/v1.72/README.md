@@ -6,10 +6,35 @@ authority: version-scope-and-status
 design_status: confirmed
 implementation_status: in_progress
 model_context_change: true
-last_updated: 2026-10-03
+last_updated: 2026-10-06
 ---
 
 # Rovai-ai v1.72：Lark 独立渠道
+
+## 并行修复：Claude Code 模型发现与 Runtime 探测可用性
+
+按用户确认，删除 256 KiB 单行与 4 MiB 累计 stdout 探测门槛，改为默认 64 MiB、按需增长、可调的单帧容量。
+Claude 优先 list_models，仅明确不支持才兼容 initialize，两者共享超时和进程回收。目录失败保留已有模型、
+选项和缓存标识，不阻止原样保存／执行；保留原生默认选择，不纳入任意模型 ID 输入、能力缓存、复杂重试或资源调度。
+正式握手与真实原生拒绝保持有效。规范见 [Runtime Launch v49](../../contracts/runtime-launch-and-verification-v49.md#模型发现与探测容量)，
+实现与环境证据见[验收记录](runtime-probe-availability-verification.md)。本地完整前端／默认 Rust 回归通过，
+Claude 2.1.280 专用查询与 2.1.100 旧协议回退分别实测通过；Windows 2.1.289 未实测，不推断通过。
+
+## 并行实施：Claude Code 与 Codex 原生连接编辑
+
+按用户确认，仅保留两种 Runtime 的简单表单，直接读取并编辑原生连接，不重复持久化 API Key。
+选项只改内存草稿，点击保存才切换原生配置；字段级合并保留外部修改。正常执行由 CLI 读取连接，
+不再生成临时连接／认证覆盖；保存官方后不承诺保留 API 凭据，进程与恢复兼容性沿用现有路径。
+本轮同时修正 Codex 实际配置层与保存目标、身份观察和字段冲突解耦、API 模型原生可选性；
+首屏本地配置直接返回，辅助来源与身份读取独立且不阻塞保存；限制收窄到本次涉及的字段，未知目标不误写。
+普通环境变量编辑保留已确认来源；真正换入口／目录后在原页完成来源确认与草稿衔接，不要求退出重进。
+名称编辑保留完整元数据且不强制重连，已知旧 selector 仅保存时调整。代码在任务 worktree 中实现；本地 UI 与原生假服务证据、验证范围和已知限制见[验收记录](runtime-custom-api-verification.md)。
+同一范围内补齐历史启动凭据的官方保存清理、未知凭据下的模型编辑、符号链接目标及 TOML 内联表写回，
+不增加提示或运行时认证层；Key 替换去除首尾空白，并保留并发与失败回退保护。
+目录改名遇到已有隐藏 ID 时复用其完整条目；已有 API 改地址保留未知凭据来源；明确切换可解除个人文件中
+相反的登录限制。组织管理来源及只读目标保持约束，不新增认证识别或策略扫描。
+补齐 Codex 命令／AWS 凭据替换的互斥清理、Claude 云路由准确回显与 Messages 切换，以及原生托管凭据的账号类型回显。
+钥匙串 API 不默认当作官方登录；保存官方时使用 CLI 自身的登录方式选择停用 API 类型，不复制或管理钥匙串凭据。
 
 ## 并行修复：HTML 内部诊断 CSP 归因
 
@@ -146,7 +171,7 @@ v0.4.1 发布后补齐候选版本的日期兼容：macOS 合并清单保留日�
 Claude Code 保留 `--print` 结构化输出，增加 stream-json 输入与 stdio 权限处理。原生 request_id
 与 tool_use_id 分别绑定审批回复和实际工具结果，复用 Action/Approval Dock。初始化成功才发送任务，
 会话 idle 与末轮结果共同控制 stdin 关闭；取消与断线撤销请求。当前合同见
-[Runtime Launch and Verification v47](../../contracts/runtime-launch-and-verification-v47.md)，取舍见
+[Runtime Launch and Verification v48](../../contracts/runtime-launch-and-verification-v49.md)，取舍见
 [V1.72-D06](decisions.md#v1-72-d06)。
 
 审批选项补充原生建议的显式记忆：一次允许不保存规则，记忆由 Claude 保存选中的范围和 destination，
@@ -191,7 +216,7 @@ Claude Code 保留 `--print` 结构化输出，增加 stream-json 输入与 stdi
 | --- | --- | --- |
 | Version lifecycle | 已更新 | v1.71 冻结为 historical；本概览、[实施计划](implementation-plan.md)、[版本决定](decisions.md)与[版本索引](../README.md)建立唯一 current v1.72 |
 | Decisions | 已更新 | [V1.72-D01](decisions.md#v1-72-d01)记录独立 Lark provider；[V1.72-D02](decisions.md#v1-72-d02)记录侧栏摘要与范围读取；[V1.72-D03](decisions.md#v1-72-d03)记录 Lark 入站附件复用与 Host 隔离；[V1.72-D04](decisions.md#v1-72-d04)记录钉钉签名链接与旧排队卡收口；[V1.72-D05](decisions.md#v1-72-d05)记录发送前邀请；[V1.72-D06](decisions.md#v1-72-d06)记录 Claude 原生双向审批，并新增 [V1.72-D07](decisions.md#v1-72-d07) 记录 Thread 命名及旧绑定兼容，均同步当前决定导航 |
-| Contracts | 已更新 | 新增 [First-run Onboarding v6](../../contracts/first-run-onboarding-v6.md)，以 Desktop schema 3 冻结逐人 Runtime 复制与恢复；发布 [Lark Channel v1](../../contracts/lark-channel-v1.md)与 [Feishu Channel v17](../../contracts/feishu-channel-v17.md)，Feishu v16 降为历史；补充 [Navigation Read v1](../../contracts/navigation-read-v1.md)、[Skills Rebuild v2](../../contracts/skills-rebuild-v2.md)、[App Update v7](../../contracts/app-update-v7.md)（继承 v6 日期来源，增加双语发布与 Renderer 显示副本选择）、[Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md)与钉钉出站 [DingTalk Channel v14](../../contracts/dingtalk-channel-v14.md)；Composer 邀请只组合现有成员加入与发送命令，不改变两者合同；公开命名由 [Thread Naming v1](../../contracts/thread-naming-v1.md) 覆盖，新上下文与工具输出分别为 [ContextManifest v32](../../contracts/context-manifest-evidence-v32.md) 和 [Built-in Transport v33](../../contracts/builtin-tool-transport-v33.md) |
+| Contracts | 已更新 | 新增 [First-run Onboarding v6](../../contracts/first-run-onboarding-v6.md)，以 Desktop schema 3 冻结逐人 Runtime 复制与恢复；发布 [Lark Channel v1](../../contracts/lark-channel-v1.md)与 [Feishu Channel v17](../../contracts/feishu-channel-v17.md)，Feishu v16 降为历史；补充 [Navigation Read v1](../../contracts/navigation-read-v1.md)、[Skills Rebuild v2](../../contracts/skills-rebuild-v2.md)、[App Update v7](../../contracts/app-update-v7.md)（继承 v6 日期来源，增加双语发布与 Renderer 显示副本选择）、[Runtime Launch v49](../../contracts/runtime-launch-and-verification-v49.md)与钉钉出站 [DingTalk Channel v14](../../contracts/dingtalk-channel-v14.md)；Composer 邀请只组合现有成员加入与发送命令，不改变两者合同；公开命名由 [Thread Naming v1](../../contracts/thread-naming-v1.md) 覆盖，新上下文与工具输出分别为 [ContextManifest v32](../../contracts/context-manifest-evidence-v32.md) 和 [Built-in Transport v33](../../contracts/builtin-tool-transport-v33.md) |
 | Architecture | 已更新 | 新增 [Lark 渠道架构](../../architecture/lark-channel.md)；[飞书渠道架构](../../architecture/feishu-channel.md)移除 `larksuite.com` 并改指 v17；[侧栏刷新](../../architecture/desktop-navigation-refresh.md)与[Skills 来源](../../architecture/skills.md)说明局部读取及目录缓存；[钉钉渠道架构](../../architecture/dingtalk-channel.md)补齐原生附件出站与重试边界；[Public Camp Composer](../../architecture/camp-composer-draft.md#发送)说明邀请与发布命令边界；[Desktop App Updates](../../architecture/desktop-app-updates.md)补齐随包发布日期来源；[架构导航](../../architecture/README.md) 明确 Thread 命名覆盖与稳定存储边界；[Built-in Tool Runtime](../../architecture/builtin-tool-runtime.md#claude-code-权限审批回调)说明 Claude 权限回调边界 |
 | UI | 已更新 | [渠道设置](../../ui/components/channel-settings.md)增加 Lark 页签、品牌显示与未验收提示，并明确只读网页执行台的历史区、生产组件及重连呈现；[Camp 命名](../../contracts/channel-camp-naming-v1.md)和[统一侧栏](../../ui/components/app-shell-navigation.md)补齐 Lark 来源及范围刷新；[结构化 Mention](../../ui/components/structured-mentions.md#member-typeahead)和[会话工作区](../../ui/components/conversation-workspace.md#camp-composer)说明待邀请反馈；公开英文名称统一为 Thread，中文继续用对话，草稿和导航持久状态兼容旧字段 |
 | Runtime Activity | 确认无需更新 | Canonical Activity、Adapter mapping 与 Registry 的事件语义保持；Thread 只更新公开范围字段及读取投影，原始证据先验摘要 |
@@ -255,7 +280,7 @@ macOS/Web 不增加入口。托盘及第二次启动恢复原窗口，明确退�
 启动和 rescan 只发现入口，安装展示“已检测到”；配置保存、Run 创建及派发不依赖历史 Ready。
 协议、认证、显式模型/选项和权限在承载任务的 Host 内验证后发送正文；初始化及失败复用 Run 状态。
 保留 Antigravity 和显式 Fast 最小兼容性检查，Fast 资格改为主动查询。
-当前边界见 [Runtime Launch v47](../../contracts/runtime-launch-and-verification-v47.md)与
+当前边界见 [Runtime Launch v49](../../contracts/runtime-launch-and-verification-v49.md)与
 [Camp Member Fast v2](../../contracts/camp-member-fast-v2.md)，理由见 [V1.72-D12](decisions.md#v1-72-d12)。
 不改变 schema、版本指针、权限默认、会话隔离、输入去重或模型上下文；不新增 LKG、健康快照或轮询。
 验证记录见[实施记录](implementation-plan.md#2026-10-05-runtime-轻量启动)。
@@ -269,10 +294,14 @@ Claude 直接传临时 settings，Codex 直接传单 Turn 档位；不再启动 
 当前规范见 [Camp Member Fast v3](../../contracts/camp-member-fast-v3.md)，理由见 [V1.72-D13](decisions.md#v1-72-d13)。
 验证范围与限制见[实施记录](implementation-plan.md#2026-10-06-fast-偏好直接应用)。
 
+后续收口保留 Thread 队员级存储与冻结，控件恢复二态；正常 Claude/Codex Host 初始化返回值补充
+未覆盖时的显示初值，不解析原生配置、不启动额外探测，也不回写用户选择。
+本轮验证见[二态与初始化值实施记录](implementation-plan.md#2026-10-06-fast-二态与初始化值)。
+
 
 ## 并行修复：Codex 失败 Host 回收
 
 User 于 2026-10-06 授权在独立 worktree 实施并推送分支。Codex 仅原生 completed 有资格复用，失败进程沿既有清理门禁
 和 worker 回收；初始化失败保留受管进程，冷恢复验证精确 Thread，未知投递沿既有 v6 轮换，正文不自动重放。
-当前规范见 [Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md)，改动与验证范围见
+当前规范见 [Runtime Launch v49](../../contracts/runtime-launch-and-verification-v49.md)，改动与验证范围见
 [实施记录](implementation-plan.md#2026-10-06-codex-host-失败恢复)。不改变数据库 schema、Runtime 容量策略或模型上下文。

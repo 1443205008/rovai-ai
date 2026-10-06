@@ -5,6 +5,7 @@ export const RUNTIME_RENDERER_CORE_METHODS = [
   'runtime.product.ensure',
   'runtime.product.check',
   'runtime.startup.get',
+  'runtime.startup.observe',
   'runtime.startup.inspect',
   'runtime.startup.check',
   'runtime.startup.save',

@@ -135,6 +135,7 @@ impl CodexRuntimeOwner {
 
 pub(crate) struct CodexHost {
     initialized: tokio::sync::OnceCell<()>,
+    credential_redactor: Option<rovai_core::runtime_custom_api::CredentialRedactor>,
     host_instance_id: String,
     child: Mutex<ManagedProcess>,
     stdin: Mutex<ManagedChildStdin>,
@@ -359,12 +360,16 @@ impl CodexHost {
         cwd: &Path,
         incoming: mpsc::UnboundedSender<CodexIncoming>,
         builtin_tools: Option<BuiltinToolProcessConfig>,
+        custom_api: Option<rovai_core::runtime_custom_api::CustomApiSnapshot>,
     ) -> Result<Arc<Self>> {
         let mut command = Command::new(codex_path);
         rovai_core::runtime_discovery::configure_runtime_command(
             rovai_core::agent_profile::AdapterKind::CodexCli,
             &mut command,
         );
+        if let Some(api) = &custom_api {
+            api.assert_current()?;
+        }
         if let Some(config) = &builtin_tools {
             config.configure_command(&mut command)?;
         }
@@ -391,6 +396,7 @@ impl CodexHost {
             .context("Codex app-server stderr was unavailable")?;
         let host = Arc::new(Self {
             initialized: tokio::sync::OnceCell::new(),
+            credential_redactor: custom_api.as_ref().and_then(|api| api.redactor().ok()),
             host_instance_id: uuid::Uuid::new_v4().to_string(),
             #[cfg(windows)]
             windows_job_name: child.windows_job_name().to_owned(),
@@ -429,7 +435,7 @@ impl CodexHost {
             loop {
                 match lines.next_line().await {
                     Ok(Some(line)) if !line.trim().is_empty() => {
-                        let message = match serde_json::from_str::<Value>(&line) {
+                        let mut message = match serde_json::from_str::<Value>(&line) {
                             Ok(message) => message,
                             Err(error) => {
                                 host.broadcast_stderr(format!(
@@ -439,6 +445,9 @@ impl CodexHost {
                                 continue;
                             }
                         };
+                        if let Some(redactor) = &host.credential_redactor {
+                            redactor.value(&mut message);
+                        }
                         // Keep routing and queue insertion atomic with cancellation's
                         // unbind + ingress barrier. Otherwise cancellation could enqueue
                         // its barrier after routing selected an owner but before this
@@ -595,6 +604,10 @@ impl CodexHost {
     }
 
     async fn broadcast_stderr(&self, text: String) {
+        let text = self
+            .credential_redactor
+            .as_ref()
+            .map_or_else(|| text.clone(), |redactor| redactor.text(&text));
         for owner in self.owners().await {
             let _ = self
                 .incoming
@@ -745,6 +758,7 @@ pub struct CodexRuntime {
     host: Arc<CodexHost>,
     thread_id: RwLock<Option<String>>,
     observed_model_id: RwLock<Option<String>>,
+    native_fast_default: RwLock<Option<bool>>,
     action_items: Mutex<HashMap<String, Value>>,
     streamed_agent_text: Mutex<String>,
     completed_agent_message: RwLock<Option<String>>,
@@ -791,6 +805,7 @@ impl CodexRuntime {
             host,
             thread_id: RwLock::new(None),
             observed_model_id: RwLock::new(None),
+            native_fast_default: RwLock::new(None),
             action_items: Mutex::new(HashMap::new()),
             streamed_agent_text: Mutex::new(String::new()),
             completed_agent_message: RwLock::new(None),
@@ -942,6 +957,11 @@ impl CodexRuntime {
         self.host.bind_thread(&thread_id, &self.owner).await?;
         *self.thread_id.write().await = Some(thread_id.clone());
         *self.observed_model_id.write().await = observed_model_id;
+        *self.native_fast_default.write().await = result
+            .get("serviceTier")
+            .and_then(Value::as_str)
+            .and_then(rovai_core::camp_fast::ObservedFastState::from_tier)
+            .and_then(rovai_core::camp_fast::ObservedFastState::fast_default);
 
         Ok(thread_id)
     }
@@ -1022,6 +1042,10 @@ impl CodexRuntime {
 
     pub async fn observed_model_id(&self) -> Option<String> {
         self.observed_model_id.read().await.clone()
+    }
+
+    pub async fn native_fast_default(&self) -> Option<bool> {
+        *self.native_fast_default.read().await
     }
 
     pub async fn turn_id(&self) -> Option<String> {
@@ -1420,6 +1444,7 @@ impl CodexCliRuntimeAdapter {
         let spawn_cwd = cwd.to_path_buf();
         let spawn_incoming = self.incoming.clone();
         let spawn_builtin_tools = builtin_tools.clone();
+        let spawn_custom_api = frozen_runtime.custom_api.clone();
         let compatibility =
             RuntimeCompatibilityKey::member(camp_id, agent_id, runtime_compatibility_digest);
         // A different Codex Host can keep the same thread's native writer lock
@@ -1442,6 +1467,7 @@ impl CodexCliRuntimeAdapter {
                         &spawn_cwd,
                         spawn_incoming,
                         Some(spawn_builtin_tools),
+                        spawn_custom_api,
                     )
                     .await?;
                     Ok(RuntimeProcessHost::Codex(host))
@@ -2262,6 +2288,7 @@ mod tests {
 
     fn process_compatibility_runtime(executable: &Path) -> FrozenAgentRuntimeConfig {
         FrozenAgentRuntimeConfig {
+            custom_api: None,
             camp_fast: None,
             adapter_kind: AdapterKind::CodexCli,
             installation_id: "codex-test".to_string(),
@@ -2840,7 +2867,10 @@ for line in sys.stdin:
         response['result'] = {'account': None, 'requiresOpenaiAuth': scenario == 'auth_required'}
     elif method == 'model/list':
         response['result'] = {'data': [{'id': 'selected', 'supportedReasoningEfforts': [{'reasoningEffort': 'low'}]}]}
-    elif method == 'thread/start': response['result'] = {'thread': {'id': 'thread-fixture'}}
+    elif method in ('thread/start', 'thread/resume'):
+        response['result'] = {'thread': {'id': 'thread-fixture'}}
+        if scenario == 'default':
+            response['result']['serviceTier'] = 'priority' if method == 'thread/start' else 'default'
     elif method == 'turn/start':
         with open(os.path.join(root, 'turns'), 'a') as log: log.write(json.dumps(request['params']) + '\n')
         if scenario == 'fast_rejected':
@@ -2918,7 +2948,7 @@ for line in sys.stdin:
                         runtime
                             .start_or_resume_thread_with_config(
                                 &root,
-                                None,
+                                (attempt == 1).then_some("thread-fixture"),
                                 CodexThreadStartOptions {
                                     developer_instructions: None,
                                     sandbox: "workspace-write",
@@ -2931,6 +2961,12 @@ for line in sys.stdin:
                             )
                             .await
                             .unwrap();
+                        assert_eq!(
+                            runtime.native_fast_default().await,
+                            (scenario == "default").then_some(attempt != 1),
+                            "start/resume baseline arrives before the single task input"
+                        );
+                        assert!(!root.join("turns").exists() || attempt > 0);
                         let turn = runtime
                             .start_turn_with_config(
                                 "task-body",
@@ -3034,6 +3070,7 @@ for line in sys.stdin:
         )
         .unwrap();
         let runtime_config = FrozenAgentRuntimeConfig {
+            custom_api: None,
             camp_fast: None,
             adapter_kind: AdapterKind::CodexCli,
             installation_id: "smoke".to_string(),

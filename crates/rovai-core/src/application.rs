@@ -811,6 +811,7 @@ fn request_runs_outside_main_queue(method: &str) -> bool {
             | "runtime.product.ensure"
             | "runtime.product.check"
             | "runtime.startup.inspect"
+            | "runtime.startup.observe"
             | "runtime.startup.check"
             | "runtime.startup.save"
             | "runtime.networkRecovery.wake"
@@ -3401,6 +3402,8 @@ impl Core {
                     let explicit_search = search.as_ref().clone().with_startup_configuration(
                         kind,
                         rovai_core::runtime_startup::RuntimeStartupConfiguration {
+                            custom_api: None,
+                            custom_api_snapshot: None,
                             program_path: Some(saved_path.to_string_lossy().to_string()),
                             environment: Vec::new(),
                         },
@@ -3830,6 +3833,7 @@ impl Core {
         Ok(json!({
             "runtimeKind": kind,
             "cache": installation.model_catalog,
+            "customApiModelIds": installation.custom_api_model_ids,
             "models": models,
             "refreshStatus": refresh_status,
             "diagnosticCode": installation
@@ -4415,7 +4419,8 @@ impl Core {
                     RuntimeCheckOutcome::Superseded
                 }))
             }
-            Err(_) => {
+            Err(error) => {
+                let failure = health::model_catalog_failure(kind, &error, path);
                 service.record_managed_probe_failure(
                     &mut database,
                     ManagedProbeFailure {
@@ -4426,7 +4431,7 @@ impl Core {
                         source: Some(installation.source),
                         failure_class: "transient",
                         diagnostic_code: "runtime_model_catalog_refresh_failed",
-                        failure: None,
+                        failure: Some(&failure),
                     },
                 )?;
                 Ok(Some(RuntimeCheckOutcome::StableFailure))
@@ -4483,6 +4488,8 @@ impl Core {
                 search.as_ref().clone().with_startup_configuration(
                     kind,
                     rovai_core::runtime_startup::RuntimeStartupConfiguration {
+                        custom_api: None,
+                        custom_api_snapshot: None,
                         program_path: Some(
                             existing_entrypoint_locator
                                 .as_ref()
@@ -10725,6 +10732,7 @@ impl Core {
                 ))
             }
             method @ ("runtime.startup.get"
+            | "runtime.startup.observe"
             | "runtime.startup.inspect"
             | "runtime.startup.check"
             | "runtime.startup.save") => {
@@ -14572,6 +14580,8 @@ impl Core {
         };
         self.bind_prepared_native_session(execution, &binding_credential, &thread_id)
             .await?;
+        record_runtime_fast_default(self, output, execution, runtime.native_fast_default().await)
+            .await;
         let Some(prepared_context) = self
             .materialize_agent_run_context(
                 execution,
@@ -15373,6 +15383,16 @@ impl Core {
         managed_output_root: &Path,
         event: &claude::ClaudeCodeRuntimeEvent,
     ) -> Result<()> {
+        if event.event_type == "runtime.fast.initialized" {
+            record_runtime_fast_default(
+                self,
+                output,
+                execution,
+                event.payload.get("enabled").and_then(Value::as_bool),
+            )
+            .await;
+            return Ok(());
+        }
         if matches!(
             event.event_type,
             "runtime.usage.observed" | "runtime.context.observed"
@@ -20760,6 +20780,63 @@ fn nonempty_public_text(text: &str) -> Option<String> {
     (!text.is_empty()).then(|| text.to_string())
 }
 
+async fn record_runtime_fast_default(
+    core: &Core,
+    output: &mpsc::UnboundedSender<String>,
+    execution: &AgentRunExecution,
+    native_default: Option<bool>,
+) {
+    let Some(fast) = execution.runtime.camp_fast.as_ref() else {
+        return;
+    };
+    // An overridden Host describes Rovai's request, not the native default.
+    if fast.fast_override.is_some() {
+        return;
+    }
+    let result = {
+        let database = core.database.lock().await;
+        (|| -> Result<bool> {
+            let active = database.connection().query_row(
+                "SELECT EXISTS(SELECT 1 FROM agent_run AS run
+                 JOIN conversation ON conversation.id = run.conversation_id
+                 JOIN agent_profile AS profile ON profile.id = conversation.agent_id
+                 WHERE run.id = ?1 AND run.execution_epoch = ?2
+                   AND run.status IN ('running', 'waiting') AND run.cancel_requested_at IS NULL
+                   AND json_extract(profile.default_model_selection_json, '$.mode') = ?3
+                   AND (?3 = 'runtime_default'
+                        OR json_extract(profile.default_model_selection_json, '$.modelId') = ?4))",
+                rusqlite::params![
+                    execution.agent_run_id,
+                    execution.execution_epoch,
+                    execution.runtime.model.source,
+                    execution.runtime.model.model_id
+                ],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !active {
+                return Ok(false);
+            }
+            rovai_core::camp_fast::record_runtime_default(
+                database.connection(),
+                &execution.camp_id,
+                &execution.agent_id,
+                &fast.runtime_binding_revision,
+                native_default,
+            )
+        })()
+    };
+    match result {
+        Ok(true) => emit(
+            output,
+            "camp.member.fast.updated",
+            json!({"threadId": execution.camp_id}),
+        ),
+        Ok(false) => {}
+        // Optional display metadata must never hold up execution.
+        Err(error) => eprintln!("Could not record Runtime Fast baseline: {error}"),
+    }
+}
+
 async fn record_runtime_model_observation(
     core: &Core,
     output: &mpsc::UnboundedSender<String>,
@@ -25936,6 +26013,8 @@ done
             RuntimeSearchEnvironment::for_test_paths(1, Vec::new()).with_startup_configuration(
                 AdapterKind::CodexCli,
                 rovai_core::runtime_startup::RuntimeStartupConfiguration {
+                    custom_api: None,
+                    custom_api_snapshot: None,
                     program_path: Some(executable.to_string_lossy().into_owned()),
                     environment: vec![rovai_core::runtime_startup::RuntimeEnvironmentVariable {
                         name: "ROVAI_CATALOG_FIXTURE".into(),
@@ -26229,6 +26308,8 @@ done
                     .with_startup_configuration(
                         AdapterKind::CodexCli,
                         rovai_core::runtime_startup::RuntimeStartupConfiguration {
+                            custom_api: None,
+                            custom_api_snapshot: None,
                             program_path: Some(executable.to_string_lossy().into_owned()),
                             environment: Vec::new(),
                         },
@@ -27738,6 +27819,7 @@ done
         retry_after: Option<&str>,
     ) -> AdapterInstallationView {
         AdapterInstallationView {
+            custom_api_model_ids: None,
             permission_options: AgentRuntimeAdapterRegistry::default()
                 .permission_options(AdapterKind::CodexCli),
             id: "managed-codex".to_string(),
@@ -28292,6 +28374,7 @@ done
         ));
         assert!(request_runs_outside_main_queue("runtime.product.ensure"));
         assert!(request_runs_outside_main_queue("runtime.product.check"));
+        assert!(request_runs_outside_main_queue("runtime.startup.observe"));
         assert!(!request_runs_outside_main_queue("camps.snapshot"));
         assert!(!request_runs_outside_main_queue("camps.enter"));
         assert!(!request_runs_outside_main_queue("camps.open"));
@@ -29909,6 +29992,71 @@ done
         (camp_id, agent_run_id, version, execution_epoch)
     }
 
+    // Owns Core's initialization-to-schema seam; camp_fast's writer tests do
+    // not execute the Run/model guard query or its public invalidation event.
+    #[cfg(all(target_os = "macos", feature = "slow-tests"))]
+    #[tokio::test]
+    async fn runtime_fast_initialization_reaches_member_projection_on_real_schema() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "rovai-fast-initialization-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let core = Arc::new(runtime_resolution_test_core(&root).unwrap());
+        let (camp_id, run_id, _, epoch) = claimed_runtime_cleanup_test_run(&core, &workspace).await;
+        let execution = {
+            let database = core.database.lock().await;
+            ExecutionRuntimeService::default()
+                .load_agent_run_execution(&database, &run_id, epoch)
+                .unwrap()
+                .unwrap()
+        };
+        assert_eq!(
+            execution.runtime.camp_fast.as_ref().unwrap().fast_override,
+            None
+        );
+        let (output, mut events) = mpsc::unbounded_channel();
+        record_runtime_fast_default(&core, &output, &execution, Some(true)).await;
+
+        // Duplicate and obsolete initialization must neither reset the saved
+        // baseline nor publish another invalidation.
+        record_runtime_fast_default(&core, &output, &execution, Some(true)).await;
+        let mut obsolete = execution.clone();
+        obsolete.execution_epoch += 1;
+        record_runtime_fast_default(&core, &output, &obsolete, Some(false)).await;
+        let projected = {
+            let database = core.database.lock().await;
+            rovai_core::camp_fast::view(&database, &camp_id, &execution.agent_id)
+                .unwrap()
+                .unwrap()
+        };
+        let event = events.try_recv().ok();
+        let extra_event = events.try_recv().ok();
+
+        ThreadAttachmentStore::new(&core.data_dir)
+            .remove_camp(&camp_id)
+            .unwrap();
+        let view_root = core.attachment_views.root().join("camps").join(&camp_id);
+        drop(core);
+        for path in [
+            &view_root,
+            view_root.parent().unwrap(),
+            view_root.parent().unwrap().parent().unwrap(),
+        ] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::remove_dir_all(root).unwrap();
+
+        assert_eq!(projected.runtime_default_fast, Some(true));
+        assert_eq!(projected.fast_override, None);
+        let event: Value = serde_json::from_str(&event.expect("baseline update event")).unwrap();
+        assert_eq!(event["method"], "thread.member.fast.updated");
+        assert_eq!(event["params"]["threadId"], camp_id);
+        assert!(extra_event.is_none());
+    }
+
     // Owns the DB-to-memory recovery handoff across actual dispatch deferral
     // and rejection. Queue-only tests cannot observe the scheduler's result.
     #[cfg(all(target_os = "macos", feature = "slow-tests"))]
@@ -30648,6 +30796,7 @@ for line in sys.stdin:
             "#!/bin/sh\ntrap '' TERM\nread -r line\nprintf '%s\\n' '{\"id\":1,\"result\":{}}'\nwhile read -r line; do :; done\n",
         );
         let runtime_config = FrozenAgentRuntimeConfig {
+            custom_api: None,
             camp_fast: None,
             adapter_kind: AdapterKind::CodexCli,
             installation_id: "cleanup-fixture".into(),

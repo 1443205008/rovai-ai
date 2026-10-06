@@ -129,12 +129,12 @@ describe('Runtime user status projection', () => {
     })
   })
 
-  it('uses the same outcome vocabulary for member list readiness', () => {
-    expect(runtimeReadinessLabel('ready')).toBe('可用')
+  it('only labels member readiness when configuration needs attention', () => {
+    expect(runtimeReadinessLabel('ready')).toBeNull()
     expect(runtimeReadinessLabel('runtime_not_configured')).toBe('未配置智能体')
     expect(runtimeReadinessLabel('needs_attention')).toBe('不可用')
-    expect(runtimeReadinessLabel('light_ready')).toBe('可尝试运行')
-    expect(runtimeReadinessLabel('installed_unverified')).toBe('可尝试运行')
+    expect(runtimeReadinessLabel('light_ready')).toBeNull()
+    expect(runtimeReadinessLabel('installed_unverified')).toBeNull()
   })
 
   it('allows installed entries to attempt real initialization', () => {
@@ -161,8 +161,8 @@ describe('Runtime user status projection', () => {
       traeAvailability
     )
     expect(result.status).toBe('available')
-    expect(result.label).toBe('可尝试运行')
-    expect(result.detail).toContain('可直接重试')
+    expect(result.label).toBe('可用')
+    expect(result.detail).toBeNull()
   })
 
   it('keeps Windows not-qualified distinct from machine availability', () => {

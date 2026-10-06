@@ -8180,10 +8180,10 @@ function mentionPresenceLabel(presence: AgentProfile['presence']): string {
 }
 
 function mentionRuntimeLabel(profile: AgentProfile): string {
+  if (!profile.runtimeConfiguration) return uiAttribute('未配置智能体')
+  const runtime = runtimeAdapterLabel(profile.runtimeConfiguration.adapterKind)
   const readiness = runtimeReadinessLabel(profile.runtimeReadiness.status)
-  return profile.runtimeConfiguration
-    ? `${runtimeAdapterLabel(profile.runtimeConfiguration.adapterKind)} · ${readiness}`
-    : readiness
+  return readiness ? `${runtime} · ${readiness}` : runtime
 }
 
 export function RuntimeRecoveryDock({

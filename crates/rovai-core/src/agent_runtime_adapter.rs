@@ -1710,9 +1710,10 @@ impl CopilotCliAdapterPolicy {
     }
 }
 
+// Persisted capability name; both native control requests establish the same evidence.
 pub const CLAUDE_MODEL_CATALOG_CAPABILITY: &str = "model.catalog.initialize";
 
-/// Normalize the model list from the matching SDK initialize control response.
+/// Normalize the model list from a matching SDK list_models or initialize response.
 /// Native selection values remain opaque: aliases and resolved IDs are not interchangeable.
 pub fn claude_code_models(response: &Value) -> Result<Vec<ModelDescriptor>> {
     let rows = response
@@ -1720,7 +1721,7 @@ pub fn claude_code_models(response: &Value) -> Result<Vec<ModelDescriptor>> {
         .and_then(Value::as_array)
         .filter(|rows| !rows.is_empty())
         .context(
-            "claude_model_catalog_incompatible: initialize did not return a non-empty models array",
+            "claude_model_catalog_incompatible: model query did not return a non-empty models array",
         )?;
     let mut seen = std::collections::BTreeSet::new();
     let mut models = vec![ModelDescriptor {

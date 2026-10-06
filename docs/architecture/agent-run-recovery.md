@@ -85,7 +85,7 @@ Delivery 才按正常调度领取。计划关闭复用同一清理事实，但�
 
 ## 7. Codex Host 完成与失败
 
-[Runtime Launch v48](../contracts/runtime-launch-and-verification-v48.md)把原生结果、业务交付和进程回收分开。
+[Runtime Launch v49](../contracts/runtime-launch-and-verification-v49.md)把原生结果、业务交付和进程回收分开。
 Codex 原生 completed 才申请 warm；最终失败、取消和中断通过既有清理 worker 停止，错误是否可分类不影响资格。
 终态事务与 Delivery claim 共享数据库边界，清理门禁先于后继 claim；等待进程退出不持有全局锁。
 
