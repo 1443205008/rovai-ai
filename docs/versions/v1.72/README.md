@@ -6,10 +6,18 @@ authority: version-scope-and-status
 design_status: confirmed
 implementation_status: in_progress
 model_context_change: true
-last_updated: 2026-10-06
+last_updated: 2026-10-07
 ---
 
 # Rovai-ai v1.72：Lark 独立渠道
+
+## 并行实施：Member CLI
+
+User 于 2026-10-06 确认[提示词与接口 r1](model-context-change-member-cli.md)，授权实施、PR 和合入 main。
+仅新增 member list/get/update，保留 create；六个身份字段和同一复合头像资产由 Core 原子 PATCH。
+复用创建记录授权、命令幂等、版本、Run tmp 和失效通知，无数据库迁移、Runtime 配置或成员关系扩权。
+当前字段合同见 [Transport v36](../../contracts/builtin-tool-transport-v36.md)。确定性回归与真实任务 Gate 状态
+记录在[实施计划](implementation-plan.md#member-cli-最小增量)。
 
 ## 并行修复：Claude Code 模型发现与 Runtime 探测可用性
 

@@ -1,7 +1,7 @@
 ---
 document_type: development-guide
 authority: test-policy-and-command-routing
-last_updated: 2026-10-04
+last_updated: 2026-10-07
 ---
 
 # 测试与 Smoke Test
@@ -89,6 +89,32 @@ Rust owner 分成四个可执行层级；feature gating 只改变日常路由，
 修改 feature-gated owner 时，定向命令必须显式加 `--features extended-tests`；若 owner 同时标为
 `slow-tests`，则使用 `--features slow-tests`。过滤命令显示 `0 tests` 不构成验证证据，提交前先用
 `-- --list` 确认目标 owner 实际进入清单。
+
+## Member CLI
+
+复用 `team_tool::tests` 的真实 Run/数据库 fixture。新增扩展 owner
+`member_profile_reads_and_patches_preserve_scope_atomicity_and_replay`：既有创建 owner 不拥有
+全局 PATCH 的事务合并、版本、图文原子提交及输出路径边界；修复前这三个操作不存在。
+创建后编辑与原创建者/跨 Thread 限制扩展既有
+`confirmed_user_input_can_create_one_idempotent_member_but_agent_input_cannot`，不新增数据库 fixture。
+图片矩阵扩展 `member_avatar::tests::imports_four_by_five_image_with_lightweight_crop_and_deterministic_identity`；
+封闭输入和 null/空 PATCH 扩展既有 `member_studio` schema owner。
+PATCH owner 同时覆盖相同图片的新请求无版本变化、源文件消失后的持久回放、同路径换图冲突，
+以及已提交资产缺失时不得重建其 ID。Run tmp 轮换删除与图片重取扩展既有
+`builtin_tool_runtime::tests::lease_rotates_fences_and_replays_exact_request`。
+无 Lead 的名单与零写入扩展原 PATCH owner。CLI 的
+`direct_flags_and_input_file_are_mutually_exclusive` 覆盖 create/update 直接参数与 JSON 文件保持原始
+相对／绝对路径。原创建与 PATCH owner 覆盖认证 Run 的文件入口：冻结 execution root 与 Thread
+workspace 不同、同名图片内容不同、失效 epoch／缺失 workspace 拒绝、缺失源仍能解析和回放、
+绝对路径原样保留、symlink 仍由 importer 拒绝。附件 helper 的等价性扩展
+`local_attachment_source::tests::resolver_returns_exact_stored_paths_for_files_and_directories`。
+修复前 update 在 CLI cwd 解析、create 在 Core cwd 解析；本次未新增 Rust owner，沿用已有
+数据库 fixture 验证冻结 Run 的权威，纯路径测试不能证明该 SQL 归属。
+
+最小验证：先 `cargo test -p rovai-core --features extended-tests --lib member_ -- --list` 确认 owner 非零，
+再执行同命令去掉 `-- --list`；租约 owner 使用
+`cargo test -p rovai-core --features extended-tests --lib builtin_tool_runtime::tests::`，
+同样先核对清单；默认 workspace 回归仍执行 `pnpm test:rust:pr`。
 
 ## Thread 执行查询
 

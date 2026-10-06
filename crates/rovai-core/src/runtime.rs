@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeSet, HashMap},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result};
@@ -109,6 +109,15 @@ pub struct AgentRunWorkspace {
     pub execution_root: String,
     pub access: String,
     pub isolation: String,
+}
+
+/// Resolve a local input without touching the filesystem or changing symlinks.
+pub fn resolve_agent_local_path(path: &Path, execution_root: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        execution_root.join(path)
+    }
 }
 
 impl AgentRunWorkspace {
