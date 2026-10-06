@@ -673,3 +673,50 @@ update help 的参数列表和例子留在单操作入口；不把数据库、as
 - `DOCS_BASE_REF=0baa74144ba52de257c98656e72b445c9bc43d4e node scripts/check-doc-decisions.mjs --require-base`：通过，包含文档链接和 diff-aware 治理检查。
 - `pnpm docs:check` 与 `DOCS_BASE_REF=0baa74144ba52de257c98656e72b445c9bc43d4e pnpm docs:check:ci`：未通过，原因仅为本文仍是 pending、缺少真实的 confirmed_revision/confirmed_by/confirmed_at。保持待确认状态，未绕过门禁。
 - 本轮未执行产品代码测试或真实任务 Gate；这份文本对比不是功能已实现或模型效果已验证的证据。
+
+## 2026-10-06 实施与验收记录
+
+本节记录后续实施事实，不改动上面的 r1 前后文本。User 确认消息为
+`d283c49e-6894-4274-a584-ce449b544d44`；实施分支 `rovai/member-cli`，最终集成基线为
+`5421fed778fcdd62f3b2c0e7f517a6e3e2b86c51`。同步 main 时仅版本概览出现文本冲突，已保留两项并行工作的记录。
+
+- 版本轴按 r1 落地：CLI/Transport 36、Agent Output 9、Charter 20、30 项操作；其他上下文与 Session 兼容轴不变。
+- 仅新增 list/get/update。六个身份字段由 Core 在版本检查下合并；文字与同一复合资产引用原子提交。
+  未新增数据库表、持久字段、授权系统、幂等键库或通用资产服务。
+- 完整读取使用封闭投影并重新授权；图片物化到既有 Run tmp，租约轮换负责清理。
+  现有创建回执支持同 Thread 原创建者在后续 Run 读取、编辑尚未加入 Thread 的成员。
+- 上传复用现有请求绑定资产和领域回执。源文件消失后仍可匹配持久回执；源文件存在时核验规范化内容，
+  已提交请求不得重新发布缺失的资产 ID。等价 source/crop/icon 保留原引用，不增加 Profile 版本。
+- 内置半身图原先仅以 renderer AVIF 存在，无法进入 Core 的既有 PNG/JPEG 读取与裁切流程；
+  本次增加四张同源 PNG 编译资源，没有增加运行期解码依赖。
+
+以最终集成基线运行的确定性验证：
+
+| 验证 | 结果 |
+| --- | --- |
+| `cargo fmt --all --check`、`git diff --check` | 通过 |
+| `pnpm test:rust:pr` | 454 项通过；1 项原有真实 Runtime smoke 保持忽略 |
+| `extended-tests` 的 `member_` owner | 18 项通过；覆盖权限、创建后编辑、PATCH/版本/原子性、图片及回放 |
+| `extended-tests` 的 `builtin_tool_runtime::tests::` | 2 项通过；覆盖 Run tmp 轮换清理、重取与锁边界 |
+| `slow-tests` 的 Bootstrap/冻结补发/新 Session owner | 4 项通过；既有冻结内容与兼容轴保持 |
+| 实际构建的 `rovai` 与 r1 文本对照 | 根帮助及 list/get/create/update 帮助逐字一致；Bootstrap 资源和 cli-operations 正文与批准稿一致 |
+| 实际 CLI stdin / `--input-file` | 对同一含禁止字段的输入返回相同退出码 2 和封闭错误；使用独立 tmp 与不存在的 Core context，无日常实例调用 |
+| `pnpm docs:test`、`pnpm skills:test`、`pnpm skills:check` | 10 项文档测试、3 项 Skill 测试与 12 项 Skill 校验通过 |
+| `pnpm docs:check`、`pnpm docs:check:ci` | 通过；diff-aware 基线为本节列出的最终集成基线 |
+
+真实模型 Gate 尚未执行。该 Gate 需要实际三位队员的 Runtime/model 和固定快照 Judge 配置，
+不能使用其他工作项的豁免，也不能以以上确定性检查或以下代码复核替代。
+
+### Standards
+
+此前标准问题已闭合，未发现新增可确认缺陷。已提交上传只验证既有资产；等价图片保留当前引用。
+新增断言覆盖重复上传不增版本及缺失资产不得重绑。默认裁切重复已消除，未发现值得单列的新气味。
+收口缺口为真实模型 Gate；当前记录没有声明其通过。
+
+### Spec
+
+两项 P2 已闭合，未发现相关新错误：等价 source/crop/icon 保留当前引用；已有回执时缺失或损坏资产
+直接拒绝，不重新发布 UUID。既有 Member owner 覆盖这些边界，授权仍先于图片操作，事务内重验权限和版本。
+本次代码复核不代表真实模型 Gate 通过。
+
+复核汇总：Standards 未关闭代码问题 0 项、另有 Gate 证据缺口 1 项；Spec 未关闭代码问题 0 项，Gate 仍待验收。

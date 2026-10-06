@@ -874,7 +874,14 @@ Clippy 与首轮基线比较仍是原有 10 项错误，本切片没有新增 li
 - 仅 list/get/update；封闭读取、事务内 PATCH、文字与资产引用原子提交，create 及 Single Chat allowlist 保持。
 - 无持久字段扩展：现有创建快照支持同 Thread 原创建者；requestId 显式传递解决重启 CLI 的重放身份；现有复合资产保存与 Run tmp 生命周期复用。
 - 内置 portrait 原先只在 renderer AVIF 包中，Core 无法读取或复用 PNG/JPEG 裁切流程；最小补充为同源 PNG 编译资源，不增加运行期解码依赖或资产服务。
-- 验证进行中：Rust 默认层、定向边界 owner、CLI 精确文本/输入、Skills、文档门禁及代码复核。
+- 最终集成基线 `5421fed778fcdd62f3b2c0e7f517a6e3e2b86c51`；同步上游仅解决版本概览文本冲突，保留并行工作的记录。
+- `pnpm test:rust:pr`：454 项通过、1 项原有 Runtime smoke 忽略；`cargo fmt --all --check` 通过。
+  定向回归全部通过：`member_` 18 项、租约生命周期 2 项、Bootstrap/冻结补发/新 Session 4 项。
+- 重建 CLI 的根帮助与四项 member 帮助、Bootstrap 资源、cli-operations 正文均与 r1 逐字一致；
+  独立 tmp 中的 stdin/输入文件封闭拒绝行为一致，不连接日常 Core。
+- 文档测试 10 项、Skill 测试 3 项及 12 项 Skill 校验通过；`docs:check` 与以上述基线运行的 `docs:check:ci` 通过。
+  Standards 与 Spec 独立复核的代码问题均已关闭，完整记录见[实施证据](model-context-change-member-cli.md#2026-10-06-实施与验收记录)。
 - 真实任务 Gate：等待具体 Runtime/model 与固定快照 Judge 配置，尚未运行或声明通过；不沿用其他工作项的豁免。
 
 - 复核修正：列表沿用 `member_order,id`；图片更新复用创建流程的请求绑定不可变资产。原 Run 源文件消失后先匹配既有领域回执，未提交请求仍拒绝；源文件存在时验证规范化内容，避免同路径换图被租约缓存吞掉。无新表或第二份请求结果。
+- 后续复核修正：等价 source/crop/icon 保留原引用和版本；有持久回执时只验证准备资产，缺失或损坏不得重新发布该资产 ID。两项均在原 PATCH owner 中补回归。
