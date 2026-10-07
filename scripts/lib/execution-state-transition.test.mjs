@@ -12,7 +12,7 @@ const root = resolve(import.meta.dirname, '../..')
 
 // Production ThreadWorkspace owns the state replacement and bottom-follow behavior.
 // A standalone status row cannot detect the resulting card/viewport displacement.
-test('execution cards keep their live line anchored and expanded tool groups retain a downward cue', { timeout: 120_000 }, async t => {
+test('execution cards update phase-only feedback and keep their live line anchored across layouts', { timeout: 120_000 }, async t => {
   const chrome = process.env.ROVAI_TEST_CHROME ?? (process.platform === 'darwin'
     ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/usr/bin/google-chrome')
   if (!await access(chrome).then(() => true, () => false)) {
@@ -90,26 +90,77 @@ test('execution cards keep their live line anchored and expanded tool groups ret
           `day/inspector initial window: ${element}.${key} jumps: ${values}`)
       }
     }
-    // The actual restore hook must fence late reads and old epochs, then recover
-    // the current snapshot when the transport reconnects without a new event.
-    await browser.evaluate(`{
-      const api = window.executionTransition
-      api.setRuntimeSnapshot('旧快照'); api.invalidateRuntimePhase(); api.emitRuntimePhase('当前标题')
-    }`)
-    await browser.wait(`document.querySelector('[data-runtime-phase-witness]')?.dataset.thinkingTitle === '当前标题'`)
-    await browser.evaluate(`window.executionTransition.resolveWindow()`)
-    await pause(80)
-    assert.equal(await browser.evaluate(`document.querySelector('[data-runtime-phase-witness]').dataset.thinkingTitle`), '当前标题')
-    await browser.evaluate(`window.executionTransition.emitRuntimePhase('旧代次', 0)`)
-    await pause(80)
-    assert.equal(await browser.evaluate(`document.querySelector('[data-runtime-phase-witness]').dataset.thinkingTitle`), '当前标题')
-    await browser.evaluate(`window.executionTransition.emitRuntimePhase(null)`)
-    await browser.wait(`document.querySelector('[data-runtime-phase-witness]')?.dataset.thinkingTitle === ''`)
-    await browser.evaluate(`{
-      const api = window.executionTransition
-      api.setRuntimeSnapshot('恢复标题'); api.invalidateRuntimePhase(); api.resolveWindow()
-    }`)
-    await browser.wait(`document.querySelector('[data-runtime-phase-witness]')?.dataset.thinkingTitle === '恢复标题'`)
+    // Web has only invalidation notifications. Keep Run/evidence inputs fixed,
+    // and assert the real expanded content rather than an independent hook probe.
+    const currentTitle = `document.querySelector('.execution-process-stage .process-action.current .running-text > span:not(.running-text-highlight)')?.textContent`
+    for (const [transport, mode] of [['invalidation', 'inspector'], ['invalidation', 'mobile'], ['event', 'inspector']]) {
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        width: mode === 'mobile' ? 390 : 1440, height: mode === 'mobile' ? 844 : 920,
+        deviceScaleFactor: 1, mobile: mode === 'mobile'
+      })
+      await browser.send('Emulation.setTouchEmulationEnabled', { enabled: mode === 'mobile' })
+      await browser.evaluate('delete window.executionTransition')
+      await browser.send('Page.navigate', {
+        url: `http://127.0.0.1:${server.address().port}/index.html?${new URLSearchParams({ mode, theme: 'day', windowed: '1', transport })}`
+      })
+      await browser.wait('!!window.executionTransition')
+      await browser.evaluate(mode === 'mobile'
+        ? `document.querySelector('.mobile-camp-tabs [data-detail="execution"]')?.click()`
+        : `document.querySelector('.camp-execution-entry')?.click()`)
+      await browser.wait(`!!document.querySelector('.run-pulse-chip[data-agent-id]:not([data-agent-id="__execution_overview__"])')`)
+      await browser.evaluate(`document.querySelector('.run-pulse-chip[data-agent-id]:not([data-agent-id="__execution_overview__"])')?.click()`)
+      await browser.wait(`!!document.querySelector('.execution-process-stage .process-action.current .running-text')`)
+      await browser.wait(`window.executionTransition.windowReadRequested()`)
+      await browser.wait(`(window.executionTransition.resolveWindow(), ${currentTitle} === '思考中')`)
+      assert.equal(await browser.evaluate(`window.executionTransition.hasEventTransport()`), transport === 'event')
+      const stableInputs = await browser.evaluate(`window.executionTransition.runInputs()`)
+      await browser.evaluate(`{
+        const api = window.executionTransition
+        api.setRuntimeSnapshot('仅标题更新'); api.invalidateRuntimePhase(); api.resolveWindow()
+      }`)
+      await browser.wait(`${currentTitle} === '仅标题更新'`)
+      await browser.evaluate(`{
+        const api = window.executionTransition
+        api.setRuntimeSnapshot('旧读取'); api.invalidateRuntimePhase()
+        api.setRuntimeSnapshot('较新标题'); api.invalidateRuntimePhase(); api.resolveWindow(true)
+      }`)
+      await browser.wait(`${currentTitle} === '较新标题'`)
+      await browser.evaluate(`window.executionTransition.resolveWindow()`)
+      await pause(80)
+      assert.equal(await browser.evaluate(currentTitle), '较新标题', 'late reads must not replace current content feedback')
+      for (const clear of ['null', 'undefined']) {
+        await browser.evaluate(`{
+          const api = window.executionTransition
+          api.setRuntimeSnapshot('清空前的标题'); api.invalidateRuntimePhase(); api.resolveWindow()
+        }`)
+        await browser.wait(`${currentTitle} === '清空前的标题'`)
+        await browser.evaluate(`{
+          const api = window.executionTransition
+          api.setRuntimeSnapshot(${clear}); api.invalidateRuntimePhase(); api.resolveWindow()
+        }`)
+        await browser.wait(`${currentTitle} === '执行中'`)
+      }
+      await browser.evaluate(`{
+        const api = window.executionTransition
+        api.setRuntimeSnapshot('恢复后的标题'); api.invalidateRuntimePhase(); api.resolveWindow()
+      }`)
+      await browser.wait(`${currentTitle} === '恢复后的标题'`)
+      await browser.capture(join(fixture, `day-${mode}-${transport}-thinking.png`))
+      if (transport === 'event') {
+        await browser.evaluate(`{
+          const api = window.executionTransition
+          api.setRuntimeSnapshot('迟到快照'); api.invalidateRuntimePhase(); api.emitRuntimePhase('事件标题'); api.resolveWindow()
+        }`)
+        await browser.wait(`${currentTitle} === '事件标题'`)
+        await browser.evaluate(`window.executionTransition.emitRuntimePhase('旧代次', 0)`)
+        await pause(80)
+        assert.equal(await browser.evaluate(currentTitle), '事件标题')
+        await browser.evaluate(`window.executionTransition.emitRuntimePhase(null)`)
+        await browser.wait(`${currentTitle} === '执行中'`)
+      }
+      assert.deepEqual(await browser.evaluate(`window.executionTransition.runInputs()`), stableInputs)
+      report.push({ label: `${mode}/${transport}/expanded-phase`, stableInputs, passed: true })
+    }
     for (const theme of ['day', 'night']) {
       for (const mode of ['bottom', 'inspector', 'mobile']) {
         const label = `${theme}/${mode}`
@@ -118,6 +169,7 @@ test('execution cards keep their live line anchored and expanded tool groups ret
           deviceScaleFactor: 1, mobile: mode === 'mobile'
         })
         await browser.send('Emulation.setTouchEmulationEnabled', { enabled: mode === 'mobile' })
+        await browser.evaluate('delete window.executionTransition')
         await browser.send('Page.navigate', {
           url: `http://127.0.0.1:${server.address().port}/index.html?${new URLSearchParams({ mode, theme })}`
         })

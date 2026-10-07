@@ -10228,6 +10228,7 @@ function RunExecutionContent({
   windowedEvidence = false,
   liveRevision,
   progress,
+  runtimeFeedback,
   threadId,
   truncatedEvidence,
   historicalEvidence,
@@ -10241,6 +10242,7 @@ function RunExecutionContent({
   windowedEvidence?: boolean
   liveRevision?: unknown
   progress?: LiveExecutionProgress
+  runtimeFeedback: Pick<LiveExecutionProgress, 'runtimePhase' | 'runtimeThinkingTitle'>
   threadId: string
   truncatedEvidence: AgentRunExecutionEvidenceView[]
   historicalEvidence: AgentRunExecutionEvidenceView[] | null
@@ -10346,9 +10348,7 @@ function RunExecutionContent({
   const hasActiveTool = toolActivityGroupHasActiveTool(activeToolItems, run.status)
   const hasActiveCompaction = executionHasActiveCompaction(processItems)
   const trailingProcessItem = groupedProcessItems[groupedProcessItems.length - 1]
-  const progressPhase = effectiveProgress?.runtimePhaseEpoch != null && effectiveProgress.runtimePhaseEpoch !== run.executionEpoch
-    ? undefined : effectiveProgress?.runtimePhase
-  const runtimePhase = windowedEvidence ? windowPage.runtimePhase : progressPhase
+  const { runtimePhase, runtimeThinkingTitle } = runtimeFeedback
   const showThinkingFeedback = run.status === 'running'
     && runtimePhase === 'thinking'
     && (!windowedEvidence || !windowPage.hasNewer)
@@ -10372,7 +10372,7 @@ function RunExecutionContent({
     processItems,
     Boolean(finalBody),
     runtimePhase,
-    windowedEvidence ? windowPage.runtimeThinkingTitle : effectiveProgress?.runtimeThinkingTitle
+    runtimeThinkingTitle
   )
   const phaseFeedback = (!windowedEvidence || !windowPage.hasNewer) ? initialFeedback : null
   const feedback = run.status === 'waiting' ? localizedAgentRunWaitDetail(run.waitReason) ?? uiAttribute('等待继续')
@@ -10628,6 +10628,14 @@ export function RunExecutionDisclosure({
 }): JSX.Element | null {
   const client = useThreadClient()
   const mobile = useMobileLayout()
+  const restoredPhase = useRuntimePhase(threadId, run, windowedEvidence)
+  // Current feedback is shared by the summary and content. An empty restored
+  // phase must also clear old feedback, including after Core reconnection.
+  const runtimeFeedback = windowedEvidence ? restoredPhase : {
+    runtimePhase: progress?.runtimePhaseEpoch != null && progress.runtimePhaseEpoch !== run.executionEpoch
+      ? undefined : progress?.runtimePhase,
+    runtimeThinkingTitle: progress?.runtimeThinkingTitle
+  }
   const recovery = useEditingRecovery()
   const recoveryKey = `mobile-run:${threadId}:${run.id}`
   const nonTerminal = NON_TERMINAL_RUNS.has(run.status)
@@ -10716,6 +10724,7 @@ export function RunExecutionDisclosure({
       windowedEvidence={windowedEvidence}
       liveRevision={liveRevision}
       progress={progress}
+      runtimeFeedback={runtimeFeedback}
       threadId={threadId}
       truncatedEvidence={truncatedEvidence}
       historicalEvidence={historicalEvidence}
@@ -10727,10 +10736,8 @@ export function RunExecutionDisclosure({
     />
   ) : null
 
-  const restoredPhase = useRuntimePhase(threadId, run, windowedEvidence)
   const phaseSummary = executionPhaseFeedback(run.status, progress?.items ?? [], Boolean(finalBody),
-    restoredPhase.runtimePhase ?? (progress?.runtimePhaseEpoch != null && progress.runtimePhaseEpoch !== run.executionEpoch ? undefined : progress?.runtimePhase),
-    restoredPhase.runtimePhase ? restoredPhase.runtimeThinkingTitle : progress?.runtimeThinkingTitle)
+    runtimeFeedback.runtimePhase, runtimeFeedback.runtimeThinkingTitle)
   const liveSummary = cancelling ? uiAttribute("正在停止")
     : run.status === 'waiting' ? localizedAgentRunWaitDetail(run.waitReason) ?? uiAttribute("等待继续")
       : run.failure?.code === 'runtime_network_interrupted' ? uiAttribute("正在恢复连接")
