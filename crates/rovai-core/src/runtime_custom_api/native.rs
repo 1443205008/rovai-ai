@@ -1,7 +1,6 @@
 //! The native files remain authoritative. Projection contains references and digests, never keys.
 use super::{
-    ClaudeApiModels, ConnectionMode, ConnectionObservation, CustomApiConfiguration, CustomApiModel,
-    CustomApiSnapshot, NativeCredential,
+    ClaudeApiModels, ConnectionMode, CustomApiConfiguration, CustomApiModel, CustomApiSnapshot,
 };
 use crate::{
     agent_profile::AdapterKind, command::canonical_json_digest,
@@ -14,36 +13,6 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
-
-tokio::task_local! {
-    static SAVE_LAUNCHER: (Option<String>, Option<String>);
-}
-
-/// The save owner supplies an already-discovered launcher. An unknown automatic
-/// target remains unknown; native reads within the commit never search PATH.
-pub async fn with_save_launcher<T>(
-    launcher: Option<String>,
-    configuration: &RuntimeStartupConfiguration,
-    operation: impl std::future::Future<Output = T>,
-) -> T {
-    SAVE_LAUNCHER
-        .scope((launcher, configured_path(configuration)), operation)
-        .await
-}
-
-fn configured_path(configuration: &RuntimeStartupConfiguration) -> Option<String> {
-    configuration
-        .environment
-        .iter()
-        .find(|entry| {
-            if cfg!(windows) {
-                entry.name.eq_ignore_ascii_case("PATH")
-            } else {
-                entry.name == "PATH"
-            }
-        })
-        .map(|entry| entry.value.clone())
-}
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -116,32 +85,12 @@ impl NativeContext {
             kind,
             directory,
             artifact_root: super::storage_root(database, kind)?,
-            launcher: configuration.program_path.clone().or_else(|| {
-                if kind == AdapterKind::CodexCli {
-                    if let Ok((launcher, path)) = SAVE_LAUNCHER.try_with(Clone::clone) {
-                        // A changed PATH has no confirmed automatic launcher.
-                        return (path == configured_path(configuration))
-                            .then_some(launcher)
-                            .flatten();
-                    }
-                    #[cfg(not(test))]
-                    return crate::runtime_discovery::resolve_active_command_path("codex")
-                        .map(|p| p.to_string_lossy().into_owned());
-                }
-                None
-            }),
+            launcher: configuration.program_path.clone(),
             codex_source: None,
             environment,
         };
         if kind == AdapterKind::CodexCli {
             context.codex_source = super::codex_source::resolve(&context);
-            if context.launcher.is_none() && SAVE_LAUNCHER.try_with(|_| ()).is_ok() {
-                context.codex_source = Some(super::codex_source::Source {
-                    base: context.directory.join("config.toml"),
-                    target_unconfirmed: true,
-                    ..Default::default()
-                });
-            }
         }
         Ok(context)
     }
@@ -170,133 +119,8 @@ impl NativeContext {
             self.environment.get(name).cloned()
         }
     }
-    /// Local metadata commands must see the same launcher environment (notably
-    /// the shell-discovered PATH used by npm shims) as the actual native process.
-    pub fn for_command(&self, command: &tokio::process::Command) -> Self {
-        let mut context = self.clone();
-        if context.environment.is_empty() {
-            context.environment = std::env::vars().collect();
-        }
-        for (name, value) in command.as_std().get_envs() {
-            let name = name.to_string_lossy().into_owned();
-            if cfg!(windows) {
-                context
-                    .environment
-                    .retain(|key, _| !key.eq_ignore_ascii_case(&name));
-            }
-            if let Some(value) = value {
-                context
-                    .environment
-                    .insert(name, value.to_string_lossy().into_owned());
-            } else {
-                context.environment.remove(&name);
-            }
-        }
-        context
-    }
-    pub fn login_command(&self, program: Option<&str>) -> String {
-        let claude = self.kind == AdapterKind::ClaudeCodeCli;
-        let binary = if claude { "claude" } else { "codex" };
-        let variable = if claude {
-            "CLAUDE_CONFIG_DIR"
-        } else {
-            "CODEX_HOME"
-        };
-        let home = self
-            .env(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-            .map(PathBuf::from)
-            .or_else(dirs::home_dir);
-        let custom_directory = home.is_none_or(|home| {
-            self.directory != home.join(if claude { ".claude" } else { ".codex" })
-        });
-        login_command(
-            binary,
-            program,
-            custom_directory.then_some((variable, self.directory.to_string_lossy().as_ref())),
-            cfg!(windows),
-        )
-    }
 }
 
-pub(super) fn login_command(
-    binary: &str,
-    program: Option<&str>,
-    directory: Option<(&str, &str)>,
-    windows: bool,
-) -> String {
-    let quote = |value: &str| {
-        if windows {
-            format!("'{}'", value.replace('\'', "''"))
-        } else {
-            format!("'{}'", value.replace('\'', "'\\''"))
-        }
-    };
-    let command = program
-        .map(|path| format!("{}{}", if windows { "& " } else { "" }, quote(path)))
-        .unwrap_or_else(|| binary.into());
-    let prefix = directory
-        .map(|(name, value)| {
-            if windows {
-                format!("$env:{name}={}; ", quote(value))
-            } else {
-                format!("{name}={} ", quote(value))
-            }
-        })
-        .unwrap_or_default();
-    format!(
-        "{prefix}{command}{}",
-        if binary == "codex" { " login" } else { "" }
-    )
-}
-
-// Only the existing native auth check populates this short-lived identity hint.
-// It stores no credentials, starts no process and never participates in admission.
-type LoginHints = std::collections::BTreeMap<PathBuf, (String, std::time::Instant, String)>;
-static CLAUDE_LOGIN_HINTS: std::sync::OnceLock<std::sync::Mutex<LoginHints>> =
-    std::sync::OnceLock::new();
-fn login_evidence(directory: &Path) -> Result<String> {
-    canonical_json_digest(&json!([
-        read_bytes(&directory.join("settings.json"))?,
-        read_bytes(&directory.join(".credentials.json"))?
-    ]))
-}
-pub fn record_claude_login(payload: &Value, directory: Option<&Path>) {
-    let Some(status) =
-        super::claude_native::Identity::from_auth_status(payload).official_login_status()
-    else {
-        return; // An API check does not establish an official login identity.
-    };
-    let Some(directory) = directory.or_else(|| payload["configDirectory"].as_str().map(Path::new))
-    else {
-        return;
-    };
-    if !directory.is_absolute() {
-        return;
-    }
-    if payload["configDirectory"]
-        .as_str()
-        .is_some_and(|path| Path::new(path) != directory)
-    {
-        return;
-    }
-    let Ok(evidence) = login_evidence(directory) else {
-        return;
-    };
-    if let Ok(mut hints) = CLAUDE_LOGIN_HINTS.get_or_init(Default::default).lock() {
-        hints.retain(|_, (_, time, _)| time.elapsed() < std::time::Duration::from_secs(300));
-        hints.insert(
-            directory.to_owned(),
-            (evidence, std::time::Instant::now(), status.into()),
-        );
-    }
-}
-fn observed_claude_login(directory: &Path) -> Option<String> {
-    let evidence = login_evidence(directory).ok()?;
-    let hints = CLAUDE_LOGIN_HINTS.get()?.lock().ok()?;
-    let (old, time, status) = hints.get(directory)?;
-    (*old == evidence && time.elapsed() < std::time::Duration::from_secs(300))
-        .then(|| status.clone())
-}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CredentialSource {
@@ -329,26 +153,12 @@ pub enum CredentialSource {
         directory: PathBuf,
     },
 }
-impl CredentialSource {
-    pub fn claude_variable(&self) -> &str {
-        match self {
-            Self::Environment { name } => name,
-            Self::Json { variable, .. } => variable,
-            _ => "ANTHROPIC_AUTH_TOKEN",
-        }
-    }
-}
 pub struct NativeRead {
     pub configuration: CustomApiConfiguration,
-    pub credential: NativeCredential,
-    pub observation: ConnectionObservation,
-    pub revision: String,
+    pub credential_version: String,
     pub connection_revision: String,
-    pub edit_revision: String,
-    pub catalog_revision: Option<String>,
     pub source: CredentialSource,
     pub provider_id: String,
-    pub catalog_path: Option<PathBuf>,
     pub configured_model_ids: Option<Vec<String>>,
 }
 impl NativeRead {
@@ -358,7 +168,7 @@ impl NativeRead {
             configured_model_ids: self.configured_model_ids.clone(),
             context: context.clone(),
             native_revision: self.connection_revision.clone(),
-            credential_version: self.credential.version.clone(),
+            credential_version: self.credential_version.clone(),
             credential_source: self.source.clone(),
             provider_id: self.provider_id.clone(),
             explicit_mode,
@@ -530,391 +340,295 @@ fn claude_cloud_route(context: &NativeContext, settings: &Value) -> Option<(Stri
         .find(|(flag, _, _)| matches!(get(flag).as_str(), "1" | "true"))
         .map(|(_, base, route)| (route.to_string(), get(base)))
 }
-fn credential(context: &NativeContext, source: &CredentialSource) -> Result<NativeCredential> {
-    let (value, version) = credential_value(source, context)?;
-    let available = value.is_some()
-        || matches!(
-            source,
-            CredentialSource::Helper { .. }
-                | CredentialSource::NativeManaged { .. }
-                | CredentialSource::CodexProvider { .. }
-                | CredentialSource::ClaudeCloud { .. }
-        );
-    let (kind, label, writable) = match source {
-        CredentialSource::Missing => ("native_file", "未配置".into(), true),
-        CredentialSource::Environment { name } => {
-            ("environment_reference", format!("环境变量 {name}"), false)
-        }
-        CredentialSource::Json { path, .. } | CredentialSource::Toml { path, .. } => {
-            ("native_file", path.display().to_string(), true)
-        }
-        CredentialSource::Helper { path } => (
-            "native_managed",
-            format!("{} 的 apiKeyHelper", path.display()),
-            true,
-        ),
-        CredentialSource::NativeManaged { .. } => {
-            ("native_managed", "Codex 原生凭据管理".into(), false)
-        }
-        CredentialSource::CodexProvider { mechanism, .. } => (
-            "native_managed",
-            if mechanism == "auth" {
-                "由原生命令提供"
-            } else {
-                "由原生 AWS 认证提供"
-            }
-            .into(),
-            true,
-        ),
-        CredentialSource::ClaudeCloud { route, .. } => ("native_cloud", route.clone(), false),
-    };
-    Ok(NativeCredential {
-        status: if available {
-            "available"
-        } else if matches!(source, CredentialSource::Missing) {
-            "missing"
-        } else {
-            "invalid_reference"
-        }
-        .into(),
-        source: kind.into(),
-        source_label: label,
-        version,
-        source_writable: writable,
-        can_replace: true,
-        can_clear: writable,
-        restriction: None,
-        remedy: (!writable)
-            .then(|| "可输入新 Key 并保存到原生连接；清除原有引用请在该来源操作。".into()),
-        value,
-    })
-}
 pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Result<NativeRead> {
-    ensure!(supported(context.kind), "此智能体没有原生连接编辑入口。");
+    ensure!(supported(context.kind), "此智能体不使用此原生连接读取器。");
     let path = context.path();
-    let (configuration, source, initial_mode, login_status, provider_id, catalog_path, evidence) =
-        if context.kind == AdapterKind::ClaudeCodeCli {
-            let settings = read_json(&path)?;
-            ensure!(
-                settings.is_object(),
-                "Claude Code 原生设置必须是 JSON 对象。"
-            );
-            let get = |name: &str| {
-                settings
-                    .get("env")
-                    .and_then(|e| e.get(name))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .or_else(|| context.env(name))
-                    .unwrap_or_default()
+    let (configuration, source, initial_mode, provider_id, evidence) = if context.kind
+        == AdapterKind::ClaudeCodeCli
+    {
+        let settings = read_json(&path)?;
+        ensure!(
+            settings.is_object(),
+            "Claude Code 原生设置必须是 JSON 对象。"
+        );
+        let get = |name: &str| {
+            settings
+                .get("env")
+                .and_then(|e| e.get(name))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| context.env(name))
+                .unwrap_or_default()
+        };
+        let mut source = CredentialSource::Missing;
+        for name in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
+            if !get(name).is_empty() {
+                source = if settings.get("env").and_then(|e| e.get(name)).is_some() {
+                    CredentialSource::Json {
+                        path: path.clone(),
+                        pointer: format!("/env/{name}"),
+                        variable: name.into(),
+                    }
+                } else {
+                    CredentialSource::Environment { name: name.into() }
+                };
+                break;
+            }
+        }
+        if matches!(source, CredentialSource::Missing)
+            && settings["apiKeyHelper"]
+                .as_str()
+                .is_some_and(|v| !v.is_empty())
+        {
+            source = CredentialSource::Helper { path: path.clone() };
+        }
+        let cloud = claude_cloud_route(context, &settings);
+        if let Some((route, _)) = &cloud {
+            source = CredentialSource::ClaudeCloud {
+                path: path.clone(),
+                route: route.clone(),
             };
-            let mut source = CredentialSource::Missing;
-            for name in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
-                if !get(name).is_empty() {
-                    source = if settings.get("env").and_then(|e| e.get(name)).is_some() {
-                        CredentialSource::Json {
-                            path: path.clone(),
-                            pointer: format!("/env/{name}"),
-                            variable: name.into(),
-                        }
-                    } else {
-                        CredentialSource::Environment { name: name.into() }
-                    };
-                    break;
+        }
+        let base_url = cloud
+            .as_ref()
+            .map(|(_, url)| url.clone())
+            .unwrap_or_else(|| get("ANTHROPIC_BASE_URL"));
+        let native_api =
+            !base_url.is_empty() || !matches!(source, CredentialSource::Missing) || cloud.is_some();
+        let models = ClaudeApiModels {
+            model: {
+                let model = get("ANTHROPIC_MODEL");
+                if model.is_empty() {
+                    settings["model"].as_str().unwrap_or_default().into()
+                } else {
+                    model
                 }
-            }
-            if matches!(source, CredentialSource::Missing)
-                && settings["apiKeyHelper"]
-                    .as_str()
-                    .is_some_and(|v| !v.is_empty())
-            {
-                source = CredentialSource::Helper { path: path.clone() };
-            }
-            let cloud = claude_cloud_route(context, &settings);
-            if let Some((route, _)) = &cloud {
-                source = CredentialSource::ClaudeCloud {
-                    path: path.clone(),
-                    route: route.clone(),
-                };
-            }
-            let base_url = cloud
-                .as_ref()
-                .map(|(_, url)| url.clone())
-                .unwrap_or_else(|| get("ANTHROPIC_BASE_URL"));
-            let native_api = !base_url.is_empty()
-                || !matches!(source, CredentialSource::Missing)
-                || cloud.is_some();
-            let login = read_json(&context.directory.join(".credentials.json"))?;
-            let observed_login = observed_claude_login(&context.directory);
-            let login_status = if !get("CLAUDE_CODE_OAUTH_TOKEN").is_empty()
-                || login["claudeAiOauth"]["accessToken"]
-                    .as_str()
-                    .is_some_and(|v| !v.is_empty())
-            {
-                "signed_in"
-            } else {
-                observed_login.as_deref().unwrap_or("unknown")
-            };
-            let models = ClaudeApiModels {
-                model: {
-                    let model = get("ANTHROPIC_MODEL");
-                    if model.is_empty() {
-                        settings["model"].as_str().unwrap_or_default().into()
-                    } else {
-                        model
-                    }
-                },
-                reasoning_model: get("ANTHROPIC_REASONING_MODEL"),
-                haiku_model: get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
-                sonnet_model: get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
-                opus_model: get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
-            };
-            // Connection selection and authenticated identity are separate observations.
-            let initial = Some(if native_api {
-                ConnectionMode::CustomApi
-            } else {
-                ConnectionMode::OfficialLogin
-            });
-            let config = CustomApiConfiguration::ClaudeCode {
-                mode: initial,
-                base_url: if native_api && cloud.is_none() && base_url.is_empty() {
-                    "https://api.anthropic.com".into()
-                } else {
-                    base_url
-                },
-                models,
-            };
-            (
-                config,
-                source,
-                initial,
-                login_status.to_owned(),
-                String::new(),
-                None,
-                settings,
-            )
+            },
+            reasoning_model: get("ANTHROPIC_REASONING_MODEL"),
+            haiku_model: get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+            sonnet_model: get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
+            opus_model: get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
+        };
+        // Connection selection and authenticated identity are separate observations.
+        let initial = Some(if native_api {
+            ConnectionMode::CustomApi
         } else {
-            let doc: toml::Value = serde_json::from_value(codex_config(context)?)?;
-            let get = |name: &str| doc.get(name);
-            let provider_id = get("model_provider")
+            ConnectionMode::OfficialLogin
+        });
+        let config = CustomApiConfiguration::ClaudeCode {
+            mode: initial,
+            base_url: if native_api && cloud.is_none() && base_url.is_empty() {
+                "https://api.anthropic.com".into()
+            } else {
+                base_url
+            },
+            models,
+        };
+        (config, source, initial, String::new(), settings)
+    } else {
+        let doc: toml::Value = serde_json::from_value(codex_config(context)?)?;
+        let get = |name: &str| doc.get(name);
+        let provider_id = get("model_provider")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("openai")
+            .to_owned();
+        // Built-in OpenAI is selected from the native registry, not an identically
+        // named user table that Codex does not use.
+        let provider = (provider_id != "openai")
+            .then(|| doc.get("model_providers").and_then(|p| p.get(&provider_id)))
+            .flatten();
+        let ps = |name: &str| {
+            provider
+                .and_then(|p| p.get(name))
                 .and_then(toml::Value::as_str)
-                .unwrap_or("openai")
-                .to_owned();
-            // Built-in OpenAI is selected from the native registry, not an identically
-            // named user table that Codex does not use.
-            let provider = (provider_id != "openai")
-                .then(|| doc.get("model_providers").and_then(|p| p.get(&provider_id)))
-                .flatten();
-            let ps = |name: &str| {
-                provider
-                    .and_then(|p| p.get(name))
-                    .and_then(toml::Value::as_str)
-                    .unwrap_or("")
-                    .to_owned()
+                .unwrap_or("")
+                .to_owned()
+        };
+        let mut base_url = ps("base_url");
+        if provider_id == "openai" {
+            base_url = get("openai_base_url")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| context.env("OPENAI_BASE_URL"))
+                .unwrap_or_default();
+        }
+        let auth_path = context.native_home().join("auth.json");
+        let store = doc
+            .get("cli_auth_credentials_store")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("file");
+        let managed_store = matches!(store, "keyring" | "auto" | "ephemeral");
+        let auth = codex_auth_file(context, store)?;
+        let native_login = provider_id == "openai"
+            || provider
+                .and_then(|p| p.get("requires_openai_auth"))
+                .and_then(toml::Value::as_bool)
+                == Some(true);
+        let mut source = CredentialSource::Missing;
+        if provider
+            .and_then(|p| p.get("auth"))
+            .and_then(|a| a.get("command"))
+            .and_then(toml::Value::as_str)
+            .is_some_and(|v| !v.trim().is_empty())
+        {
+            source = CredentialSource::CodexProvider {
+                path: super::codex_source::field_file(context, &["model_providers", &provider_id]),
+                provider: provider_id.clone(),
+                mechanism: "auth".into(),
             };
-            let mut base_url = ps("base_url");
-            if provider_id == "openai" {
-                base_url = get("openai_base_url")
-                    .and_then(toml::Value::as_str)
-                    .map(str::to_owned)
-                    .or_else(|| context.env("OPENAI_BASE_URL"))
-                    .unwrap_or_default();
-            }
-            let auth_path = context.native_home().join("auth.json");
-            let store = doc
-                .get("cli_auth_credentials_store")
-                .and_then(toml::Value::as_str)
-                .unwrap_or("file");
-            let managed_store = matches!(store, "keyring" | "auto" | "ephemeral");
-            let auth = codex_auth_file(context, store)?;
-            let native_login = provider_id == "openai"
-                || provider
-                    .and_then(|p| p.get("requires_openai_auth"))
-                    .and_then(toml::Value::as_bool)
-                    == Some(true);
-            let mut source = CredentialSource::Missing;
-            if provider
-                .and_then(|p| p.get("auth"))
-                .and_then(|a| a.get("command"))
-                .and_then(toml::Value::as_str)
-                .is_some_and(|v| !v.trim().is_empty())
-            {
-                source = CredentialSource::CodexProvider {
-                    path: super::codex_source::field_file(
-                        context,
-                        &["model_providers", &provider_id],
-                    ),
-                    provider: provider_id.clone(),
-                    mechanism: "auth".into(),
-                };
-            } else if provider.and_then(|p| p.get("aws")).is_some() {
-                source = CredentialSource::CodexProvider {
-                    path: super::codex_source::field_file(
-                        context,
-                        &["model_providers", &provider_id],
-                    ),
-                    provider: provider_id.clone(),
-                    mechanism: "aws".into(),
-                };
-            } else if !ps("env_key").is_empty() {
-                source = if ps("env_key") == "ROVAI_UNCONFIGURED_API_KEY" {
-                    CredentialSource::Missing
-                } else {
-                    CredentialSource::Environment {
-                        name: ps("env_key"),
-                    }
-                };
-            } else if !ps("experimental_bearer_token").is_empty() {
-                source = CredentialSource::Toml {
-                    path: super::codex_source::field_file(
-                        context,
-                        &["model_providers", &provider_id, "experimental_bearer_token"],
-                    ),
-                    keys: vec![
-                        "model_providers".into(),
-                        provider_id.clone(),
-                        "experimental_bearer_token".into(),
-                    ],
-                };
-            } else if native_login && context.env("OPENAI_API_KEY").is_some_and(|v| !v.is_empty()) {
-                source = CredentialSource::Environment {
-                    name: "OPENAI_API_KEY".into(),
-                };
-            } else if native_login
-                && !managed_store
+        } else if provider.and_then(|p| p.get("aws")).is_some() {
+            source = CredentialSource::CodexProvider {
+                path: super::codex_source::field_file(context, &["model_providers", &provider_id]),
+                provider: provider_id.clone(),
+                mechanism: "aws".into(),
+            };
+        } else if !ps("env_key").is_empty() {
+            source = if ps("env_key") == "ROVAI_UNCONFIGURED_API_KEY" {
+                CredentialSource::Missing
+            } else {
+                CredentialSource::Environment {
+                    name: ps("env_key"),
+                }
+            };
+        } else if !ps("experimental_bearer_token").is_empty() {
+            source = CredentialSource::Toml {
+                path: super::codex_source::field_file(
+                    context,
+                    &["model_providers", &provider_id, "experimental_bearer_token"],
+                ),
+                keys: vec![
+                    "model_providers".into(),
+                    provider_id.clone(),
+                    "experimental_bearer_token".into(),
+                ],
+            };
+        } else if native_login && context.env("OPENAI_API_KEY").is_some_and(|v| !v.is_empty()) {
+            source = CredentialSource::Environment {
+                name: "OPENAI_API_KEY".into(),
+            };
+        } else if native_login
+            && !managed_store
+            && auth["auth_mode"] != "chatgpt"
+            && auth["OPENAI_API_KEY"]
+                .as_str()
+                .is_some_and(|v| !v.is_empty())
+        {
+            source = CredentialSource::Json {
+                path: auth_path,
+                pointer: "/OPENAI_API_KEY".into(),
+                variable: "OPENAI_API_KEY".into(),
+            };
+        } else if native_login
+            && (managed_store
+                || auth["tokens"]["access_token"]
+                    .as_str()
+                    .is_some_and(|v| !v.is_empty()))
+        {
+            source = CredentialSource::NativeManaged {
+                directory: context.directory.clone(),
+            };
+        }
+        let has_token = auth["tokens"]["access_token"]
+            .as_str()
+            .is_some_and(|v| !v.is_empty());
+        let native_api = provider_id != "openai"
+            || !base_url.is_empty()
+            || (!managed_store
                 && auth["auth_mode"] != "chatgpt"
                 && auth["OPENAI_API_KEY"]
                     .as_str()
-                    .is_some_and(|v| !v.is_empty())
-            {
-                source = CredentialSource::Json {
-                    path: auth_path,
-                    pointer: "/OPENAI_API_KEY".into(),
-                    variable: "OPENAI_API_KEY".into(),
-                };
-            } else if native_login
-                && (managed_store
-                    || auth["tokens"]["access_token"]
-                        .as_str()
-                        .is_some_and(|v| !v.is_empty()))
-            {
-                source = CredentialSource::NativeManaged {
-                    directory: context.directory.clone(),
-                };
-            }
-            let has_token = auth["tokens"]["access_token"]
-                .as_str()
-                .is_some_and(|v| !v.is_empty());
-            let login_status = if managed_store {
-                // A fallback file alone cannot prove which keyring/file identity Codex selects.
-                "unknown"
-            } else if has_token {
-                "signed_in"
-            } else if matches!(source, CredentialSource::NativeManaged { .. }) {
-                "unknown"
-            } else {
-                "signed_out"
-            };
-            let native_api = provider_id != "openai"
-                || !base_url.is_empty()
-                || (!managed_store
-                    && auth["auth_mode"] != "chatgpt"
-                    && auth["OPENAI_API_KEY"]
-                        .as_str()
-                        .is_some_and(|v| !v.is_empty()))
-                || !matches!(
-                    source,
-                    CredentialSource::Missing | CredentialSource::NativeManaged { .. }
-                );
-            // An official OAuth login alone is not a reusable API credential. Keep
-            // its login status, but never offer it as the key for a newly entered URL.
-            if !native_api && has_token && !managed_store {
-                source = CredentialSource::Missing;
-            }
-            let default_model = get("model")
-                .and_then(toml::Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let catalog_path = get("model_catalog_json")
-                .and_then(toml::Value::as_str)
-                .map(PathBuf::from)
-                .map(|p| {
-                    if p.is_absolute() {
-                        p
-                    } else {
-                        super::codex_source::field_file(context, &["model_catalog_json"])
-                            .parent()
-                            .unwrap_or(context.native_home())
-                            .join(p)
-                    }
-                });
-            let mut models = Vec::new();
-            let catalog = catalog_path.as_ref().map(|p| read_json(p)).transpose()?;
-            if let Some(catalog) = &catalog {
-                let entries = catalog["models"].as_array().ok_or_else(|| {
-                    anyhow::anyhow!("Codex model_catalog_json 不是完整原生目录。")
-                })?;
-                for entry in entries.iter().filter(|e| {
-                    catalog["rovai_model_ids"]
-                        .as_array()
-                        .map(|ids| ids.contains(&e["slug"]))
-                        .unwrap_or_else(|| e["visibility"] == "list")
-                }) {
-                    if let Some(id) = entry["slug"].as_str() {
-                        models.push(CustomApiModel {
-                            row_id: row_id(id)?,
-                            id: id.into(),
-                            display_name: entry["display_name"].as_str().unwrap_or_default().into(),
-                        });
-                    }
+                    .is_some_and(|v| !v.is_empty()))
+            || !matches!(
+                source,
+                CredentialSource::Missing | CredentialSource::NativeManaged { .. }
+            );
+        // An official OAuth login alone is not a reusable API credential. Keep
+        // its login status, but never offer it as the key for a newly entered URL.
+        if !native_api && has_token && !managed_store {
+            source = CredentialSource::Missing;
+        }
+        let default_model = get("model")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let catalog_path = get("model_catalog_json")
+            .and_then(toml::Value::as_str)
+            .map(PathBuf::from)
+            .map(|p| {
+                if p.is_absolute() {
+                    p
+                } else {
+                    super::codex_source::field_file(context, &["model_catalog_json"])
+                        .parent()
+                        .unwrap_or(context.native_home())
+                        .join(p)
+                }
+            });
+        let mut models = Vec::new();
+        let catalog = catalog_path.as_ref().map(|p| read_json(p)).transpose()?;
+        if let Some(catalog) = &catalog {
+            let entries = catalog["models"]
+                .as_array()
+                .ok_or_else(|| anyhow::anyhow!("Codex model_catalog_json 不是完整原生目录。"))?;
+            for entry in entries.iter().filter(|e| {
+                catalog["rovai_model_ids"]
+                    .as_array()
+                    .map(|ids| ids.contains(&e["slug"]))
+                    .unwrap_or_else(|| e["visibility"] == "list")
+            }) {
+                if let Some(id) = entry["slug"].as_str() {
+                    models.push(CustomApiModel {
+                        row_id: row_id(id)?,
+                        id: id.into(),
+                        display_name: entry["display_name"].as_str().unwrap_or_default().into(),
+                    });
                 }
             }
-            if !default_model.is_empty() && !models.iter().any(|m| m.id == default_model) {
-                models.insert(
-                    0,
-                    CustomApiModel {
-                        row_id: row_id(&default_model)?,
-                        id: default_model.clone(),
-                        display_name: String::new(),
-                    },
-                );
-            }
-            let default_row_id = models
-                .iter()
-                .find(|m| m.id == default_model)
-                .map(|m| m.row_id.clone());
-            let initial = if native_api
-                || get("forced_login_method").and_then(toml::Value::as_str) == Some("api")
-            {
-                Some(ConnectionMode::CustomApi)
-            } else if managed_store
-                && doc.get("forced_login_method").and_then(toml::Value::as_str) != Some("chatgpt")
-            {
-                None // Native storage may contain either API or ChatGPT auth; do not guess.
-            } else {
-                Some(ConnectionMode::OfficialLogin)
-            };
-            let configuration = CustomApiConfiguration::Codex {
-                mode: initial,
-                base_url: if initial == Some(ConnectionMode::CustomApi) && base_url.is_empty() {
-                    "https://api.openai.com/v1".into()
-                } else {
-                    base_url
+        }
+        if !default_model.is_empty() && !models.iter().any(|m| m.id == default_model) {
+            models.insert(
+                0,
+                CustomApiModel {
+                    row_id: row_id(&default_model)?,
+                    id: default_model.clone(),
+                    display_name: String::new(),
                 },
-                models,
-                default_model,
-                default_row_id,
-            };
-            (
-                configuration,
-                source,
-                initial,
-                login_status.to_owned(),
-                provider_id,
-                catalog_path,
-                json!({"config": doc, "catalog": catalog, "auth": auth}),
-            )
+            );
+        }
+        let default_row_id = models
+            .iter()
+            .find(|m| m.id == default_model)
+            .map(|m| m.row_id.clone());
+        let initial = if native_api
+            || get("forced_login_method").and_then(toml::Value::as_str) == Some("api")
+        {
+            Some(ConnectionMode::CustomApi)
+        } else if managed_store
+            && doc.get("forced_login_method").and_then(toml::Value::as_str) != Some("chatgpt")
+        {
+            None // Native storage may contain either API or ChatGPT auth; do not guess.
+        } else {
+            Some(ConnectionMode::OfficialLogin)
         };
+        let configuration = CustomApiConfiguration::Codex {
+            mode: initial,
+            base_url: if initial == Some(ConnectionMode::CustomApi) && base_url.is_empty() {
+                "https://api.openai.com/v1".into()
+            } else {
+                base_url
+            },
+            models,
+            default_model,
+            default_row_id,
+        };
+        (
+            configuration,
+            source,
+            initial,
+            provider_id,
+            json!({"config": doc, "catalog": catalog, "auth": auth}),
+        )
+    };
     // No read writes files or imports a key; stale Rovai mode metadata is ignored.
     if let Ok(url) = url::Url::parse(configuration.base_url()) {
         ensure!(
@@ -922,7 +636,7 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
             "原生接口地址含账号或密码，无法安全回显；请在该原生来源改为独立凭据后重试。"
         );
     }
-    let credential = credential(context, &source)?;
+    let (_, credential_version) = credential_value(&source, context)?;
     let configured_model_ids = if configuration.mode() != Some(ConnectionMode::OfficialLogin)
         && evidence
             .pointer("/catalog/rovai_managed_model_list")
@@ -938,81 +652,26 @@ pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Resul
     } else {
         None
     };
-    let revision = canonical_json_digest(
-        &json!({"configuration":configuration, "credential":credential.version, "native":evidence,
-            "target":super::native_file::target(&path)?}),
-    )?;
     let connection_revision = connection_digest(
         context,
         &configuration,
         &source,
-        &credential.version,
+        &credential_version,
         &provider_id,
         initial_mode,
         &evidence,
         true,
     )?;
-    let edit_revision = connection_digest(
-        context,
-        &configuration,
-        &source,
-        &credential.version,
-        &provider_id,
-        initial_mode,
-        &evidence,
-        false,
-    )?;
-    let catalog_revision = catalog_path
-        .as_ref()
-        .map(|path| {
-            canonical_json_digest(&json!([
-                super::native_file::target(path)?,
-                evidence["catalog"]
-            ]))
-        })
-        .transpose()?;
     Ok(NativeRead {
         configuration,
-        credential,
-        observation: ConnectionObservation {
-            initial_mode,
-            login_status: if context
-                .codex_source
-                .as_ref()
-                .is_some_and(|s| s.target_unconfirmed)
-            {
-                "unknown".into()
-            } else {
-                login_status.into()
-            },
-            conflict: super::codex_source::observation(context).or_else(|| {
-                if context
-                    .codex_source
-                    .as_ref()
-                    .is_some_and(|s| s.rejected_selector)
-                    && evidence.pointer("/config/profile").is_some()
-                {
-                    Some(
-                    "原生配置包含已停用的 profile 选择字段；保存连接时会移除，其他旧配置内容保留。"
-                        .into(),
-                )
-                } else {
-                    None
-                }
-            }),
-            login_command: context.login_command(None),
-        },
-        revision,
+        credential_version,
         connection_revision,
-        edit_revision,
-        catalog_revision,
         source,
         provider_id,
-        catalog_path,
         configured_model_ids,
     })
 }
-/// Execution compatibility is deliberately narrower than the whole-file edit CAS.
+/// Execution compatibility tracks the selected native connection.
 /// Only the selected connection participates; unrelated providers, UI, Skills,
 /// MCP and native bookkeeping are owned by their existing runtime mechanisms.
 fn connection_digest(

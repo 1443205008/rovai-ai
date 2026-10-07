@@ -664,20 +664,6 @@ async fn claude_code_probe_at(path: &Path) -> ClaudeCodeCapabilityProbe {
         Ok(output)
     }
     .await;
-    if let Ok(output) = &auth
-        && let Ok(value) = serde_json::from_slice::<Value>(&output.stdout.bytes)
-    {
-        let snapshot =
-            rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::ClaudeCodeCli)
-                .ok()
-                .flatten();
-        rovai_core::runtime_custom_api::native::record_claude_login(
-            &value,
-            snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.context.directory.as_path()),
-        );
-    }
     let authenticated = match auth {
         Ok(output) if output.status.success() => {
             serde_json::from_slice::<Value>(&output.stdout.bytes)
@@ -2793,7 +2779,6 @@ fn classify_acp_probe_failure(detail: &str) -> AgentRuntimeProbeStatus {
 
 pub async fn codex_model_catalog(path: &Path) -> Result<Value> {
     let mut command = runtime_command(path, Some(AdapterKind::CodexCli));
-    let custom_api = rovai_core::runtime_discovery::custom_api_snapshot(AdapterKind::CodexCli)?;
     command.args(["app-server", "--listen", "stdio://"]);
     let mut process =
         RuntimeProbeProcess::spawn(&mut command, DEFAULT_CAPTURE_LIMIT, DEFAULT_CLEANUP_TIMEOUT)
@@ -2853,15 +2838,6 @@ pub async fn codex_model_catalog(path: &Path) -> Result<Value> {
                 if request_id > 101 {
                     bail!("model/list exceeded the pagination safety limit");
                 }
-            }
-            if let Some(api) = &custom_api {
-                models.retain(|model| {
-                    model
-                        .get("model")
-                        .or_else(|| model.get("id"))
-                        .and_then(Value::as_str)
-                        .is_some_and(|id| api.model_is_configured(id))
-                });
             }
             Ok::<_, anyhow::Error>(json!({"data": models}))
         };

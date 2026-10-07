@@ -676,8 +676,6 @@ pub struct AdapterCapabilitySnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdapterInstallationView {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub custom_api_model_ids: Option<Vec<String>>,
     pub id: String,
     pub adapter_kind: AdapterKind,
     pub executable_path: String,
@@ -1307,18 +1305,6 @@ impl AgentProfileService {
                 .context("failed to list Adapter installations")?
         };
         for installation in &mut installations {
-            installation.custom_api_model_ids =
-                crate::runtime_startup::load(database, installation.adapter_kind)?
-                    .configuration
-                    .custom_api_snapshot
-                    .as_ref()
-                    .and_then(|api| api.configured_model_ids.clone());
-            if let (Some(ids), Some(snapshot)) = (
-                &installation.custom_api_model_ids,
-                &mut installation.snapshot,
-            ) {
-                snapshot.models.retain(|model| ids.contains(&model.id));
-            }
             installation.member_runtime_defaults =
                 if installation.enabled && installation.path_state == "valid" {
                     Some(member_runtime_defaults(installation.adapter_kind))
@@ -2657,21 +2643,6 @@ impl AgentProfileService {
                 model: envelope.payload.model.clone(),
                 permissions: envelope.payload.permissions.clone(),
             };
-            if let (Some(api), ModelSelection::Explicit { model_id, .. }) = (
-                crate::runtime_startup::snapshot_from_connection(
-                    transaction,
-                    binding.adapter_kind,
-                )?,
-                &binding.model,
-            ) && !api.model_is_configured(model_id)
-            {
-                return Ok(CommandHandlerResult::rejected(
-                    "runtime_model_unavailable",
-                    json!({
-                        "modelId": model_id, "detail": "当前接口未配置此模型，请重新选择。"
-                    }),
-                ));
-            }
             // Saving configuration records exact user intent. Dynamic catalog validation
             // belongs to the real Host, including when an old diagnostic failed.
             if let ModelSelection::Explicit { model_id, options } = &binding.model
@@ -3691,7 +3662,6 @@ fn installation_from_row(row: &Row<'_>) -> rusqlite::Result<AdapterInstallationV
         chrono::Utc::now(),
     );
     Ok(AdapterInstallationView {
-        custom_api_model_ids: None,
         id: row.get(0)?,
         adapter_kind,
         executable_path: row.get(2)?,
@@ -4244,16 +4214,6 @@ fn resolve_frozen_runtime_binding_with_snapshot(
             crate::runtime_startup::snapshot_from_connection(transaction, binding.adapter_kind)?
         }
     };
-    if let (Some(api), ModelSelection::Explicit { model_id, .. }) = (&custom_api, &binding.model)
-        && !api.model_is_configured(model_id)
-    {
-        return Ok(Err(runtime_blocker(
-            "runtime_model_unavailable",
-            json!({
-                "modelId": model_id, "detail": "当前接口未配置此模型，请重新选择。"
-            }),
-        )));
-    }
     let installation_id = binding.installation_id.clone();
     let installation = transaction
         .query_row(
@@ -6400,7 +6360,8 @@ mod slow_tests {
         // The admission/rebind seam freezes the connection, including a frozen absence.
         // Reusing this fixture keeps executable/permission evidence identical across cases.
         let api = crate::runtime_custom_api::CustomApiSnapshot {
-            configured_model_ids: Some(vec![frozen.model.model_id.clone()]),
+            // A legacy editor catalog is identity evidence, never an extra model allowlist.
+            configured_model_ids: Some(vec!["retired-editor-only-model".into()]),
             configuration: crate::runtime_custom_api::CustomApiConfiguration::Codex {
                 mode: Some(crate::runtime_custom_api::ConnectionMode::CustomApi),
                 base_url: "https://old.example/prefix".into(),
@@ -6455,11 +6416,10 @@ mod slow_tests {
         );
         let mut stored =
             serde_json::to_value(crate::runtime_startup::RuntimeStartupConfiguration {
-                custom_api: Some(rotated.configuration.clone()),
                 ..Default::default()
             })
             .unwrap();
-        stored.as_object_mut().unwrap().remove("customApi");
+        stored["customApi"] = json!({"retired":true});
         stored["_connectionMode"] = json!("official_login");
         transaction.execute("INSERT INTO runtime_startup_setting(runtime_kind,revision,configuration_json,updated_at) VALUES('codex-cli',2,?1,datetime('now'))", [stored.to_string()]).unwrap();
         assert_eq!(

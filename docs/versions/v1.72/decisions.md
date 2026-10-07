@@ -314,9 +314,10 @@ AI 创建队员的专项窗口内生命周期继续由 D09 对应合同约束。
 <a id="v1-72-d14"></a>
 ## V1.72-D14：连接编辑以原生来源为权威，不另建 Key 副本
 
-- 状态：accepted
+- 状态：superseded
 - 日期：2026-10-04
-- 当前权威：[Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md)、[Runtime Catalog](../../architecture/runtime-catalog-boundaries.md#claude-code-与-codex-原生连接编辑)与[启动设置 UI](../../ui/components/app-shell-navigation.md#原生连接设置)
+- 后续撤销：User 于 2026-10-07 取消连接编辑；原生配置不改写，执行只读兼容与脱敏保留。
+- 当前权威：[Runtime Launch v52](../../contracts/runtime-launch-and-verification-v52.md)、[Runtime Catalog](../../architecture/runtime-catalog-boundaries.md#claude-code-与-codex-原生配置)与[启动设置 UI](../../ui/components/app-shell-navigation.md#原生连接设置)
 
 ### 背景与选择
 
@@ -333,9 +334,10 @@ Skills、MCP 和会话，亦不采用。字段级合并及原生文件原子写�
 <a id="v1-72-d15"></a>
 ## V1.72-D15：保存切换原生连接，撤回双路径保留与启动覆盖
 
-- 状态：accepted
+- 状态：superseded
 - 日期：2026-10-04
-- 当前权威：[Runtime Launch v48](../../contracts/runtime-launch-and-verification-v48.md)、[Runtime Catalog](../../architecture/runtime-catalog-boundaries.md#claude-code-与-codex-原生连接编辑)与[启动设置 UI](../../ui/components/app-shell-navigation.md#原生连接设置)
+- 后续撤销：User 于 2026-10-07 取消连接编辑；原生配置不改写，执行只读兼容与脱敏保留。
+- 当前权威：[Runtime Launch v52](../../contracts/runtime-launch-and-verification-v52.md)、[Runtime Catalog](../../architecture/runtime-catalog-boundaries.md#claude-code-与-codex-原生配置)与[启动设置 UI](../../ui/components/app-shell-navigation.md#原生连接设置)
 
 ### 背景与选择
 

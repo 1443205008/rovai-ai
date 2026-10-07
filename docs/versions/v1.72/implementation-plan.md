@@ -1091,3 +1091,43 @@ JavaScript 全套与文档门禁在仅含受版本控制文件及本次补丁的
 - 完整 `test:settings-workspace` 在进入未修改的连接编辑页时失败：夹具初始 `startup` 为空，
   `runtime.startup.observe` 返回 undefined，触发 `connectionReadError` 读取异常；本轮目录专项通过
   不代表完整设置页回归通过。截图及专项运行脚本保存在本次 Thread 的 `runtime-status-copy` 附件目录。
+
+
+## 2026-10-07 移除自定义 API 配置
+
+基线 `a5e202ab`，分支 `rovai/remove-custom-api`；已整合原本的本地保存修复及主线 `f67682c8`。
+按 User 明确取消要求执行 [Runtime Launch v52](../../contracts/runtime-launch-and-verification-v52.md)。
+
+- 移除 Claude/Codex 官方/API 单选、连接登录状态、URL、Key、模型映射及模型列表；普通启动设置保持。
+- Core、Desktop 与 Web 均退出 `runtime.startup.observe`，封闭输入拒绝旧连接补丁和 `apiKey/customApi`。
+- 删除原生写回、迁移、认证切换、目录生成及辅助账号/来源进程；没有修改用户已有文件或凭据。
+- 原生 `model/list` 与能力继续拥有模型选择，移除编辑器的二次过滤；不实现此前取消的推理强度 fallback。
+- 历史冻结快照解析、只读原生来源摘要、Host 兼容与输出脱敏保留；没有新增数据表或模型上下文。
+
+Rust 退役清单（生产写路径与合同在同一改动退出）：
+
+| 原 owner | 处理与保留边界 |
+| --- | --- |
+| `configuration_rejects_ambiguous_connections_and_preserves_optional_models` | 退出 API 表单校验；普通字段及旧请求拒绝由 `runtime_startup::tests::environment_validation_preserves_values_and_rejects_ambiguous_or_reserved_names` 拥有 |
+| `native_editor_reads_without_writing_merges_fields_and_never_copies_credentials` | 替换为 `startup_saves_preserve_native_files_and_merge_only_local_preferences`，沿用 SQLite fixture 验证 CAS、合并、提交失败、隐藏旧凭据及原生文件不变 |
+| `native_sources_keep_environment_references_and_replace_only_the_selected_connection` | 替换为 `native_sources_are_read_only_and_keep_secrets_out_of_snapshots`，保留文件/环境/命令/AWS/云认证来源、无执行读取、脱敏、解析错误、symlink 身份与冻结兼容；原生替换/迁移 case 随 writer 退出 |
+| `native_catalog_preserves_internal_entries_and_unknown_ids_use_only_native_defaults` | 原生目录生成生产路径退出，不再为此功能生成目录 |
+| Windows `windows_native_edits_preserve_acl_and_guard_publication` | 原生写回/ACL 发布生产路径退出；通用私有存储与 Windows 平台测试保留 |
+
+上述模块可执行 owner 从跨平台合计 5 项收窄为 2 项；不是删除当前 Migration、权限、恢复或脱敏合同。
+Core 阻塞环境读取、正式检查代次与本地保存 4 个 owner 原位保留；profile 冻结/重绑定 owner 保留。
+API 专用 UI/CLI fixture 退役，启动页 UI 回归由既有 settings-workspace fixture 继续承担；更新其本地提交 mock，
+并修正 About 页已更名的链接选择器，未改变 About 产品代码。
+
+已完成的定向验证：
+
+- `pnpm typecheck` 通过；启动草稿、队员参数、Main 白名单 3 个 Vitest 文件共 39 项通过。
+- `runtime_custom_api::` 的 2 个保留 owner（extended-tests）、Core 环境与保存的 4 个 owner
+  （slow-tests）、profile 冻结/重绑定 1 个 owner（slow-tests）均实际执行并通过。
+- 完整 `test:settings-workspace` 通过；两种启动页均无 API 入口，保存只发送一次本地请求。
+  独立 Electron fixture 使用 `/var/folders/pm/zmpfxggd0glcm8vx3p3y3mmr0000gq/T/rovai-settings-workspace-test-Yv9gdQ/user-data`，
+  Skill Library 为其 `managed-skill-library/`，不启动 Core 或真实 Runtime。
+  已检查日夜主题、1040×700 与 200% 截图，Impeccable 机械检查无发现。
+
+完整仓库回归、文档门禁与安装证据在完成后补记；文档检查使用干净受版本控制检出，
+不修改主工作区被 Git 忽略的原型稿及其过期链接。

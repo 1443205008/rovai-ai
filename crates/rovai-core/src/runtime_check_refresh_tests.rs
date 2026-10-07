@@ -193,7 +193,6 @@ fn configuration(
     process_path: &Path,
 ) -> RuntimeStartupConfiguration {
     RuntimeStartupConfiguration {
-        custom_api: None,
         custom_api_snapshot: None,
         program_path: path.map(|path| path.to_string_lossy().to_string()),
         environment: vec![
@@ -396,49 +395,29 @@ async fn fresh_formal_and_draft_checks_preserve_program_selection_and_private_st
         captures,
         "same-write retries remain idempotent"
     );
-    // Write-only API-key input never appears in the RPC's successful readback or errors.
-    let api_kind = AdapterKind::ClaudeCodeCli;
-    let current = fixture
-        .core
-        .handle_runtime_startup("runtime.startup.get", json!({"runtimeKind":api_kind}))
-        .await
-        .unwrap();
-    let saved = fixture.core.handle_runtime_startup("runtime.startup.save", json!({
-        "runtimeKind":api_kind,"edits":[
-            {"path":["mode"],"before":current["configuration"]["customApi"]["mode"],"after":"custom_api","label":"连接方式"},
-            {"path":["baseUrl"],"before":current["configuration"]["customApi"]["baseUrl"],"after":"https://offline.invalid/prefix","label":"地址"},
-            {"path":["credentialVersion"],"before":current["credential"]["version"],"after":"replace","label":"API Key"}
-        ],"apiKey":{"action":"replace","value":"private-rpc-test-key"}
-    })).await.unwrap();
-    assert_eq!(saved["credential"]["status"], "available");
-    assert!(!saved.to_string().contains("private-rpc-test-key"));
-    let read = fixture
-        .core
-        .handle_runtime_startup("runtime.startup.get", json!({"runtimeKind":api_kind}))
-        .await
-        .unwrap();
-    assert_eq!(read["configuration"], saved["configuration"]);
-    assert!(
-        fixture
-            .core
-            .runtime_search_environment
-            .read()
-            .await
-            .startup_configuration(api_kind)
-            .custom_api_snapshot
-            .is_some()
-    );
-    let bad = fixture
-        .core
-        .handle_runtime_startup(
-            "runtime.startup.save",
-            json!({
-                "runtimeKind":api_kind,"edits":[],"apiKey":{"action":"private-rpc-test-key"}
-            }),
-        )
-        .await
-        .unwrap_err();
-    assert!(!format!("{bad:#}").contains("private-rpc-test-key"));
+    // Removed editor requests are closed, including old clients holding a Key draft.
+    for kind in [AdapterKind::ClaudeCodeCli, AdapterKind::CodexCli] {
+        for removed in [
+            json!({"apiKey":{"action":"replace","value":"private-rpc-test-key"}}),
+            json!({"edits":[{"path":["baseUrl"],"before":null,"after":"https://unused.invalid","label":"URL"}]}),
+        ] {
+            let mut params = removed;
+            params["runtimeKind"] = json!(kind);
+            let error = fixture
+                .core
+                .handle_runtime_startup("runtime.startup.save", params)
+                .await
+                .unwrap_err();
+            assert!(!format!("{error:#}").contains("private-rpc-test-key"));
+        }
+        assert!(
+            fixture
+                .core
+                .handle_runtime_startup("runtime.startup.observe", json!({"runtimeKind":kind}))
+                .await
+                .is_err()
+        );
+    }
     // A stalled optional native process cannot own the settings page's response.
     let stalled = fixture.program("settings-only", "0.159.2", true);
     let native_home = fixture.root.join("settings-native");
@@ -457,36 +436,10 @@ async fn fresh_formal_and_draft_checks_preserve_program_selection_and_private_st
     let local = tokio::time::timeout(Duration::from_secs(2), fixture.settings())
         .await
         .expect("local settings must not await the stalled auxiliary child");
-    assert_eq!(
-        local["configuration"]["customApi"]["baseUrl"],
-        "https://local.example"
-    );
-    assert!(
-        !stalled.parent().unwrap().join("environment.txt").exists(),
-        "get must not launch a native process"
-    );
-    let observer = {
-        let core = fixture.core.clone();
-        tokio::spawn(async move {
-            core.handle_runtime_startup("runtime.startup.observe", json!({"runtimeKind":KIND}))
-                .await
-        })
-    };
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !fixture.root.join("probe-started").exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-    // The auxiliary child is held at a file barrier while both operations finish.
-    let local = tokio::time::timeout(Duration::from_secs(2), fixture.settings())
-        .await
-        .unwrap();
-    assert_eq!(
-        local["configuration"]["customApi"]["baseUrl"],
-        "https://local.example"
-    );
+    assert!(local["configuration"].get("customApi").is_none());
+    assert!(local.get("credential").is_none());
+    assert!(!local.to_string().contains("local-fake-key"));
+    assert!(!stalled.parent().unwrap().join("environment.txt").exists());
     let saved = tokio::time::timeout(Duration::from_secs(2), fixture.core.handle_runtime_startup("runtime.startup.save", json!({
         "runtimeKind":KIND,"edits":[{"path":["environment","VISIBLE_SETTING"],"before":null,"after":"on","label":""}]
     }))).await.unwrap().unwrap();
@@ -501,16 +454,10 @@ async fn fresh_formal_and_draft_checks_preserve_program_selection_and_private_st
     let error = tokio::time::timeout(Duration::from_secs(2), fixture.core.handle_runtime_startup("runtime.startup.save", json!({
         "runtimeKind":KIND,"edits":[{"path":["baseUrl"],"before":"https://local.example","after":"https://never-write.example","label":""}]
     }))).await.unwrap().unwrap_err();
-    assert!(error.to_string().contains("写入目标尚未确认"));
+    assert!(error.to_string().contains("修改字段无效"));
     assert_eq!(
         std::fs::read(native_home.join("config.toml")).unwrap(),
         original
-    );
-    std::fs::write(fixture.root.join("probe-release"), "release").unwrap();
-    let observed = observer.await.unwrap().unwrap();
-    assert!(
-        observed["connectionReadError"].is_null(),
-        "failed supplement never clears the local form"
     );
     fixture.close().await;
 }
@@ -646,162 +593,46 @@ async fn local_saves_finish_while_environment_capture_is_held_and_never_launch_w
             .configuration
             .custom_api_snapshot
             .unwrap();
-        for operation in ["url", "replace", "model", "environment", "clear", "program"] {
-            let current = fixture
-                .core
-                .handle_runtime_startup("runtime.startup.get", json!({"runtimeKind":kind}))
-                .await
-                .unwrap();
-            let config: RuntimeStartupConfiguration =
-                serde_json::from_value(current["configuration"].clone()).unwrap();
-            let editable = rovai_core::runtime_startup::editable(kind, &config);
-            let (path, before, after, key) = match operation {
-                "url" => (
-                    json!(["baseUrl"]),
-                    editable["baseUrl"].clone(),
-                    json!("https://still-offline.invalid"),
-                    json!({"action":"keep"}),
-                ),
-                "replace" | "clear" => (
-                    json!(["credentialVersion"]),
-                    current["credential"]["version"].clone(),
-                    json!(operation),
-                    if operation == "replace" {
-                        json!({"action":"replace","value":"replacement-fixture-key"})
-                    } else {
-                        json!({"action":"clear"})
-                    },
-                ),
-                "model" if kind == AdapterKind::ClaudeCodeCli => (
-                    json!(["claudeModels", "model"]),
-                    editable["claudeModels"]["model"].clone(),
-                    json!("offline-model"),
-                    json!({"action":"keep"}),
-                ),
-                "model" => {
-                    let row = editable["codexModels"]
-                        .as_object()
-                        .unwrap()
-                        .keys()
-                        .next()
-                        .unwrap()
-                        .clone();
-                    (
-                        json!(["codexModels", row, "id"]),
-                        editable["codexModels"][&row]["id"].clone(),
-                        json!("offline-model"),
-                        json!({"action":"keep"}),
-                    )
-                }
-                "environment" => (
-                    json!(["environment", "VISIBLE_LOCAL"]),
-                    Value::Null,
-                    json!("updated"),
-                    json!({"action":"keep"}),
-                ),
-                _ => (
-                    json!(["programPath"]),
-                    editable["programPath"].clone(),
-                    Value::Null,
-                    json!({"action":"keep"}),
-                ),
-            };
-            let mut edits =
-                vec![json!({"path":path,"before":before,"after":after,"label":"fixture"})];
-            if !matches!(operation, "environment" | "program") {
-                edits.push(json!({"path":["nativeRevision"],"before":current["nativeRevision"],"after":current["nativeRevision"],"label":"source"}));
-            }
-            let saved = tokio::time::timeout(
-                Duration::from_secs(2),
-                fixture.core.handle_runtime_startup(
-                    "runtime.startup.save",
-                    json!({"runtimeKind":kind,"edits":edits,"apiKey":key}),
-                ),
-            )
-            .await
-            .expect("a blocked reader must not delay local commit")
-            .unwrap();
-            assert!(
-                saved.get("status").is_none(),
-                "unexpected conflict: {operation}"
-            );
-            assert!(saved["credential"].get("value").is_none());
+        let original = std::fs::read(&file).unwrap();
+        for (path, before, after) in [
+            (
+                json!(["environment", "VISIBLE_LOCAL"]),
+                Value::Null,
+                json!("updated"),
+            ),
+            (
+                json!(["programPath"]),
+                json!(program.to_string_lossy()),
+                Value::Null,
+            ),
+        ] {
+            let saved = tokio::time::timeout(Duration::from_secs(2), fixture.core.handle_runtime_startup("runtime.startup.save", json!({
+                "runtimeKind":kind,"edits":[{"path":path,"before":before,"after":after,"label":"fixture"}]
+            }))).await.expect("a blocked reader must not delay local commit").unwrap();
+            assert!(saved.get("status").is_none());
             assert!(!saved.to_string().contains("fixture-key"));
             assert_eq!(captures.load(Ordering::SeqCst), 1);
             assert_eq!(
                 serde_json::to_value(&*fixture.core.runtime_discovery.read().await).unwrap(),
                 discovery
             );
-            assert!(
-                !refresh.is_finished(),
-                "save cannot release/restart the existing reader"
-            );
-        }
-        assert!(
-            old.assert_current().is_err(),
-            "old connection snapshots cannot be reused by a later Run"
-        );
-        if kind == AdapterKind::CodexCli {
-            // Restore-auto has no confirmed launcher in this isolated fixture.
-            // A following API save must not guess the default file or discover
-            // another executable, even though that local file is readable.
-            let before = std::fs::read(&file).unwrap();
-            let rejected = fixture
-                .core
-                .handle_runtime_startup(
-                    "runtime.startup.save",
-                    json!({"runtimeKind":kind,"edits":[{
-                    "path":["baseUrl"],"before":"https://still-offline.invalid",
-                    "after":"https://unconfirmed.invalid","label":"URL"
-                }],"apiKey":{"action":"keep"}}),
-                )
-                .await
-                .unwrap_err();
-            assert!(rejected.to_string().contains("目标尚未确认"));
-            assert_eq!(std::fs::read(&file).unwrap(), before);
-
-            // An independent owner read can supply the known automatic
-            // launcher. Later saves reuse it, until PATH selects another source.
-            let configuration = fixture
-                .core
-                .runtime_search_environment
-                .read()
-                .await
-                .startup_configuration(kind);
-            rovai_core::runtime_custom_api::native::with_save_launcher(
-                Some(program.to_string_lossy().into_owned()),
-                &configuration,
-                fixture
-                    .core
-                    .handle_runtime_startup("runtime.startup.get", json!({"runtimeKind":kind})),
-            )
-            .await
-            .unwrap();
-            let confirmed = fixture.core.handle_runtime_startup("runtime.startup.save", json!({
-                "runtimeKind":kind,"edits":[{"path":["baseUrl"],"before":"https://still-offline.invalid",
-                    "after":"https://confirmed.invalid","label":"URL"}],"apiKey":{"action":"keep"}
-            })).await.unwrap();
-            assert_eq!(
-                confirmed["configuration"]["customApi"]["baseUrl"],
-                "https://confirmed.invalid"
-            );
-            fixture.core.handle_runtime_startup("runtime.startup.save", json!({
-                "runtimeKind":kind,"edits":[{"path":["environment","PATH"],"before":null,
-                    "after":"/unconfirmed-runtime-path","label":"PATH"}],"apiKey":{"action":"keep"}
-            })).await.unwrap();
-            let rejected = fixture.core.handle_runtime_startup("runtime.startup.save", json!({
-                "runtimeKind":kind,"edits":[{"path":["baseUrl"],"before":"https://confirmed.invalid",
-                    "after":"https://wrong-source.invalid","label":"URL"}],"apiKey":{"action":"keep"}
-            })).await.unwrap_err();
-            assert!(rejected.to_string().contains("目标尚未确认"));
-            assert_eq!(captures.load(Ordering::SeqCst), 1);
             assert!(!refresh.is_finished());
+            assert_eq!(
+                std::fs::read(&file).unwrap(),
+                original,
+                "startup save must never edit native configuration"
+            );
         }
-        assert!(
-            std::fs::read_to_string(file)
+        old.assert_current().unwrap();
+        // An external native edit still fences the previous connection.
+        std::fs::write(
+            &file,
+            String::from_utf8(original)
                 .unwrap()
-                .contains("keep_unknown")
-        );
+                .replace("fixture-key", "rotated-key"),
+        )
+        .unwrap();
+        assert!(old.assert_current().is_err());
     }
     let generation = fixture
         .core

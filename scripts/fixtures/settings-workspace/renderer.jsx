@@ -6,6 +6,7 @@ import { HostWebSettings } from '@renderer/HostWebSettings'
 import { GeneralSettings } from '@renderer/GeneralSettings'
 import { AppearanceSettings } from '@renderer/AppearanceSettings'
 import { NotificationSettings } from '@renderer/NotificationSettings'
+import { editableSnapshot, configurationFromSnapshot, withSnapshotValue } from '@renderer/runtime-startup-editor'
 import { RuntimeInstallationsPanel } from '@renderer/MemberManagement'
 import { ChannelSettings } from '@renderer/ChannelSettings'
 import { RuntimeMonitoring } from '@renderer/RuntimeMonitoring'
@@ -121,9 +122,16 @@ Object.assign(window, { rovai: {
   request: async (method, params = {}) => {
     await request(method, params)
     if (method === 'runtime.startup.get') return clone(state.startup[params.runtimeKind] ?? { runtimeKind: params.runtimeKind, revision: 0, configuration: { programPath: null, environment: [] } })
-    if (method === 'runtime.startup.observe') return clone(state.startup[params.runtimeKind])
     if (method === 'runtime.startup.save') {
-      const settings = { runtimeKind: params.runtimeKind, revision: params.expectedRevision + 1, configuration: clone(params.configuration) }
+      const previous = state.startup[params.runtimeKind] ?? { runtimeKind: params.runtimeKind, revision: 0, configuration: { programPath: null, environment: [] } }
+      let next = editableSnapshot(previous.configuration)
+      const conflicts = params.edits.flatMap(edit => {
+        const current = edit.path[0] === 'programPath' ? next.programPath : next.environment[edit.path[1]] ?? null
+        return current !== edit.before && current !== edit.after ? [{ ...edit, current }] : []
+      })
+      if (conflicts.length) return { status: 'conflict', latest: clone(previous), conflicts }
+      for (const edit of params.edits) next = withSnapshotValue(next, edit.path, edit.after)
+      const settings = { runtimeKind: params.runtimeKind, revision: previous.revision + 1, configuration: configurationFromSnapshot(next), reconnectRequired: true }
       state.startup[params.runtimeKind] = settings
       return clone(settings)
     }
