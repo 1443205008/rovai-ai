@@ -4,6 +4,7 @@ module.exports=async({window,run,click,settle,waitFor,navigate,capture,noOverflo
  const text=()=>run('document.body.textContent')
  const save='button[type="submit"]'
  await navigate('claude-code-cli');await waitFor('document.querySelector("input[type=url]")')
+ await capture('claude-api-day')
  assert.equal(await run(`document.querySelector(${JSON.stringify(save)}).disabled`),true,'native first read does not require saving')
  assert.ok((await text()).includes('已从原生配置读取，无需重新输入。'))
  assert.equal(await run('document.querySelector(".runtime-custom-api-key-input input").value'),'')

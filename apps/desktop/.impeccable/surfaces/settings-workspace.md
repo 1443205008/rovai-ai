@@ -347,7 +347,8 @@ Login help keeps the local command and one account-management sentence. Center t
 use the conversation copy/check icon with a brief success state and no success message. Keep actionable copy failures.
 
 Claude has five optional model mappings; Codex has ID, optional display name and one default per model
-row. Keep row identities independent of edited IDs. No provider, reference-model, capability or protocol editor.
+row. Keep row identities independent of edited IDs. Use a clear 20px trash glyph in a 36px delete control.
+No provider, reference-model, capability or protocol editor.
 Native configuration is read on entry and after saving, with retry on read failure only. Existing credentials
 show a status-derived mask; the eye reveals new input only. Clear is explicit and separate from sign-out.
 
@@ -355,8 +356,9 @@ Save only edited fields. Preserve unrelated external changes and every draft whi
 inline. Read-only credential references may still be replaced through a supported native binding; show a
 specific source and remedy only for actual restrictions. A URL text change does not invalidate a static key.
 
-State shared native-config impact once. Omit protocol labels and HTTP warnings. Keep Base URL/default-model/key semantics in concise field
-labels and collapsed help. No persistent reread control, Test API button, polling or extra save confirmation.
+Omit shared native-config impact, request-content notices, protocol labels, HTTP warnings and configuration-help sections.
+Keep field labels, actual credential status, action feedback and specific restrictions or errors.
+No persistent reread control, Test API button, polling or extra save confirmation.
 Porcelain Day / Steel Night and the <=600px stacked model rows retain the existing surfaces and control names.
-Current behavior is owned by [Runtime Launch v47](../../../../docs/contracts/runtime-launch-and-verification-v47.md)
+Current behavior is owned by [Runtime Launch v49](../../../../docs/contracts/runtime-launch-and-verification-v49.md)
 and [native connection UI](../../../../docs/ui/components/app-shell-navigation.md#原生连接设置).
