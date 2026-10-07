@@ -6,10 +6,16 @@ authority: version-scope-and-status
 design_status: confirmed
 implementation_status: in_progress
 model_context_change: true
-last_updated: 2026-10-07
+last_updated: 2026-10-08
 ---
 
 # Rovai-ai v1.72：Lark 独立渠道
+
+## 移除 Core 全局 heartbeat
+
+按 User 批复移除 legacy 500ms maintenance：Single Chat/non-batch、取消和 Runtime 授权响应由提交后通知推进；
+Automation、预算和文本收尾按业务 deadline／实际失败退避等待。保留普通 Delivery 的单一 Scheduler 与原有
+低频恢复，不新增持久队列或调度框架。原消费者、计时器和验证边界见[验收记录](heartbeat-removal-verification.md)。
 
 ## 并行实施：Member CLI
 

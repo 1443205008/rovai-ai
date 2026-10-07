@@ -4,7 +4,7 @@ contract: message-delivery
 version: 10
 status: accepted
 authority: public-message-delivery-route-reconciliation
-last_updated: 2026-09-19
+last_updated: 2026-10-08
 ---
 
 # Message Delivery v10
@@ -23,3 +23,11 @@ The ordinary Scheduler's startup scan and its fixed 30-second fallback both ente
 work exists, so already-stranded rows self-heal and are immediately eligible without a schema migration,
 database backfill or separate maintenance event. Reconciliation creates no Run by itself and does not weaken
 Runtime, membership-lifetime, execution-isolation or cleanup checks.
+
+The ordinary Scheduler remains the sole owner of batch claims and retains its fixed 30-second recovery
+fallback. The inherited v9 clause retaining a separate 500ms maintenance task is superseded: non-batch Runs
+now wake after committed input, terminal settlement, readiness or resource release; time-dependent duties use
+their own effective deadlines. The legacy loop and its registration are removed. Non-batch preparation remains
+independent of ordinary batch coordination and must not claim or dispatch ordinary batch work. See
+[current execution drivers](../architecture/public-a2a-message-delivery.md) and
+[shutdown ownership](../architecture/planned-shutdown.md).

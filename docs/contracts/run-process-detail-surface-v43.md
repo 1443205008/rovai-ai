@@ -5,7 +5,7 @@ authority: execution-evidence-block-and-group-pagination
 status: accepted
 version: 43
 source_version: v1.72
-last_updated: 2026-10-02
+last_updated: 2026-10-08
 ---
 
 # Run Process Detail Surface v43
@@ -13,6 +13,13 @@ last_updated: 2026-10-02
 继承 [v42](run-process-detail-surface-v42.md) 的 operation 生命周期、结果永久预算与纯 Built-in Shell
 关联。本版将可见 Run 主线与展开的 Tool 组分别分页，取代 v40 按已读取操作数量切割组摘要的窗口规则。
 不新增数据库表、迁移、持久化分组身份或第二份 Evidence；不改变模型上下文和执行事实。
+
+## 终态文本定稿重试
+
+终态事务提交后，正文定稿失败继续保留原 buffer、失败次数与 `retry_not_before`。Core 按最早有效重试时间
+安排一次性唤醒，首次 500ms，指数退避至 30s；没有失败或成功清空后不再设 timer。此规则替代继承合同中
+依赖 AgentRun maintenance tick 的驱动描述。重试仅调用既有文本定稿路径，保留相同 block ID、revision、
+change sequence 与事件 shape，不重放已提交的领域事务，不建立第二份正文／恢复状态。
 
 ## 读取投影与身份
 

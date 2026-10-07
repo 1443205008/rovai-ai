@@ -2814,7 +2814,8 @@ mod tests {
                 |row| row.get::<_, i64>(0),
             )
             .unwrap();
-        service
+        while take_run_wake(database) {}
+        let result = service
             .send(
                 database,
                 &user_envelope(
@@ -2829,7 +2830,22 @@ mod tests {
                     },
                 ),
             )
-            .unwrap()
+            .unwrap();
+        if result.result.status != CommandResultStatus::Rejected {
+            assert!(
+                take_run_wake(database),
+                "committed Single Chat sends must wake the run driver"
+            );
+        }
+        result
+    }
+
+    fn take_run_wake(database: &Database) -> bool {
+        std::future::Future::poll(
+            std::pin::pin!(database.execution_wake.runs.notified()).as_mut(),
+            &mut std::task::Context::from_waker(std::task::Waker::noop()),
+        )
+        .is_ready()
     }
 
     #[test]
@@ -4169,6 +4185,7 @@ mod tests {
                 [&first_run_id],
             )
             .unwrap();
+        while take_run_wake(&database) {}
         runtime
             .succeed_agent_run(
                 &mut database,
@@ -4193,6 +4210,10 @@ mod tests {
             )
             .unwrap();
 
+        assert!(
+            take_run_wake(&database),
+            "terminal commit must wake FIFO publication"
+        );
         let ready = ready_pending_inputs(&database).unwrap();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].pending_input_id, pending_input_id);
@@ -4207,6 +4228,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(published.result.status, CommandResultStatus::Accepted);
+        assert!(
+            take_run_wake(&database),
+            "publishing the head must wake dispatch"
+        );
         let queued_run_id = published.result.payload["agentRunId"].as_str().unwrap();
         let queued_refs = load_agent_run_source_attachments(&database, queued_run_id, 0).unwrap();
         assert_eq!(queued_refs.len(), 1);

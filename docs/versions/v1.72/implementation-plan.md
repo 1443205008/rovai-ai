@@ -3,7 +3,7 @@ document_type: implementation-plan
 version: v1.72
 authority: version-implementation-and-acceptance
 status: in_progress
-last_updated: 2026-10-07
+last_updated: 2026-10-08
 ---
 
 # v1.72 实施与验收
@@ -1154,3 +1154,10 @@ API 专用 UI/CLI fixture 退役，启动页 UI 回归由既有 settings-workspa
   旧版备份为 `/Applications/Rovai AI.backup-before-remove-custom-api-20261007-9e09d4b1.app`，保留不删除。
 - 日常 App/Helper/Host PID `39161/39165/39166/39167/39168` 安装后均存活，日常数据未改动。
   新版本已安装，当前会话仍运行旧版；退出后应从规范安装路径显式打开新版，不从备份启动。
+
+
+## 2026-10-08 移除 Core legacy heartbeat
+
+用户授权范围为完整迁移消费者并删除全局 500ms 循环，保持既有事务、执行、恢复和渠道重试语义。
+替代入口、保留计时器、测试 owner 和实际结果统一记录在[验收记录](heartbeat-removal-verification.md)。
+普通 batch Scheduler 的 claim owner 与 30 秒恢复入口继续保留；没有新增通用 Job 表、事件总线或持久状态机。
