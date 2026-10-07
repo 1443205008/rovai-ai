@@ -322,8 +322,7 @@ function ImageTile({ source }: { source: GalleryImage }): JSX.Element {
     displayName={source.image.displayName} ready={Boolean(url)} busy={action} inPreview={open}
     hasPath={Boolean(fileLocation.location?.path)}
     revealLabel={menu && source.kind === 'attachment' && client.attachments.kind === 'native' ? attachmentRevealLabel(client.platform) : undefined}
-    onAction={value => { void runImageAction(value) }} onPreview={showPreview}
-    onRefresh={() => setRefreshRevision(value => value + 1)} />
+    onAction={value => { void runImageAction(value) }} onPreview={showPreview} />
 
   const createOwnedUrl = useCallback((blob: Blob): string => {
     const nextUrl = URL.createObjectURL(blob)

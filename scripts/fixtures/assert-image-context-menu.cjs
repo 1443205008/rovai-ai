@@ -96,9 +96,9 @@ module.exports = async (window, run, capture, output) => {
     await run('window.campOpenTest.scrollAttachmentSurface("user")')
     await waitFor(`document.querySelector(${JSON.stringify(userTile + ' img')})?.naturalWidth === 640`)
     await openMenu(userTile, true)
-    assert.deepEqual(await labels(), ['复制图片', '保存图片…', '查看大图', '复制完整路径', '在 Finder 中显示', '刷新图片'])
+    assert.deepEqual(await labels(), ['复制图片', '保存图片…', '查看大图', '复制完整路径', '在 Finder 中显示'])
     await key('End')
-    assert.equal(await run('document.activeElement.textContent'), '刷新图片')
+    assert.equal(await run('document.activeElement.textContent'), '在 Finder 中显示')
     await key('Down')
     assert.equal(await run('document.activeElement.textContent'), '复制图片', 'keyboard navigation loops')
     await capture('image-menu-day')
@@ -155,7 +155,8 @@ module.exports = async (window, run, capture, output) => {
 
     await run('document.documentElement.dataset.theme = "night"')
     await openMenu(agentTile)
-    assert.deepEqual(await labels(), ['复制图片', '保存图片…', '查看大图', '刷新图片'], 'Runtime images have image actions without fabricated file paths')
+    assert.deepEqual(await labels(), ['复制图片', '保存图片…', '查看大图'], 'Runtime images have image actions without fabricated file paths or refresh')
+    assert.equal(await run('document.querySelectorAll(".image-context-menu [role=separator]").length'), 0, 'no empty file-action group')
     await capture('image-menu-night-runtime')
     await key('Escape')
 
@@ -167,12 +168,15 @@ module.exports = async (window, run, capture, output) => {
     await run('navigator.clipboard.write = window.originalImageClipboardWrite; void 0')
 
     await run(`window.campOpenTest.showImages({displayName:'broken.png',mediaType:'image/png',data:'AQID'})`)
-    const broken = '[data-message-id="image-message-0"] .image-tile-preview'
-    await waitFor('document.querySelector(".image-tile-placeholder")?.textContent.includes("不可用")')
+    const broken = '[data-message-id="image-message-1"] .image-tile-preview'
+    await run(`document.querySelector(${JSON.stringify(broken)}).scrollIntoView({block:'center'})`)
+    await waitFor(`document.querySelector(${JSON.stringify(broken)})?.textContent.includes("不可用")`)
     await openMenu(broken, true)
     assert.equal(await run('document.querySelector(".image-context-menu [role=menuitem]").getAttribute("aria-disabled")'), 'true')
+    assert.equal((await labels()).includes('刷新图片'), false)
+    await key('Escape')
     await run(`window.campOpenTest.showImages(${JSON.stringify(image)})`)
-    await choose('刷新图片')
+    await run('window.dispatchEvent(new Event("focus"))')
     await waitFor(`document.querySelector(${JSON.stringify(broken + ' img')})?.naturalWidth === 640`)
 
     window.webContents.debugger.attach('1.3')
@@ -188,7 +192,7 @@ module.exports = async (window, run, capture, output) => {
     assert.equal(await run('getComputedStyle(document.querySelector(".image-context-menu")).animationName'), 'none')
     await capture('image-menu-night-200-percent')
     await key('Escape')
-    return { checks: ['full-size-native-image-copy', 'transparent-pixels', 'native-paste', 'original-byte-download', 'exact-owner-reveal', 'keyboard-loop-and-escape', 'lightbox-menu', 'runtime-menu', 'copy-denied', 'broken-image-refresh', 'day-night', '200-percent-collision', 'reduced-motion'], clipboardRestored: true }
+    return { checks: ['full-size-native-image-copy', 'transparent-pixels', 'native-paste', 'original-byte-download', 'exact-owner-reveal', 'keyboard-loop-and-escape', 'lightbox-menu', 'runtime-menu-without-refresh', 'copy-denied', 'broken-attachment-auto-recovery', 'day-night', '200-percent-collision', 'reduced-motion'], clipboardRestored: true }
   } finally {
     if (process.platform === 'darwin') assert.ok(isDeepStrictEqual(macClipboard(JSON.stringify(archive)), archive), 'restore every original clipboard item and flavor')
     else { clipboard.clear(); for (const [format, buffer] of archive) clipboard.writeBuffer(format, buffer) }

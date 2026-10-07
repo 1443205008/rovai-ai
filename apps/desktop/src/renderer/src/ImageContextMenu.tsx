@@ -11,12 +11,11 @@ const glyphs = {
   preview: <><rect x="2.5" y="2.5" width="13" height="13" rx="2" /><path d="m3 13 4-4 3 3 2-2 3 3" /><circle cx="11.5" cy="6.5" r="1" /></>,
   save: <><path d="M9 2.5v8m-3-3 3 3 3-3M3 11.5v3a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-3" /></>,
   path: <><path d="m7 11 4-4M6.5 6.5 5 8a3.2 3.2 0 0 0 4.5 4.5l1.5-1.5m.5-4.5L13 5a3.2 3.2 0 0 0-4.5-4.5L7 2" transform="translate(0 2)" /></>,
-  reveal: <path d="M2.5 5.5v-1a1 1 0 0 1 1-1h4l2 2h5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-8Z" />,
-  refresh: <><path d="M14.5 6A6 6 0 1 0 15 10M14.5 2.5V6H11" /></>
+  reveal: <path d="M2.5 5.5v-1a1 1 0 0 1 1-1h4l2 2h5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-8Z" />
 }
 
 export function ImageContextMenu({ position, onClose, displayName, ready, busy, inPreview,
-  hasPath, revealLabel, onAction, onPreview, onRefresh }: {
+  hasPath, revealLabel, onAction, onPreview }: {
   position: ImageMenuPosition | null
   onClose: () => void
   displayName: string
@@ -27,7 +26,6 @@ export function ImageContextMenu({ position, onClose, displayName, ready, busy, 
   revealLabel?: string
   onAction: (action: ImageAction) => void
   onPreview: () => void
-  onRefresh: () => void
 }): JSX.Element {
   const returnFocus = useRef(false)
   const origin = useRef<HTMLElement | null>(null)
@@ -55,11 +53,9 @@ export function ImageContextMenu({ position, onClose, displayName, ready, busy, 
         {item('copy', busy === 'copy' ? uiAttribute('正在复制图片…') : uiAttribute('复制图片'), () => onAction('copy'), !ready || busy !== null)}
         {item('save', uiAttribute('保存图片…'), () => onAction('save'), !ready || busy !== null)}
         {!inPreview && item('preview', uiAttribute('查看大图'), onPreview, !ready)}
-        <DropdownMenu.Separator className="attachment-context-menu-separator" />
+        {(hasPath || revealLabel) && <DropdownMenu.Separator className="attachment-context-menu-separator" />}
         {hasPath && item('path', uiAttribute('复制完整路径'), () => onAction('path'), busy !== null)}
         {revealLabel && item('reveal', revealLabel, () => onAction('reveal'), busy !== null)}
-        {(hasPath || revealLabel) && <DropdownMenu.Separator className="attachment-context-menu-separator" />}
-        {item('refresh', uiAttribute('刷新图片'), onRefresh, busy !== null)}
       </DropdownMenu.Content>
     </DropdownMenu.Portal>
   </DropdownMenu.Root>
