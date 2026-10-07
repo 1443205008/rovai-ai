@@ -1547,8 +1547,6 @@
 .runtime-native-credential-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding-left: 170px; margin-top: -6px; }
 .runtime-native-credential-note { margin: 0; color: var(--muted); font-size: 12px; }
 .runtime-native-credential-note.is-warning { color: var(--attention); }
-.runtime-native-credential-row .quiet-button { min-height: 28px; padding: 3px 0; font-size: 12px; }
-.runtime-native-credential-row .danger-text { color: var(--danger); }
 .runtime-connection-help { color: var(--muted); font-size: 12px; line-height: 1.65; }
 .runtime-connection-help summary { width: fit-content; padding: 5px 0; cursor: pointer; color: var(--ink); }
 .runtime-connection-help summary:focus-visible { outline: 2px solid var(--steel); outline-offset: 3px; border-radius: 3px; }

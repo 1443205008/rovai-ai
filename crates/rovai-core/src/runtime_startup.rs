@@ -218,7 +218,8 @@ pub fn reload_native(settings: &mut RuntimeStartupSettings, database: &Path) {
 pub fn load(database: &Database, kind: AdapterKind) -> Result<RuntimeStartupSettings> {
     read_settings(database, kind)
 }
-/// Internal settings retain legacy environment references; owner-facing reads never return key values.
+/// Owner-editor reads hide credential environment rows; the selected static API
+/// key is returned only in `credential.value`, never in configuration or snapshots.
 pub fn public(mut settings: RuntimeStartupSettings) -> RuntimeStartupSettings {
     let referenced = settings
         .configuration

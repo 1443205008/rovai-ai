@@ -18,15 +18,17 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
   const id = useId()
   const [revealed, setRevealed] = useState(false)
   const activeApi = usesCustomApi(value)
-  const keyInput = apiKey.action === 'replace' ? apiKey.value : ''
   const keyAvailable = reusableCredential(credential)
+  const nativeKey = keyAvailable ? credential?.value ?? '' : ''
+  const keyInput = apiKey.action === 'replace' ? apiKey.value : apiKey.action === 'clear' ? '' : nativeKey
   const clearing = apiKey.action === 'clear'
-  const credentialNote = clearing ? '保存后清除该 API Key，不退出官方登录。' : apiKey.action === 'replace' ? credential?.sourceWritable === false ? '保存后改用新 Key，原凭据来源不变。' : '保存后替换当前 API Key。'
+  const credentialNote = apiKey.action !== 'keep' ? null
     : credential?.source === 'native_cloud' ? `${credential.sourceLabel} 原生路由`
-      : keyAvailable ? credential?.source === 'native_managed' ? credential.sourceLabel : '已从原生配置读取，无需重新输入。'
+      : keyAvailable ? credential?.source === 'native_managed' ? credential.sourceLabel : null
       : credential?.status === 'unknown' ? '由原生 CLI 管理'
       : credential?.status === 'invalid_reference' ? uiAttribute('未能读取 {0}。可填写新 Key，或修复该来源。', credential.sourceLabel)
         : '未找到可复用的凭据，请填写 API Key。'
+  useEffect(() => setRevealed(false), [credential?.version])
   const loginStatus = observation?.loginStatus ?? 'unknown'
   const loginCommand = observation?.loginCommand || (value.kind === 'claude-code-cli' ? 'claude' : 'codex login')
   return <section className="runtime-startup-section runtime-custom-api" aria-labelledby={`${id}-title`}>
@@ -58,22 +60,24 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
         <label htmlFor={`${id}-key`}>API Key</label>
         <div className="runtime-custom-api-key-input">
           <input id={`${id}-key`} type={revealed && keyInput ? 'text' : 'password'} autoComplete="new-password" spellCheck={false} disabled={disabled || credential?.canReplace === false}
-            value={keyInput} aria-describedby={`${id}-credential-note${credential?.canReplace === false ? ` ${id}-credential-restriction` : ''}`}
-            placeholder={clearing ? uiAttribute('待清除') : keyAvailable ? '••••••••••••••••' : uiAttribute('输入 API Key')}
-            onChange={(event) => { if (!event.target.value) setRevealed(false); onKeyChange(event.target.value ? { action: 'replace', value: event.target.value } : { action: 'keep' }) }} />
+            value={keyInput} aria-describedby={[credentialNote && `${id}-credential-note`, credential?.canReplace === false && `${id}-credential-restriction`].filter(Boolean).join(' ') || undefined}
+            placeholder={clearing ? '' : keyAvailable && !nativeKey ? '••••••••••••••••' : uiAttribute('输入 API Key')}
+            onChange={(event) => {
+              const input = event.target.value
+              if (!input) setRevealed(false)
+              onKeyChange(input === nativeKey ? { action: 'keep' } : input ? { action: 'replace', value: input } : nativeKey ? { action: 'clear' } : { action: 'keep' })
+            }} />
           <button type="button" className="quiet-button runtime-startup-icon runtime-key-visibility" disabled={disabled || !keyInput}
             aria-label={uiAttribute(revealed ? '隐藏 API Key' : '显示 API Key')} aria-pressed={Boolean(revealed && keyInput)}
-            title={uiAttribute(revealed ? '隐藏本次输入' : '显示本次输入')} onClick={() => setRevealed(!revealed)}>
+            title={uiAttribute(revealed ? '隐藏 API Key' : '显示 API Key')} onClick={() => setRevealed(!revealed)}>
             <DialogControlIcon name={revealed && keyInput ? 'eye-off' : 'eye'} />
           </button>
         </div>
       </div>
       {credential?.canReplace === false && <p id={`${id}-credential-restriction`} className="runtime-credential-restriction" role="status"><UiText zh={"来源："} />{credential.sourceLabel}。{credential.restriction}。{credential.remedy}</p>}
-      <div className="runtime-native-credential-row">
+      {credentialNote && <div className="runtime-native-credential-row">
         <p id={`${id}-credential-note`} className={`runtime-native-credential-note${!keyAvailable && apiKey.action === 'keep' ? ' is-warning' : ''}`} role="status">{uiAttribute(credentialNote)}</p>
-        {clearing ? <button type="button" className="quiet-button runtime-key-clear-undo" disabled={disabled} onClick={() => onKeyChange({ action: 'keep' })}><UiText zh={"撤销清除"} /></button>
-          : credential?.status === 'available' && credential.canClear && <button type="button" className="quiet-button danger-text runtime-key-clear" disabled={disabled} onClick={() => { setRevealed(false); onKeyChange({ action: 'clear' }) }}><UiText zh={"清除 API Key"} /></button>}
-      </div>
+      </div>}
       {value.kind === 'claude-code-cli' && <>
         {([['model', '主模型'], ['reasoningModel', '推理模型（Thinking）'], ['haikuModel', 'Haiku 默认模型'], ['sonnetModel', 'Sonnet 默认模型'], ['opusModel', 'Opus 默认模型']] as const).map(([field, label]) =>
           <label key={field}><span>{uiAttribute(label)}</span><input value={value.models[field]} placeholder={uiAttribute("模型 ID（选填）")} autoComplete="off" spellCheck={false} disabled={disabled}

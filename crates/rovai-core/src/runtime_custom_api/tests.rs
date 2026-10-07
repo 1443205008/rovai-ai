@@ -209,8 +209,14 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
     assert_eq!(saved.revision, 0, "native use requires no initial save");
     let frozen = saved.configuration.custom_api_snapshot.clone().unwrap();
     assert_eq!(frozen.key().unwrap().as_deref(), Some("isolated-old-key"));
-    let public = serde_json::to_string(&runtime_startup::public(saved.clone())).unwrap();
-    assert!(!public.contains("isolated-old-key"));
+    let editor = serde_json::to_value(runtime_startup::public(saved.clone())).unwrap();
+    assert_eq!(editor["credential"]["value"], "isolated-old-key");
+    assert!(
+        !editor["configuration"]
+            .to_string()
+            .contains("isolated-old-key")
+    );
+    assert!(!format!("{saved:?}").contains("isolated-old-key"));
     let edit = FieldEdit {
         path: vec!["claudeModels".into(), "model".into()],
         before: json!("before"),
@@ -640,9 +646,12 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
         let before = std::fs::read(context.path()).unwrap();
         let auth_before = native::read_bytes(&auth_path).unwrap();
         let saved = runtime_startup::load(&db, kind).unwrap();
-        let public = serde_json::to_string(&runtime_startup::public(saved.clone())).unwrap();
+        let editor = serde_json::to_value(runtime_startup::public(saved.clone())).unwrap();
         assert!(
-            !public.contains("legacy-private-key") && !public.contains("official-private-token")
+            !editor["configuration"]
+                .to_string()
+                .contains("legacy-private-key")
+                && !editor.to_string().contains("official-private-token")
         );
         let edits = vec![FieldEdit {
             path: vec!["mode".into()],
@@ -804,8 +813,14 @@ fn native_editor_reads_without_writing_merges_fields_and_never_copies_credential
             .iter()
             .all(|entry| entry.name != "PRIVATE_RELAY_CREDENTIAL")
     );
-    let public = serde_json::to_string(&runtime_startup::public(saved)).unwrap();
-    assert!(!public.contains("retired-fixture-key") && !public.contains("replacement-fixture-key"));
+    let editor = serde_json::to_value(runtime_startup::public(saved)).unwrap();
+    assert_eq!(editor["credential"]["value"], "replacement-fixture-key");
+    assert!(!editor.to_string().contains("retired-fixture-key"));
+    assert!(
+        !editor["configuration"]
+            .to_string()
+            .contains("replacement-fixture-key")
+    );
 
     // Identity observations never redefine file CAS, even across a failed refresh.
     let kind = AdapterKind::CodexCli;
@@ -1046,6 +1061,11 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         read.source,
         native::CredentialSource::Environment { .. }
     ));
+    assert_eq!(
+        read.credential.value.as_deref(),
+        Some("isolated-environment-key")
+    );
+    assert!(!format!("{:?}", read.credential).contains("isolated-environment-key"));
     assert!(
         !read.credential.source_writable
             && read.credential.can_replace
@@ -1126,6 +1146,12 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     let read = native::read(&context, None).unwrap();
     let snapshot = read.snapshot(&context, false);
     assert_eq!(snapshot.key().unwrap().as_deref(), Some("replacement-key"));
+    assert_eq!(read.credential.value.as_deref(), Some("replacement-key"));
+    assert!(
+        !serde_json::to_string(&snapshot)
+            .unwrap()
+            .contains("replacement-key")
+    );
     assert!(
         !context.artifact_root.exists(),
         "reading native configuration creates no launch overlay"
@@ -1191,6 +1217,7 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
         native::CredentialSource::NativeManaged { .. }
     ));
     assert!(read.snapshot(&context, false).key().unwrap().is_none());
+    assert!(read.credential.value.is_none());
     let mut changed = read.configuration.clone();
     if let CustomApiConfiguration::Codex { base_url, .. } = &mut changed {
         *base_url = "https://new-api.example".into();
@@ -1229,6 +1256,7 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     )
     .unwrap();
     let auto = native::read(&context, Some(ConnectionMode::OfficialLogin)).unwrap();
+    assert!(auto.credential.value.is_none());
     assert!(matches!(
         auto.source,
         native::CredentialSource::NativeManaged { .. }
@@ -1292,6 +1320,7 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     .unwrap();
     let read = native::read(&context, None).unwrap();
     assert!(read.credential.can_clear);
+    assert_eq!(read.credential.value.as_deref(), Some("inactive-file-key"));
     native_edit::write(
         &context,
         &read,

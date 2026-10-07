@@ -202,7 +202,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
         runtimeKind, ...submission
       })
       if ('status' in settings && settings.status === 'conflict') {
-        // Rebase untouched fields from the new read, preserving every local edit and the write-only Key input.
+        // Rebase untouched fields from the new read, preserving every local edit and explicit Key change.
         let merged = editableSnapshot(initialConfiguration(settings.latest))
         for (const edit of edits) if (edit.path[0] !== 'credentialVersion') merged = withSnapshotValue(merged, edit.path, edit.after)
         for (const edit of submission.edits) if (edit.path[0] === 'mode') merged = withSnapshotValue(merged, edit.path, edit.after)

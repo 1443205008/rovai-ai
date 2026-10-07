@@ -350,7 +350,9 @@ Claude has five optional model mappings; Codex has ID, optional display name and
 row. Keep row identities independent of edited IDs. Use a clear 20px trash glyph in a 36px delete control.
 No provider, reference-model, capability or protocol editor.
 Native configuration is read on entry and after saving, with retry on read failure only. Existing credentials
-show a status-derived mask; the eye reveals new input only. Clear is explicit and separate from sign-out.
+populate readable keys into a password input; the eye reveals the current value. Viewing is read-only.
+Restore masking after save, discard, re-entry or credential revision changes. Remove the read-success note and separate clear/undo buttons.
+Clearing a readable key is an edit committed by Save; emptying a new key for an opaque source only cancels replacement.
 
 Save only edited fields. Preserve unrelated external changes and every draft while resolving a true conflict
 inline. Read-only credential references may still be replaced through a supported native binding; show a
@@ -360,5 +362,5 @@ Omit shared native-config impact, request-content notices, protocol labels, HTTP
 Keep field labels, actual credential status, action feedback and specific restrictions or errors.
 No persistent reread control, Test API button, polling or extra save confirmation.
 Porcelain Day / Steel Night and the <=600px stacked model rows retain the existing surfaces and control names.
-Current behavior is owned by [Runtime Launch v49](../../../../docs/contracts/runtime-launch-and-verification-v49.md)
+Current behavior is owned by [Runtime Launch v50](../../../../docs/contracts/runtime-launch-and-verification-v50.md)
 and [native connection UI](../../../../docs/ui/components/app-shell-navigation.md#原生连接设置).

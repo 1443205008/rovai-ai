@@ -543,6 +543,7 @@ fn credential(context: &NativeContext, source: &CredentialSource) -> Result<Nati
         restriction: None,
         remedy: (!writable)
             .then(|| "可输入新 Key 并保存到原生连接；清除原有引用请在该来源操作。".into()),
+        value,
     })
 }
 pub fn read(context: &NativeContext, _selected: Option<ConnectionMode>) -> Result<NativeRead> {

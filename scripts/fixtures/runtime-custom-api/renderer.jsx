@@ -8,7 +8,7 @@ import '@renderer/member-editor.css'
 
 const clone = value => structuredClone(value)
 const settings = kind => ({runtimeKind:kind,revision:0,nativeRevision:'native-0',connectionReadError:null,reconnectRequired:false,nativeWritten:false,
-  credential:{status:'available',source:'environment_reference',sourceLabel:'RELAY_KEY',version:'key-1',sourceWritable:false,canReplace:true,canClear:true,restriction:null,remedy:null},
+  credential:{status:'available',source:'native_file',sourceLabel:'fixture native config',version:'key-1',sourceWritable:true,canReplace:true,canClear:true,restriction:null,remedy:null,value:'fixture-native-key'},
   connectionObservation:{initialMode:'custom_api',loginStatus:'signed_in',conflict:null},
   configuration:{programPath:null,environment:[],customApi:kind==='codex-cli'?{kind,mode:'custom_api',baseUrl:'https://relay.example/prefix',models:[{rowId:'one',id:'model-a',displayName:'开发模型'},{rowId:'two',id:'model-b',displayName:''}],defaultModel:'model-a',defaultRowId:'one'}:{kind,mode:'custom_api',baseUrl:'https://relay.example/prefix',models:{model:'claude-main',reasoningModel:'think',haikuModel:'small',sonnetModel:'medium',opusModel:'large'}}}})
 const state={startup:Object.fromEntries(['claude-code-cli','codex-cli'].map(kind=>[kind,settings(kind)])),failure:null}
@@ -34,8 +34,9 @@ const client={platform:'darwin',selectRuntimeExecutable:async()=>state.selectedE
       if(params.runtimeKind==='claude-code-cli')saved.configuration.customApi.models={model:'',reasoningModel:'',haikuModel:'',sonnetModel:'',opusModel:''}
       else Object.assign(saved.configuration.customApi,{models:[],defaultModel:'',defaultRowId:null})
       saved.credential.status='missing'
+      saved.credential.value=null
     }
-    if(params.apiKey.action!=='keep'){saved.credential.version+='-next';saved.credential.status=params.apiKey.action==='clear'?'missing':'available'}
+    if(params.apiKey.action!=='keep'){saved.credential.version+='-next';saved.credential.status=params.apiKey.action==='clear'?'missing':'available';saved.credential.value=params.apiKey.action==='clear'?null:params.apiKey.value}
     saved.nativeWritten=params.edits.some(edit=>!['environment','programPath'].includes(edit.path[0]))
     if(!state.keepNativeRevision&&(saved.nativeWritten||params.edits.some(edit=>edit.path[0]==='programPath'||edit.path[0]==='environment'&&['CODEX_HOME','HOME','USERPROFILE'].includes(edit.path[1])))) saved.nativeRevision+='-next'
     saved.revision++;saved.reconnectRequired=true

@@ -371,7 +371,7 @@ export type RuntimeCustomApiConfiguration =
   | { kind: 'claude-code-cli'; mode: RuntimeConnectionMode | null; baseUrl: string; models: { model: string; reasoningModel: string; haikuModel: string; sonnetModel: string; opusModel: string } }
   | { kind: 'codex-cli'; mode: RuntimeConnectionMode | null; baseUrl: string; models: { rowId: string; id: string; displayName: string }[]; defaultModel: string; defaultRowId: string | null }
 
-/** Write only; omitted means keep. Masked values are never round-tripped as credentials. */
+/** Explicit edit intent; unchanged or revealed credentials stay keep. Masks are never submitted. */
 export type RuntimeApiKeyChange = { action: 'keep' } | { action: 'replace'; value: string } | { action: 'clear' }
 export interface RuntimeNativeCredential {
   status: 'available' | 'missing' | 'invalid_reference' | 'unknown'
@@ -383,6 +383,8 @@ export interface RuntimeNativeCredential {
   canClear: boolean
   restriction: string | null
   remedy: string | null
+  /** Readable native API key for the owner editor only; ephemeral, masked by default. */
+  value?: string | null
 }
 export interface RuntimeConnectionObservation {
   /** Display initialization only; never a native-file CAS baseline or execution gate. */

@@ -226,7 +226,7 @@ impl ApiKeyChange {
         Ok(())
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeCredential {
     pub status: String,
@@ -238,6 +238,17 @@ pub struct NativeCredential {
     pub can_clear: bool,
     pub restriction: Option<String>,
     pub remedy: Option<String>,
+    /// Ephemeral owner-editor value; never included in execution snapshots or storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+}
+impl std::fmt::Debug for NativeCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeCredential")
+            .field("status", &self.status)
+            .field("source", &self.source)
+            .finish_non_exhaustive()
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
