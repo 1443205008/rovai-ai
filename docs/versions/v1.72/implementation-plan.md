@@ -1129,5 +1129,28 @@ API 专用 UI/CLI fixture 退役，启动页 UI 回归由既有 settings-workspa
   Skill Library 为其 `managed-skill-library/`，不启动 Core 或真实 Runtime。
   已检查日夜主题、1040×700 与 200% 截图，Impeccable 机械检查无发现。
 
-完整仓库回归、文档门禁与安装证据在完成后补记；文档检查使用干净受版本控制检出，
-不修改主工作区被 Git 忽略的原型稿及其过期链接。
+完整回归与治理：
+
+| 验证 | 结果 |
+| --- | --- |
+| `pnpm test:rust:pr` | workspace 453 项通过；1 项既有真实 Runtime smoke 按声明忽略 |
+| `pnpm test` | Vitest 238 文件、2,602 项通过；Node 主脚本集 334 项通过、2 项 Windows 用例在 macOS 跳过；文档、Skill、sandbox 子集通过 |
+| `pnpm docs:test`、`pnpm docs:check`、`DOCS_BASE_REF=f67682c8 pnpm docs:check:ci` | 通过，未增加治理例外 |
+| `cargo fmt --all --check`、`git diff --check` | 通过 |
+
+完整 JavaScript 与文档门禁使用提交 `9e09d4b1` 的临时 detached 检出
+`/private/tmp/rovai-remove-api-verify-9e09d4b1`，复用既有 `node_modules` 并关闭自动依赖安装，
+不共享 Rust target、不修改主工作区被 Git 忽略的原型稿及其过期链接。
+主开发目录仍为 `/Users/murray.xue/VSCodeProjects/opensource/rovai-ai`，分支 `rovai/remove-custom-api`；
+验证检出没有独立变更，收尾时移除，任务分支保留并推送。没有运行真实 Provider/账号 smoke 或 Windows 原生验收。
+
+打包与非终止安装交接：
+
+- `pnpm package:mac:daily` 通过，App/Core/Host/CLI 的 arm64 架构与 ad-hoc 签名门通过；安装代码为 `9e09d4b1`。
+- 真实打包 App 在 `/private/tmp/rovai-remove-api-packaged-zqq2egic/user-data` 完成独立验收，
+  Skill Library 为其 `managed-skill-library/`；核对实际数据库路径、两种启动页入口移除、
+  普通环境变量本地保存、回执字段和旧 `apiKey` 输入拒绝。验收实例已关闭，没有启动真实 Provider Run。
+- 安装到 `/Applications/Rovai AI.app`，源、暂存、最终目标三处安装验证通过。
+  旧版备份为 `/Applications/Rovai AI.backup-before-remove-custom-api-20261007-9e09d4b1.app`，保留不删除。
+- 日常 App/Helper/Host PID `39161/39165/39166/39167/39168` 安装后均存活，日常数据未改动。
+  新版本已安装，当前会话仍运行旧版；退出后应从规范安装路径显式打开新版，不从备份启动。
