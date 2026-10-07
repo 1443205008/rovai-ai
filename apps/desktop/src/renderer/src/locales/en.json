@@ -3583,5 +3583,13 @@
   "原生反馈：Fast": "Runtime reports Fast",
   "原生反馈：标准速度": "Runtime reports standard speed",
   "原生反馈：Fast 冷却中": "Runtime reports Fast cooldown",
-  "Fast 实际状态未确认": "Actual Fast state unconfirmed"
+  "Fast 实际状态未确认": "Actual Fast state unconfirmed",
+  "图片操作：{0}": "Image actions: {0}",
+  "正在复制图片…": "Copying image…",
+  "复制图片": "Copy image",
+  "保存图片…": "Save image…",
+  "查看大图": "View full image",
+  "已复制图片": "Image copied",
+  "未能复制图片，请重试或保存图片。": "Could not copy the image. Try again or save it.",
+  "未能保存图片，请重试。": "Could not save the image. Try again."
 }
