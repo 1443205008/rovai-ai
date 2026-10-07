@@ -1472,7 +1472,7 @@ export function RuntimeInstallationsPanel({
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<{ runtimeKind: AdapterKind; mode: 'install' | 'login' } | null>(null)
-  const [checkFeedback, setCheckFeedback] = useState<{ runtimeKind: AdapterKind; error: string | null } | null>(null)
+  const [checkFeedback, setCheckFeedback] = useState<{ runtimeKind: AdapterKind; error: string } | null>(null)
   const guideId = useId()
   const availability = health?.runtimeAvailability ?? []
   const hasEnabledRuntime =
@@ -1495,7 +1495,6 @@ export function RuntimeInstallationsPanel({
       } finally {
         await onReload()
       }
-      setCheckFeedback({ runtimeKind, error: null })
     } catch (nextError) {
       setCheckFeedback({ runtimeKind, error: errorMessage(nextError) })
     } finally {
@@ -1575,12 +1574,8 @@ export function RuntimeInstallationsPanel({
             const isOpen = guide !== null && expanded?.runtimeKind === runtimeKind
             const checking = busy === `check-${runtimeKind}`
             const feedback = checkFeedback?.runtimeKind === runtimeKind ? (
-              <p className={`runtime-guide-feedback${checkFeedback.error ? ' is-error' : ''}`} role={checkFeedback.error ? 'alert' : 'status'}>
-                {checkFeedback.error ?? (presentation.status === 'not_installed'
-                  ? uiAttribute("仍未检测到程序。请确认已在终端完成安装，再重新检测。")
-                  : presentation.status === 'authentication_required'
-                    ? uiAttribute("仍需登录。请在终端完成账号或模型配置后重试。")
-                    : uiAttribute("检测完成：{0}。{1}", String(presentation.label), String(item?.failure ? '' : presentation.detail ?? '')))}
+              <p className="runtime-guide-feedback is-error" role="alert">
+                {checkFeedback.error}
               </p>
             ) : null
             return (

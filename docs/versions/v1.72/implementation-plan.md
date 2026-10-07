@@ -1029,3 +1029,17 @@ Windows 原生运行结果归档于 [PR #652](https://github.com/murray17/rovai-
   12 个 Skill 规范检查和以该 main SHA 为 base 的通用文档门禁通过。
 - 独立复核：Spec 未关闭问题 0 项；Standards 的当前版本文档漂移修正并复核后，未关闭问题 0 项。
   复核与上述确定性检查不代表真实模型 Gate 通过；按已记录的 User 后续合并指令推进 PR。
+
+## 2026-10-07 智能体状态文案精简
+
+- 按 User 要求，入口存在的状态显示为“可用”，删除执行验证说明与检查成功后的重复提示行；
+  检查失败、延后及登录/安装入口保留。仅调整 Renderer 展示，不改变 Core 检查或启动语义。
+- 分支：`rovai/runtime-status-copy`；worktree：`/Users/murray.xue/VSCodeProjects/opensource/rovai-ai-runtime-status-copy`；
+  基线：`921e37e1`；无需独立治理前置提交。状态为 ready，下一步按 User 指令创建 PR。
+- TypeScript 检查、相关 Renderer 测试 54 项、桌面构建、文档治理及默认 Rust workspace 回归通过；
+  Impeccable 机械检查无发现。沿用既有状态测试，没有新增 Rust 测试或界面测试文件。
+- 生产目录组件在隔离 Electron 中通过日夜主题、1440×920、1040×700 与 200% 缩放检查：
+  成功检测无提示行，失败/延后仍显示错误，成功重试清除旧错误，页面无横向溢出。
+- 完整 `test:settings-workspace` 在进入未修改的连接编辑页时失败：夹具初始 `startup` 为空，
+  `runtime.startup.observe` 返回 undefined，触发 `connectionReadError` 读取异常；本轮目录专项通过
+  不代表完整设置页回归通过。截图及专项运行脚本保存在本次 Thread 的 `runtime-status-copy` 附件目录。

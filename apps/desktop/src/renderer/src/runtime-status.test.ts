@@ -18,9 +18,9 @@ import {
 describe('Runtime user status projection', () => {
   it.each([
     ['detecting', '正在检查…'],
-    ['found_uninspected', '已检测到'],
-    ['light_ready', '已检测到'],
-    ['installed_unverified', '已检测到'],
+    ['found_uninspected', '可用'],
+    ['light_ready', '可用'],
+    ['installed_unverified', '可用'],
     ['checking', '正在检查…'],
     ['ready', '可用'],
     ['authentication_required', '需要登录'],
@@ -69,8 +69,8 @@ describe('Runtime user status projection', () => {
 
     expect(result).toEqual({
       status: 'available',
-      label: '已检测到',
-      detail: '已检测到可执行入口；启动任务时验证登录、模型与所需能力。'
+      label: '可用',
+      detail: null
     })
   })
 
