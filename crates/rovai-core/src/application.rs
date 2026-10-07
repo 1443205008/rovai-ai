@@ -2370,7 +2370,7 @@ struct Core {
     agent_run_cancellation_notify: Notify,
     delivery_batch_scheduler_notify: Notify,
     agent_run_cleanup_inflight: Mutex<HashSet<ActiveExecutionKey>>,
-    runtime_phases: Mutex<HashMap<String, (i64, String)>>,
+    runtime_phases: Mutex<HashMap<String, (i64, crate::runtime_thinking::RuntimeThinking)>>,
     network_recovery: Mutex<NetworkRecoveryQueue>,
     network_recovery_notify: Notify,
     pending_execution_recovery: Mutex<()>,
@@ -10218,17 +10218,19 @@ impl Core {
                     )?)?
                 };
                 let read_ms = read_started_at.elapsed().as_millis();
+                let phase_epoch = database.connection().query_row(
+                    "SELECT CASE WHEN status = 'running' AND cancel_requested_at IS NULL THEN execution_epoch END FROM agent_run WHERE id = ?1",
+                    [&params.agent_run_id], |row| row.get::<_, Option<i64>>(0),
+                ).ok().flatten();
                 drop(database);
                 let serialization_started_at = Instant::now();
                 let mut value = changes;
-                if let Some((_, phase)) = self
-                    .runtime_phases
-                    .lock()
-                    .await
-                    .get(&params.agent_run_id)
-                    .cloned()
+                if let Some((epoch, phase)) =
+                    self.runtime_phases.lock().await.get(&params.agent_run_id)
+                    && Some(*epoch) == phase_epoch
                 {
-                    value["runtimePhase"] = Value::String(phase);
+                    value["runtimePhase"] = json!(phase.phase());
+                    value["runtimeThinkingTitle"] = json!(phase.title());
                 }
                 let serialization_ms = serialization_started_at.elapsed().as_millis();
                 eprintln!(
@@ -10285,17 +10287,19 @@ impl Core {
                     )?)?
                 };
                 let read_ms = read_started_at.elapsed().as_millis();
+                let phase_epoch = database.connection().query_row(
+                    "SELECT CASE WHEN status = 'running' AND cancel_requested_at IS NULL THEN execution_epoch END FROM agent_run WHERE id = ?1",
+                    [&params.agent_run_id], |row| row.get::<_, Option<i64>>(0),
+                ).ok().flatten();
                 drop(database);
                 let serialization_started_at = Instant::now();
                 let mut value = page;
-                if let Some((_, phase)) = self
-                    .runtime_phases
-                    .lock()
-                    .await
-                    .get(&params.agent_run_id)
-                    .cloned()
+                if let Some((epoch, phase)) =
+                    self.runtime_phases.lock().await.get(&params.agent_run_id)
+                    && Some(*epoch) == phase_epoch
                 {
-                    value["runtimePhase"] = Value::String(phase);
+                    value["runtimePhase"] = json!(phase.phase());
+                    value["runtimeThinkingTitle"] = json!(phase.title());
                 }
                 let serialization_ms = serialization_started_at.elapsed().as_millis();
                 eprintln!(
@@ -20457,6 +20461,22 @@ async fn process_agent_run_acp_message(
         return;
     }
     if adapter_kind == AdapterKind::CopilotCli && method == "github.com/copilot/sessionEvent" {
+        if let Some(intent) = crate::runtime_thinking::copilot_intent(&params) {
+            if let Err(error) = persist_runtime_evidence(
+                core,
+                agent_run_id,
+                execution_epoch,
+                None,
+                "agent.thinking.title",
+                &intent,
+            )
+            .await
+            {
+                eprintln!(
+                    "failed to update Copilot thinking status for AgentRun {agent_run_id}: {error:#}"
+                );
+            }
+        }
         // Drop private events before Evidence or Renderer IPC.
         if usage
             .iter()
@@ -20672,10 +20692,17 @@ fn normalize_acp_event_with_completion(
                 "sessionId": params.get("sessionId"),
                 "messageId": message_id,
                 "messageIdSource": message_id_source,
+                "runtimeRootOutput": crate::runtime::is_root_output(params) && crate::runtime::is_root_output(&update),
                 }),
             )
         }
-        Some("agent_thought_chunk") => ("agent.thought.delta", update),
+        Some("agent_thought_chunk") => {
+            let root =
+                crate::runtime::is_root_output(params) && crate::runtime::is_root_output(&update);
+            let mut payload = update;
+            payload["runtimeRootOutput"] = json!(root);
+            ("agent.thought.delta", payload)
+        }
         Some("tool_call") | Some("tool_call_update") => {
             let public_command =
                 acp::public_acp_shell_command(adapter_kind, update.get("rawInput"))
@@ -20712,6 +20739,7 @@ fn normalize_acp_event_with_completion(
                 });
             let public_kind = native_kind;
             let mut payload = json!({
+                "runtimeRootOutput": crate::runtime::is_root_output(params) && crate::runtime::is_root_output(&update),
                 "sessionUpdate": update.get("sessionUpdate"),
                 "toolCallId": update.get("toolCallId"),
                 "toolName": update.get("toolName"),
@@ -21172,20 +21200,16 @@ async fn persist_runtime_evidence(
     event_type: &str,
     payload: &Value,
 ) -> Result<Option<AgentRunExecutionEvidence>> {
-    if !ExecutionEvidenceService::is_durable_runtime_evidence_event(event_type) {
+    let observes_phase = crate::runtime_thinking::RuntimeThinking::observes(event_type, payload);
+    let durable = ExecutionEvidenceService::is_durable_runtime_evidence_event(event_type);
+    if !durable && !observes_phase {
         return Ok(None);
     }
-    let runtime_phase = runtime_phase_transition(event_type, payload);
     let mut database = core.database.lock().await;
-    let phase_admitted = if runtime_phase.is_some() {
-        database.connection().query_row(
-            "SELECT EXISTS(SELECT 1 FROM agent_run WHERE id = ?1 AND execution_epoch = ?2 AND status IN ('running', 'waiting') AND cancel_requested_at IS NULL)",
-            rusqlite::params![agent_run_id, execution_epoch],
-            |row| row.get::<_, bool>(0),
-        )?
-    } else {
-        false
-    };
+    let phase_admitted = observes_phase && database.connection().query_row(
+        "SELECT EXISTS(SELECT 1 FROM agent_run WHERE id = ?1 AND execution_epoch = ?2 AND status = 'running' AND cancel_requested_at IS NULL)",
+        rusqlite::params![agent_run_id, execution_epoch], |row| row.get::<_, bool>(0),
+    )?;
     let recorded = ExecutionEvidenceService.record_runtime_event_with_managed_output_root(
         &mut database,
         &ManagedBlobStore::new(&core.data_dir),
@@ -21205,58 +21229,44 @@ async fn persist_runtime_evidence(
             |row| row.get::<_, bool>(0),
         ).unwrap_or(false);
     let evidence = recorded.map(RecordedExecutionEvidence::into_evidence);
-    drop(database);
-    if phase_admitted && let Some(phase) = runtime_phase {
+    if phase_admitted {
         let mut phases = core.runtime_phases.lock().await;
-        let changed = phases
+        let fresh = phases
             .get(agent_run_id)
-            .is_none_or(|(epoch, current)| *epoch != execution_epoch || current != phase);
-        if changed {
-            phases.insert(
-                agent_run_id.to_string(),
-                (execution_epoch, phase.to_string()),
+            .is_none_or(|(epoch, _)| *epoch != execution_epoch);
+        let entry = phases.entry(agent_run_id.to_string()).or_insert_with(|| {
+            (
+                execution_epoch,
+                crate::runtime_thinking::RuntimeThinking::default(),
+            )
+        });
+        if entry.0 != execution_epoch {
+            *entry = (
+                execution_epoch,
+                crate::runtime_thinking::RuntimeThinking::default(),
             );
         }
+        let changed = entry.1.observe(event_type, payload) || fresh;
+        let phase = entry.1.phase();
+        let title = entry.1.title().map(str::to_owned);
         drop(phases);
         if changed {
             emit(
                 &core.output,
                 "agent_run.runtime_phase_changed",
                 json!({
-                    "agentRunId": agent_run_id,
-                    "executionEpoch": execution_epoch,
-                    "phase": phase,
+                    "agentRunId": agent_run_id, "executionEpoch": execution_epoch,
+                    "phase": phase, "thinkingTitle": title,
                 }),
             );
         }
     }
+    drop(database);
     if should_reproject {
         core.project_agent_run_file_changes_after_terminal(agent_run_id, execution_epoch)
             .await;
     }
     Ok(evidence)
-}
-
-fn runtime_phase_transition(event_type: &str, payload: &Value) -> Option<&'static str> {
-    let native_reasoning =
-        payload.pointer("/item/type").and_then(Value::as_str) == Some("reasoning");
-    if native_reasoning {
-        return Some(if event_type == "activity.completed" {
-            "executing"
-        } else {
-            "thinking"
-        });
-    }
-    if matches!(
-        event_type,
-        "agent.thought.delta"
-            | "agent.thought.block"
-            | "agent.reasoning.summary.delta"
-            | "agent.reasoning.summary.block"
-    ) {
-        return Some("thinking");
-    }
-    ExecutionEvidenceService::is_durable_runtime_evidence_event(event_type).then_some("executing")
 }
 
 fn observation_hook_compaction_display_event(
@@ -21344,31 +21354,6 @@ async fn persist_prepared_runtime_evidence_batch(
         prepared,
     )?;
     drop(database);
-    let has_public_update = recorded.iter().any(Option::is_some);
-    if has_public_update {
-        let mut phases = core.runtime_phases.lock().await;
-        let changed = phases
-            .get(agent_run_id)
-            .is_none_or(|(epoch, phase)| *epoch != execution_epoch || phase != "executing");
-        if changed {
-            phases.insert(
-                agent_run_id.to_string(),
-                (execution_epoch, "executing".to_string()),
-            );
-        }
-        drop(phases);
-        if changed {
-            emit(
-                &core.output,
-                "agent_run.runtime_phase_changed",
-                json!({
-                    "agentRunId": agent_run_id,
-                    "executionEpoch": execution_epoch,
-                    "phase": "executing",
-                }),
-            );
-        }
-    }
     Ok(recorded
         .into_iter()
         .map(|recorded| recorded.map(RecordedExecutionEvidence::into_evidence))

@@ -90,6 +90,26 @@ test('execution cards keep their live line anchored and expanded tool groups ret
           `day/inspector initial window: ${element}.${key} jumps: ${values}`)
       }
     }
+    // The actual restore hook must fence late reads and old epochs, then recover
+    // the current snapshot when the transport reconnects without a new event.
+    await browser.evaluate(`{
+      const api = window.executionTransition
+      api.setRuntimeSnapshot('旧快照'); api.invalidateRuntimePhase(); api.emitRuntimePhase('当前标题')
+    }`)
+    await browser.wait(`document.querySelector('[data-runtime-phase-witness]')?.dataset.thinkingTitle === '当前标题'`)
+    await browser.evaluate(`window.executionTransition.resolveWindow()`)
+    await pause(80)
+    assert.equal(await browser.evaluate(`document.querySelector('[data-runtime-phase-witness]').dataset.thinkingTitle`), '当前标题')
+    await browser.evaluate(`window.executionTransition.emitRuntimePhase('旧代次', 0)`)
+    await pause(80)
+    assert.equal(await browser.evaluate(`document.querySelector('[data-runtime-phase-witness]').dataset.thinkingTitle`), '当前标题')
+    await browser.evaluate(`window.executionTransition.emitRuntimePhase(null)`)
+    await browser.wait(`document.querySelector('[data-runtime-phase-witness]')?.dataset.thinkingTitle === ''`)
+    await browser.evaluate(`{
+      const api = window.executionTransition
+      api.setRuntimeSnapshot('恢复标题'); api.invalidateRuntimePhase(); api.resolveWindow()
+    }`)
+    await browser.wait(`document.querySelector('[data-runtime-phase-witness]')?.dataset.thinkingTitle === '恢复标题'`)
     for (const theme of ['day', 'night']) {
       for (const mode of ['bottom', 'inspector', 'mobile']) {
         const label = `${theme}/${mode}`
@@ -108,7 +128,7 @@ test('execution cards keep their live line anchored and expanded tool groups ret
         await browser.evaluate(`document.querySelector('.run-pulse-chip[data-agent-id]:not([data-agent-id="__execution_overview__"])')?.click()`)
         await browser.wait(`document.querySelector('.execution-drawer')?.getBoundingClientRect().width > 0`)
         const states = []
-        for (const [phase, text] of [['connecting', '思考中'], ['thinking', '思考中'], ['body', '开始检查。']]) {
+        for (const [phase, text] of [['connecting', '执行中'], ['thinking', '思考中'], ['body', '开始检查。']]) {
           await browser.evaluate(`window.executionTransition.setPhase('${phase}')`)
           await browser.wait(`document.querySelector('.process-content')?.textContent.includes('${text}') === true`)
           await pause(200) // Allow the production ResizeObserver and bottom-follow frame to settle.
@@ -127,6 +147,13 @@ test('execution cards keep their live line anchored and expanded tool groups ret
             assert.ok(Math.max(...values) - Math.min(...values) <= 1,
               `${label}: ${element}.${key} jumps across connecting → thinking → first narration: ${values}`)
           }
+        }
+        for (const phase of ['body-thinking', 'tools-thinking']) {
+          await browser.evaluate(`window.executionTransition.setPhase('${phase}')`)
+          await browser.wait(`document.querySelector('.process-action.current .running-text')?.getAttribute('title') === '检查调用链与状态同步'`)
+          assert.equal(await browser.evaluate(`document.querySelectorAll('.process-action.current .running-text[title="检查调用链与状态同步"]').length`), 1,
+            `${label}: thinking title must occupy one current feedback row`)
+          await browser.capture(join(fixture, `${theme}-${mode}-${phase}.png`))
         }
         await browser.evaluate(`window.executionTransition.setPhase('tools')`)
         await browser.wait(`!!document.querySelector('.tool-activity-group > summary .command-expand-cue')`)

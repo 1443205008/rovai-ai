@@ -13,6 +13,7 @@ import { useExecutionDisclosureAnchor } from './useExecutionDisclosureAnchor'
 import { useExecutionMetrics, useExecutionMetricsVisibility } from './useExecutionMetrics'
 import { executionUsageTotal } from './execution-metrics-reader'
 import { RunningText } from './RunningText'
+import { useRuntimePhase } from './useRuntimePhase'
 import { ExecutionContentContext, ExecutionVirtualList } from './ExecutionVirtualList'
 import { ExecutionNarration } from './ExecutionNarration'
 import type { MessageQuoteSnapshot } from '@contracts'
@@ -43,7 +44,7 @@ import {
   CompactionEventRow, ExecutionToolGroupStateContext, FileOperationRow, ModifiedFileRow, RuntimeRetryNotice,
   ToolActivityGroup, ToolCallRow, selectCompletePresentableExecutionEvidence, type ToolCallStep
 } from './ExecutionToolGroup'
-import { executionInitialFeedback, executionRunSummary } from './execution-run-summary'
+import { executionPhaseFeedback, executionRunSummary } from './execution-run-summary'
 import { ComposerPrimaryAction } from './ComposerPrimaryAction'
 import { ThreadMemberFastToggle } from './ThreadMemberFastToggle'
 import { useThreadMemberFast, type ThreadMemberFastControls } from './useThreadMemberFast'
@@ -10345,17 +10346,17 @@ function RunExecutionContent({
   const hasActiveTool = toolActivityGroupHasActiveTool(activeToolItems, run.status)
   const hasActiveCompaction = executionHasActiveCompaction(processItems)
   const trailingProcessItem = groupedProcessItems[groupedProcessItems.length - 1]
-  const runtimePhase = windowedEvidence ? windowPage.runtimePhase : effectiveProgress?.runtimePhase
-  const thinkingAfterTool = run.status === 'running'
+  const progressPhase = effectiveProgress?.runtimePhaseEpoch != null && effectiveProgress.runtimePhaseEpoch !== run.executionEpoch
+    ? undefined : effectiveProgress?.runtimePhase
+  const runtimePhase = windowedEvidence ? windowPage.runtimePhase : progressPhase
+  const showThinkingFeedback = run.status === 'running'
     && runtimePhase === 'thinking'
-    && trailingProcessItem?.kind === 'toolGroup'
     && (!windowedEvidence || !windowPage.hasNewer)
-    && !hasActiveTool
     && !hasActiveCompaction
     && !finalBody
   const liveTailToolGroupKey = run.status === 'running'
     && !cancelling
-    && !thinkingAfterTool
+    && (!showThinkingFeedback || hasActiveTool)
     && trailingProcessItem?.kind === 'toolGroup'
     ? trailingProcessItem.key
     : null
@@ -10366,13 +10367,14 @@ function RunExecutionContent({
   const completeEvidence = selectCompletePresentableExecutionEvidence(
     displayedEvidence ?? truncatedEvidence
   )
-  const initialFeedback = executionInitialFeedback(
+  const initialFeedback = executionPhaseFeedback(
     run.status,
     processItems,
     Boolean(finalBody),
-    runtimePhase
+    runtimePhase,
+    windowedEvidence ? windowPage.runtimeThinkingTitle : effectiveProgress?.runtimeThinkingTitle
   )
-  const phaseFeedback = thinkingAfterTool ? uiAttribute('思考中') : initialFeedback
+  const phaseFeedback = (!windowedEvidence || !windowPage.hasNewer) ? initialFeedback : null
   const feedback = run.status === 'waiting' ? localizedAgentRunWaitDetail(run.waitReason) ?? uiAttribute('等待继续')
     : run.failure?.code === 'runtime_network_interrupted' ? uiAttribute('正在恢复连接')
       : activeRetryDiagnostic
@@ -10576,9 +10578,9 @@ function RunExecutionContent({
         && !cancelling
         && run.waitReason !== 'recovery_blocked'
         && run.waitReason !== 'network_recovery_blocked'
-        && !hasActiveTool
+        && (!hasActiveTool || showThinkingFeedback)
         && !hasActiveCompaction
-        && liveTailToolGroupKey === null
+        && (liveTailToolGroupKey === null || showThinkingFeedback)
         && feedback
         && (
           <div className={`process-action current${feedback === phaseFeedback ? ' is-phase-feedback' : ''}`} role="status">
@@ -10725,6 +10727,14 @@ export function RunExecutionDisclosure({
     />
   ) : null
 
+  const restoredPhase = useRuntimePhase(threadId, run, windowedEvidence)
+  const phaseSummary = executionPhaseFeedback(run.status, progress?.items ?? [], Boolean(finalBody),
+    restoredPhase.runtimePhase ?? (progress?.runtimePhaseEpoch != null && progress.runtimePhaseEpoch !== run.executionEpoch ? undefined : progress?.runtimePhase),
+    restoredPhase.runtimePhase ? restoredPhase.runtimeThinkingTitle : progress?.runtimeThinkingTitle)
+  const liveSummary = cancelling ? uiAttribute("正在停止")
+    : run.status === 'waiting' ? localizedAgentRunWaitDetail(run.waitReason) ?? uiAttribute("等待继续")
+      : run.failure?.code === 'runtime_network_interrupted' ? uiAttribute("正在恢复连接")
+        : phaseSummary ?? uiAttribute("执行中")
   const liveOpen = !mobile && (active || cancellingActive)
   if (hideSummary) {
     return expanded
@@ -10750,15 +10760,9 @@ export function RunExecutionDisclosure({
     >
       <summary hidden={liveOpen} className={mobile ? 'mobile-run-summary' : undefined}>
         {mobile && <time className="mobile-run-time">{runIntervalLabel(run)}</time>}
-        <span className="process-disclosure-label">{mobile ? localizedAgentRunPresentation(run, cancelling).label : !liveOpen && (nonTerminal
-          ? cancelling ? uiAttribute("正在停止") : run.status === 'waiting' ? localizedAgentRunWaitDetail(run.waitReason) ?? uiAttribute("等待继续")
-            : executionInitialFeedback(
-              run.status,
-              progress?.items ?? [],
-              Boolean(finalBody),
-              progress?.runtimePhase
-            ) ?? uiAttribute("执行中")
-          : executionRunSummary(run, run.updatedAt))}</span>
+        <span className="process-disclosure-label">{nonTerminal
+          ? liveSummary : mobile ? localizedAgentRunPresentation(run, cancelling).label
+            : executionRunSummary(run, run.updatedAt)}</span>
         {mobile && focused && nonTerminal && <span className="current-run-badge"><UiText zh={"当前执行"} /></span>}
         <span className="process-disclosure-slot" aria-hidden="true">
           <svg viewBox="0 0 16 16" focusable="false">
