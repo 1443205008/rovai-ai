@@ -5,7 +5,7 @@ authority: user-authorized-independent-run-continuation
 status: accepted
 version: 1
 source_version: v1.72
-last_updated: 2026-10-07
+last_updated: 2026-10-08
 ---
 
 # AgentRun Continuation v1
@@ -52,8 +52,11 @@ Formatter / ContextManifest 32、公开 Run Facts 9、Delivery Profile 10 的模
 `useNewSession: true`。若排队中兼容性变化，领取时产生明确失败 Run，用户可再次选择新会话。
 
 实际 Native Session 恢复失败时，续做 Run 失败，公开错误为 `continuation_session_unavailable`；
-不得在同一次续做内隐式创建空会话再次投递。恢复失败记录
-只用于下次新会话确认。明确换会话只清理当前 Conversation 绑定，保留当前工作区、历史和业务状态。
+不得在同一次续做内隐式创建空会话再次投递。恢复失败记录用于下次新会话确认；若之后同一 Conversation
+当前绑定／会话已有可信的原生成功完成记录，旧失败不再强制换会话。完成记录必须与已接受输入的
+binding ID、generation、execution epoch 和 native turn ID 匹配，先后以事件序列为准；仅接受输入、
+其他绑定的成功或发生在失败之前的成功均不足。历史事件保留不改写。
+明确换会话只清理当前 Conversation 绑定，保留当前工作区、历史和业务状态。
 本能力不承诺业务效果恰好发生一次，也不新增效果对账系统。
 
 ## 错误与 UI

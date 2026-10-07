@@ -81,15 +81,31 @@ pub(crate) fn requires_new_session(
         "SELECT native_session_id, native_adapter_installation_id, native_binding_compatibility_digest,
                 native_installation_generation, native_session_compatibility_key FROM conversation WHERE id=?1",
         [&source.conversation_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?;
+    // Retain resume failures as history, but let a later native completion on the
+    // current binding supersede them. Input acceptance alone is not completion.
     let uncertain:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM runtime_input_delivery AS delivery
         JOIN agent_run AS run ON run.id=delivery.agent_run_id
         JOIN conversation ON conversation.id=run.conversation_id
         WHERE run.conversation_id=?1 AND run.status IN ('failed','cancelled') AND COALESCE(run.terminal_resolution_source,'')<>'runtime_terminal'
           AND (delivery.status IN ('accepted','delivery_unknown') OR (delivery.status='prepared' AND delivery.dispatch_started_at IS NOT NULL))
           AND (conversation.native_session_id IS NULL OR conversation.native_binding_id IS NULL OR delivery.native_binding_id=conversation.native_binding_id))
-        OR EXISTS(SELECT 1 FROM event_log WHERE event_type='agent_run.continuation_session_unavailable'
-          AND json_extract(payload_json,'$.conversationId')=?1
-          AND json_extract(payload_json,'$.nativeSessionId') IS ?2)",
+        OR EXISTS(SELECT 1 FROM event_log AS failure
+          WHERE failure.event_type='agent_run.continuation_session_unavailable'
+            AND json_extract(failure.payload_json,'$.conversationId')=?1
+            AND json_extract(failure.payload_json,'$.nativeSessionId') IS ?2
+            AND NOT EXISTS (
+              SELECT 1 FROM event_log AS completed
+              JOIN agent_run AS recovered ON completed.entity_type='agent_run' AND completed.entity_id=recovered.id
+              JOIN runtime_input_delivery AS accepted ON accepted.agent_run_id=recovered.id
+                AND accepted.execution_epoch=completed.execution_epoch
+              JOIN conversation AS current ON current.id=recovered.conversation_id
+              WHERE completed.event_type='agent_run.succeeded' AND completed.global_sequence>failure.global_sequence
+                AND recovered.status='succeeded' AND recovered.terminal_resolution_source='runtime_terminal'
+                AND current.id=?1 AND current.native_session_id IS ?2
+                AND accepted.status='accepted' AND accepted.native_binding_id=current.native_binding_id
+                AND accepted.native_binding_generation=current.native_binding_generation
+                AND accepted.native_input_id=json_extract(completed.payload_json,'$.nativeTurnId')
+            ))",
         params![source.conversation_id,session],|r|r.get(0))?;
     if uncertain {
         return Ok(true);

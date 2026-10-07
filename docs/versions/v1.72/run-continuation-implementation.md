@@ -2,7 +2,7 @@
 document_type: implementation-record
 version: v1.72
 authority: implementation-evidence
-last_updated: 2026-10-07
+last_updated: 2026-10-08
 ---
 
 # 用户主动继续执行实施记录
@@ -72,7 +72,50 @@ last_updated: 2026-10-07
 浏览器截图保存在此 worktree 的 `out/verification/run-continuation/`；测试使用 Mock 传输，
 不代表真实 Runtime 恢复或模型质量对照。
 
-真实模型 Gate **未执行**。本项尚无冻结的实际 Runtime/model、Judge 和预算配置；不沿用其他工作项的豁免。
+2026-10-08 已完成下述真实 Codex 续做专项；通用 12 Case 新旧模型／Judge 对照 Gate **未执行**。
+专项运行不替代该语义 Gate，本项尚无冻结的通用评测模型、Judge 和预算配置；不沿用其他工作项的豁免。
 按[上下文变更治理](../../development/model-context-change-governance.md#真实任务-gate)“PR 前保留新旧实际执行对照”的要求，
 完成 User 授权的分支提交／推送后，保留 worktree，暂不创建 PR 或合入主线。
 下一步是冻结本项真实任务评测配置、补齐 Gate 证据，再进入 PR review。
+
+## 恢复失败历史修正与真实 Runtime 专项
+
+User 对 `39ab0d0e` 的复核指出：历史 `continuation_session_unavailable` 会压过同一会话之后的成功。
+修正只查询既有成功事件和 Runtime Input Delivery；同一当前绑定的可信原生完成发生在失败之后，
+旧失败就不再要求新会话。事件不删除，未知输入门禁不放宽，未增加 Schema、提示词或恢复状态系统。
+
+扩展既有 `continuation_rechecks_scope_and_requires_explicit_session_replacement` owner：
+实际调用接受与成功结算路径，验证“失败 → 普通执行成功 → 继续”；同时保留接受不等于完成、
+不同绑定不能清除失败、新失败仍要求确认的负向断言。修复前目标断言失败，修复后 delivery queue 24 项通过。
+未新增独立 Rust 测试 owner。
+
+真实专项入口为 `node scripts/accept-run-continuation.mjs`，前置为 `cargo build -p rovai-core --bins`。
+脚本使用生产 Core / Codex CLI 和独立 data-dir、Skill Library、MCP 配置与工作区，不启动日常 App。
+恢复失败通过临时移开本次 fixture 自己创建的 Native Session 文件触发；核对 session ID 和工作区归属，
+停止本次 Core 后操作，结束时恢复文件。没有 Mock 响应或预制模型输出。
+
+执行环境为 macOS、Codex CLI `0.159.2`，配置 `runtime_default`，实际观察到 `gpt-6.1-sol`。
+最终运行于本地 2026-10-08，fixture 名为 `rovai-continuation-real-65ecpJ`，
+Thread 为 `rvcamp_01m4bk35n4f4rac0hr9pree7kp`。报告同时保存源码 diff、脚本与实际 Core 二进制摘要。
+
+| 真实路径 | 结果与证据 |
+| --- | --- |
+| 投递前停止 → 原会话续做 | 原 Run `ac8907e2` 保持 cancelled；新 Run `84bf694e` 成功，会话 ID 不变，读到新 Task |
+| 实际恢复失败 | Run `f3059632` 明确 failed；无 Runtime Input Delivery、无空会话替换，下次请求要求确认 |
+| 历史失败 → 普通消息成功 → 再续做 | 普通 Run `10b050af` 和续做 Run `fcb27c71` 成功，沿用同一 Native Session，无额外换会话确认 |
+| 再次恢复失败 → 确认新会话 | Run `7f2be575` 再次失败并要求确认；确认后 `0254ed25` 成功，原 checkpoint 字节摘要不变；模型产物读到更新后的 Task 和职责，原 Run 状态不变 |
+| 已接受输入后停止、native 终态未知 | Run `1e10c499` 清理完成仍要求明确新会话确认，不用进程清理冒充原生完成 |
+
+首次 fixture `rovai-continuation-real-xiCNgn` 的原始失败报告保留：当时把“已接受但终态未知的停止”
+误当作可直接恢复的前置条件，被既有确认门禁正确拒绝。随后区分投递前停止与已接受停止两个路径，
+没有为了让测试通过而放宽准入。上述同会话停止用例只证明投递前停止；未证明已接受输入且 Adapter
+已确认 interrupted 终态之后的同会话恢复。其他 Adapter / 平台和通用 12 Case Judge Gate 仍未验证。
+
+中间 fixture `rovai-continuation-real-k7mKCZ` 的五项检查也通过；最终运行进一步连接
+“成功之后再失败 → 确认新会话”，验证较早的成功不会覆盖新失败。三份原始私有报告均保存在
+各自 fixture 的 `report.json`，由入口输出的绝对路径定位，保留 Run、会话与检查结果。
+本次提示词前后相同，沿用已确认 r2，仅修正会话准入判断。
+
+修正后复验：`pnpm test:rust:pr` 为 453 项通过、1 项既有忽略；`pnpm docs:test`、
+`DOCS_BASE_REF=b20b1f69 pnpm docs:check:ci`、`cargo fmt --all -- --check`、
+`node --check scripts/accept-run-continuation.mjs` 与 `git diff --check` 均通过。
