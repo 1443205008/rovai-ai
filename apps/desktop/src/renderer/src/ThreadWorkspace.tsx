@@ -9549,7 +9549,7 @@ function MessageReplyIcon(): JSX.Element {
   )
 }
 
-function TruncatedStructuredMessageBody({
+export function TruncatedStructuredMessageBody({
   body,
   content,
   members,
@@ -9621,7 +9621,7 @@ function TruncatedStructuredMessageBody({
           <path d="m4 6 4 4 4-4" />
         </svg>
       </button>
-      <span className="sr-only" aria-live="polite">
+      <span className="sr-only" aria-live="polite" data-quote-exclude>
         {expanded ? uiAttribute("全文已展开") : uiAttribute("其余内容已收起")}<UiText zh={"，共 "} />{projection.lineCount}<UiText zh={" 行"} /></span>
     </div>
   )
