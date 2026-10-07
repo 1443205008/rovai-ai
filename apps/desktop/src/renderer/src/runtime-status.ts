@@ -85,10 +85,7 @@ export function runtimeAvailabilityPresentation(
     case 'found_uninspected':
     case 'light_ready':
     case 'installed_unverified':
-      return {
-        ...presentation('available', uiAttribute('已检测到可执行入口；启动任务时验证登录、模型与所需能力。')),
-        label: uiAttribute('已检测到')
-      }
+      return presentation('available')
     case 'ready':
       if (availability.runtimeKind === 'zcode-app') {
         return presentation(
