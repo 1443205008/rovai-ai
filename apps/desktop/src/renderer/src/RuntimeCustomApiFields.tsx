@@ -1,7 +1,8 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import type { RuntimeApiKeyChange } from '@contracts'
 import { reusableCredential, usesCustomApi, type ConnectionObservation, type NativeCredential, type RuntimeCustomApiConfiguration } from './runtime-connection-editor'
 import { DialogControlIcon } from './AppDialog'
+import { CopyIcon } from './CopyIcon'
 import { newCommandId } from '../../shared/command-id'
 import { UiText, uiAttribute } from './interface-language'
 
@@ -16,7 +17,6 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
 }): React.JSX.Element {
   const id = useId()
   const [revealed, setRevealed] = useState(false)
-  const [copyStatus, setCopyStatus] = useState<string | null>(null)
   const activeApi = usesCustomApi(value)
   const keyInput = apiKey.action === 'replace' ? apiKey.value : ''
   const keyAvailable = reusableCredential(credential)
@@ -24,7 +24,7 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
   const credentialNote = clearing ? '保存后清除该 API Key，不退出官方登录。' : apiKey.action === 'replace' ? credential?.sourceWritable === false ? '保存后改用新 Key，原凭据来源不变。' : '保存后替换当前 API Key。'
     : credential?.source === 'native_cloud' ? `${credential.sourceLabel} 原生路由`
       : keyAvailable ? credential?.source === 'native_managed' ? credential.sourceLabel : '已从原生配置读取，无需重新输入。'
-      : credential?.status === 'unknown' ? '由原生 CLI 管理，尚未确认'
+      : credential?.status === 'unknown' ? '由原生 CLI 管理'
       : credential?.status === 'invalid_reference' ? uiAttribute('未能读取 {0}。可填写新 Key，或修复该来源。', credential.sourceLabel)
         : '未找到可复用的凭据，请填写 API Key。'
   const loginStatus = observation?.loginStatus ?? 'unknown'
@@ -43,28 +43,19 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
       {value.mode === null && <p className="runtime-custom-api-note runtime-connection-unselected"><UiText zh={"请选择连接方式。"} /></p>}
       {!activeApi && <div className="runtime-connection-login">
         <div className="runtime-connection-login-row" role="status" aria-atomic="true"><span><UiText zh={"登录状态"} /></span><span className={`runtime-login-status is-${loginStatus}`}>
-          {uiAttribute(loginStatus === 'signed_in' ? '已登录' : loginStatus === 'signed_out' ? '未登录' : '由原生 CLI 管理，尚未确认')}
+          {uiAttribute(loginStatus === 'signed_in' ? '已登录' : loginStatus === 'signed_out' ? '未登录' : '未确认')}
         </span></div>
         <details className="runtime-connection-help runtime-login-help" open={loginStatus === 'signed_out' || undefined}>
           <summary><UiText zh={"登录与账号操作"} /></summary>
-          <p><UiText zh={"在本机终端运行："} /></p>
-          <div className="runtime-login-command"><code>{loginCommand}</code><button type="button" className="quiet-button" onClick={async () => {
-            try { await navigator.clipboard.writeText(loginCommand); setCopyStatus('已复制') }
-            catch { setCopyStatus('复制失败，请选中命令复制。') }
-          }}><UiText zh="复制命令" /></button></div>
-          {copyStatus && <p role="status">{uiAttribute(copyStatus)}</p>}
-          {value.kind === 'claude-code-cli' ? <p><UiText zh={"进入后用 "} /><code>/login</code><UiText zh={" 登录，并选择 Claude 账号。"} /></p>
-            : <p><UiText zh={"按提示完成 ChatGPT 登录。"} /></p>}
-          <p><UiText zh={"登录、退出或切换账号在对应 CLI 中操作；完成后重新进入此页。此处切换连接方式不会退出账号。"} /></p>
+          <RuntimeLoginCommand key={loginCommand} command={loginCommand} />
+          <p><UiText zh="账号操作在 CLI 中完成，操作后重新进入此页。" /></p>
         </details>
       </div>}
     {observation?.conflict && <p role="alert" className="runtime-startup-result is-warning runtime-connection-conflict">{observation.conflict}</p>}
     {activeApi && <p className="runtime-custom-api-note"><UiText zh={"请求将发送至此接口，可能包含提示词、代码和工具结果。"} /></p>}
     {activeApi && <div id={`${id}-api-fields`} className="runtime-custom-api-fields">
-      <label><span><UiText zh={"接口地址（Base URL）"} /></span><input type="url" value={value.baseUrl} placeholder="https://api.example.com" autoComplete="off" spellCheck={false} disabled={disabled} aria-describedby={`${id}-protocol`}
+      <label><span><UiText zh={"接口地址（Base URL）"} /></span><input type="url" value={value.baseUrl} placeholder="https://api.example.com" autoComplete="off" spellCheck={false} disabled={disabled}
         onChange={(event) => onChange({ ...value, baseUrl: event.target.value })} /></label>
-      <p id={`${id}-protocol`} className="runtime-api-protocol">{credential?.source === 'native_cloud' && apiKey.action === 'keep' ? credential.sourceLabel : value.kind === 'claude-code-cli' ? 'Anthropic Messages' : 'OpenAI Responses'}</p>
-      {value.baseUrl.trim().toLowerCase().startsWith('http:') && <p className="runtime-startup-result is-warning" role="status"><UiText zh="HTTP 不加密，凭据与请求内容可能在传输中泄露。建议使用 HTTPS。" /></p>}
       <div className="runtime-custom-api-key-row">
         <label htmlFor={`${id}-key`}>API Key</label>
         <div className="runtime-custom-api-key-input">
@@ -102,6 +93,26 @@ export function RuntimeCustomApiFields({ value, apiKey, credential, disabled, ob
       </details>
     </div>}
   </section>
+}
+
+function RuntimeLoginCommand({ command }: { command: string }): React.JSX.Element {
+  const [copiedAt, setCopiedAt] = useState<number | null>(null)
+  const [copyFailed, setCopyFailed] = useState(false)
+  const copied = copiedAt !== null
+  useEffect(() => {
+    if (copiedAt === null) return
+    const timer = window.setTimeout(() => setCopiedAt(null), 1600)
+    return () => window.clearTimeout(timer)
+  }, [copiedAt])
+  return <>
+    <p><UiText zh="在本机终端运行：" /></p>
+    <div className="runtime-login-command"><code>{command}</code><button type="button" className="quiet-button message-copy-button"
+      aria-label={uiAttribute(copied ? '已复制' : '复制命令')} title={uiAttribute('复制命令')} onClick={async () => {
+        try { await navigator.clipboard.writeText(command); setCopiedAt(Date.now()); setCopyFailed(false) }
+        catch { setCopiedAt(null); setCopyFailed(true) }
+      }}><CopyIcon copied={copied} /></button></div>
+    {copyFailed && <p role="alert"><UiText zh="复制失败，请选中命令复制。" /></p>}
+  </>
 }
 
 function CodexApiModels({ value, disabled, onChange }: {

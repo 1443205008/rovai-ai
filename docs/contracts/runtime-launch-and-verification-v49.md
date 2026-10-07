@@ -12,6 +12,12 @@ last_updated: 2026-10-07
 继承 [v48](runtime-launch-and-verification-v48.md) 的原生连接配置、模型发现、真实 Host 验证、权限、Session、输入及关闭边界。
 本版收紧 Codex Host 的完成与失败释放，不改变 Fleet TTL、容量、跨会话复用范围，也不启用其他 Adapter 的 warm。
 
+## 登录状态呈现
+
+继承的 `signed_in / signed_out / unknown` 原生事实边界不变；设置页未知状态文案缩短为“未确认”。
+不能因未读取到官方凭据或辅助读取失败而显示“未登录”，不新增账号检查、后台轮询或执行准入。
+命令、复制反馈与精简说明由[原生连接 UI](../ui/components/app-shell-navigation.md#原生连接设置)拥有。
+
 ## 原生终态与释放
 
 仅身份匹配的原生 `turn/completed`、状态 `completed` 有资格申请 `Reusable`；Fleet 仍检查健康、静默、

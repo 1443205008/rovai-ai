@@ -342,7 +342,9 @@ preview responses. A fallback search source retains a local warning without expo
 
 Only Claude Code and Codex extend the existing startup form. Preserve the established dividers,
 semantic theme tokens, compact fields and common save/discard row. Choose Official sign-in or Custom API;
-login status is separate and signed-in uses success green. Login instructions refer to this computer.
+login status is separate and signed-in uses success green. Unknown identity reads “未确认”, never inferred signed-out.
+Login help keeps the local command and one account-management sentence. Center the command and copy icon together;
+use the conversation copy/check icon with a brief success state and no success message. Keep actionable copy failures.
 
 Claude has five optional model mappings; Codex has ID, optional display name and one default per model
 row. Keep row identities independent of edited IDs. No provider, reference-model, capability or protocol editor.
@@ -353,7 +355,7 @@ Save only edited fields. Preserve unrelated external changes and every draft whi
 inline. Read-only credential references may still be replaced through a supported native binding; show a
 specific source and remedy only for actual restrictions. A URL text change does not invalidate a static key.
 
-State shared native-config impact once. Keep Base URL/protocol/default-model/key semantics in concise field
+State shared native-config impact once. Omit protocol labels and HTTP warnings. Keep Base URL/default-model/key semantics in concise field
 labels and collapsed help. No persistent reread control, Test API button, polling or extra save confirmation.
 Porcelain Day / Steel Night and the <=600px stacked model rows retain the existing surfaces and control names.
 Current behavior is owned by [Runtime Launch v47](../../../../docs/contracts/runtime-launch-and-verification-v47.md)

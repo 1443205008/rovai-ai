@@ -1549,14 +1549,13 @@
 .runtime-native-credential-note.is-warning { color: var(--attention); }
 .runtime-native-credential-row .quiet-button { min-height: 28px; padding: 3px 0; font-size: 12px; }
 .runtime-native-credential-row .danger-text { color: var(--danger); }
-.runtime-api-protocol { margin: -7px 0 0; padding-left: 170px; color: var(--muted); font-size: 12px; }
 .runtime-connection-help { color: var(--muted); font-size: 12px; line-height: 1.65; }
 .runtime-connection-help summary { width: fit-content; padding: 5px 0; cursor: pointer; color: var(--ink); }
 .runtime-connection-help summary:focus-visible { outline: 2px solid var(--steel); outline-offset: 3px; border-radius: 3px; }
 .runtime-connection-help p { margin: 6px 0; }
 .runtime-api-help { padding-left: 170px; margin-top: 0; }
 .runtime-login-help { margin-top: 8px; }
-.runtime-login-command { display: flex; align-items: start; gap: 8px; }
+.runtime-login-command { display: flex; align-items: center; gap: 8px; }
 .runtime-login-command code { min-width: 0; overflow-wrap: anywhere; user-select: text; }
 .runtime-login-command button { flex-shrink: 0; }
 .runtime-connection-help code { font-size: 12px; color: var(--ink); }
@@ -1573,5 +1572,5 @@
   .runtime-connection-login-row { grid-template-columns: 1fr 1fr; gap: 12px; }
   .runtime-custom-api-key-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .runtime-native-credential-row { padding-left: 0; }
-  .runtime-api-protocol, .runtime-api-help, .runtime-credential-restriction { padding-left: 0; }
+  .runtime-api-help, .runtime-credential-restriction { padding-left: 0; }
 }
