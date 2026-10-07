@@ -349,7 +349,7 @@ use the conversation copy/check icon with a brief success state and no success m
 Claude has five optional model mappings; Codex has ID, optional display name and one default per model
 row. Keep row identities independent of edited IDs. Use a clear 20px trash glyph in a 36px delete control.
 No provider, reference-model, capability or protocol editor.
-Native configuration is read on entry and after saving, with retry on read failure only. Existing credentials
+Native configuration is read on entry, with retry on read failure only. Save updates the form from its local receipt. Existing credentials
 populate readable keys into a password input; the eye reveals the current value. Viewing is read-only.
 Restore masking after save, discard, re-entry or credential revision changes. Remove the read-success note and separate clear/undo buttons.
 Clearing a readable key is an edit committed by Save; emptying a new key for an opaque source only cancels replacement.
@@ -362,5 +362,12 @@ Omit shared native-config impact, request-content notices, protocol labels, HTTP
 Keep field labels, actual credential status, action feedback and specific restrictions or errors.
 No persistent reread control, Test API button, polling or extra save confirmation.
 Porcelain Day / Steel Night and the <=600px stacked model rows retain the existing surfaces and control names.
-Current behavior is owned by [Runtime Launch v50](../../../../docs/contracts/runtime-launch-and-verification-v50.md)
+Current behavior is owned by [Runtime Launch v51](../../../../docs/contracts/runtime-launch-and-verification-v51.md)
 and [native connection UI](../../../../docs/ui/components/app-shell-navigation.md#原生连接设置).
+
+### Local configuration save
+
+Claude/Codex save commits local fields only. End loading from the receipt and show “已保存” in the existing action row;
+if only a new source selection was committed, keep the connection draft and identify it as unsaved. Do not call parent
+reloads or observe a newly saved source automatically. An unconfirmed target fails clearly with the draft retained.
+Save receipts omit full keys; keep only the editor-owned confirmed value in memory. Local completion is not connection health.

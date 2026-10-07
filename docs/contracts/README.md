@@ -97,7 +97,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Camp Open Projection v10（历史）](camp-open-projection-v10.md) | main Snapshot 34/Open 6；Open 不读取 event_log，移除 timeline/coverage.timeline，保留 high-water 与业务卡片 |
 | [Camp Open Projection v10（渠道分支历史）](camp-open-projection-channel-v10.md) | v9 保留；Camp/Navigation 增加可选 channelSource，原始 title 不变；合并时保留原文以区分同号合同 |
 | [Camp Open Projection v9（历史）](camp-open-projection-v9.md) | v8 保留；Snapshot 34/Open 5 增加可选 member.fast，仅查询安全缓存 |
-| [Runtime Launch and Verification v50（当前）](runtime-launch-and-verification-v50.md) | 继承 v49；Owner 设置回显可读的原生静态 API Key，默认隐藏，查看不写入，不增加持久副本 |
+| [Runtime Launch and Verification v51（当前）](runtime-launch-and-verification-v51.md) | 继承 v50；保存只做本地提交，不触发发现、检查、目录或 Host 工作；保存回执不含完整 Key，界面按回执结束保存 |
+| [Runtime Launch and Verification v50（历史）](runtime-launch-and-verification-v50.md) | 继承 v49；Owner 设置回显可读的原生静态 API Key，默认隐藏，查看不写入，不增加持久副本 |
 | [Runtime Launch and Verification v49（历史）](runtime-launch-and-verification-v49.md) | 继承 v48；Codex 可信原生终态决定复用、事务清理门禁、明确回收证据和精确冷恢复 |
 | [Runtime Launch and Verification v48（历史）](runtime-launch-and-verification-v48.md) | 继承 v47 真实 Host 验证；Claude Code/Codex 原生配置复用、字段合并、无 Key 副本、真实连接方式与执行兼容性 |
 | [Runtime Launch and Verification v47（历史）](runtime-launch-and-verification-v47.md) | 继承 v46；静态安装发现、真实 Host 初始化屏障、版本未知可运行与诊断解耦 |

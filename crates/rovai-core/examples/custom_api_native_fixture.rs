@@ -158,15 +158,10 @@ async fn main() -> Result<()> {
         .collect::<Vec<_>>();
     if configuration.enabled() && !root.join("reuse-native-fixture").is_file() {
         let catalog = if kind == AdapterKind::CodexCli && !address_only {
-            Some(
-                runtime_custom_api::codex_catalog::generate(
-                    Some(executable),
-                    &context,
-                    &before,
-                    &configuration,
-                )
-                .await?,
-            )
+            Some(runtime_custom_api::codex_catalog::generate(
+                &before,
+                &configuration,
+            )?)
         } else {
             None
         };

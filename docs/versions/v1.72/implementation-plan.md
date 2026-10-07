@@ -1029,3 +1029,51 @@ Windows 原生运行结果归档于 [PR #652](https://github.com/murray17/rovai-
   12 个 Skill 规范检查和以该 main SHA 为 base 的通用文档门禁通过。
 - 独立复核：Spec 未关闭问题 0 项；Standards 的当前版本文档漂移修正并复核后，未关闭问题 0 项。
   复核与上述确定性检查不代表真实模型 Gate 通过；按已记录的 User 后续合并指令推进 PR。
+
+## 2026-10-07 设置保存仅本地提交
+
+基线 `3acf1f28`（已包含主线 `921e37e1`），工作分支 `rovai/local-settings-save`。
+按 User 的保存流程说明新增 [Runtime Launch v51](../../contracts/runtime-launch-and-verification-v51.md)，
+继承原生文件归属和安全写入；这是可逆的操作链调整，没有新增配置存储或架构决策。
+
+- `runtime.startup.save` 移除 shell 捕获、程序扫描、全 Runtime discovery 和 Codex 模型元数据子进程。
+  自动入口只使用已有发现或独立 Owner 读取确认的进程内记录；PATH 改变或入口未知时不猜测写入目标。
+  这份可失效的入口记录不持久化、不拥有连接配置或凭据。模型文件使用已有原生目录或已包含的
+  兼容默认结构，保留隐藏元数据、未知字段、字段 CAS、目录修订和凭据 Keep/Replace/Clear。
+- 保存回执（包括冲突最新值）不携带完整 Key；表单从回执更新基线和完成状态，只保留编辑器已有的、
+  来源及版本匹配的 Key 或本次替换值。移除父组件 reload 与保存触发的来源 observation，迟到读取不得
+  覆盖已提交字段；同时选择来源与编辑连接时，只提交启动选择并保留尚未提交的连接草稿。
+- 环境捕获及发现文件校验移至提交锁之外，发布时核对代次并合并最新配置；保存仅更新本地修订与失效标记。
+  不重启或取消已有 Host/Run，后续执行继续使用原有配置快照兼容检查。
+
+测试准入与退役：新增 slow owner
+`application::runtime_check_environment::tests::local_saves_finish_while_environment_capture_is_held_and_never_launch_work`
+独占“环境捕获尚未完成时保存仍可提交”的交错；修复前保存会等待同一提交锁，或补跑环境/CLI/发现。
+已有 probe-race owner 的屏障发生在环境捕获之后，无法覆盖这一失败窗口；必须通过隔离 Core、SQLite 和
+真实 RPC handler 验证锁与提交边界，纯函数测试不足。一个 owner 表驱动覆盖两种 Runtime 的 URL、Key、模型、
+环境和程序选择，并核对旧快照失效、无发现发布、无额外捕获、回执脱敏和迟到刷新保留新配置。
+最小命令：`cargo test -p rovai-core --features slow-tests --lib application::runtime_check_environment::tests::local_saves_finish_while_environment_capture_is_held_and_never_launch_work`。
+
+扩展已有 `discovered_runtime_verification_keeps_database_available_and_identity_after_restart`，通过阻塞唯一
+文件 worker 验证生产 discovery 发布既不占数据库锁，也不占保存提交锁。改写原环境读取失败 owner 为保存
+不依赖失败 reader。删除 `native_resource::tests::selected_wrapper_reads_local_catalog_without_resource_fingerprints`：
+其唯一生产路径（保存时启动 CLI 读取 bundled catalog）在本次退出，没有保留永久禁用测试。模型本地转换与
+未知元数据保留继续由 `codex_catalog::tests` 及 `runtime_custom_api::tests` 拥有。新增一个、删除一个 Rust owner，
+其他变化扩展原有 owner；前端在原 Electron fixture 验证请求计数、回执屏障、失败/冲突草稿及 Key 三态。
+
+本轮验证（macOS arm64）：
+
+| 命令 / owner | 结果 |
+| --- | --- |
+| `pnpm test:rust:pr` | workspace 455 项通过，1 项既有真实 Runtime smoke 按声明忽略；包含原生 fixture example 编译 |
+| slow-tests 的 `application::runtime_check_environment::tests::` | 4 项通过，包含环境屏障、旧 probe 隔离、未知自动目标拒绝、独立读取后的入口复用和 PATH 改变后失效 |
+| slow-tests 的 `runtime_custom_api::` | 4 个 owner 通过，覆盖配置格式、来源权限、凭据三态、字段冲突、未知字段、目录元数据和写入回退 |
+| discovery 文件 worker 锁 owner / `runtime_fleet::tests::warm_hosts_never_cross_camp_compatibility_keys` | 各 1 项通过 |
+| `pnpm test` | Vitest 238 文件、2,603 项通过；Node 主脚本集 334 项通过、2 项 Windows 用例在 macOS 跳过；文档、Skill、sandbox 子集均通过 |
+| `pnpm typecheck`、`cargo fmt --all --check`、`git diff --check` | 通过 |
+| `ROVAI_KEEP_CUSTOM_API_FIXTURE=1 node --test scripts/lib/runtime-custom-api-ui.test.mjs` | 隔离 Electron fixture 通过；人工查看窄屏与保存回执截图，原有日夜主题和表单布局保持 |
+| `pnpm docs:test`、`pnpm docs:check`、`DOCS_BASE_REF=921e37e1 pnpm docs:check:ci` | 干净工作树通过；未修改主工作区被 Git 忽略的原型稿及其过期链接 |
+
+JavaScript 全套与文档门禁在仅含受版本控制文件及本次补丁的临时工作树执行，复用既有依赖，关闭 pnpm 的
+自动依赖安装；未删改依赖或为文档检查添加例外。Core/Rust 和 Electron 定向 fixture 在原工作区执行，
+数据均来自临时目录。未运行真实 Provider/账号 smoke、Windows 原生验收或更换当前日常 App。

@@ -1,6 +1,6 @@
 import type { RuntimeNativeCredential, RuntimeCustomApiConfiguration, RuntimeStartupSettings } from '@contracts'
 import { describe, expect, it } from 'vitest'
-import { customApiError, draftAfterSourceObservation, emptyCustomApi, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey, startupEdits, startupSubmission } from './runtime-startup-draft'
+import { customApiError, draftAfterSourceObservation, emptyCustomApi, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey, settingsAfterSave, startupEdits, startupSubmission } from './runtime-startup-draft'
 
 describe('startup editor draft contract', () => {
   it('treats returning to the saved values as clean and preserves empty or spaced values', () => {
@@ -61,6 +61,16 @@ describe('startup editor draft contract', () => {
     const official = { ...draft, customApi: { ...codex, mode: 'official_login' as const, baseUrl: 'invalid', models: [] } }
     expect(customApiError(official, { action: 'replace', value: 'bad key\n' }, { ...credential, canReplace: false })).toBeNull()
     const saved: RuntimeStartupSettings = { runtimeKind: 'codex-cli', revision: 1, configuration: draft, credential, nativeRevision: 'native-1', connectionObservation: null, connectionReadError: null, reconnectRequired: false, nativeWritten: false }
+    // Receipts never reread secrets. Preserve only this editor's matching value;
+    // external/source changes and removal must not resurrect an old Key.
+    const owned = { ...saved, credential: { ...credential, value: 'owned-key' } }
+    expect(settingsAfterSave(saved, owned, key).credential?.value).toBe('owned-key')
+    expect(settingsAfterSave(saved, owned, { action: 'replace', value: 'new-key' }).credential?.value).toBe('new-key')
+    expect(settingsAfterSave(saved, owned, { action: 'clear' }).credential?.value).toBeUndefined()
+    expect(settingsAfterSave({ ...saved, credential: { ...credential, version: 'external' } }, owned, key).credential?.value).toBeUndefined()
+    expect(settingsAfterSave({ ...saved, credential: { ...credential, status: 'missing' } }, owned, key).credential?.value).toBeUndefined()
+    expect(settingsAfterSave({ ...saved, configuration: { ...draft, environment: [{ name: 'CODEX_HOME', value: '/new/home' }] } }, owned, key).credential?.value).toBeUndefined()
+    expect(settingsAfterSave({ ...saved, configuration: official }, owned, key).credential?.value).toBeUndefined()
     const keyDraft = { action: 'replace', value: 'memory-only-key' } as const
     expect(startupSubmission(saved, draft, { action: 'replace', value: ' \t padded-key \r\n' }).apiKey).toEqual({ action: 'replace', value: 'padded-key' })
     const submission = startupSubmission(saved, official, keyDraft)

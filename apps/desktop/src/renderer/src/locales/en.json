@@ -1,4 +1,6 @@
 {
+  "已保存": "Saved",
+  "启动设置已保存，连接更改尚未保存。": "Startup settings saved; connection changes are still unsaved.",
   "待邀请": "Pending invitation",
   "邀请加入": "Invite to join",
   "邀请其他队员": "Invite another teammate",

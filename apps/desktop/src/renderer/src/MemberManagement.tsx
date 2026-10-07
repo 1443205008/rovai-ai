@@ -1519,7 +1519,7 @@ export function RuntimeInstallationsPanel({
   }
 
   if (settingsRuntime) return <RuntimeStartupSettings key={settingsRuntime} runtimeKind={settingsRuntime} health={health}
-    onBack={() => setSettingsRuntime(null)} onReload={onReload} />
+    onBack={() => setSettingsRuntime(null)} />
 
   return (
     <>

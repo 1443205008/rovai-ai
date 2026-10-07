@@ -1,11 +1,22 @@
 import type { AdapterKind, RuntimeApiKeyChange } from '@contracts'
 import { configurationFromSnapshot, editableSnapshot, editedFields, initialConfiguration, reusableCredential, supportsOfficialLogin, usesCustomApi, withSnapshotValue, type FieldEdit, type NativeCredential, type RuntimeCustomApiConfiguration, type RuntimeStartupConfiguration, type RuntimeStartupSettings } from './runtime-connection-editor'
 
-// Only a saved launch/directory selection schedules another source observation.
-// Input edits and ordinary environment saves do not query native processes.
+// Identifies an editor's source; changing it never schedules an operation.
 export function startupSourceKey(configuration: RuntimeStartupConfiguration): string {
-  const selectors = new Set(['CODEX_HOME', 'HOME', 'USERPROFILE', ...(configuration.programPath ? [] : ['PATH'])])
+  const selectors = new Set(['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'HOME', 'USERPROFILE', ...(configuration.programPath ? [] : ['PATH'])])
   return JSON.stringify([configuration.programPath, configuration.environment.filter(entry => selectors.has(entry.name.toUpperCase())).sort((a, b) => a.name.localeCompare(b.name))])
+}
+
+// Save receipts omit the key. Keep only the value this editor already owns,
+// when the receipt confirms that credential (or our explicit replacement).
+export function settingsAfterSave(settings: RuntimeStartupSettings, previous: RuntimeStartupSettings, key: RuntimeApiKeyChange): RuntimeStartupSettings {
+  if (!settings.credential) return settings
+  const value = settings.configuration.customApi?.mode === 'official_login' || settings.credential.status !== 'available' ? undefined
+    : key.action === 'replace' ? key.value
+      : key.action === 'keep' && settings.credential.version === previous.credential?.version
+        && startupSourceKey(settings.configuration) === startupSourceKey(previous.configuration) ? previous.credential?.value
+        : undefined
+  return { ...settings, credential: { ...settings.credential, value } }
 }
 
 // A newly selected source may finish resolving while the user is already typing.

@@ -218,6 +218,15 @@ pub fn reload_native(settings: &mut RuntimeStartupSettings, database: &Path) {
 pub fn load(database: &Database, kind: AdapterKind) -> Result<RuntimeStartupSettings> {
     read_settings(database, kind)
 }
+/// Commit receipts never echo credentials. The editor may retain its existing
+/// in-memory value; only an explicit owner read returns a native key.
+pub fn saved_response(settings: RuntimeStartupSettings) -> RuntimeStartupSettings {
+    let mut settings = public(settings);
+    if let Some(credential) = &mut settings.credential {
+        credential.value = None;
+    }
+    settings
+}
 /// Owner-editor reads hide credential environment rows; the selected static API
 /// key is returned only in `credential.value`, never in configuration or snapshots.
 pub fn public(mut settings: RuntimeStartupSettings) -> RuntimeStartupSettings {
@@ -653,8 +662,8 @@ pub fn commit_save(
             Some(&read.edit_revision) == prepared.current.native_revision.as_ref(),
             "原生连接在保存期间变化，草稿已保留，请再次保存。"
         );
-        // Local catalog generation may await the selected executable. Recheck
-        // exactly its source plus edited fields, not unrelated native contents.
+        // Local catalog generation reads a separate file. Recheck exactly its
+        // source plus edited fields, not unrelated native contents.
         if generated_catalog.is_some() {
             ensure!(
                 read.catalog_revision == prepared.current.native_catalog_revision,

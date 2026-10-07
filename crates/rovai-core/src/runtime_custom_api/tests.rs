@@ -1432,9 +1432,7 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     if let CustomApiConfiguration::Codex { models, .. } = &mut desired {
         models[0].display_name = "Edited name".into();
     }
-    let generated = codex_catalog::generate(None, &context, &after_default, &desired)
-        .await
-        .unwrap();
+    let generated = codex_catalog::generate(&after_default, &desired).unwrap();
     let mut expected = full.clone();
     expected["models"][0]["display_name"] = json!("Edited name");
     expected["rovai_managed_model_list"] = json!(false);
@@ -1485,9 +1483,7 @@ async fn native_sources_keep_environment_references_and_replace_only_the_selecte
     if let CustomApiConfiguration::Codex { models, .. } = &mut removed {
         models.remove(0);
     }
-    let generated = codex_catalog::generate(None, &context, &saved, &removed)
-        .await
-        .unwrap();
+    let generated = codex_catalog::generate(&saved, &removed).unwrap();
     let edit = FieldEdit {
         path: vec!["codexModels".into()],
         before: Value::Null,

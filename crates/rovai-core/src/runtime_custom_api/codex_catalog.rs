@@ -1,9 +1,7 @@
-//! Preserve native catalogs; new metadata comes from the actual selected entrypoint.
-//! Known metadata is read from the selected executable, never another installation/cache.
+//! Save-time model edits use only the selected local catalog and compatibility defaults.
 use super::CustomApiConfiguration;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::{Value, json};
-use std::path::Path;
 
 const BASE_INSTRUCTIONS: &str = include_str!("codex-0.159.2-prompt.txt");
 
@@ -43,7 +41,6 @@ fn adapt_catalog(
     mut catalog: Value,
     current: &CustomApiConfiguration,
     desired: &CustomApiConfiguration,
-    bundled: Option<&Value>,
     inherited_catalog: bool,
 ) -> Result<Value> {
     let CustomApiConfiguration::Codex { models, .. } = desired else {
@@ -86,12 +83,6 @@ fn adapt_catalog(
         let mut item = destination
             .or(source)
             .map(|index| original[index].clone())
-            .or_else(|| {
-                bundled
-                    .and_then(|c| c["models"].as_array())
-                    .and_then(|entries| entries.iter().find(|entry| entry["slug"] == model.id))
-                    .cloned()
-            })
             .unwrap_or_else(|| fallback_model(&model.id));
         item["slug"] = json!(model.id);
         if !inherited_catalog || previous_row.is_none_or(|old| old.id != model.id) {
@@ -126,58 +117,26 @@ fn adapt_catalog(
     Ok(catalog)
 }
 
-pub async fn generate(
-    executable: Option<&Path>,
-    context: &super::native::NativeContext,
+/// No subprocess, discovery or model refresh. Existing hidden metadata remains
+/// authoritative; a new catalog uses the already-shipped native fallback shape.
+pub fn generate(
     current: &super::native::NativeRead,
     desired: &CustomApiConfiguration,
 ) -> Result<Value> {
     let existing = current
         .catalog_path
         .as_ref()
-        .map(|p| super::native::read_json(p))
+        .map(|path| super::native::read_json(path))
         .transpose()?;
     let CustomApiConfiguration::Codex { models, .. } = desired else {
         anyhow::bail!("Codex 连接类型不匹配。");
     };
-    let previous = match &current.configuration {
-        CustomApiConfiguration::Codex { models, .. } => models,
-        _ => unreachable!(),
-    };
-    let needs_metadata = existing.is_none()
-        || models.iter().any(|model| {
-            let id = previous
-                .iter()
-                .find(|old| old.row_id == model.row_id)
-                .map(|old| &old.id)
-                .unwrap_or(&model.id);
-            !existing
-                .as_ref()
-                .and_then(|c| c["models"].as_array())
-                .is_some_and(|entries| {
-                    entries
-                        .iter()
-                        .any(|entry| entry["slug"] == *id || entry["slug"] == model.id)
-                })
-        });
-    let bundled = if needs_metadata {
-        let executable =
-            executable.context("新模型目录需要读取当前 Codex 程序的本地元数据，请先选择程序。")?;
-        Some(super::native_resource::bundled_catalog(executable, context).await?)
-    } else {
-        None
-    };
-    let base = existing
-        .clone()
-        .or_else(|| bundled.clone())
-        .context("Codex 原生目录不可用。")?;
-    adapt_catalog(
-        base,
-        &current.configuration,
-        desired,
-        bundled.as_ref(),
-        existing.is_some(),
-    )
+    let base = existing.clone().unwrap_or_else(|| {
+        json!({
+            "models": models.iter().map(|model| fallback_model(&model.id)).collect::<Vec<_>>()
+        })
+    });
+    adapt_catalog(base, &current.configuration, desired, existing.is_some())
 }
 
 pub fn models_changed(before: &CustomApiConfiguration, after: &CustomApiConfiguration) -> bool {
@@ -231,7 +190,7 @@ mod tests {
         if let CustomApiConfiguration::Codex { models, .. } = &mut inherited {
             models.clear();
         }
-        let catalog = adapt_catalog(native, &inherited, &config, None, false).unwrap();
+        let catalog = adapt_catalog(native, &inherited, &config, false).unwrap();
         let models = catalog["models"].as_array().unwrap();
         assert_eq!(models.len(), 3);
         assert_eq!(models[0]["context_window"], 123456);
@@ -247,7 +206,7 @@ mod tests {
         assert_eq!(models[2]["priority"], 99);
         assert_eq!(models[2]["display_name"], "known-but-unknown-suffix");
         assert!(
-            adapt_catalog(json!({"data":[]}), &config, &config, None, false).is_err(),
+            adapt_catalog(json!({"data":[]}), &config, &config, false).is_err(),
             "model/list is not a full native catalog"
         );
         let mut original = catalog.clone();
@@ -261,7 +220,7 @@ mod tests {
         if let CustomApiConfiguration::Codex { models, .. } = &mut renamed {
             models[0].display_name = "Renamed".into();
         }
-        let updated = adapt_catalog(original.clone(), &config, &renamed, None, true).unwrap();
+        let updated = adapt_catalog(original.clone(), &config, &renamed, true).unwrap();
         let mut expected = original.clone();
         expected["models"][0]["display_name"] = json!("Renamed");
         assert_eq!(
@@ -271,7 +230,7 @@ mod tests {
         if let CustomApiConfiguration::Codex { models, .. } = &mut renamed {
             models[0].id = "custom-renamed-id".into();
         }
-        let updated = adapt_catalog(original.clone(), &config, &renamed, None, true).unwrap();
+        let updated = adapt_catalog(original.clone(), &config, &renamed, true).unwrap();
         expected["models"][0]["slug"] = json!("custom-renamed-id");
         expected["rovai_model_ids"][0] = json!("custom-renamed-id");
         assert_eq!(
@@ -282,7 +241,7 @@ mod tests {
         if let CustomApiConfiguration::Codex { models, .. } = &mut removed {
             models.remove(0);
         }
-        let updated = adapt_catalog(updated, &renamed, &removed, None, true).unwrap();
+        let updated = adapt_catalog(updated, &renamed, &removed, true).unwrap();
         assert_eq!(updated["models"][0]["visibility"], "hide");
         assert_eq!(
             updated["models"][1], original["models"][1],
@@ -308,7 +267,7 @@ mod tests {
                 }
                 *default_model = ids[1].into();
             }
-            let updated = adapt_catalog(original.clone(), &config, &renamed, None, true).unwrap();
+            let updated = adapt_catalog(original.clone(), &config, &renamed, true).unwrap();
             let entries = updated["models"].as_array().unwrap();
             assert_eq!(
                 entries
@@ -349,7 +308,7 @@ mod tests {
                 display_name: "Existing hidden model".into(),
             });
         }
-        let updated = adapt_catalog(original.clone(), &config, &added, None, true).unwrap();
+        let updated = adapt_catalog(original.clone(), &config, &added, true).unwrap();
         assert_eq!(updated["models"].as_array().unwrap().len(), 3);
         assert_eq!(
             updated["models"][1]["display_name"],

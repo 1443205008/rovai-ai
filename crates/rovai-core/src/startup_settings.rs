@@ -49,7 +49,34 @@ struct SaveParams {
     api_key: rovai_core::runtime_custom_api::ApiKeyChange,
 }
 
+fn launcher_selection(configuration: &RuntimeStartupConfiguration) -> String {
+    let path = configuration
+        .environment
+        .iter()
+        .find(|entry| {
+            if cfg!(windows) {
+                entry.name.eq_ignore_ascii_case("PATH")
+            } else {
+                entry.name == "PATH"
+            }
+        })
+        .map(|entry| &entry.value);
+    json!([configuration.program_path, path]).to_string()
+}
+
 impl Core {
+    async fn remember_startup_launcher(&self, settings: &runtime_startup::RuntimeStartupSettings) {
+        if let Some(snapshot) = &settings.configuration.custom_api_snapshot {
+            self.runtime_startup_launchers.lock().await.insert(
+                settings.runtime_kind,
+                (
+                    launcher_selection(&settings.configuration),
+                    snapshot.context.launcher.clone(),
+                ),
+            );
+        }
+    }
+
     pub(crate) async fn handle_runtime_startup(
         &self,
         method: &str,
@@ -91,6 +118,7 @@ impl Core {
                         context.login_command(settings.configuration.program_path.as_deref());
                 }
                 drop(database);
+                self.remember_startup_launcher(&settings).await;
                 Ok(serde_json::to_value(runtime_startup::public(settings))?)
             }
             // A separate, optional read after the local form is already usable.
@@ -101,6 +129,7 @@ impl Core {
                     runtime_startup::load(&*self.database.lock().await, params.runtime_kind)?;
                 self.refresh_startup_source(&mut settings).await;
                 self.refresh_startup_account(&mut settings).await;
+                self.remember_startup_launcher(&settings).await;
                 Ok(serde_json::to_value(runtime_startup::public(settings))?)
             }
             "runtime.startup.inspect" | "runtime.startup.check" => {
@@ -123,151 +152,164 @@ impl Core {
             "runtime.startup.save" => {
                 let params: SaveParams = serde_json::from_value(params)
                     .map_err(|_| anyhow::anyhow!("启动设置输入格式无效。"))?;
-                let kind = params.runtime_kind;
-                ensure!(
-                    current_runtime_platform_blocker(kind).is_none(),
-                    "当前平台不支持这个运行时。"
-                );
                 let _update = self.runtime_search_update.lock().await;
-                let initial_legacy_save = params.configuration.is_some();
-                let edits = match (params.edits, params.configuration, params.expected_revision) {
-                    (Some(edits), None, None) => edits,
-                    (None, Some(configuration), Some(revision)) => {
-                        ensure!(
-                            configuration.custom_api.is_none() && params.api_key.is_keep(),
-                            "原生连接保存必须提交修改字段。"
-                        );
-                        let saved = runtime_startup::load(&*self.database.lock().await, kind)?;
-                        let same = saved.configuration.program_path == configuration.program_path
-                            && saved.configuration.environment == configuration.environment;
-                        if same && saved.revision > 0 {
-                            return Ok(serde_json::to_value(runtime_startup::public(saved))?);
-                        }
-                        ensure!(
-                            saved.revision == revision,
-                            "启动设置已被更新，请保留草稿并再次保存。"
-                        );
-                        runtime_startup::ordinary_edits(kind, &saved.configuration, &configuration)
-                    }
-                    _ => anyhow::bail!("启动设置保存格式无效。"),
-                };
-                let prepared = runtime_startup::prepare_save(
-                    &*self.database.lock().await,
-                    kind,
-                    edits,
-                    &params.api_key,
-                )?;
-                if !prepared.conflicts.is_empty() {
-                    return Ok(
-                        json!({"status":"conflict", "latest":runtime_startup::public(prepared.current), "conflicts":prepared.conflicts}),
-                    );
-                }
-                if prepared.edits.is_empty()
-                    && !(initial_legacy_save && prepared.current.revision == 0)
-                {
-                    return Ok(serde_json::to_value(runtime_startup::public(
-                        prepared.current,
-                    ))?);
-                }
-                let configuration = prepared.configuration.clone();
-                let search = if configuration.program_path.is_none() {
-                    // Restore-auto previews use fresh discovery inputs. Capture them
-                    // again under the save lock, then merge the latest saved settings.
-                    // Nothing is published until the revision CAS below succeeds.
-                    let search = self.read_runtime_check_environment(true).await?;
-                    let configurations = runtime_startup::load_all(&*self.database.lock().await)?;
-                    search.with_startup_configurations(configurations)
-                } else {
-                    let current = self.runtime_search_environment.read().await.clone();
-                    current.as_ref().clone().with_generation(
-                        current
-                            .generation()
-                            .checked_add(1)
-                            .context("Runtime generation exhausted")?,
-                    )
-                }
-                .with_startup_configuration(kind, configuration.clone());
-                let draft_search = search.clone();
-                let observation =
-                    tokio::task::spawn_blocking(move || discover_runtime_path(kind, &draft_search))
-                        .await?;
-                if configuration.program_path.is_some() {
-                    ensure!(
-                        observation.discovery_status == RuntimeDiscoveryStatus::Found,
-                        "所选程序不存在或无法执行，请重新选择。"
-                    );
-                }
-                let executable = observation
-                    .executable_path
-                    .as_deref()
-                    .map(std::path::Path::new);
-                // The local catalog command runs outside the database lock. The
-                // native revision is checked again by commit_save before writing.
-                let generated_catalog = if prepared
-                    .edits
-                    .iter()
-                    .any(|e| e.path.first().is_some_and(|p| p == "codexModels"))
-                {
-                    let mut context = {
-                        let database = self.database.lock().await;
-                        rovai_core::runtime_custom_api::native::NativeContext::resolve(
-                            kind,
-                            &configuration,
-                            database.path(),
-                        )?
-                    };
-                    let mut metadata_command = tokio::process::Command::new(
-                        executable.unwrap_or(std::path::Path::new("codex")),
-                    );
-                    search.configure_tokio_command(kind, &mut metadata_command);
-                    context = context.for_command(&metadata_command);
-                    let desired = configuration
-                        .custom_api
-                        .as_ref()
-                        .context("缺少 Codex 连接配置。")?;
-                    let current =
-                        rovai_core::runtime_custom_api::native::read(&context, desired.mode())?;
-                    Some(
-                        rovai_core::runtime_custom_api::codex_catalog::generate(
-                            executable, &context, &current, desired,
-                        )
-                        .await?,
-                    )
-                } else {
+                let search = self.runtime_search_environment.read().await.clone();
+                let configuration = search.startup_configuration(params.runtime_kind);
+                let observed_launcher = self
+                    .runtime_startup_launchers
+                    .lock()
+                    .await
+                    .get(&params.runtime_kind)
+                    .filter(|(selection, _)| *selection == launcher_selection(&configuration))
+                    .map(|(_, launcher)| launcher.clone());
+                let known_launcher = if configuration.program_path.is_some() {
                     None
-                };
-                let settings = {
-                    let mut database = self.database.lock().await;
-                    runtime_startup::commit_save(
-                        &mut database,
-                        kind,
-                        prepared,
-                        search.generation(),
-                        params.api_key,
-                        generated_catalog.as_ref(),
-                    )?
-                };
-                let search = if settings.reconnect_required {
-                    search
+                } else if let Some(launcher) = observed_launcher {
+                    launcher
+                } else if let Some(launcher) = configuration
+                    .custom_api_snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.context.launcher.clone())
+                {
+                    Some(launcher)
                 } else {
-                    search
-                        .with_generation(self.runtime_search_environment.read().await.generation())
-                }
-                .with_startup_configuration(kind, settings.configuration.clone());
-                search.activate_for_runtime_commands();
-                *self.runtime_search_environment.write().await = Arc::new(search);
-                if settings.reconnect_required {
-                    self.native_skill_discovery.invalidate_cache();
-                }
-                // No fleet invalidation: a live host retains its captured process environment.
-                drop(_update);
-                if settings.reconnect_required {
-                    self.run_runtime_discovery().await;
-                }
-                Ok(serde_json::to_value(runtime_startup::public(settings))?)
+                    self.runtime_discovery
+                        .read()
+                        .await
+                        .get(&params.runtime_kind)
+                        .filter(|entry| entry.search_generation == search.generation())
+                        .and_then(|entry| entry.executable_path.clone())
+                };
+                rovai_core::runtime_custom_api::native::with_save_launcher(
+                    known_launcher,
+                    &configuration,
+                    self.save_runtime_startup(params),
+                )
+                .await
             }
             _ => anyhow::bail!("Unknown startup settings method"),
         }
+    }
+
+    async fn save_runtime_startup(&self, params: SaveParams) -> Result<Value> {
+        let kind = params.runtime_kind;
+        ensure!(
+            current_runtime_platform_blocker(kind).is_none(),
+            "当前平台不支持这个运行时。"
+        );
+        let initial_legacy_save = params.configuration.is_some();
+        let edits = match (params.edits, params.configuration, params.expected_revision) {
+            (Some(edits), None, None) => edits,
+            (None, Some(configuration), Some(revision)) => {
+                ensure!(
+                    configuration.custom_api.is_none() && params.api_key.is_keep(),
+                    "原生连接保存必须提交修改字段。"
+                );
+                let saved = runtime_startup::load(&*self.database.lock().await, kind)?;
+                let same = saved.configuration.program_path == configuration.program_path
+                    && saved.configuration.environment == configuration.environment;
+                if same && saved.revision > 0 {
+                    return Ok(serde_json::to_value(runtime_startup::saved_response(
+                        saved,
+                    ))?);
+                }
+                ensure!(
+                    saved.revision == revision,
+                    "启动设置已被更新，请保留草稿并再次保存。"
+                );
+                runtime_startup::ordinary_edits(kind, &saved.configuration, &configuration)
+            }
+            _ => anyhow::bail!("启动设置保存格式无效。"),
+        };
+        let prepared = runtime_startup::prepare_save(
+            &*self.database.lock().await,
+            kind,
+            edits,
+            &params.api_key,
+        )?;
+        if !prepared.conflicts.is_empty() {
+            return Ok(
+                json!({"status":"conflict", "latest":runtime_startup::saved_response(prepared.current), "conflicts":prepared.conflicts}),
+            );
+        }
+        if prepared.edits.is_empty() && !(initial_legacy_save && prepared.current.revision == 0) {
+            return Ok(serde_json::to_value(runtime_startup::saved_response(
+                prepared.current,
+            ))?);
+        }
+        // Saving only publishes local configuration. Retain the captured
+        // PATH; discovery, shell reads and native commands belong to their
+        // explicit operations, never this transaction.
+        let current = self.runtime_search_environment.read().await.clone();
+        let search = current.as_ref().clone().with_generation(
+            current
+                .generation()
+                .checked_add(1)
+                .context("Runtime generation exhausted")?,
+        );
+        if prepared
+            .edits
+            .iter()
+            .any(|edit| edit.path == ["programPath"])
+            && let Some(path) = &prepared.configuration.program_path
+        {
+            ensure!(
+                rovai_core::runtime_discovery::is_runtime_entrypoint_file(std::path::Path::new(
+                    path
+                )),
+                "所选程序不存在或无法执行，请重新选择。"
+            );
+        }
+        let generated_catalog = if prepared
+            .edits
+            .iter()
+            .any(|edit| edit.path[0] == "codexModels")
+        {
+            let snapshot = prepared
+                .current
+                .configuration
+                .custom_api_snapshot
+                .as_ref()
+                .context("原生写入目标尚未确认，草稿已保留。")?;
+            let current = rovai_core::runtime_custom_api::native::read(&snapshot.context, None)?;
+            let desired = prepared
+                .configuration
+                .custom_api
+                .as_ref()
+                .context("缺少 Codex 连接配置。")?;
+            Some(rovai_core::runtime_custom_api::codex_catalog::generate(
+                &current, desired,
+            )?)
+        } else {
+            None
+        };
+        let settings = {
+            let mut database = self.database.lock().await;
+            runtime_startup::commit_save(
+                &mut database,
+                kind,
+                prepared,
+                search.generation(),
+                params.api_key,
+                generated_catalog.as_ref(),
+            )?
+        };
+        let search = if settings.reconnect_required {
+            search
+        } else {
+            search.with_generation(self.runtime_search_environment.read().await.generation())
+        }
+        .with_startup_configuration(kind, settings.configuration.clone());
+        search.activate_for_runtime_commands();
+        *self.runtime_search_environment.write().await = Arc::new(search);
+        if settings.reconnect_required {
+            self.native_skill_discovery.invalidate_cache();
+        }
+        self.remember_startup_launcher(&settings).await;
+        // No fleet invalidation: a live host retains its captured process environment.
+        Ok(serde_json::to_value(runtime_startup::saved_response(
+            settings,
+        ))?)
     }
 
     async fn refresh_startup_source(&self, settings: &mut runtime_startup::RuntimeStartupSettings) {

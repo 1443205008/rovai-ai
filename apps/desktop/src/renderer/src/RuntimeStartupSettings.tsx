@@ -6,7 +6,7 @@ import type { AdapterKind, HealthStatus, RuntimeApiKeyChange, RuntimeStartupInsp
 import { configurationFromSnapshot, conflictValue, editableSnapshot, initialConfiguration, withSnapshotValue, type FieldConflict, type RuntimeStartupConfiguration, type RuntimeStartupSettings as StartupSettings } from './runtime-connection-editor'
 import { AppDialogContent, AppDialogFooter, AppDialogHeader, DialogControlIcon } from './AppDialog'
 import { adapterLabel, PRODUCT_RUNTIME_LOGOS } from './runtime-products'
-import { customApiError, draftAfterSourceObservation, emptyCustomApi, nativeConnectionChange, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey, startupEdits, startupSourceKey, startupSubmission } from './runtime-startup-draft'
+import { customApiError, draftAfterSourceObservation, emptyCustomApi, nativeConnectionChange, normalizedStartupConfiguration, runtimeEnvironmentErrors, runtimeStartupKey, settingsAfterSave, startupEdits, startupSourceKey, startupSubmission } from './runtime-startup-draft'
 import { RuntimeCustomApiFields } from './RuntimeCustomApiFields'
 import { readErrorMessage } from './error-message'
 import { UiText, uiAttribute } from './interface-language'
@@ -17,8 +17,8 @@ const INSPECTION_LABELS: Record<RuntimeStartupInspection['status'], string> = {
   authentication_required: '已识别程序，需要登录', ready: '检查通过', check_failed: '检查未通过，请确认登录和运行环境'
 }
 
-export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }: {
-  runtimeKind: AdapterKind; health: HealthStatus | null; onBack(): void; onReload(): Promise<void>
+export function RuntimeStartupSettings({ runtimeKind, health, onBack }: {
+  runtimeKind: AdapterKind; health: HealthStatus | null; onBack(): void
 }): React.JSX.Element {
   const client = useThreadClient()
   const [saved, setSaved] = useState<StartupSettings | null>(null)
@@ -35,6 +35,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   const [inspection, setInspection] = useState<RuntimeStartupInspection | null>(null)
   const [confirmAction, setConfirmAction] = useState<'back' | null>(null)
   const [loadAttempt, setLoadAttempt] = useState(0)
+  const [saveCompleted, setSaveCompleted] = useState<'complete' | 'startup_only' | null>(null)
   const [sourceObservation, setSourceObservation] = useState<{ baseline: StartupSettings; observed: StartupSettings; selection: string; handoff: boolean; sequence: number; nativeSave: number } | null>(null)
   const observedSelection = useRef<string | null>(null)
   const nativeSaveSequence = useRef(0)
@@ -47,6 +48,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   const canSave = dirty && conflicts.length === 0
   state.current = { draft, busy, dirty, saved }
   const sourceSelection = saved ? startupSourceKey(saved.configuration) : null
+  const formLoaded = saved !== null
   const item = health?.runtimeAvailability.find((candidate) => candidate.runtimeKind === runtimeKind)
   const initialPath = item?.discovery.executablePath ?? null
   const label = adapterLabel(runtimeKind)
@@ -85,12 +87,13 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     const observationSequence = sequence.current
     const nativeSave = nativeSaveSequence.current
     setSourceObservation(null)
-    // One supplement per saved source selection, never per Save or keystroke.
+    // One supplement on explicit page entry/retry. Saving a new source must
+    // never launch a follow-up observation; an unconfirmed target stays so.
     void client.request<StartupSettings>('runtime.startup.observe', { runtimeKind }).then((observed) => {
       if (active) setSourceObservation({ baseline, observed, selection: sourceSelection, handoff, sequence: observationSequence, nativeSave })
     }).catch(() => { /* The local form and any draft remain usable. */ })
     return () => { active = false }
-  }, [client, runtimeKind, sourceSelection, loadAttempt])
+  }, [client, runtimeKind, formLoaded, loadAttempt])
 
   useEffect(() => {
     if (!sourceObservation || busy !== null) return
@@ -127,6 +130,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   }, [])
 
   const change = (next: RuntimeStartupConfiguration): void => {
+    setSaveCompleted(null)
     sequence.current += 1
     setDraft(next)
     setInspection(null)
@@ -187,6 +191,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     if (!saved || !canSave || busy || !validate(draft)) return
     const next = normalizedStartupConfiguration(draft)
     setBusy('save')
+    setSaveCompleted(null)
     setError(null)
     try {
       const edits = startupEdits(saved, next, apiKey)
@@ -198,10 +203,11 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
         submission.edits = submission.edits.filter(edit => ['programPath', 'environment'].includes(edit.path[0]))
         submission.apiKey = { action: 'keep' }
       }
-      const settings = await client.request<StartupSettings | { status: 'conflict'; latest: StartupSettings; conflicts: FieldConflict[] }>('runtime.startup.save', {
+      const response = await client.request<StartupSettings | { status: 'conflict'; latest: StartupSettings; conflicts: FieldConflict[] }>('runtime.startup.save', {
         runtimeKind, ...submission
       })
-      if ('status' in settings && settings.status === 'conflict') {
+      if ('status' in response && response.status === 'conflict') {
+        const settings = { ...response, latest: settingsAfterSave(response.latest, saved, { action: 'keep' }) }
         // Rebase untouched fields from the new read, preserving every local edit and explicit Key change.
         let merged = editableSnapshot(initialConfiguration(settings.latest))
         for (const edit of edits) if (edit.path[0] !== 'credentialVersion') merged = withSnapshotValue(merged, edit.path, edit.after)
@@ -214,17 +220,18 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
         setConflicts(settings.conflicts)
         return
       }
-      if ('status' in settings) return
+      if ('status' in response) return
+      const settings = settingsAfterSave(response, saved, submission.apiKey)
       // Label-only native saves intentionally keep the connection digest stable.
       // They still supersede any earlier auxiliary response.
-      if (settings.nativeWritten) nativeSaveSequence.current += 1
+      nativeSaveSequence.current += 1
       if (selectingSource && edits.some(edit => !['programPath', 'environment'].includes(edit.path[0]))) {
         const pending = draftAfterSourceObservation(saved, draft, settings, apiKey)
         setSaved(settings)
         setDraft({ ...pending, programPath: settings.configuration.programPath, environment: settings.configuration.environment })
         setRowIds(settings.configuration.environment.map(variable => rowIds[draft.environment.findIndex(row => row.name === variable.name)] ?? newCommandId()))
       } else applySaved(settings)
-      try { await onReload() } catch { setError(uiAttribute('已保存，列表刷新失败。')) }
+      setSaveCompleted(selectingSource && edits.some(edit => !['programPath', 'environment'].includes(edit.path[0])) ? 'startup_only' : 'complete')
     } catch (nextError) { setError(readErrorMessage(nextError)) }
     finally { setBusy(null) }
   }
@@ -232,6 +239,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
   const discard = (): void => {
     if (!saved) return
     sequence.current += 1
+    setSaveCompleted(null)
     applySaved(saved)
     setInspection(null)
     setError(null)
@@ -252,14 +260,14 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
     setError(null)
   }
 
-  const status = error ? null : inspection?.status ?? (!dirty
+  const status = error ? null : inspection?.status ?? (!dirty && !saved?.reconnectRequired
     ? item?.status === 'authentication_required' ? 'authentication_required'
       : initialPath ? 'recognized' : item?.discovery.discoveryStatus === 'missing' ? 'missing' : null
     : null)
   const statusLabel = busy === 'inspect' ? uiAttribute('正在验证程序…') : busy === 'check' ? uiAttribute('正在检查状态…') : status ? uiAttribute(INSPECTION_LABELS[status]) : null
   const locked = busy !== null || saved === null || loadError !== null
   const displayedPath = draft.programPath ?? (inspection ? inspection.executablePath :
-    !dirty && !error && busy !== 'inspect' && busy !== 'check' ? initialPath : null)
+    !dirty && !saved?.reconnectRequired && !error && busy !== 'inspect' && busy !== 'check' ? initialPath : null)
   const environmentIncomplete = (inspection?.searchEnvironment?.diagnosticCodes?.length ?? 0) > 0
 
   return <section className="runtime-startup-page" aria-busy={busy === 'load' || busy === 'save'}>
@@ -325,6 +333,7 @@ export function RuntimeStartupSettings({ runtimeKind, health, onBack, onReload }
         </div>
       </div>)}
       <footer className="runtime-startup-actions">
+        {saveCompleted && <span className="runtime-startup-result" role="status"><UiText zh={saveCompleted === 'startup_only' ? '启动设置已保存，连接更改尚未保存。' : '已保存'} /></span>}
         <button className="quiet-button" type="button" disabled={!dirty || locked} onClick={discard}><UiText zh={"放弃更改"} /></button>
         <button className="quiet-button member-editor-save" type="submit" disabled={!canSave || locked}><DialogControlIcon name="save" />{busy === 'save' ? uiAttribute("正在保存…") : uiAttribute("保存")}</button>
       </footer>

@@ -15,6 +15,36 @@ use std::{
     path::{Path, PathBuf},
 };
 
+tokio::task_local! {
+    static SAVE_LAUNCHER: (Option<String>, Option<String>);
+}
+
+/// The save owner supplies an already-discovered launcher. An unknown automatic
+/// target remains unknown; native reads within the commit never search PATH.
+pub async fn with_save_launcher<T>(
+    launcher: Option<String>,
+    configuration: &RuntimeStartupConfiguration,
+    operation: impl std::future::Future<Output = T>,
+) -> T {
+    SAVE_LAUNCHER
+        .scope((launcher, configured_path(configuration)), operation)
+        .await
+}
+
+fn configured_path(configuration: &RuntimeStartupConfiguration) -> Option<String> {
+    configuration
+        .environment
+        .iter()
+        .find(|entry| {
+            if cfg!(windows) {
+                entry.name.eq_ignore_ascii_case("PATH")
+            } else {
+                entry.name == "PATH"
+            }
+        })
+        .map(|entry| entry.value.clone())
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NativeContext {
@@ -87,8 +117,14 @@ impl NativeContext {
             directory,
             artifact_root: super::storage_root(database, kind)?,
             launcher: configuration.program_path.clone().or_else(|| {
-                #[cfg(not(test))]
                 if kind == AdapterKind::CodexCli {
+                    if let Ok((launcher, path)) = SAVE_LAUNCHER.try_with(Clone::clone) {
+                        // A changed PATH has no confirmed automatic launcher.
+                        return (path == configured_path(configuration))
+                            .then_some(launcher)
+                            .flatten();
+                    }
+                    #[cfg(not(test))]
                     return crate::runtime_discovery::resolve_active_command_path("codex")
                         .map(|p| p.to_string_lossy().into_owned());
                 }
@@ -99,6 +135,13 @@ impl NativeContext {
         };
         if kind == AdapterKind::CodexCli {
             context.codex_source = super::codex_source::resolve(&context);
+            if context.launcher.is_none() && SAVE_LAUNCHER.try_with(|_| ()).is_ok() {
+                context.codex_source = Some(super::codex_source::Source {
+                    base: context.directory.join("config.toml"),
+                    target_unconfirmed: true,
+                    ..Default::default()
+                });
+            }
         }
         Ok(context)
     }
