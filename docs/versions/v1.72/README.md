@@ -285,7 +285,7 @@ macOS/Web 不增加入口。托盘及第二次启动恢复原窗口，明确退�
 
 ## 并行交付：Runtime 安装发现与真实启动验证
 
-启动和 rescan 只发现入口，安装展示“已检测到”；配置保存、Run 创建及派发不依赖历史 Ready。
+启动和 rescan 只发现入口，安装展示“可用”，检查成功不追加说明；配置保存、Run 创建及派发不依赖历史 Ready。
 协议、认证、显式模型/选项和权限在承载任务的 Host 内验证后发送正文；初始化及失败复用 Run 状态。
 保留 Antigravity 和显式 Fast 最小兼容性检查，Fast 资格改为主动查询。
 当前边界见 [Runtime Launch v49](../../contracts/runtime-launch-and-verification-v49.md)与

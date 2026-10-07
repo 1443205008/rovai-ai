@@ -181,11 +181,11 @@ The Agent Runtime catalog displays Pi Coding Agent as “PI” immediately after
 
 Runtime settings show the reviewed user-facing Runtime catalog, which may omit a closed internal identity that
 has not completed any product qualification. User-facing states are limited to
-checking, installed but awaiting first-run verification, available, needs handling, needs login, not
-installed, unsupported, unavailable and temporarily unknown. A successful bounded light launch and identity
-result reads “可用” and means the executable can be selected and tried; supporting copy says login, models and
-capabilities are confirmed by explicit check or first task. A path-only result remains temporarily unknown,
-never synthetic checking. Do not expose internal “found/not checked”, fingerprint or
+checking, available, needs handling, needs login, not installed, unsupported, unavailable and temporarily
+unknown. An admitted executable that has been found reads “可用” and can be selected and tried.
+Do not append execution-verification explanations or a separate success message after a check; the status
+badge carries the result. Failed or deferred checks keep actionable feedback. Do not expose internal
+“found/not checked”, fingerprint or
 attempt stages. Do not show discovery summaries (source, entrypoint kind, candidate extension, native target
 resolution or version probe outcome) in Runtime rows on any platform. Executable paths are editable in the dedicated startup settings page; fingerprint, backoff
 and audit remain inside advanced diagnostics.
