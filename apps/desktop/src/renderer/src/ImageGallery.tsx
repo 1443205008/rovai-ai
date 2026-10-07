@@ -319,10 +319,10 @@ function ImageTile({ source }: { source: GalleryImage }): JSX.Element {
   }
 
   const contextMenu = <ImageContextMenu position={menu} onClose={() => setMenu(null)}
-    displayName={source.image.displayName} ready={Boolean(url)} busy={action} inPreview={open}
+    displayName={source.image.displayName} ready={Boolean(url)} busy={action}
     hasPath={Boolean(fileLocation.location?.path)}
     revealLabel={menu && source.kind === 'attachment' && client.attachments.kind === 'native' ? attachmentRevealLabel(client.platform) : undefined}
-    onAction={value => { void runImageAction(value) }} onPreview={showPreview} />
+    onAction={value => { void runImageAction(value) }} />
 
   const createOwnedUrl = useCallback((blob: Blob): string => {
     const nextUrl = URL.createObjectURL(blob)
