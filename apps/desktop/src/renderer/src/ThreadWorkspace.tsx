@@ -1,3 +1,4 @@
+import { ContinueAgentRunButton } from './ContinueAgentRunButton'
 import { PendingThreadDraftPersistence } from './pending-thread-draft'
 import { MessageModelSummary, ModelSummaryText, ProfileModelFields } from './ThreadModelInformation'
 import { memberRuntimeConfigurationPresentation, modelSummary, runtimeAdapterLabel } from './runtime-model-presentation'
@@ -6579,28 +6580,25 @@ export function executionQueueBatches(runs: readonly AgentRunView[]): ExecutionQ
 export function executionDeliveryQueueBatches(
   deliveries: readonly MessageDeliveryView[]
 ): ExecutionDeliveryQueueBatch[] {
-  const byAgent = new Map<string, MessageDeliveryView[]>()
-  for (const delivery of deliveries) {
-    if (!messageDeliveryWaitsInExecutionQueue(delivery)) continue
-    byAgent.set(delivery.recipientAgentId, [
-      ...(byAgent.get(delivery.recipientAgentId) ?? []),
-      delivery
-    ])
+  const byBatch = new Map<string, MessageDeliveryView[]>()
+  const ordinaryBatch = new Map<string, string>()
+  // The snapshot already resolves equal timestamps by the durable queue sequence.
+  const ordered = deliveries.filter(messageDeliveryWaitsInExecutionQueue).slice().sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt))
+  for (const delivery of ordered) {
+    const agent = delivery.recipientAgentId
+    if (delivery.continuationRequest) ordinaryBatch.delete(agent)
+    const key = delivery.continuationRequest ? delivery.id : ordinaryBatch.get(agent) ?? delivery.id
+    if (!delivery.continuationRequest) ordinaryBatch.set(agent, key)
+    byBatch.set(key, [...(byBatch.get(key) ?? []), delivery])
   }
-  return [...byAgent.entries()].map(([agentId, agentDeliveries]) => {
-    const ordered = agentDeliveries.slice().sort((left, right) =>
-      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
-    )
-    const messageIds = [...new Set(ordered.map((delivery) => delivery.messageId))]
-    return {
-      agentId,
-      deliveries: ordered,
-      messageIds,
-      createdAt: ordered.at(-1)?.createdAt ?? ''
-    }
-  }).sort((left, right) =>
-    right.createdAt.localeCompare(left.createdAt) || left.agentId.localeCompare(right.agentId)
-  )
+  return [...byBatch.values()].map((batch) => ({
+    agentId: batch[0].recipientAgentId,
+    deliveries: batch,
+    messageIds: [...new Set(batch.map((delivery) => delivery.messageId))],
+    createdAt: batch.at(-1)?.createdAt ?? ''
+  })).sort((left, right) =>
+    right.createdAt.localeCompare(left.createdAt) || left.agentId.localeCompare(right.agentId))
 }
 
 function executionRunDurationLabel(run: AgentRunView, now: number): string {
@@ -7349,6 +7347,9 @@ function ExecutionDrawer({
                   aria-controls={contentId} onClick={() => toggleRun(run.id)}>
                   <ExecutionCardChevron expanded={expanded} />
                 </button>
+                {run.invocationKind === 'batch' && (run.status === 'failed' || run.status === 'cancelled') && inputMessageIds.length > 0 && (
+                  <ContinueAgentRunButton threadId={threadId} agentRunId={run.id} onError={onFileOpenError} />
+                )}
                 {(stopState === 'available' || stopState === 'stopping' || stopState === 'confirming') && (
                   <button className="is-danger" type="button" aria-label={uiAttribute("终止{0}的本次执行", String(runMemberName))}
                     title={uiAttribute("终止本次执行")} disabled={stopState !== 'available'} onClick={() => stopRun(run)}>
@@ -7457,7 +7458,7 @@ function ExecutionDrawer({
   }
 
   const renderDeliveryQueueBatch = (batch: ExecutionDeliveryQueueBatch): JSX.Element => {
-    const expansionKey = `delivery:${batch.agentId}`
+    const expansionKey = `delivery:${batch.deliveries[0].id}`
     const expanded = expandedQueueAgents.has(expansionKey)
     const runMember = memberById.get(batch.agentId)
     const runMemberName = runMember?.displayName ?? batch.agentId
@@ -7467,7 +7468,7 @@ function ExecutionDrawer({
         || sourceMessage.attachments.map((item) => item.displayName).join('、')
         || uiAttribute('排队消息')
       : uiAttribute('排队消息')
-    const contentId = `execution-delivery-queue-content-${batch.agentId}`
+    const contentId = `execution-delivery-queue-content-${batch.deliveries[0].id}`
     const toggle = (): void => setExpandedQueueAgents((current) => {
       const next = new Set(current)
       if (next.has(expansionKey)) next.delete(expansionKey)
@@ -7476,7 +7477,7 @@ function ExecutionDrawer({
     })
     return (
       <li className="execution-process-stage status-queued" data-delivery-queue-agent-id={batch.agentId}
-        key={`delivery-queue:${batch.agentId}`}>
+        key={`delivery-queue:${batch.deliveries[0].id}`}>
         <span className="execution-process-node tone-attention state-queued" aria-hidden="true">
           <ExecutionStatusGlyph status="queued" />
         </span>
@@ -7522,7 +7523,7 @@ function ExecutionDrawer({
     ...deliveryQueueBatches.map((batch) => ({
       kind: 'delivery_queue' as const,
       createdAt: batch.createdAt,
-      id: batch.agentId,
+      id: batch.deliveries[0].id,
       batch
     }))
   ].sort((left, right) =>

@@ -11,6 +11,14 @@ last_updated: 2026-10-07
 
 # Rovai-ai v1.72：Lark 独立渠道
 
+## 并行实施：用户主动继续执行
+
+User 已确认 [r2 输入对照](model-context-change-run-continuation.md) 并授权独立 worktree 实现、推送。
+[AgentRun Continuation v1](../../contracts/agent-run-continuation-v1.md) 将新授权接入现有 waiting lane；
+每次完整选择原业务输入，现有 builder 重建当前上下文，同一来源可多次独立执行。按钮为 24×24 纯图标，
+原卡片状态不关联新 Run。Migration 184 / schema 134 增量保留旧证据；实现与验证见
+[续做实施记录](run-continuation-implementation.md)。
+
 ## 并行实施：Member CLI
 
 User 于 2026-10-06 确认[提示词与接口 r1](model-context-change-member-cli.md)，授权实施、PR 和合入 main。

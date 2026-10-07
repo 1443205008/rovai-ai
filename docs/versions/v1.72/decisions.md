@@ -355,3 +355,22 @@ D14 的原生来源权威继续保留；用户进一步撤回“保存官方后�
 保存官方后，再用 API 可能需要重新填写，这换取了单一原生配置权威和更少的版本／认证兼容分支。OAuth 不删除，
 共享配置影响如实说明；无法写回的已知有效覆盖在保存时报告。拒绝继续保留两条路径及运行时覆盖，也不采用
 启动前写文件、退出后还原的方案，避免并发进程互相改变配置。前端保存前往返切换必须无损，失败保留全部草稿。
+
+<a id="v1-72-d16"></a>
+## V1.72-D16：继续执行是新的 User 授权，接入现有 Delivery lane
+
+- 状态：accepted
+- 日期：2026-10-07
+- 当前权威：[AgentRun Continuation v1](../../contracts/agent-run-continuation-v1.md)、[Accepted Input Recovery v7](../../contracts/accepted-input-recovery-v7.md)、[Message Delivery v11](../../contracts/message-delivery-v11.md)、[AgentRun Recovery](../../architecture/agent-run-recovery.md)
+
+### 背景与选择
+
+停止不代表效果回滚；旧 Run 的 accepted/unknown 投递不能当作未执行。User 希望保留原目标、工作区，
+由一次明确点击开始新执行，同一失败 Run 可多次尝试且状态独立。选择在命令事务中保存新授权，引用原
+业务输入，并重用当前上下文 builder、命令幂等与唯一队列。一次续做有明确批次边界，不引入新生命周期。
+
+### 后果与替代方案
+
+需要增量迁移表示一条授权 Delivery 对应原多条业务输入，并保留其单 Run 归属约束。旧输入事实不改写，
+清理门禁不放宽。拒绝重置旧 Run、复制冻结投递或单后继链，也不建设恢复协调器、效果对账系统或语义审批器。
+提示词不追加来源 ID、证据和恢复指令；会话真正恢复失败时结束当前尝试，显式确认才能以新会话继续。

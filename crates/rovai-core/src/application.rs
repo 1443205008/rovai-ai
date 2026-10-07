@@ -837,6 +837,7 @@ fn request_runs_outside_main_queue(method: &str) -> bool {
             | "missions.changes"
             | "missions.fileDiff"
             | "agentRuns.cancel"
+            | "agentRuns.continue"
             | "singleChat.sourceAttachments.addFromPath"
             | "singleChat.composerDraft.removeAttachment"
             | "singleChat.pendingInputs.addSourceAttachmentFromPath"
@@ -1126,6 +1127,7 @@ fn request_invalidates_navigation(method: &str) -> bool {
             | "camp.messages.withdraw"
             | "userAutomation.camp.send"
             | "agentRuns.cancel"
+            | "agentRuns.continue"
             | "channels.executionConsole.agentRun.cancel"
             | "channels.dingtalk.executionConsole.agentRun.cancel"
     )
@@ -1139,6 +1141,7 @@ fn navigation_invalidation_emitted_at_commit_boundary(method: &str) -> bool {
             | "camp.messages.send"
             | "camp.messages.withdraw"
             | "agentRuns.cancel"
+            | "agentRuns.continue"
             | "channels.executionConsole.agentRun.cancel"
             | "channels.dingtalk.executionConsole.agentRun.cancel"
     )
@@ -10004,6 +10007,28 @@ impl Core {
                 }
                 Ok(serde_json::to_value(execution.result)?)
             }
+            "agentRuns.continue" => {
+                let params: UserCommandParams<crate::run_continuation::ContinueAgentRunCommand> =
+                    serde_json::from_value(request.params.clone())?;
+                let camp_id = params.command.camp_id.clone();
+                let mut database = self.database.lock().await;
+                let execution = crate::run_continuation::continue_agent_run(
+                    &mut database,
+                    &user_camp_command_envelope(params.command_id, camp_id.clone(), params.command),
+                )?;
+                let should_notify = execution.result.status == CommandResultStatus::Applied;
+                drop(database);
+                if should_notify {
+                    self.delivery_batch_scheduler_notify.notify_one();
+                    emit(
+                        &self.output,
+                        "agent_run.continuation_requested",
+                        json!({"threadId":camp_id}),
+                    );
+                    emit_navigation_invalidated(&self.output, "agentRuns.continue", Some(&camp_id));
+                }
+                Ok(serde_json::to_value(execution.result)?)
+            }
             "agentRuns.cancel" => {
                 let params: UserCommandParams<CancelAgentRunCommand> =
                     serde_json::from_value(request.params.clone())?;
@@ -11733,18 +11758,26 @@ impl Core {
                 if !has_waiting_delivery_batch_work(&database)? {
                     Vec::new()
                 } else {
+                    let event_boundary: i64 = database.connection().query_row(
+                        "SELECT COALESCE(MAX(global_sequence), 0) FROM event_log",
+                        [],
+                        |row| row.get(0),
+                    )?;
                     let runs = claim_waiting_delivery_batches(
                         &mut database,
                         DELIVERY_BATCH_SCHEDULER_PAGE_LIMIT,
                     )?;
                     let mut statement = database.connection().prepare(
-                        "SELECT DISTINCT camp_id FROM agent_run WHERE id IN (SELECT value FROM json_each(?1)) AND camp_id IS NOT NULL"
+                        "SELECT DISTINCT camp_id FROM agent_run WHERE id IN (SELECT value FROM json_each(?1)) AND camp_id IS NOT NULL
+                         UNION SELECT camp_id FROM event_log WHERE global_sequence > ?2
+                           AND event_type='agent_run.continuation_cancelled' AND camp_id IS NOT NULL"
                     )?;
                     changed_camps.extend(
                         statement
-                            .query_map([serde_json::to_string(&runs)?], |row| {
-                                row.get::<_, String>(0)
-                            })?
+                            .query_map(
+                                rusqlite::params![serde_json::to_string(&runs)?, event_boundary],
+                                |row| row.get::<_, String>(0),
+                            )?
                             .collect::<rusqlite::Result<Vec<_>>>()?,
                     );
                     runs
@@ -14625,6 +14658,10 @@ impl Core {
         let thread_id = match thread {
             Ok(thread_id) => thread_id,
             Err(error) => {
+                if resumable_session_id.is_some() {
+                    let mut database = self.database.lock().await;
+                    crate::run_continuation::guard_session_fallback(&mut database, execution)?;
+                }
                 if resumable_session_id.is_some()
                     && resume_disposition == NativeSessionResumeDisposition::Controlled
                 {
@@ -14845,6 +14882,10 @@ impl Core {
                         == Some(pi::PiActivationFailureKind::ResumeContinuityLost) =>
             {
                 let failure = classify_native_resume_failure(&error);
+                {
+                    let mut database = self.database.lock().await;
+                    crate::run_continuation::guard_session_fallback(&mut database, execution)?;
+                }
                 {
                     let mut database = self.database.lock().await;
                     if resume_disposition == NativeSessionResumeDisposition::Controlled {
@@ -16254,6 +16295,10 @@ impl Core {
         if binding_credential.native_session_id.is_some()
             && session_continuation == acp::AcpSessionContinuation::New
         {
+            {
+                let mut database = self.database.lock().await;
+                crate::run_continuation::guard_session_fallback(&mut database, execution)?;
+            }
             binding_credential = self.prepare_builtin_tool_binding(execution, true).await?;
             session_continuation = acp::AcpSessionContinuation::New;
         }
@@ -16295,6 +16340,10 @@ impl Core {
                     && error.downcast_ref::<RuntimeFailureError>().is_none() =>
             {
                 let failure = classify_native_resume_failure(&error);
+                {
+                    let mut database = self.database.lock().await;
+                    crate::run_continuation::guard_session_fallback(&mut database, execution)?;
+                }
                 eprintln!(
                     "{} Native Session {:?} failed for AgentRun {}; continuity is lost and a new Session will be created: {error:#}",
                     execution.runtime.adapter_kind.as_str(),
@@ -24570,7 +24619,8 @@ fn emit_navigation_invalidated(
                 "reason": reason, "threadId": camp_id,
                 "scope": if reason.starts_with("agent_run.") || matches!(reason,
                     "navigation.campViewed" | "delivery_batch.claimed" | "camps.rename" | "camps.members.add" | "camps.members.remove"
-                    | "camps.changeDefaultLead" | "camps.reconcileDefaultLead" | "agentRuns.cancel") { "camp" } else { "group" }
+                    | "camps.changeDefaultLead" | "camps.reconcileDefaultLead" | "agentRuns.cancel"
+            | "agentRuns.continue") { "camp" } else { "group" }
             }),
             None => json!({ "reason": reason, "scope": "all" }),
         },
@@ -29540,6 +29590,7 @@ done
             "camp.messages.withdraw",
             "userAutomation.camp.send",
             "agentRuns.cancel",
+            "agentRuns.continue",
         ] {
             assert!(request_invalidates_navigation(method), "{method}");
         }
@@ -29561,6 +29612,7 @@ done
             "camps.discardPending",
             "camp.messages.send",
             "camp.messages.withdraw",
+            "agentRuns.continue",
         ] {
             assert!(
                 navigation_invalidation_emitted_at_commit_boundary(method),

@@ -13,6 +13,10 @@ User 的主称呼、结构化提及及冻结恢复见 [User Naming v1](user-nami
 本目录保存跨版本、字段级且可由测试直接验证的接口合同。[Version Decisions](../decisions/README.md)解释为什么选择某个边界，
 Architecture 解释组件如何组成，Version 概览记录交付范围；它们都不复制本目录的完整 wire shape。
 
+## 用户主动继续
+
+- [AgentRun Continuation v1（当前）](agent-run-continuation-v1.md)：新用户授权、原业务输入、当前上下文，独立 Run 与现有队列。
+
 ## Navigation
 
 - [Navigation Read v1（当前）](navigation-read-v1.md)：单会话、单分组、完整摘要快照，观察水位内已读确认与局部失效。
@@ -54,7 +58,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Windows Window Close v1（当前）](windows-window-close-v1.md) | Windows 主窗口关闭选择、记忆、本机设置与托盘生命周期；明确退出复用 Planned Shutdown |
 | [Host Lifecycle v2（当前）](host-lifecycle-v2.md) | 统一 Host 的原生 Server 单一数据根与用户入口；Desktop 旧布局兼容、唯一 owner、配套 WebUI 与受控停止 |
 | [Host Lifecycle v1（兼容入口）](host-lifecycle-v1.md) | 旧预览 Host CLI 的显式内部路径和初始化；由 v2 保留兼容，不自动迁移数据 |
-| [Host Web v4（当前）](host-web-v4.md) | Task v5 当前输入/投影与 Host protocol 4 clean break |
+| [Host Web v5（当前）](host-web-v5.md) | User 继续入口与既有命令回执核对，传输协议仍为 4 |
+| [Host Web v4（历史）](host-web-v4.md) | Task v5 当前输入/投影与 Host protocol 4 clean break |
 | [Host Web v3（历史）](host-web-v3.md) | 继承 v2；Task v4 版本化输入/投影与旧 payload reconciliation clean break |
 | [Host Web v2（历史）](host-web-v2.md) | 同一 Core 的受控 Camp 写入、独立编辑归属、原命令核对、source 上传、授权资源及共享生产页面；Task reconciliation 由 v3 替代 |
 | [Host Web v1（历史）](host-web-v1.md) | 同一 Core 的初始只读网络入口；新会话由 v2 替代 |
@@ -313,7 +318,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [User Automation v1（历史）](user-automation-v1.md) | 普通用户 `rovai app` 的独立本机 IPC、Runtime OS 隔离、原子 Camp/Run 自动化、真实 shell exit、双 cursor Diagnostic Trial、安全投影与私有 bundle |
 | [Network Interruption Recovery v2（当前）](network-interruption-recovery-v2.md) | v1 分类/退避/wake 不变；同 Run 恢复不再依赖 CampTurn 或协作预算 |
 | [Network Interruption Recovery v1（历史）](network-interruption-recovery-v1.md) | App/Core 持续运行期间的严格网络分类、Core 内存固定退避、ACP terminal 接管与 CampTurn 时期准入 |
-| [Accepted Input Recovery v6（当前）](accepted-input-recovery-v6.md) | accepted/unknown 自动失败且不重放；旧执行隔离确认独立门禁后继 Delivery |
+| [Accepted Input Recovery v7（当前）](accepted-input-recovery-v7.md) | 保留冻结投递与隔离边界，增加 User 显式授权的独立续做 |
+| [Accepted Input Recovery v6（历史）](accepted-input-recovery-v6.md) | accepted/unknown 自动失败且不重放；旧执行隔离确认独立门禁后继 Delivery |
 | [Accepted Input Recovery v5（历史）](accepted-input-recovery-v5.md) | v4 发送边界不变；普通恢复失败与业务取消终态分离 |
 | [Accepted Input Recovery v4（历史）](accepted-input-recovery-v4.md) | 新增 `dispatch_started_at`；发送/取消事务排序，迟到回执只补证据 |
 | [Accepted Input Recovery v3（历史）](accepted-input-recovery-v3.md) | v2 outcome-unknown 边界不变；Manifest 21 使用语义 View receipt，并增加 Migration 100 clean break |
@@ -477,7 +483,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Gather v3（历史）](gather-v3.md) | v2 lifecycle/limits 不变；Completion Input 使用 `agent_v1` request/captured 投影、projected digest 与 schema v3 |
 | [Gather v2（历史）](gather-v2.md) | v1 lifecycle 加当前代最后 captured result、独立回传限额、完整 request 与 completion input v2 |
 | [Gather v1（历史）](gather-v1.md) | GatherRecord/Item、Default Lead 接受、持久 capture/Barrier、completion snapshot/FIFO 与旧 capture budget/input v1 |
-| [Message Delivery v10（当前）](message-delivery-v10.md) | 继承 v9；claim 原子修复历史 waiting lane 缺失的 Camp-member Conversation，启动扫描与兜底自动恢复 |
+| [Message Delivery v11（当前）](message-delivery-v11.md) | 续做复用 waiting Delivery，独立成批，来源状态不传播 |
+| [Message Delivery v10（历史）](message-delivery-v10.md) | 继承 v9；claim 原子修复历史 waiting lane 缺失的 Camp-member Conversation，启动扫描与兜底自动恢复 |
 | [Message Delivery v9（历史）](message-delivery-v9.md) | waiting Delivery 是唯一队列；claim 原子创建不可变的多输入 AgentRun，无预算、Gather 或业务重试 |
 | [Message Delivery v8（历史）](message-delivery-v8.md) | Managed v2 Message 的旧 dispatch/attempt 模型 |
 | [Message Delivery v7（历史）](message-delivery-v7.md) | v6 membership lifetime 不变；允许 `cancelled + terminal + attempt=0`，统一显式/批量取消转换并保证迟到回调与重启不复活 |
@@ -531,7 +538,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [ContextManifest Evidence v9 (historical)](context-manifest-evidence-v9.md) | bounded public omission evidence；不作为 Formatter v13 恢复入口 |
 | [Context Delivery Profile v2 (historical)](context-delivery-profile-v2.md) | 公共引用链与历史 budget 的旧当前合同；不选择 self-active Task |
 | [Context Delivery Profile v1 (historical)](context-delivery-profile-v1.md) | AgentRun 公共消息窗口、Unicode scalar 正文截断、历史字符预算与遗漏提示 |
-| [Run Process Detail Surface v43（当前）](run-process-detail-surface-v43.md) | 继承 v42；主线按完整内容块分页、Tool 组独立游标与有界自动补齐，不新增表或迁移 |
+| [Run Process Detail Surface v44（当前）](run-process-detail-surface-v44.md) | 失败／停止卡片的紧凑继续图标与独立排队请求 |
+| [Run Process Detail Surface v43（历史）](run-process-detail-surface-v43.md) | 继承 v42；主线按完整内容块分页、Tool 组独立游标与有界自动补齐，不新增表或迁移 |
 | [Run Process Detail Surface v42](run-process-detail-surface-v42.md) | 继承 v41；新 Tool 持久化输出限 7,680 UTF-8 字节，显式三态归约与可缺省丢失标记 |
 | [Run Process Detail Surface v41（历史）](run-process-detail-surface-v41.md) | Operation 单记录生命周期、独立 change cursor、输入/结果分离 Blob 与 content-free thinking phase |
 | [Run Process Detail Surface v40（历史）](run-process-detail-surface-v40.md) | 继承 v39；普通 Camp 与完整 Mission 进入时默认选择总览，同时保留最新 running Run 的精确聚焦与定位 |
