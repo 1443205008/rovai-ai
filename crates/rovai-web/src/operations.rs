@@ -140,8 +140,6 @@ pub enum Operation {
     McpImport,
     #[serde(rename = "runtime.startup.get")]
     RuntimeStartupGet,
-    #[serde(rename = "runtime.startup.observe")]
-    RuntimeStartupObserve,
     #[serde(rename = "runtime.startup.save")]
     RuntimeStartupSave,
     #[serde(rename = "runtime.startup.inspect")]
@@ -459,7 +457,6 @@ impl Operation {
             Self::McpScan => "mcp.import.scan",
             Self::McpImport => "mcp.import.commit",
             Self::RuntimeStartupGet => "runtime.startup.get",
-            Self::RuntimeStartupObserve => "runtime.startup.observe",
             Self::RuntimeStartupSave => "runtime.startup.save",
             Self::RuntimeStartupInspect => "runtime.startup.inspect",
             Self::RuntimeStartupCheck => "runtime.startup.check",

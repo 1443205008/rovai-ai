@@ -1,5 +1,5 @@
 ---
-version: 19
+version: 20
 slug: "settings-workspace"
 primary_target: "apps/desktop/src/renderer/src/SettingsPageHeader.tsx"
 related_targets:
@@ -10,7 +10,6 @@ related_targets:
   - "apps/desktop/src/renderer/src/McpSettings.tsx"
   - "apps/desktop/src/renderer/src/AboutUpdatesSettings.tsx"
   - "apps/desktop/src/renderer/src/RuntimeStartupSettings.tsx"
-  - "apps/desktop/src/renderer/src/RuntimeCustomApiFields.tsx"
 ---
 
 # Settings workspace surface brief
@@ -322,8 +321,7 @@ refresh or chevron icon, and the settings gear as consistent columns. Settings r
 and missing Runtimes admitted on the current platform. Preserve actual installation/login guide content.
 
 The startup page reuses the 1040px content track and an at-most-800px form. Show Runtime identity, program
-path with native picker and restore-auto action, the inline check result, the supported custom API section,
-then environment rows. Environment values start masked and have reveal/delete controls. Keep errors
+path with native picker and restore-auto action, the inline check result, then environment rows. Environment values start masked and have reveal/delete controls. Keep errors
 actionable and local; no empty-state explanation, top-right unsaved badge or repeated “next launch”/
 “does not change system variables” small print.
 
@@ -338,25 +336,13 @@ Draft checks and restore-auto previews read fresh private search inputs. Failed 
 to the saved program/version as though it had just been checked. Editing or leaving invalidates older
 preview responses. A fallback search source retains a local warning without exposing environment values.
 
-### Native connection editor
+### Local startup settings only
 
-Only Claude Code and Codex extend the existing startup form. Preserve the established dividers,
-semantic theme tokens, compact fields and common save/discard row. Choose Official sign-in or Custom API;
-login status is separate and signed-in uses success green. Unknown identity reads “未确认”, never inferred signed-out.
-Login help keeps the local command and one account-management sentence. Center the command and copy icon together;
-use the conversation copy/check icon with a brief success state and no success message. Keep actionable copy failures.
+Claude Code and Codex no longer expose the native connection editor. Remove official/API mode selection,
+login status, address, Key, Claude model mappings and the custom Codex model list. Keep program path,
+explicit checks, masked environment values and the existing save/discard row. Do not add replacement help,
+a disabled entry or an alternative connection editor. Existing native files remain unchanged.
 
-Claude has five optional model mappings; Codex has ID, optional display name and one default per model
-row. Keep row identities independent of edited IDs. No provider, reference-model, capability or protocol editor.
-Native configuration is read on entry and after saving, with retry on read failure only. Existing credentials
-show a status-derived mask; the eye reveals new input only. Clear is explicit and separate from sign-out.
-
-Save only edited fields. Preserve unrelated external changes and every draft while resolving a true conflict
-inline. Read-only credential references may still be replaced through a supported native binding; show a
-specific source and remedy only for actual restrictions. A URL text change does not invalidate a static key.
-
-State shared native-config impact once. Omit protocol labels and HTTP warnings. Keep Base URL/default-model/key semantics in concise field
-labels and collapsed help. No persistent reread control, Test API button, polling or extra save confirmation.
-Porcelain Day / Steel Night and the <=600px stacked model rows retain the existing surfaces and control names.
-Current behavior is owned by [Runtime Launch v47](../../../../docs/contracts/runtime-launch-and-verification-v47.md)
-and [native connection UI](../../../../docs/ui/components/app-shell-navigation.md#原生连接设置).
+Save ends from its local receipt and shows “已保存”; it does not call parent reloads, native observation or
+runtime checks. Preserve failed drafts and field conflict recovery. Native login/install guides remain in
+the Runtime catalog. Behavior is owned by [Runtime Launch v52](../../../../docs/contracts/runtime-launch-and-verification-v52.md).

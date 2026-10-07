@@ -817,7 +817,6 @@ fn request_runs_outside_main_queue(method: &str) -> bool {
             | "runtime.product.ensure"
             | "runtime.product.check"
             | "runtime.startup.inspect"
-            | "runtime.startup.observe"
             | "runtime.startup.check"
             | "runtime.startup.save"
             | "runtime.networkRecovery.wake"
@@ -3408,7 +3407,6 @@ impl Core {
                     let explicit_search = search.as_ref().clone().with_startup_configuration(
                         kind,
                         rovai_core::runtime_startup::RuntimeStartupConfiguration {
-                            custom_api: None,
                             custom_api_snapshot: None,
                             program_path: Some(saved_path.to_string_lossy().to_string()),
                             environment: Vec::new(),
@@ -3554,19 +3552,36 @@ impl Core {
     }
 
     async fn publish_runtime_discovery(&self, observation: RuntimeDiscoveryObservation) {
+        // Verification can wait on the blocking pool or disk. Neither it nor
+        // discovery may retain the configuration commit lock during that wait.
+        let verified = if observation.discovery_status == RuntimeDiscoveryStatus::Found {
+            Some(self.verify_runtime_entry(&observation).await)
+        } else {
+            None
+        };
         let _update = self.runtime_search_update.lock().await;
         if self.runtime_search_environment.read().await.generation()
             != observation.search_generation
         {
             return;
         }
-        if observation.discovery_status == RuntimeDiscoveryStatus::Found
-            && let Err(error) = self.persist_runtime_entry(&observation).await
-        {
-            eprintln!(
-                "failed to persist bounded Runtime discovery for {}: {error:#}",
-                observation.runtime_kind.as_str()
-            );
+        if let Some(verified) = verified {
+            let result = match verified {
+                Ok(verified) => AgentProfileService::default()
+                    .commit_discovered_runtime_entry(
+                        &mut *self.database.lock().await,
+                        verified,
+                        None,
+                    )
+                    .map(|_| ()),
+                Err(error) => Err(error),
+            };
+            if let Err(error) = result {
+                eprintln!(
+                    "failed to persist bounded Runtime discovery for {}: {error:#}",
+                    observation.runtime_kind.as_str()
+                );
+            }
         }
         self.runtime_discovery
             .write()
@@ -3596,46 +3611,28 @@ impl Core {
         );
     }
 
-    async fn persist_runtime_entry(&self, observation: &RuntimeDiscoveryObservation) -> Result<()> {
-        let executable_path = observation
-            .executable_path
-            .as_deref()
-            .context("light Runtime discovery did not include executablePath")?;
-        let executable_fingerprint = observation
-            .executable_fingerprint
-            .as_deref()
-            .context("light Runtime discovery did not include executableFingerprint")?;
-        let source = observation
-            .source
-            .context("light Runtime discovery did not include source")?;
-        self.persist_discovered_runtime_entry(
-            rovai_core::agent_profile::DiscoveredRuntimeEntry {
-                adapter_kind: observation.runtime_kind,
-                executable_path: executable_path.to_string(),
-                source,
-                executable_fingerprint: executable_fingerprint.to_string(),
-                entrypoint_locator_identity: observation.entrypoint_locator_identity.clone(),
-            },
-            None,
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn persist_discovered_runtime_entry(
+    async fn verify_runtime_entry(
         &self,
-        entry: rovai_core::agent_profile::DiscoveredRuntimeEntry,
-        existing_installation_id: Option<&str>,
-    ) -> Result<String> {
-        let verified = tokio::task::spawn_blocking(move || entry.verify())
+        observation: &RuntimeDiscoveryObservation,
+    ) -> Result<rovai_core::agent_profile::VerifiedDiscoveredRuntimeEntry> {
+        let entry = rovai_core::agent_profile::DiscoveredRuntimeEntry {
+            adapter_kind: observation.runtime_kind,
+            executable_path: observation
+                .executable_path
+                .clone()
+                .context("light Runtime discovery did not include executablePath")?,
+            source: observation
+                .source
+                .context("light Runtime discovery did not include source")?,
+            executable_fingerprint: observation
+                .executable_fingerprint
+                .clone()
+                .context("light Runtime discovery did not include executableFingerprint")?,
+            entrypoint_locator_identity: observation.entrypoint_locator_identity.clone(),
+        };
+        tokio::task::spawn_blocking(move || entry.verify())
             .await
-            .context("Runtime entry verification worker failed")??;
-        let mut database = self.database.lock().await;
-        AgentProfileService::default().commit_discovered_runtime_entry(
-            &mut database,
-            verified,
-            existing_installation_id,
-        )
+            .context("Runtime entry verification worker failed")?
     }
 
     async fn commit_rebound_runtime_candidate(
@@ -3647,12 +3644,14 @@ impl Core {
         candidate: &RuntimeExecutableCandidate,
         search_generation: u64,
     ) -> Result<bool> {
-        let _update = self.runtime_search_update.lock().await;
-        if self.runtime_search_environment.read().await.generation() != search_generation
-            || !candidate.entrypoint_locator_identity_is_current()
+        if !candidate.entrypoint_locator_identity_is_current()
             || fingerprint_executable(executable_path).ok().as_deref()
                 != Some(executable_fingerprint)
         {
+            return Ok(false);
+        }
+        let _update = self.runtime_search_update.lock().await;
+        if self.runtime_search_environment.read().await.generation() != search_generation {
             return Ok(false);
         }
         let observed_at = chrono::Utc::now().to_rfc3339();
@@ -3839,7 +3838,6 @@ impl Core {
         Ok(json!({
             "runtimeKind": kind,
             "cache": installation.model_catalog,
-            "customApiModelIds": installation.custom_api_model_ids,
             "models": models,
             "refreshStatus": refresh_status,
             "diagnosticCode": installation
@@ -4494,7 +4492,6 @@ impl Core {
                 search.as_ref().clone().with_startup_configuration(
                     kind,
                     rovai_core::runtime_startup::RuntimeStartupConfiguration {
-                        custom_api: None,
                         custom_api_snapshot: None,
                         program_path: Some(
                             existing_entrypoint_locator
@@ -4759,15 +4756,15 @@ impl Core {
                         } else {
                             "runtime_probe_transient_failure"
                         };
-                        let Some(_update) = self.runtime_check_update_guard(&search).await else {
-                            return Ok(RuntimeCheckOutcome::Superseded);
-                        };
                         if !candidate.entrypoint_locator_identity_is_current()
                             || fingerprint_executable(&canonical).ok().as_deref()
                                 != Some(candidate_fingerprint.as_str())
                         {
                             return Ok(RuntimeCheckOutcome::Superseded);
                         }
+                        let Some(_update) = self.runtime_check_update_guard(&search).await else {
+                            return Ok(RuntimeCheckOutcome::Superseded);
+                        };
                         let mut database = self.database.lock().await;
                         AgentProfileService::default().record_managed_probe_failure(
                             &mut database,
@@ -4923,15 +4920,15 @@ impl Core {
                 mut snapshot,
                 failure,
             } = deep_probe;
-            let Some(_update) = self.runtime_check_update_guard(&search).await else {
-                return Ok(RuntimeCheckOutcome::Superseded);
-            };
             if !candidate.entrypoint_locator_identity_is_current()
                 || fingerprint_executable(&canonical).ok().as_deref()
                     != Some(candidate_fingerprint.as_str())
             {
                 return Ok(RuntimeCheckOutcome::Superseded);
             }
+            let Some(_update) = self.runtime_check_update_guard(&search).await else {
+                return Ok(RuntimeCheckOutcome::Superseded);
+            };
             apply_entrypoint_locator_compatibility(
                 &mut snapshot,
                 candidate.entrypoint_locator_identity.as_ref(),
@@ -10808,7 +10805,6 @@ impl Core {
                 ))
             }
             method @ ("runtime.startup.get"
-            | "runtime.startup.observe"
             | "runtime.startup.inspect"
             | "runtime.startup.check"
             | "runtime.startup.save") => {
@@ -14151,29 +14147,18 @@ impl Core {
                 .await
                 .context("Runtime entry resolution worker failed")?;
                 if observation.discovery_status == RuntimeDiscoveryStatus::Found {
+                    let verified = self.verify_runtime_entry(&observation).await?;
                     let _update = self.runtime_search_update.lock().await;
                     anyhow::ensure!(
                         self.runtime_search_environment.read().await.generation()
                             == observation.search_generation,
                         "Runtime search environment changed during entry resolution; retry this run"
                     );
-                    let executable_path = observation
-                        .executable_path
-                        .context("Runtime entry path missing")?;
-                    let executable_fingerprint = observation
-                        .executable_fingerprint
-                        .context("Runtime entry fingerprint missing")?;
-                    self.persist_discovered_runtime_entry(
-                        rovai_core::agent_profile::DiscoveredRuntimeEntry {
-                            adapter_kind: kind,
-                            executable_path,
-                            source: observation.source.unwrap_or(installation.source),
-                            executable_fingerprint,
-                            entrypoint_locator_identity: observation.entrypoint_locator_identity,
-                        },
+                    AgentProfileService::default().commit_discovered_runtime_entry(
+                        &mut *self.database.lock().await,
+                        verified,
                         Some(&installation.id),
-                    )
-                    .await?;
+                    )?;
                     return Ok::<(), anyhow::Error>(());
                 }
                 if attempt == 0 {
@@ -26089,7 +26074,6 @@ done
             RuntimeSearchEnvironment::for_test_paths(1, Vec::new()).with_startup_configuration(
                 AdapterKind::CodexCli,
                 rovai_core::runtime_startup::RuntimeStartupConfiguration {
-                    custom_api: None,
                     custom_api_snapshot: None,
                     program_path: Some(executable.to_string_lossy().into_owned()),
                     environment: vec![rovai_core::runtime_startup::RuntimeEnvironmentVariable {
@@ -26384,7 +26368,6 @@ done
                     .with_startup_configuration(
                         AdapterKind::CodexCli,
                         rovai_core::runtime_startup::RuntimeStartupConfiguration {
-                            custom_api: None,
                             custom_api_snapshot: None,
                             program_path: Some(executable.to_string_lossy().into_owned()),
                             environment: Vec::new(),
@@ -26398,6 +26381,7 @@ done
                     );
                 assert_eq!(observation.discovery_status, RuntimeDiscoveryStatus::Found);
                 let core = runtime_resolution_test_core(&root).unwrap();
+                *core.runtime_search_environment.write().await = Arc::new(search);
 
                 // Hold the sole blocking worker at a deterministic barrier. The
                 // real persistence future must queue its file work without
@@ -26409,7 +26393,7 @@ done
                     let _ = release_rx.recv();
                 });
                 started_rx.await.unwrap();
-                let mut persistence = Box::pin(core.persist_runtime_entry(&observation));
+                let mut persistence = Box::pin(core.publish_runtime_discovery(observation.clone()));
                 std::future::poll_fn(|context| {
                     assert!(
                         persistence.as_mut().poll(context).is_pending(),
@@ -26419,6 +26403,10 @@ done
                 })
                 .await;
                 {
+                    let _update = core
+                        .runtime_search_update
+                        .try_lock()
+                        .expect("queued discovery verification must leave local saves available");
                     let database = core.database.try_lock().expect(
                         "queued file verification must leave the global database available",
                     );
@@ -26432,7 +26420,7 @@ done
                 }
                 release_tx.send(()).unwrap();
                 worker.await.unwrap();
-                persistence.await.unwrap();
+                persistence.await;
 
                 let service = AgentProfileService::default();
                 let mut core = core;
@@ -27895,7 +27883,6 @@ done
         retry_after: Option<&str>,
     ) -> AdapterInstallationView {
         AdapterInstallationView {
-            custom_api_model_ids: None,
             permission_options: AgentRuntimeAdapterRegistry::default()
                 .permission_options(AdapterKind::CodexCli),
             id: "managed-codex".to_string(),
@@ -28450,7 +28437,6 @@ done
         ));
         assert!(request_runs_outside_main_queue("runtime.product.ensure"));
         assert!(request_runs_outside_main_queue("runtime.product.check"));
-        assert!(request_runs_outside_main_queue("runtime.startup.observe"));
         assert!(!request_runs_outside_main_queue("camps.snapshot"));
         assert!(!request_runs_outside_main_queue("camps.enter"));
         assert!(!request_runs_outside_main_queue("camps.open"));

@@ -9,10 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     agent_profile::AdapterKind,
     db::Database,
-    runtime_custom_api::{
-        ApiKeyChange, ConnectionMode, ConnectionObservation, CustomApiConfiguration,
-        CustomApiSnapshot, FieldConflict, FieldEdit, NativeCredential, native, native_edit,
-    },
+    runtime_custom_api::{CustomApiSnapshot, native},
 };
 
 #[derive(Clone, Default, Eq, Serialize, Deserialize)]
@@ -21,8 +18,6 @@ pub struct RuntimeStartupConfiguration {
     pub program_path: Option<String>,
     #[serde(default)]
     pub environment: Vec<RuntimeEnvironmentVariable>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom_api: Option<CustomApiConfiguration>,
     /// Resolved by the Host from its private stored references, never accepted from clients.
     #[serde(skip)]
     pub custom_api_snapshot: Option<CustomApiSnapshot>,
@@ -30,9 +25,7 @@ pub struct RuntimeStartupConfiguration {
 
 impl PartialEq for RuntimeStartupConfiguration {
     fn eq(&self, other: &Self) -> bool {
-        self.program_path == other.program_path
-            && self.environment == other.environment
-            && self.custom_api == other.custom_api
+        self.program_path == other.program_path && self.environment == other.environment
     }
 }
 
@@ -41,13 +34,6 @@ impl std::fmt::Debug for RuntimeStartupConfiguration {
         f.debug_struct("RuntimeStartupConfiguration")
             .field("program_path", &self.program_path)
             .field("environment_count", &self.environment.len())
-            .field(
-                "custom_api_enabled",
-                &self
-                    .custom_api
-                    .as_ref()
-                    .is_some_and(CustomApiConfiguration::enabled),
-            )
             .finish()
     }
 }
@@ -65,14 +51,23 @@ pub struct RuntimeStartupSettings {
     pub runtime_kind: AdapterKind,
     pub revision: u64,
     pub configuration: RuntimeStartupConfiguration,
-    pub credential: Option<NativeCredential>,
-    pub connection_observation: Option<ConnectionObservation>,
-    pub native_revision: Option<String>,
-    #[serde(skip)]
-    pub native_catalog_revision: Option<String>,
-    pub connection_read_error: Option<String>,
     pub reconnect_required: bool,
-    pub native_written: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FieldEdit {
+    pub path: Vec<String>,
+    pub before: serde_json::Value,
+    pub after: serde_json::Value,
+    pub label: String,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldConflict {
+    #[serde(flatten)]
+    pub edit: FieldEdit,
+    pub current: serde_json::Value,
 }
 
 impl RuntimeStartupConfiguration {
@@ -152,73 +147,42 @@ fn load_record(
     // Ignore legacy UI selection; native configuration alone chooses the connection.
     if let Some(object) = value.as_object_mut() {
         object.remove("_connectionMode");
+        object.remove("customApi");
     }
     Ok((u64::try_from(revision)?, serde_json::from_value(value)?))
 }
 
-fn read_settings(database: &Database, kind: AdapterKind) -> Result<RuntimeStartupSettings> {
-    let (revision, configuration) = load_record(database.connection(), kind)?;
-    let mut settings = RuntimeStartupSettings {
+pub fn load(database: &Database, kind: AdapterKind) -> Result<RuntimeStartupSettings> {
+    let (revision, mut configuration) = load_record(database.connection(), kind)?;
+    // Read-only compatibility and redaction evidence. No native settings or keys
+    // are exposed by the editor, and a native parse error cannot block local prefs.
+    configuration.custom_api_snapshot = native_snapshot(kind, &configuration, database.path());
+    Ok(RuntimeStartupSettings {
         runtime_kind: kind,
         revision,
-        configuration: configuration.clone(),
-        credential: None,
-        connection_observation: None,
-        native_revision: None,
-        native_catalog_revision: None,
-        connection_read_error: None,
+        configuration,
         reconnect_required: false,
-        native_written: false,
-    };
-    reload_native(&mut settings, database.path());
-    Ok(settings)
+    })
 }
 
-/// Reproject only native file data. Optional identity hints live in observation,
-/// never in the editable file baseline or execution snapshot.
-pub fn reload_native(settings: &mut RuntimeStartupSettings, database: &Path) {
-    let kind = settings.runtime_kind;
+fn native_snapshot(
+    kind: AdapterKind,
+    configuration: &RuntimeStartupConfiguration,
+    database: &Path,
+) -> Option<CustomApiSnapshot> {
     if !native::supported(kind) {
-        return;
+        return None;
     }
-    settings.connection_read_error = None;
-    let read = native::NativeContext::resolve(kind, &settings.configuration, database)
-        .and_then(|context| native::read(&context, None).map(|read| (context, read)));
-    match read {
-        Ok((context, mut read)) => {
-            read.observation.login_command =
-                context.login_command(settings.configuration.program_path.as_deref());
-            settings.configuration.custom_api_snapshot = Some(read.snapshot(&context, false));
-            if matches!(read.source, native::CredentialSource::NativeManaged { .. }) {
-                crate::runtime_custom_api::codex_native::project(
-                    &context,
-                    &read.configuration,
-                    &mut read.credential,
-                    &mut read.observation,
-                );
-            }
-            settings.configuration.custom_api = Some(read.configuration);
-            settings.credential = Some(read.credential);
-            settings.connection_observation = Some(read.observation);
-            settings.native_revision = Some(read.edit_revision);
-            settings.native_catalog_revision = read.catalog_revision;
-        }
-        Err(error) => {
-            settings.configuration.custom_api = None;
-            settings.configuration.custom_api_snapshot = None;
-            settings.credential = None;
-            settings.connection_observation = None;
-            settings.native_revision = None;
-            settings.native_catalog_revision = None;
-            settings.connection_read_error = Some(error.to_string());
-        }
-    }
+    native::NativeContext::resolve(kind, configuration, database)
+        .and_then(|context| native::read(&context, None).map(|read| read.snapshot(&context, false)))
+        .ok()
 }
 
-pub fn load(database: &Database, kind: AdapterKind) -> Result<RuntimeStartupSettings> {
-    read_settings(database, kind)
+pub fn saved_response(settings: RuntimeStartupSettings) -> RuntimeStartupSettings {
+    public(settings)
 }
-/// Internal settings retain legacy environment references; owner-facing reads never return key values.
+
+/// Never return native credential values or legacy secret environment rows.
 pub fn public(mut settings: RuntimeStartupSettings) -> RuntimeStartupSettings {
     let referenced = settings
         .configuration
@@ -263,35 +227,10 @@ pub fn editable(
     configuration: &RuntimeStartupConfiguration,
 ) -> serde_json::Value {
     use serde_json::json;
-    let mut value = json!({"programPath":configuration.program_path, "environment":configuration.environment.iter().filter(|e| !sensitive_environment(kind, &e.name)).map(|entry| (entry.name.clone(), json!(entry.value))).collect::<serde_json::Map<_,_>>()});
-    if let Some(api) = &configuration.custom_api {
-        value["mode"] = json!(api.mode());
-        value["baseUrl"] = json!(api.base_url());
-        match api {
-            CustomApiConfiguration::ClaudeCode { models, .. } => {
-                value["claudeModels"] = json!(models)
-            }
-            CustomApiConfiguration::Codex {
-                models,
-                default_row_id,
-                ..
-            } => {
-                value["codexModels"] = json!(
-                    models
-                        .iter()
-                        .map(|row| (
-                            row.row_id.clone(),
-                            json!({"id": row.id, "displayName":row.display_name})
-                        ))
-                        .collect::<serde_json::Map<_, _>>()
-                );
-                value["defaultRowId"] = json!(default_row_id);
-            }
-        }
-    }
+    let value = json!({"programPath":configuration.program_path, "environment":configuration.environment.iter().filter(|e| !sensitive_environment(kind, &e.name)).map(|entry| (entry.name.clone(), json!(entry.value))).collect::<serde_json::Map<_,_>>()});
     value
 }
-/// Compatibility for callers of the ordinary startup editor. Native connection writes require patches.
+/// Field edits merge independent changes without overwriting an external update.
 pub fn ordinary_edits(
     kind: AdapterKind,
     before: &RuntimeStartupConfiguration,
@@ -320,8 +259,8 @@ pub fn ordinary_edits(
     paths
         .into_iter()
         .filter_map(|path| {
-            let old = native_edit::value_at(&before, &path);
-            let next = native_edit::value_at(&after, &path);
+            let old = value_at(&before, &path);
+            let next = value_at(&after, &path);
             (old != next).then(|| FieldEdit {
                 path,
                 before: old.clone(),
@@ -338,15 +277,6 @@ fn allowed_edit(edit: &FieldEdit, kind: AdapterKind) -> bool {
         ["environment", name] => {
             !sensitive_environment(kind, name) && !name.to_ascii_uppercase().starts_with("ROVAI_")
         }
-        ["mode" | "baseUrl" | "credentialVersion" | "nativeRevision"] => native::supported(kind),
-        [
-            "claudeModels",
-            "model" | "reasoningModel" | "haikuModel" | "sonnetModel" | "opusModel",
-        ] => kind == AdapterKind::ClaudeCodeCli,
-        ["defaultRowId"] => kind == AdapterKind::CodexCli,
-        ["codexModels", row] | ["codexModels", row, "id" | "displayName"] => {
-            kind == AdapterKind::CodexCli && !row.is_empty() && row.len() <= 128
-        }
         _ => false,
     }
 }
@@ -359,40 +289,12 @@ pub struct PreparedSave {
 pub fn prepare_save(
     database: &Database,
     kind: AdapterKind,
-    mut edits: Vec<FieldEdit>,
-    key: &ApiKeyChange,
+    edits: Vec<FieldEdit>,
 ) -> Result<PreparedSave> {
     ensure!(edits.len() <= 512, "修改字段过多。");
     let current = load(database, kind)?;
-    let official = edits
-        .iter()
-        .rev()
-        .find(|e| e.path == ["mode"])
-        .map(|e| e.after == "official_login")
-        .unwrap_or_else(|| {
-            current
-                .configuration
-                .custom_api
-                .as_ref()
-                .is_some_and(|api| api.mode() == Some(ConnectionMode::OfficialLogin))
-        });
-    if official {
-        // Hidden API input never participates in validation, CAS, generation or writes.
-        edits.retain(|e| {
-            e.path.first().is_some_and(|p| {
-                matches!(
-                    p.as_str(),
-                    "programPath" | "environment" | "mode" | "nativeRevision"
-                )
-            })
-        });
-    } else {
-        key.validate()?;
-    }
     let visible = public(current.clone());
     let mut value = editable(kind, &visible.configuration);
-    value["credentialVersion"] = serde_json::json!(current.credential.as_ref().map(|c| &c.version));
-    value["nativeRevision"] = serde_json::json!(current.native_revision);
     let mut conflicts = Vec::new();
     let mut seen = BTreeSet::new();
     for edit in &edits {
@@ -400,20 +302,15 @@ pub fn prepare_save(
             allowed_edit(edit, kind) && seen.insert(edit.path.clone()),
             "修改字段无效或重复。"
         );
-        let now = native_edit::value_at(&value, &edit.path).clone();
-        let credential = edit.path == ["credentialVersion"] || edit.path == ["nativeRevision"];
-        if now != edit.before && (credential || now != edit.after) {
+        let now = value_at(&value, &edit.path).clone();
+        if now != edit.before && now != edit.after {
             conflicts.push(FieldConflict {
                 edit: edit.clone(),
                 current: now,
             });
         }
-        native_edit::set_at(&mut value, &edit.path, edit.after.clone())?;
+        set_at(&mut value, &edit.path, edit.after.clone())?;
     }
-    ensure!(
-        official || key.is_keep() == !seen.contains(&vec!["credentialVersion".into()]),
-        "API Key 操作缺少凭据版本。"
-    );
     let mut configuration = current.configuration.clone();
     configuration.program_path = serde_json::from_value(value["programPath"].clone())?;
     let hidden_names = current
@@ -455,129 +352,6 @@ pub fn prepare_save(
             });
         }
     }
-    let native_changed = edits
-        .iter()
-        .any(|e| !matches!(e.path[0].as_str(), "programPath" | "environment"));
-    if native_changed {
-        ensure!(
-            current.connection_read_error.is_none(),
-            "连接读取失败，请重试；其他启动字段仍可单独保存。"
-        );
-    }
-    if let Some(api) = &mut configuration.custom_api {
-        api.set_mode(serde_json::from_value(value["mode"].clone())?);
-        match api {
-            CustomApiConfiguration::ClaudeCode {
-                base_url, models, ..
-            } => {
-                *base_url = serde_json::from_value(value["baseUrl"].clone())?;
-                *models = serde_json::from_value(value["claudeModels"].clone())?;
-            }
-            CustomApiConfiguration::Codex {
-                base_url,
-                models,
-                default_row_id,
-                default_model,
-                ..
-            } => {
-                *base_url = serde_json::from_value(value["baseUrl"].clone())?;
-                *default_row_id = serde_json::from_value(value["defaultRowId"].clone())?;
-                let rows = value["codexModels"]
-                    .as_object()
-                    .ok_or_else(|| anyhow::anyhow!("模型列表无效。"))?;
-                // Preserve native ordering, append only genuinely new rows.
-                let order = models
-                    .iter()
-                    .map(|m| m.row_id.clone())
-                    .chain(
-                        rows.keys()
-                            .filter(|k| !models.iter().any(|m| &m.row_id == *k))
-                            .cloned(),
-                    )
-                    .collect::<Vec<_>>();
-                *models = order.into_iter().filter_map(|id| rows.get(&id).filter(|v| !v.is_null()).map(|v| (id,v))).map(|(id,v)| serde_json::from_value(serde_json::json!({"rowId":id,"id":v["id"],"displayName":v["displayName"]}))).collect::<std::result::Result<_,_>>()?;
-                *default_model = models
-                    .iter()
-                    .find(|m| Some(&m.row_id) == default_row_id.as_ref())
-                    .map(|m| m.id.clone())
-                    .unwrap_or_default();
-            }
-        }
-        if native_changed && conflicts.is_empty() && !official {
-            let list_edited = edits
-                .iter()
-                .any(|e| matches!(e.path[0].as_str(), "codexModels" | "defaultRowId"));
-            let inherited_api = current
-                .configuration
-                .custom_api
-                .as_ref()
-                .is_some_and(|c| c.mode() != Some(ConnectionMode::OfficialLogin));
-            let keep_cloud_route = current
-                .credential
-                .as_ref()
-                .is_some_and(|c| c.source == "native_cloud")
-                && key.is_keep()
-                && !edits.iter().any(|e| e.path == ["baseUrl"]);
-            api.validate_edit(
-                kind,
-                list_edited || !inherited_api,
-                !keep_cloud_route
-                    && (edits.iter().any(|e| {
-                        matches!(e.path[0].as_str(), "baseUrl" | "mode" | "credentialVersion")
-                    })),
-            )?;
-        }
-    }
-    if native_changed && conflicts.is_empty() && kind == AdapterKind::CodexCli {
-        let context =
-            native::NativeContext::resolve(kind, &current.configuration, database.path())?;
-        let read = native::read(&context, None)?;
-        if let Some(desired) = &configuration.custom_api {
-            crate::runtime_custom_api::codex_source::validate_edits(
-                &context, &read, desired, &edits,
-            )?;
-        }
-    }
-    // Retired legacy startup secrets must not become ordinary visible variables
-    // once a replacement no longer references them from the native provider.
-    if !official && !key.is_keep() {
-        if let Some(native::CredentialSource::Environment { name }) = current
-            .configuration
-            .custom_api_snapshot
-            .as_ref()
-            .map(|s| &s.credential_source)
-        {
-            configuration
-                .environment
-                .retain(|entry| &entry.name != name);
-        }
-    }
-    if official && edits.iter().any(|e| e.path == ["mode"]) {
-        let referenced = current
-            .configuration
-            .custom_api_snapshot
-            .as_ref()
-            .and_then(|snapshot| match &snapshot.credential_source {
-                native::CredentialSource::Environment { name } => Some(name.as_str()),
-                _ => None,
-            });
-        // These values belong to Rovai's old startup editor. Remove them only on
-        // official Save; never expose, migrate, or retain a second API credential.
-        configuration.environment.retain(|entry| {
-            let api_override = match kind {
-                AdapterKind::ClaudeCodeCli => matches!(
-                    entry.name.to_ascii_uppercase().as_str(),
-                    "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_BASE_URL"
-                ),
-                AdapterKind::CodexCli => matches!(
-                    entry.name.to_ascii_uppercase().as_str(),
-                    "OPENAI_API_KEY" | "CODEX_API_KEY" | "OPENAI_BASE_URL"
-                ),
-                _ => false,
-            };
-            !api_override && referenced != Some(entry.name.as_str())
-        });
-    }
     Ok(PreparedSave {
         current,
         configuration: configuration.validated(cfg!(windows))?,
@@ -613,131 +387,38 @@ pub fn commit_save(
     kind: AdapterKind,
     prepared: PreparedSave,
     search_generation: u64,
-    key: ApiKeyChange,
-    generated_catalog: Option<&serde_json::Value>,
 ) -> Result<RuntimeStartupSettings> {
     ensure!(prepared.conflicts.is_empty(), "请先处理字段冲突。");
-    let key = if prepared
-        .configuration
-        .custom_api
-        .as_ref()
-        .is_some_and(|api| api.mode() == Some(ConnectionMode::OfficialLogin))
-    {
-        ApiKeyChange::Keep
-    } else {
-        key
-    };
-    let current = load_record(database.connection(), kind)?;
-    ensure!(
-        current.0 == prepared.current.revision,
-        "启动设置在保存期间发生变化，草稿已保留，请再次保存。"
-    );
-    let mut native_written = false;
-    let mut native_rollback = Vec::new();
-    if prepared
-        .edits
-        .iter()
-        .any(|e| !matches!(e.path[0].as_str(), "programPath" | "environment"))
-    {
-        let future_context =
-            native::NativeContext::resolve(kind, &prepared.configuration, database.path())?;
-        let context =
-            native::NativeContext::resolve(kind, &prepared.current.configuration, database.path())?;
-        ensure!(
-            context.path() == future_context.path(),
-            "原生配置目录已变化，请先保存目录再编辑连接。草稿已保留。"
-        );
-        let read = native::read(&context, None)?;
-        ensure!(
-            Some(&read.edit_revision) == prepared.current.native_revision.as_ref(),
-            "原生连接在保存期间变化，草稿已保留，请再次保存。"
-        );
-        // Local catalog generation may await the selected executable. Recheck
-        // exactly its source plus edited fields, not unrelated native contents.
-        if generated_catalog.is_some() {
-            ensure!(
-                read.catalog_revision == prepared.current.native_catalog_revision,
-                "模型目录在生成期间变化，草稿已保留；请再次保存以合并最新内容。"
-            );
-        }
-        let baseline = editable(kind, &prepared.current.configuration);
-        let mut observed = prepared.current.configuration.clone();
-        observed.custom_api = Some(read.configuration.clone());
-        let observed = editable(kind, &observed);
-        for edit in &prepared.edits {
-            if matches!(
-                edit.path[0].as_str(),
-                "programPath" | "environment" | "credentialVersion" | "nativeRevision"
-            ) {
-                continue;
-            }
-            let now = native_edit::value_at(&observed, &edit.path);
-            ensure!(
-                now == native_edit::value_at(&baseline, &edit.path) || now == &edit.after,
-                "正在编辑的原生字段在保存期间变化，草稿已保留；请再次保存以合并最新内容。"
-            );
-        }
-        let desired = prepared
-            .configuration
-            .custom_api
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("缺少连接配置。"))?;
-        // A changed launcher may report another target even if its provisional
-        // default path happens to equal the old one. Do not write on that guess.
-        crate::runtime_custom_api::codex_source::validate_edits(
-            &future_context,
-            &read,
-            desired,
-            &prepared.edits,
-        )?;
-        native_rollback = native_edit::write_with_saved_environment(
-            &context,
-            &read,
-            desired,
-            &prepared.edits,
-            &key,
-            generated_catalog,
-            &future_context,
-        )?;
-        native_written = !native_rollback.is_empty();
-    }
-    let ordinary_changed = prepared.edits.iter().any(|e| {
-        matches!(e.path[0].as_str(), "programPath" | "environment") && e.before != e.after
-    });
-    let connection_changed = if native_written {
-        native::NativeContext::resolve(kind, &prepared.configuration, database.path())
-            .and_then(|context| native::read(&context, None))
-            .map(|read| {
-                prepared
-                    .current
-                    .configuration
-                    .custom_api_snapshot
-                    .as_ref()
-                    .is_none_or(|old| old.native_revision != read.connection_revision)
-            })
-            .unwrap_or(true)
-    } else {
-        false
-    };
-    let reconnect_required = ordinary_changed || connection_changed;
-    if let Err(error) = persist(
+    let reconnect_required = prepared.configuration != prepared.current.configuration;
+    persist(
         database,
         kind,
         prepared.current.revision,
         prepared.configuration,
         search_generation,
         reconnect_required,
-    ) {
-        for (file, after) in native_rollback.iter().rev() {
-            file.restore(after)?;
-        }
-        return Err(error);
-    }
+    )?;
     let mut saved = load(database, kind)?;
-    saved.native_written = native_written;
     saved.reconnect_required = reconnect_required;
     Ok(saved)
 }
+
+fn value_at<'a>(value: &'a serde_json::Value, path: &[String]) -> &'a serde_json::Value {
+    path.iter().fold(value, |value, key| &value[key])
+}
+fn set_at(value: &mut serde_json::Value, path: &[String], next: serde_json::Value) -> Result<()> {
+    let mut target = value;
+    for key in path {
+        target = target
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("修改字段无效。"))?
+            .entry(key.clone())
+            .or_insert(serde_json::Value::Null);
+    }
+    *target = next;
+    Ok(())
+}
+
 fn persist(
     database: &mut Database,
     kind: AdapterKind,
@@ -748,7 +429,6 @@ fn persist(
 ) -> Result<()> {
     configuration = configuration.validated(cfg!(windows))?;
     let (current, _) = load_record(database.connection(), kind)?;
-    configuration.custom_api = None;
     configuration.custom_api_snapshot = None;
     ensure!(
         current == expected_revision,
@@ -787,25 +467,14 @@ pub(crate) fn snapshot_from_connection(
             .ok(),
     )
 }
-/// Only ordinary startup fields participate in a preview; API drafts are not executed.
+/// Explicit checks use the saved native connection; startup drafts never edit it.
 pub fn resolve_draft(
     database: &Database,
     kind: AdapterKind,
     mut configuration: RuntimeStartupConfiguration,
-    _change: ApiKeyChange,
 ) -> Result<RuntimeStartupConfiguration> {
     configuration = configuration.validated(cfg!(windows))?;
-    // Existing startup checks use the saved native connection, never hidden API drafts.
-    configuration.custom_api = None;
-    configuration.custom_api_snapshot = None;
-    if native::supported(kind) {
-        let read = native::NativeContext::resolve(kind, &configuration, database.path())
-            .and_then(|context| native::read(&context, None).map(|read| (context, read)));
-        if let Ok((context, read)) = read {
-            configuration.custom_api_snapshot = Some(read.snapshot(&context, false));
-            configuration.custom_api = Some(read.configuration);
-        }
-    }
+    configuration.custom_api_snapshot = native_snapshot(kind, &configuration, database.path());
     Ok(configuration)
 }
 
@@ -817,7 +486,6 @@ mod tests {
     #[test]
     fn environment_validation_preserves_values_and_rejects_ambiguous_or_reserved_names() {
         let config = |names: &[&str]| RuntimeStartupConfiguration {
-            custom_api: None,
             custom_api_snapshot: None,
             program_path: None,
             environment: names
@@ -851,15 +519,31 @@ mod tests {
                     runtime_kind: kind,
                     revision: 0,
                     configuration,
-                    credential: None,
-                    connection_observation: None,
-                    native_revision: None,
-                    native_catalog_revision: None,
-                    connection_read_error: None,
                     reconnect_required: false,
-                    native_written: false,
                 });
                 assert_eq!(public.configuration.environment.is_empty(), restricted);
+            }
+        }
+        for retired in ["customApi", "customApiSnapshot", "apiKey"] {
+            let input = serde_json::json!({"programPath":null,"environment":[],retired:{"value":"fake-key"}});
+            assert!(serde_json::from_value::<RuntimeStartupConfiguration>(input).is_err());
+        }
+        for path in [
+            vec!["mode"],
+            vec!["baseUrl"],
+            vec!["credentialVersion"],
+            vec!["nativeRevision"],
+            vec!["codexModels", "row"],
+            vec!["claudeModels", "model"],
+        ] {
+            let edit = FieldEdit {
+                path: path.into_iter().map(str::to_owned).collect(),
+                before: serde_json::Value::Null,
+                after: serde_json::Value::Null,
+                label: String::new(),
+            };
+            for kind in [AdapterKind::ClaudeCodeCli, AdapterKind::CodexCli] {
+                assert!(!allowed_edit(&edit, kind));
             }
         }
         let valid = config(&[" HTTP_PROXY ", "_EMPTY"])
@@ -905,7 +589,6 @@ mod tests {
             RuntimeSearchEnvironment::for_test_paths(1, Vec::new()).with_startup_configuration(
                 AdapterKind::CodexCli,
                 RuntimeStartupConfiguration {
-                    custom_api: None,
                     custom_api_snapshot: None,
                     program_path: None,
                     environment: vec![RuntimeEnvironmentVariable {

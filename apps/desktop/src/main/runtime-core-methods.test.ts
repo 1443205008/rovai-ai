@@ -11,7 +11,6 @@ describe('Runtime Renderer Core method allowlist', () => {
       'runtime.product.ensure',
       'runtime.product.check',
       'runtime.startup.get',
-      'runtime.startup.observe',
       'runtime.startup.inspect',
       'runtime.startup.check',
       'runtime.startup.save',

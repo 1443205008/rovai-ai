@@ -1946,7 +1946,6 @@ mod tests {
         let configured = search.with_startup_configuration(
             AdapterKind::CodexCli,
             crate::runtime_startup::RuntimeStartupConfiguration {
-                custom_api: None,
                 custom_api_snapshot: None,
                 program_path: Some(
                     directory
