@@ -2558,6 +2558,7 @@ export interface ThreadUserAnchorPreview {
   messageId: string
   throughGlobalSequence: number
   sourceAvailable: boolean
+  /** Earliest valid direct child Agent reply; null does not imply the question was unanswered. */
   firstReply: { messageId: string; sequence: number; summary: string; messageVersion: number } | null
 }
 

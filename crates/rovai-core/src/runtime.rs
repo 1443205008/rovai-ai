@@ -5595,6 +5595,7 @@ fn persist_recipient_free_agent_publication(
             "recipientFree": true,
         }),
     )?;
+    crate::message_changes::record(transaction, &target.camp_id, false, &[]);
     Ok(message_id)
 }
 

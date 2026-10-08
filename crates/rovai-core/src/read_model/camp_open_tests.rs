@@ -838,9 +838,14 @@ fn user_anchor_index_is_complete_lightweight_and_read_only() {
             _ => Authorization::Allow,
         }))
         .unwrap();
-    let index = ReadModelService
+    let material = ReadModelService
         .user_anchors(&mut database, &camp_id)
         .unwrap();
+    assert!(
+        database.connection().is_autocommit(),
+        "formatting must not retain the read transaction"
+    );
+    let index = material.format().unwrap();
     database
         .connection()
         .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
@@ -901,21 +906,71 @@ fn user_anchor_index_is_complete_lightweight_and_read_only() {
     assert!(wire["items"][0].get("body").is_none());
 }
 
-// Owns authoritative reply identity: explicit replies, full Run inputs/anchor,
-// legacy Turn fallback, ordering and unavailable sources. No Renderer Run window is involved.
+// Owns direct child reply identity and its indexed read boundary. Run/Turn inference
+// is intentionally retired; existing relationship fixtures now prove it stays absent.
 #[test]
-fn user_anchor_preview_resolves_first_valid_business_reply() {
+fn user_anchor_preview_resolves_first_valid_direct_reply() {
     let (mut database, camp_id, completed_run, _) = business_fixture();
     let source: String = database.connection().query_row(
         "SELECT id FROM camp_message WHERE camp_id = ?1 AND author_type = 'user' ORDER BY sequence LIMIT 1",
         [&camp_id], |r| r.get(0)).unwrap();
+    database
+        .connection()
+        .authorizer(Some(|context: AuthContext<'_>| match context.action {
+            AuthAction::Read {
+                table_name: "agent_run" | "agent_run_input" | "camp_turn",
+                ..
+            } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }))
+        .unwrap();
     let preview = ReadModelService
         .user_anchor_preview(&mut database, &camp_id, &source)
+        .unwrap()
+        .format()
         .unwrap();
-    assert_eq!(
-        preview.first_reply.unwrap().message_id,
-        "open-agent-message"
-    );
+    assert!(preview.first_reply.is_none());
+    database
+        .connection()
+        .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
+        .unwrap();
+    let plan = database
+        .connection()
+        .prepare(&format!(
+            "EXPLAIN QUERY PLAN {}",
+            user_anchors::DIRECT_REPLY_SQL
+        ))
+        .unwrap()
+        .query_map(params![camp_id, source, 1], |r| r.get::<_, String>(3))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+        .join("\n");
+    assert!(plan.contains("camp_message_direct_reply_idx (camp_id=? AND reply_to_camp_message_id=? AND sequence>?)"), "{plan}");
+    assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+    let candidate_steps = |database: &Database| {
+        let mut query = database
+            .connection()
+            .prepare(user_anchors::DIRECT_REPLY_SQL)
+            .unwrap();
+        assert!(
+            query
+                .query_row(params![camp_id, source, 1], |r| r.get::<_, String>(0))
+                .optional()
+                .unwrap()
+                .is_none()
+        );
+        query.get_status(rusqlite::StatementStatus::VmStep)
+    };
+    let before_steps = candidate_steps(&database);
+    // More later messages without this reply relationship must not increase candidate work.
+    database.connection().execute("WITH RECURSIVE n(i) AS (VALUES(100) UNION ALL SELECT i+1 FROM n WHERE i<10100)
+        INSERT INTO camp_message(id,camp_id,sequence,author_type,author_id,body,structured_content_json,
+            content_digest,address_mode,addressed_agent_ids_json,created_at,updated_at)
+        SELECT 'unrelated-anchor-reply-'||i,?1,i,'agent','agent_1','never hydrated','[]','sha256:unrelated','default','[]','2026-10-08','2026-10-08' FROM n", [&camp_id]).unwrap();
+    assert_eq!(candidate_steps(&database), before_steps);
+    eprintln!("direct_reply_candidates unrelated_later_messages=10001 vm_steps={before_steps}");
+
     database.connection().execute(
         "INSERT INTO camp_message(id, camp_id, sequence, author_type, author_id, body,
          structured_content_json, content_digest, address_mode, addressed_agent_ids_json, created_at, updated_at)
@@ -929,20 +984,22 @@ fn user_anchor_preview_resolves_first_valid_business_reply() {
             [&completed_run],
         )
         .unwrap();
-    assert_eq!(
+    assert!(
         ReadModelService
             .user_anchor_preview(&mut database, &camp_id, &source)
             .unwrap()
-            .first_reply
+            .format()
             .unwrap()
-            .message_id,
-        "open-agent-message"
+            .first_reply
+            .is_none()
     );
-    // Existing input membership continues to associate the original source, but output
-    // published before the later user is never that later user's reply.
+    // Run input/anchor relationships never supply a preview; neither does an output
+    // published before the user it explicitly replies to.
     assert!(
         ReadModelService
             .user_anchor_preview(&mut database, &camp_id, "anchor-later-user")
+            .unwrap()
+            .format()
             .unwrap()
             .first_reply
             .is_none()
@@ -951,6 +1008,8 @@ fn user_anchor_preview_resolves_first_valid_business_reply() {
     assert!(
         ReadModelService
             .user_anchor_preview(&mut database, &camp_id, &source)
+            .unwrap()
+            .format()
             .unwrap()
             .first_reply
             .is_none()
@@ -964,6 +1023,8 @@ fn user_anchor_preview_resolves_first_valid_business_reply() {
          '2026-08-31T00:00:00Z', '2026-08-31T00:00:00Z')", params![camp_id, source]).unwrap();
     let preview = ReadModelService
         .user_anchor_preview(&mut database, &camp_id, &source)
+        .unwrap()
+        .format()
         .unwrap();
     assert_eq!(
         preview.first_reply.unwrap().message_id,
@@ -993,6 +1054,8 @@ fn user_anchor_preview_resolves_first_valid_business_reply() {
         ReadModelService
             .user_anchor_preview(&mut database, &camp_id, "anchor-later-user")
             .unwrap()
+            .format()
+            .unwrap()
             .first_reply
             .is_none()
     );
@@ -1003,14 +1066,14 @@ fn user_anchor_preview_resolves_first_valid_business_reply() {
             [],
         )
         .unwrap();
-    assert_eq!(
+    assert!(
         ReadModelService
             .user_anchor_preview(&mut database, &camp_id, "anchor-later-user")
             .unwrap()
-            .first_reply
+            .format()
             .unwrap()
-            .message_id,
-        "anchor-earliest-reply"
+            .first_reply
+            .is_none()
     );
     database.connection().execute("UPDATE camp_message SET reply_to_camp_message_id = ?1, camp_turn_id = NULL WHERE id = 'anchor-earliest-reply'", [&source]).unwrap();
 
@@ -1025,6 +1088,8 @@ fn user_anchor_preview_resolves_first_valid_business_reply() {
         ReadModelService
             .user_anchor_preview(&mut database, &camp_id, &source)
             .unwrap()
+            .format()
+            .unwrap()
             .first_reply
             .unwrap()
             .message_id,
@@ -1034,6 +1099,8 @@ fn user_anchor_preview_resolves_first_valid_business_reply() {
     assert!(
         ReadModelService
             .user_anchor_preview(&mut database, &camp_id, &source)
+            .unwrap()
+            .format()
             .unwrap()
             .first_reply
             .is_none()
@@ -1050,6 +1117,8 @@ fn user_anchor_preview_resolves_first_valid_business_reply() {
         }
         let unavailable = ReadModelService
             .user_anchor_preview(&mut database, &camp_id, id)
+            .unwrap()
+            .format()
             .unwrap();
         assert!(!unavailable.source_available);
         assert!(unavailable.first_reply.is_none());

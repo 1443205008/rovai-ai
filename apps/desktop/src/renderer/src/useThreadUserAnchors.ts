@@ -18,17 +18,17 @@ export function useThreadUserAnchorCache(client: ThreadClient) {
 export function useThreadUserAnchors(threadId: string, client: ThreadClient,
   messages: readonly ThreadMessageView[], confirmed: readonly ThreadMessageView[],
   namesKey: string, text: (message: ThreadMessageView) => string,
-  supplied?: ThreadUserAnchorNavigation, initialSequence = 0) {
+  supplied?: ThreadUserAnchorNavigation, bodyReady = true) {
   const navigation = useMemo(() => supplied ?? new ThreadUserAnchorNavigation(threadId, client), [supplied, threadId, client])
   const state = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
-  const startSequence = useRef(initialSequence)
-  startSequence.current = initialSequence
-  useEffect(() => navigation.start(startSequence.current), [navigation])
   useEffect(() => navigation.observe(messages, confirmed, text), [navigation, messages, confirmed, text])
   const names = useRef({ threadId, namesKey })
   useEffect(() => {
     if (names.current.threadId === threadId && names.current.namesKey !== namesKey) navigation.resync()
     names.current = { threadId, namesKey }
   }, [navigation, namesKey, threadId])
+  // Observe the committed body/names before starting: cached entry changes must not
+  // invalidate a new request that already started with those same materials.
+  useEffect(() => { if (bodyReady) return navigation.start() }, [navigation, bodyReady])
   return { navigation, ...state }
 }

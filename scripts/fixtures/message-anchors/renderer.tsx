@@ -49,12 +49,14 @@ const emitChange = (indexChanged: boolean) => {
   for (const listener of events) listener({ method: 'thread.messages.changed', params: { threadId, indexChanged, throughGlobalSequence: watermark } })
 }
 const requests: string[] = []
+const indexBodyMounted: boolean[] = []
 const earlierCursors: number[] = []
 Object.assign(window, { rovai: {
   platform: 'darwin', onEvent: (listener: (event: unknown) => void) => { events.add(listener); return () => events.delete(listener) }, clipboard: { write: async () => {} },
   request: async (method: string, params?: { messageId: string }) => {
     requests.push(method)
     if (method === 'thread.messages.anchors') {
+      indexBodyMounted.push(Boolean(document.querySelector('[data-message-id]')))
       const items = fullMessages.filter(message => message.authorType === 'user' && !message.withdrawn)
         .map(message => ({ messageId: message.id, sequence: message.sequence, title: message.body, messageVersion: message.version }))
       return { schemaVersion: 1, throughGlobalSequence: watermark, threadId, totalCount: items.length, items }
@@ -79,7 +81,10 @@ Object.assign(window, { rovai: {
 let updateSnapshot: React.Dispatch<React.SetStateAction<ThreadSnapshot>>
 let updateWidth: React.Dispatch<React.SetStateAction<number | undefined>>
 let updateHistory: React.Dispatch<React.SetStateAction<ThreadOpenMessageCoverage | null>>
+let updateBodyReady: React.Dispatch<React.SetStateAction<boolean>>
 function Fixture(): React.JSX.Element {
+  const [bodyReady, setBodyReady] = useState(false)
+  updateBodyReady = setBodyReady
   const [snapshot, setSnapshot] = useState(initial)
   const [paneWidth, setPaneWidth] = useState<number>()
   const [history, setHistory] = useState<ThreadOpenMessageCoverage | null>(null)
@@ -92,7 +97,7 @@ function Fixture(): React.JSX.Element {
     <AppHeader threadTitle={snapshot.thread.title} contextLabel="rovai-ai" thread={snapshot}
       detailEntryHostRef={setEntryHost} onFocusApprovals={() => {}} />
     <main className="content task-content" style={{ width: paneWidth }}>
-      <ThreadWorkspace snapshot={snapshot} projectName="rovai-ai" agents={[agent]} busy={false} stopping={false}
+      <ThreadWorkspace workspaceEntrySnapshotReady={bodyReady} snapshot={snapshot} projectName="rovai-ai" agents={[agent]} busy={false} stopping={false}
         onSend={async () => {}} onChangeLead={async () => {}} onTasksChanged={async () => {}}
         onResolveApproval={() => {}} worldMapEnabled={false} detailEntryHost={entryHost}
         messageHistory={history} onLoadEarlierMessages={async () => {
@@ -123,6 +128,8 @@ const point = (node: Element): { x: number; y: number } => {
 }
 Object.assign(window, { anchorsTest: {
   settle, longTitle, firstReply,
+  bodyReady: async () => { updateBodyReady(true); await settle() },
+  indexBodyMounted: () => indexBodyMounted,
   count: async (count: number, start = 1) => {
     fullMessages = messages(count + start - 1)
     earlierCursors.length = 0

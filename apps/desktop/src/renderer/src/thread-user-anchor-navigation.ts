@@ -44,7 +44,8 @@ export class ThreadUserAnchorNavigation {
   #previewTimer: ReturnType<typeof setTimeout> | null = null
   #previewRequests = new Map<string, Promise<void>>()
   #indexedById = new Map<string, ThreadUserAnchor>()
-  #prefetched: Promise<ThreadUserAnchorIndex | null> | null = null
+  #indexTrusted = false
+  #indexRequest: { generation: number; promise: Promise<void> } | null = null
   #known = new Map<string, ThreadMessageView>()
   #unavailable = new Set<string>()
   #confirmed: UserMessageAnchor[] = []
@@ -57,12 +58,8 @@ export class ThreadUserAnchorNavigation {
     this.#state = { ...this.#state, ...patch }
     for (const listener of this.#listeners) listener()
   }
-  prefetch(): void {
-    if (this.#active) { this.queueRefresh(); return }
-    this.#prefetched = this.client.request<ThreadUserAnchorIndex>('thread.messages.anchors', { threadId: this.threadId }).catch(() => null)
-  }
-  start(minimumSequence = 0): () => void {
-    this.#indexWatermark = Math.max(this.#indexWatermark, minimumSequence)
+  start(): () => void {
+    this.#indexTrusted = false
     this.#active = true
     this.#unsubscribers = [
       this.client.onEvent?.(event => {
@@ -74,11 +71,10 @@ export class ThreadUserAnchorNavigation {
         else for (const message of change.messages ?? []) this.changed(message)
       })
     ].filter((value): value is () => void => Boolean(value))
-    const prefetched = this.#prefetched
-    this.#prefetched = null
-    void this.refresh(prefetched)
+    void this.refresh()
     return () => {
       this.#active = false
+      this.#indexTrusted = false
       this.#indexGeneration++; this.#previewGeneration++; this.#navigationGeneration++
       for (const unsubscribe of this.#unsubscribers) unsubscribe()
       this.cancelPreview()
@@ -110,20 +106,32 @@ export class ThreadUserAnchorNavigation {
     if (this.#state.previews.size) this.#set({ previews: new Map() })
   }
   queueRefresh(): void {
+    this.#indexTrusted = false
     this.#indexGeneration++ // reject an in-flight read immediately, before the coalescing timer
     if (!this.#active || this.#refreshTimer) return
     this.#refreshTimer = setTimeout(() => { this.#refreshTimer = null; void this.refresh() }, 100)
   }
-  refresh = async (prefetched: Promise<ThreadUserAnchorIndex | null> | null = null): Promise<void> => {
-    const generation = ++this.#indexGeneration
+  refresh = (): Promise<void> => {
+    if (!this.#active) return Promise.resolve()
+    if (this.#indexRequest?.generation === this.#indexGeneration) return this.#indexRequest.promise
+    if (this.#refreshTimer) clearTimeout(this.#refreshTimer)
+    this.#refreshTimer = null
+    if (this.#indexTrusted) this.#indexGeneration++
+    this.#indexTrusted = false
+    const generation = this.#indexGeneration
+    const promise = this.#readIndex(generation)
+    this.#indexRequest = { generation, promise }
+    void promise.finally(() => { if (this.#indexRequest?.promise === promise) this.#indexRequest = null })
+    return promise
+  }
+  async #readIndex(generation: number): Promise<void> {
     this.#set({ status: 'loading' })
     try {
-      const index = await (prefetched ?? this.client.request<ThreadUserAnchorIndex>('thread.messages.anchors', { threadId: this.threadId }))
+      const index = await this.client.request<ThreadUserAnchorIndex>('thread.messages.anchors', { threadId: this.threadId })
       if (!index) throw new Error('anchor index unavailable')
       if (!this.#active || generation !== this.#indexGeneration) return
       if (index.threadId !== this.threadId) throw new Error('anchor index identity mismatch')
       if (index.throughGlobalSequence < this.#indexWatermark) {
-        if (prefetched) { this.queueRefresh(); return }
         throw new Error('anchor index watermark regressed')
       }
       const ids = new Set(index.items.map(item => item.messageId))
@@ -134,6 +142,7 @@ export class ThreadUserAnchorNavigation {
       for (const item of this.#state.index?.items ?? []) if (!ids.has(item.messageId)) this.#unavailable.add(item.messageId)
       this.#indexedById = new Map(index.items.map(item => [item.messageId, item]))
       this.#confirmed = this.#confirmed.filter(anchor => !ids.has(anchor.id))
+      this.#indexTrusted = true
       this.#set({ index, status: 'ready' })
       this.#rebuildAnchors()
     } catch {
@@ -158,7 +167,8 @@ export class ThreadUserAnchorNavigation {
     const index = this.#indexedById
     for (const message of messages) {
       const previous = this.#known.get(message.id)
-      if (previous && previous.version > message.version) continue
+      if (previous && (previous.version > message.version
+        || (previous.version === message.version && previous.withdrawn && !message.withdrawn))) continue
       this.#known.set(message.id, message)
       if (!previous || previous.version !== message.version || previous.withdrawn !== message.withdrawn) {
         if (message.authorType === 'agent') previewsChanged = true
@@ -221,22 +231,29 @@ export class ThreadUserAnchorNavigation {
   cancelNavigation(): void { this.#navigationGeneration++ }
   async locate(messageId: string, displayed: ReadonlyMap<string, ThreadMessageView>): Promise<number | null> {
     const ticket = ++this.#navigationGeneration
-    const item = this.#indexedById.get(messageId)
     const message = displayed.get(messageId)
     const unavailable = (): never => { throw new Error(uiAttribute('这条用户消息当前不可用。')) }
     if (this.#unavailable.has(messageId) || (message && !navigableUserMessage(message))) return unavailable()
+    // Keep the visible directory while resyncing, but wait for an already valid read
+    // before trusting it. A queued/failed refresh falls back to around for validation.
+    if (!this.#indexTrusted && this.#indexRequest?.generation === this.#indexGeneration) {
+      await this.#indexRequest.promise
+      if (!this.currentNavigation(ticket)) return null
+      if (this.#unavailable.has(messageId)) return unavailable()
+    }
+    const item = this.#indexedById.get(messageId)
     // A fresh index verifies identity/navigation state; cached body must be at least that version.
-    if (message && item && message.version >= item.messageVersion
+    if (this.#indexTrusted && message && item && message.version >= item.messageVersion
       && this.#state.index!.throughGlobalSequence >= this.#indexWatermark) {
-      if (this.#known.has(messageId) && this.#state.window) this.#set({ window: null })
       return ticket
     }
+    const validationGeneration = this.#indexGeneration
     try {
       const window = await this.client.request<ThreadMessageAroundSnapshot>('thread.messages.around', { threadId: this.threadId, messageId })
       if (!this.currentNavigation(ticket)) return null
       if (window.threadId !== this.threadId || window.anchorMessageId !== messageId) return unavailable()
       const target = window.messages.find(message => message.id === messageId)
-      if (window.throughGlobalSequence < this.#indexWatermark || (target && item && target.version < item.messageVersion)) {
+      if (validationGeneration !== this.#indexGeneration || window.throughGlobalSequence < this.#indexWatermark || (target && item && target.version < item.messageVersion)) {
         throw new Error(uiAttribute('消息已更新，请重试定位。'))
       }
       if (!window.sourceAvailable || !target || !navigableUserMessage(target) || this.#unavailable.has(messageId)) {

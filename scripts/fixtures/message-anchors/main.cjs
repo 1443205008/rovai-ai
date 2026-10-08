@@ -35,6 +35,13 @@ app.whenReady().then(async () => {
     await window.loadFile(renderer)
     window.focus(); window.webContents.focus()
     await run('window.anchorsTest.settle()')
+    await check('body mounts before the single index request and entry preview does not prefetch', async () => {
+      assert.equal((await state()).requests.includes('thread.messages.anchors'), false)
+      assert.ok((await run('window.anchorsTest.loadedIds()')).length > 0)
+      await run('window.anchorsTest.bodyReady()')
+      assert.equal((await state()).requests.filter(method => method === 'thread.messages.anchors').length, 1)
+      assert.deepEqual(await run('window.anchorsTest.indexBodyMounted()'), [true])
+    })
     await run('window.anchorsTest.top()')
     await check('four user messages enable the rail, teammate replies never count', async () => {
       await run('window.anchorsTest.count(3)')
@@ -107,7 +114,7 @@ app.whenReady().then(async () => {
       assert.equal(after.scrollTop, before.scrollTop)
       await capture('03-240-user-messages')
     })
-    await check('keyboard can reach the last user and unanswered previews contain only the title', async () => {
+    await check('keyboard can reach the last user and absent direct replies leave only the title', async () => {
       await move({ x: 600, y: 40 })
       await run('window.anchorsTest.focus()')
       const end = await key('End')
@@ -174,6 +181,11 @@ app.whenReady().then(async () => {
       assert.equal((await state()).requests.filter(method => method === 'thread.messages.anchors').length, indexes)
       await run('window.anchorsTest.jump("user-100")')
       assert.equal((await state()).focusedMessage, 'user-100')
+      const aroundCount = (await state()).requests.filter(method => method === 'thread.messages.around').length
+      await run('window.anchorsTest.jump("user-100")')
+      assert.equal((await state()).focusedMessage, 'user-100')
+      assert.ok((await run('window.anchorsTest.loadedIds()')).includes('user-100'))
+      assert.equal((await state()).requests.filter(method => method === 'thread.messages.around').length, aroundCount)
       assert.equal(await run('window.anchorsTest.gap()'), true)
       assert.ok(await run('window.anchorsTest.loaderTop() > window.anchorsTest.targetTop("user-100")'))
       await run('window.anchorsTest.jump("user-300")')
@@ -195,7 +207,8 @@ app.whenReady().then(async () => {
     })
     await check('preview failure preserves the title and keyboard retry keeps navigation focus', async () => {
       await move({ x: 600, y: 40 })
-      await run('window.anchorsTest.railTop(); window.anchorsTest.failNextPreview()')
+      await run('window.anchorsTest.railTop()')
+      await run('window.anchorsTest.failNextPreview()')
       const failed = await move(await run('window.anchorsTest.firstMarker()'))
       assert.equal(failed.title, await run('window.anchorsTest.longTitle'))
       assert.ok(failed.reply.includes('重试'))

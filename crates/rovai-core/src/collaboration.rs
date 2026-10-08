@@ -818,6 +818,12 @@ impl CollaborationService {
                     "withdrawnAt": now,
                 }),
             )?;
+            crate::message_changes::record(
+                transaction,
+                &envelope.payload.camp_id,
+                true,
+                std::slice::from_ref(&envelope.payload.message_id),
+            );
             Ok(CommandHandlerResult::applied(
                 "message.withdrawn",
                 json!({
@@ -4263,6 +4269,12 @@ fn queue_camp_message_and_runs(
             "taskId": input.execution.and_then(|execution| execution.task_id.as_deref()),
         }),
     )?;
+    crate::message_changes::record(
+        transaction,
+        input.camp_id,
+        matches!(author_type, "user" | "external_principal"),
+        &[],
+    );
     for delivery in &deliveries {
         append_domain_event(
             transaction,
@@ -5294,6 +5306,7 @@ pub(crate) fn exhaust_camp_turn_execution_budget(
 }
 
 pub(crate) fn delete_camp_aggregate(transaction: &Connection, camp_id: &str) -> Result<()> {
+    crate::message_changes::record_deleted_thread(transaction, camp_id)?;
     transaction.execute(
         r#"
         DELETE FROM legacy_import_map
@@ -9160,6 +9173,8 @@ mod slow_tests {
         let (mut database, directory) = test_database();
         let service = CollaborationService::default();
         let camp_id = create_camp_with_members(&service, &mut database, &directory, &["agent_2"]);
+        let (output, mut changes) = tokio::sync::mpsc::unbounded_channel();
+        database.message_changes = Some(output);
         let send = user_envelope(
             "withdrawable-local-composer-message",
             Some(&camp_id),
@@ -9192,6 +9207,10 @@ mod slow_tests {
             .as_str()
             .unwrap()
             .to_string();
+        let published: Value = serde_json::from_str(&changes.try_recv().unwrap()).unwrap();
+        assert_eq!(published["params"]["threadId"], camp_id);
+        assert_eq!(published["params"]["indexChanged"], true);
+        assert_eq!(published["params"]["unavailableMessageIds"], json!([]));
         let before: (String, i64) = database
             .connection()
             .query_row(
@@ -9218,6 +9237,19 @@ mod slow_tests {
             )
             .expect("recallable message should withdraw atomically");
         assert_eq!(withdrawn.result.code, "message.withdrawn");
+        let removed: Value = serde_json::from_str(&changes.try_recv().unwrap()).unwrap();
+        assert_eq!(
+            removed["params"]["unavailableMessageIds"],
+            json!([message_id])
+        );
+        assert_eq!(removed["params"]["indexChanged"], true);
+        assert!(
+            removed["params"]["throughGlobalSequence"].as_i64().unwrap()
+                > published["params"]["throughGlobalSequence"]
+                    .as_i64()
+                    .unwrap()
+        );
+        assert!(changes.try_recv().is_err());
 
         let erased: (
             String,

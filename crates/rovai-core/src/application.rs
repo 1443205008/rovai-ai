@@ -10158,7 +10158,7 @@ impl Core {
                 let index =
                     ReadModelService.user_anchors(&mut database, params.camp_id.as_str())?;
                 drop(database);
-                Ok(serde_json::to_value(index)?)
+                Ok(serde_json::to_value(index.format()?)?)
             }
             "camp.messages.anchorPreview" => {
                 let params: ThreadMessageAroundParams =
@@ -10170,7 +10170,7 @@ impl Core {
                     &params.message_id,
                 )?;
                 drop(database);
-                Ok(serde_json::to_value(preview)?)
+                Ok(serde_json::to_value(preview.format()?)?)
             }
             "camp.messages.around" => {
                 let params: ThreadMessageAroundParams =

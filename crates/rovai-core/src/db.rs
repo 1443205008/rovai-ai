@@ -14,6 +14,8 @@ mod pending_draft;
 mod run_continuation;
 #[path = "db_thread_names.rs"]
 mod thread_names;
+#[path = "db_user_anchors.rs"]
+mod user_anchors;
 #[path = "db_user_projection.rs"]
 mod user_projection;
 
@@ -317,7 +319,7 @@ impl MainThreadMigrationSource {
 }
 
 pub(crate) const CURRENT_DATA_CONTRACT_VERSION: &str = "v1.72";
-pub(crate) const CURRENT_PROJECTION_SCHEMA_VERSION: i64 = 134;
+pub(crate) const CURRENT_PROJECTION_SCHEMA_VERSION: i64 = 135;
 const V147_MIGRATION_SOURCE_DATA_CONTRACT_VERSION: &str = "v1.54";
 const V147_MIGRATION_SOURCE_PROJECTION_SCHEMA_VERSION: i64 = 96;
 const V145_MIGRATION_SOURCE_DATA_CONTRACT_VERSION: &str = "v1.53";
@@ -776,6 +778,7 @@ struct CurrentMigrationState {
     v182: bool,
     v183: bool,
     v184: bool,
+    v185: bool,
 }
 
 impl CurrentMigrationState {
@@ -797,11 +800,19 @@ impl CurrentMigrationState {
     }
 
     fn admits(&self, contract: &str, schema: i64, classifier: &str) -> bool {
+        if self.v185 {
+            let mut previous = *self;
+            previous.v185 = false;
+            return contract == CURRENT_DATA_CONTRACT_VERSION
+                && schema == CURRENT_PROJECTION_SCHEMA_VERSION
+                && self.v184
+                && previous.admits("v1.72", 134, classifier);
+        }
         if self.v184 {
             let mut previous = *self;
             previous.v184 = false;
-            return contract == CURRENT_DATA_CONTRACT_VERSION
-                && schema == CURRENT_PROJECTION_SCHEMA_VERSION
+            return contract == "v1.72"
+                && schema == 134
                 && self.v183
                 && previous.admits("v1.72", 133, classifier);
         }
@@ -3323,6 +3334,7 @@ pub(crate) fn classify_database_contract(
         || (migrations.v182 && !member_creation::schema_matches(connection)?)
         || (migrations.v183 && !pending_draft::schema_matches(connection)?)
         || (migrations.v184 && !run_continuation::schema_matches(connection)?)
+        || (migrations.v185 && !user_anchors::schema_matches(connection)?)
         || (migrations.v156
             && !migrations.v157
             && !attachment_paths::schema_matches(connection)?
@@ -4100,6 +4112,7 @@ fn legacy_main_context_source(
         || migrations.v182
         || migrations.v183
         || migrations.v184
+        || migrations.v185
         || !migrations.admits(
             "v1.72",
             marker.projection_schema_version,
@@ -5204,7 +5217,8 @@ fn load_current_migration_state(
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 181),
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 182),
                EXISTS(SELECT 1 FROM schema_migration WHERE version = 183),
-               EXISTS(SELECT 1 FROM schema_migration WHERE version = 184)
+               EXISTS(SELECT 1 FROM schema_migration WHERE version = 184),
+               EXISTS(SELECT 1 FROM schema_migration WHERE version = 185)
         "#,
         [],
         |row| {
@@ -5324,6 +5338,7 @@ fn load_current_migration_state(
                 v182: row.get(112)?,
                 v183: row.get(113)?,
                 v184: row.get(114)?,
+                v185: row.get(115)?,
             })
         },
     )
@@ -8452,6 +8467,9 @@ impl Database {
             if !self.schema_migration_applied(184)? {
                 migration_step!("migration_184", run_continuation::migrate(self));
             }
+            if !self.schema_migration_applied(185)? {
+                migration_step!("migration_185", user_anchors::migrate(self));
+            }
             if let Err(error) =
                 crate::notification::maintain_notification_episode_retention(self.connection())
             {
@@ -9222,6 +9240,9 @@ impl Database {
         }
         if !self.schema_migration_applied(184)? {
             migration_step!("migration_184", run_continuation::migrate(self));
+        }
+        if !self.schema_migration_applied(185)? {
+            migration_step!("migration_185", user_anchors::migrate(self));
         }
         if let Err(error) =
             crate::notification::maintain_notification_episode_retention(self.connection())
@@ -40518,6 +40539,7 @@ mod tests {
             v182: version >= 182,
             v183: version >= 183,
             v184: version >= 184,
+            v185: version >= 185,
         }
     }
 
@@ -40712,6 +40734,12 @@ mod tests {
                 "current",
                 CURRENT_DATA_CONTRACT_VERSION,
                 CURRENT_PROJECTION_SCHEMA_VERSION,
+                185,
+            ),
+            (
+                "v1.72/schema 134 before direct reply index",
+                "v1.72",
+                134,
                 184,
             ),
             (
@@ -41221,7 +41249,7 @@ mod tests {
         }
 
         assert!(migration_state_through(141).admits("v1.52", 92, V142_CLASSIFIER_VERSION));
-        let current = migration_state_through(184);
+        let current = migration_state_through(185);
         let v092_source = migration_state_through(91);
         let mut missing_intermediate = current;
         missing_intermediate.v84 = false;
@@ -41758,7 +41786,7 @@ mod tests {
             )
             .expect("current contract marker should load");
 
-        assert_eq!(state, migration_state_through(184));
+        assert_eq!(state, migration_state_through(185));
         assert!(state.admits(&contract, schema, &classifier));
         assert!(has_admissible_data_contract(
             &directory.join("rovai.sqlite")

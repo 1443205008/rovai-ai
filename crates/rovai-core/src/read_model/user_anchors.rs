@@ -51,12 +51,20 @@ const NAVIGABLE_USER: &str = "message.author_type IN ('user', 'external_principa
     AND message.tombstoned_at IS NULL AND message.recall_state <> 'withdrawn'
     AND NOT EXISTS (SELECT 1 FROM mission_start WHERE message_id = message.id)";
 
+pub(super) const DIRECT_REPLY_SQL: &str = "
+    SELECT reply.id FROM camp_message AS reply
+    WHERE reply.camp_id = ?1 AND reply.reply_to_camp_message_id = ?2
+      AND reply.sequence > ?3 AND reply.author_type = 'agent'
+      AND reply.tombstoned_at IS NULL AND reply.recall_state <> 'withdrawn'
+      AND NOT EXISTS (SELECT 1 FROM mission_start WHERE message_id = reply.id)
+    ORDER BY reply.sequence, reply.id LIMIT 1";
+
 impl ReadModelService {
     pub fn user_anchors(
         &self,
         database: &mut Database,
         camp_id: &str,
-    ) -> Result<ThreadUserAnchorIndex> {
+    ) -> Result<UserAnchorIndexRead> {
         let tx = database.connection_mut().transaction()?;
         load_camp(&tx, camp_id)?.context("Thread does not exist")?;
         let through_global_sequence = current_global_sequence(&tx)?;
@@ -70,22 +78,12 @@ impl ReadModelService {
             .prepare(&sql)?
             .query_map([camp_id], text_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        let items = navigation_text(&tx, rows)?
-            .into_iter()
-            .map(|(row, title)| ThreadUserAnchor {
-                message_id: row.id,
-                sequence: row.sequence,
-                message_version: row.version,
-                title,
-            })
-            .collect::<Vec<_>>();
+        let text = read_navigation_text(&tx, rows)?;
         tx.commit()?;
-        Ok(ThreadUserAnchorIndex {
-            schema_version: 1,
+        Ok(UserAnchorIndexRead {
             camp_id: camp_id.into(),
             through_global_sequence,
-            total_count: items.len(),
-            items,
+            text,
         })
     }
 
@@ -94,7 +92,7 @@ impl ReadModelService {
         database: &mut Database,
         camp_id: &str,
         message_id: &str,
-    ) -> Result<ThreadUserAnchorPreview> {
+    ) -> Result<UserAnchorPreviewRead> {
         let tx = database.connection_mut().transaction()?;
         load_camp(&tx, camp_id)?.context("Thread does not exist")?;
         let through_global_sequence = current_global_sequence(&tx)?;
@@ -108,58 +106,91 @@ impl ReadModelService {
                 |row| row.get(0),
             )
             .optional()?;
-        // Explicit replies take precedence, even when they address another message.
-        // An existing Run's complete input set takes precedence over the message's Turn.
-        // The candidate pass reads identities and relationships, never reply bodies.
+        // Only direct child replies qualify. Select identity before reading any body.
         let reply_id = if let Some(sequence) = sequence {
-            tx.query_row(r#"
-                SELECT reply.id
-                FROM camp_message AS reply
-                LEFT JOIN agent_run AS run ON run.id = reply.source_agent_run_id
-                  AND run.invocation_kind <> 'single_chat'
-                  AND COALESCE(run.camp_id, (SELECT camp_id FROM camp_turn WHERE id = run.camp_turn_id)) = ?1
-                WHERE reply.camp_id = ?1 AND reply.author_type = 'agent'
-                  AND reply.sequence > ?3 AND reply.tombstoned_at IS NULL
-                  AND reply.recall_state <> 'withdrawn'
-                  AND NOT EXISTS (SELECT 1 FROM mission_start WHERE message_id = reply.id)
-                  AND CASE
-                    WHEN reply.reply_to_camp_message_id IS NOT NULL THEN reply.reply_to_camp_message_id = ?2
-                    WHEN run.id IS NOT NULL THEN
-                      run.anchor_message_id = ?2
-                      OR EXISTS (SELECT 1 FROM agent_run_input WHERE agent_run_id = run.id AND message_id = ?2)
-                      OR EXISTS (SELECT 1 FROM camp_turn WHERE id = run.camp_turn_id AND camp_id = ?1
-                                 AND trigger_type = 'camp_message' AND trigger_id = ?2)
-                    ELSE EXISTS (SELECT 1 FROM camp_turn WHERE id = reply.camp_turn_id AND camp_id = ?1
-                                 AND trigger_type = 'camp_message' AND trigger_id = ?2)
-                  END
-                ORDER BY reply.sequence, reply.id LIMIT 1
-            "#, params![camp_id, message_id, sequence], |row| row.get::<_, String>(0)).optional()?
+            tx.query_row(
+                DIRECT_REPLY_SQL,
+                params![camp_id, message_id, sequence],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
         } else {
             None
         };
-        let first_reply = if let Some(id) = reply_id {
-            let row = tx.query_row("SELECT id, sequence, version, structured_content_json,
+        let rows = if let Some(id) = reply_id {
+            vec![tx.query_row("SELECT id, sequence, version, structured_content_json,
                 source_attachments_json, quotes_json FROM camp_message WHERE id = ?1 AND camp_id = ?2",
-                params![id, camp_id], text_row)?;
-            navigation_text(&tx, vec![row])?
-                .into_iter()
-                .next()
-                .map(|(row, summary)| ThreadUserAnchorReply {
-                    message_id: row.id,
-                    sequence: row.sequence,
-                    message_version: row.version,
-                    summary,
-                })
+                params![id, camp_id], text_row)?]
         } else {
-            None
+            Vec::new()
         };
+        let text = read_navigation_text(&tx, rows)?;
         tx.commit()?;
-        Ok(ThreadUserAnchorPreview {
-            schema_version: 1,
+        Ok(UserAnchorPreviewRead {
             camp_id: camp_id.into(),
             message_id: message_id.into(),
             through_global_sequence,
             source_available: sequence.is_some(),
+            text,
+        })
+    }
+}
+
+/// Detached consistent materials. Call format only after releasing the shared Database guard.
+pub struct UserAnchorIndexRead {
+    camp_id: String,
+    through_global_sequence: i64,
+    text: NavigationTextRead,
+}
+impl UserAnchorIndexRead {
+    pub fn format(self) -> Result<ThreadUserAnchorIndex> {
+        let items = self
+            .text
+            .format()?
+            .into_iter()
+            .map(|(row, title)| ThreadUserAnchor {
+                message_id: row.id,
+                sequence: row.sequence,
+                message_version: row.version,
+                title,
+            })
+            .collect::<Vec<_>>();
+        Ok(ThreadUserAnchorIndex {
+            schema_version: 1,
+            camp_id: self.camp_id,
+            through_global_sequence: self.through_global_sequence,
+            total_count: items.len(),
+            items,
+        })
+    }
+}
+
+pub struct UserAnchorPreviewRead {
+    camp_id: String,
+    message_id: String,
+    through_global_sequence: i64,
+    source_available: bool,
+    text: NavigationTextRead,
+}
+impl UserAnchorPreviewRead {
+    pub fn format(self) -> Result<ThreadUserAnchorPreview> {
+        let first_reply = self
+            .text
+            .format()?
+            .into_iter()
+            .next()
+            .map(|(row, summary)| ThreadUserAnchorReply {
+                message_id: row.id,
+                sequence: row.sequence,
+                message_version: row.version,
+                summary,
+            });
+        Ok(ThreadUserAnchorPreview {
+            schema_version: 1,
+            camp_id: self.camp_id,
+            message_id: self.message_id,
+            through_global_sequence: self.through_global_sequence,
+            source_available: self.source_available,
             first_reply,
         })
     }
@@ -185,15 +216,16 @@ fn text_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NavigationText> {
     })
 }
 
-fn navigation_text(
+fn read_navigation_text(
     tx: &Transaction<'_>,
-    rows: Vec<NavigationText>,
-) -> Result<Vec<(NavigationText, String)>> {
+    mut rows: Vec<NavigationText>,
+) -> Result<NavigationTextRead> {
     let contents = rows
-        .iter()
+        .iter_mut()
         .map(|row| {
-            serde_json::from_str::<StructuredThreadMessageContent>(&row.content)
-                .map(normalize_content)
+            serde_json::from_str::<StructuredThreadMessageContent>(&std::mem::take(
+                &mut row.content,
+            ))
         })
         .collect::<serde_json::Result<Vec<_>>>()?;
     let mentions = contents
@@ -211,25 +243,11 @@ fn navigation_text(
         let (id, name) = name?;
         names.insert(id, name);
     }
-    let current_user = CurrentUserResolver::resolve("zh-CN");
-    let mut texts = contents
-        .iter()
-        .map(|content| {
-            render_plain_text_with_current_user(
-                content,
-                |id| names.get(id).cloned(),
-                current_user.display_name,
-            )
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let empty = rows
-        .iter()
-        .zip(&texts)
-        .filter(|(_, text)| text.trim().is_empty())
-        .map(|(row, _)| row.id.as_str())
-        .collect::<Vec<_>>();
+    // Parsing only identifies mention IDs required by this consistent read. Rendering,
+    // normalization and fallback parsing run later without the shared Database lock.
+    let requested = rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>();
     let mut attachments = BTreeMap::<String, Vec<String>>::new();
-    if !empty.is_empty() {
+    if !requested.is_empty() {
         // Both historical attachment representations are metadata-only and fetched once.
         let mut query = tx.prepare(r#"
             WITH requested AS (SELECT value AS id FROM json_each(?1))
@@ -241,46 +259,73 @@ fn navigation_text(
                 FROM requested JOIN camp_message_attachment_ref a ON a.camp_message_id = requested.id
             ) ORDER BY message_id, ordinal, id
         "#)?;
-        for row in query.query_map([serde_json::to_string(&empty)?], |row| {
+        for row in query.query_map([serde_json::to_string(&requested)?], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })? {
             let (id, name) = row?;
             attachments.entry(id).or_default().push(name);
         }
     }
-    rows.into_iter()
-        .zip(texts.drain(..))
-        .map(|(row, mut text)| {
-            if text.trim().is_empty() {
-                let mut names = parse_source_attachments(&row.sources)?
-                    .into_iter()
-                    .map(|a| a.display_name)
-                    .collect::<Vec<_>>();
-                names.extend(attachments.remove(&row.id).unwrap_or_default());
-                text = names.join("、");
-            }
-            if text.trim().is_empty() {
-                text = serde_json::from_str::<Vec<MessageQuoteSnapshot>>(&row.quotes)?
-                    .into_iter()
-                    .map(|quote| quote.text)
-                    .collect::<Vec<_>>()
-                    .join(" ");
-            }
-            if text.trim().is_empty() {
-                text = "（无文本）".into();
-            }
-            // Same scalar budget as the existing Run input summary; CSS owns visible length.
-            let mut chars = text
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .chars()
-                .collect::<Vec<_>>();
-            if chars.len() > SUMMARY_SCALARS {
-                chars.truncate(SUMMARY_SCALARS);
-                chars[SUMMARY_SCALARS - 1] = '…';
-            }
-            Ok((row, chars.into_iter().collect()))
-        })
-        .collect()
+    Ok(NavigationTextRead {
+        rows,
+        contents,
+        names,
+        attachments,
+    })
+}
+
+struct NavigationTextRead {
+    rows: Vec<NavigationText>,
+    contents: Vec<StructuredThreadMessageContent>,
+    names: BTreeMap<String, String>,
+    attachments: BTreeMap<String, Vec<String>>,
+}
+impl NavigationTextRead {
+    fn format(mut self) -> Result<Vec<(NavigationText, String)>> {
+        let current_user = CurrentUserResolver::resolve("zh-CN");
+        self.rows
+            .into_iter()
+            .zip(self.contents)
+            .map(|(row, content)| {
+                let mut text = render_plain_text_with_current_user(
+                    &normalize_content(content),
+                    |id| self.names.get(id).cloned(),
+                    current_user.display_name,
+                )?;
+                if text.trim().is_empty() {
+                    let mut names = parse_source_attachments(&row.sources)?
+                        .into_iter()
+                        .map(|a| a.display_name)
+                        .collect::<Vec<_>>();
+                    names.extend(self.attachments.remove(&row.id).unwrap_or_default());
+                    text = names.join("、");
+                }
+                if text.trim().is_empty() {
+                    text = serde_json::from_str::<Vec<MessageQuoteSnapshot>>(&row.quotes)?
+                        .into_iter()
+                        .map(|quote| quote.text)
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                }
+                if text.trim().is_empty() {
+                    text = "（无文本）".into();
+                }
+                Ok((row, navigation_summary(&text)))
+            })
+            .collect()
+    }
+}
+
+fn navigation_summary(text: &str) -> String {
+    // Iterate only up to the scalar budget plus lookahead, without a full word/char array.
+    let mut chars = text
+        .split_whitespace()
+        .enumerate()
+        .flat_map(|(index, word)| (index > 0).then_some(' ').into_iter().chain(word.chars()));
+    let mut summary: String = chars.by_ref().take(SUMMARY_SCALARS).collect();
+    if chars.next().is_some() {
+        summary.pop();
+        summary.push('…');
+    }
+    summary
 }

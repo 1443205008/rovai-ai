@@ -1831,7 +1831,6 @@ export function BusinessApp({
     transaction?: NavigationTransaction
   ): Promise<boolean> => {
     if (selectionGeneration !== campSelectionGeneration.current || (transaction && !transaction.isCurrent())) return false
-    userAnchorNavigationFor(threadId).prefetch()
     const cachedSnapshot = activeThreadIdRef.current === threadId
       ? null
       : recentThreadSnapshot(campSnapshotCache.current, threadId)
@@ -2247,7 +2246,6 @@ export function BusinessApp({
         await logRouteContentPaint(target.kind)
         return
       } else {
-        userAnchorNavigationFor(target.threadId).prefetch()
         const projectionRequest = requestThreadProjection(target.threadId, 'enter')
         scheduleOverview()
         let opened: Awaited<ReturnType<typeof requestThreadProjection>>

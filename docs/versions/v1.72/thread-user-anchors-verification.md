@@ -6,7 +6,7 @@ last_updated: 2026-10-08
 
 # 全会话用户消息锚点验收
 
-范围依据 User 确认：完整用户目录、Core 权威首条关联回复、按需预览、单个独立定位窗口及必要失效处理。
+范围依据 User 确认：完整用户目录、Core 权威首条有效直接回复、按需预览、单个独立定位窗口及必要失效处理。
 保留正文分页、单行标题、三行回复、原有宽度门槛、横线样式、内部滚动与键盘操作；不增加通用历史窗口框架。
 合同为 [Camp Open Projection v26](../../contracts/camp-open-projection-v26.md)。
 
@@ -19,30 +19,52 @@ last_updated: 2026-10-08
 正文或执行历史。首条回复先定位 ID，再生成一个摘要。两个入口沿 Desktop allowlist 与已授权 Web operation 进入
 同一 Core 实现。前端局部状态隔离索引／预览／点击代次与正文分页，消息合并按 ID 和版本处理。
 
-已有 Gateway 在 commit 后沿 Host 输出通知消息变化，Web SSE 只保留公开失效元数据。目录不随普通 Run 状态刷新；
+实际消息写入在同步事务作用域收集提示，Gateway／Channel Host 在 commit 后沿 Host 输出通知消息变化，Web SSE 只保留公开失效元数据。目录不随普通 Run 状态刷新；
 已访问预览按会话失效，不后台预取。实际下一条消息的 sequence 作为 around 窗口边界补充，避免把编号跳号当作缺口。
+
+## 4563d23d 基线修正
+
+User 后续明确将预览收窄为直接 reply 子消息，替代此前 Run／输入／Turn 的补全要求。直接回复按 `(sequence, id)`
+选择首条有效 Agent 消息，无符合项只保留标题，不作“未回答”判断；历史关系和发送逻辑不改写。Migration 185 /
+schema 135 只增加 reply 等值前缀组合索引，与 receipt 同事务提交，旧数据保持。
+
+定位缓存不因 `known` 曾见过目标就清窗。resync／目录失效立即撤销可信状态，旧目录仍可显示；刷新失败和旧响应
+不能恢复快速定位。点击等待当前有效索引读取，或通过 around 检查；有效缓存仍免请求。新定位窗口替换旧窗口。
+
+进入／恢复取消提前 prefetch，正文可用并提交页面后由 hook 启动目录，同代请求合并。索引与预览先在一致事务取得
+材料和水位，释放 Database 锁后格式化；Unicode 摘要使用有界迭代，不再为整个文本创建字符数组。
+
+消息变更提示在真实发布、撤回、删除路径收集最小元数据；同步事务作用域按连接隔离，退出丢弃未提交材料。
+只有确有消息变化时才在提交前取得水位，提交成功后沿原 Host 通道发送。无关命令不读取导航水位或反查事件范围，
+幂等回放不重复通知；Channel Host 既有维护事务同样保留此边界。
 
 ## 可重复验证
 
 | Owner / 命令 | 验证边界 |
 | --- | --- |
-| `cargo test --workspace` | 默认工作区 455 项通过，包含 Core、Host、Web 与 CLI 边界 |
-| `pnpm docs:test` / `pnpm docs:check` / `DOCS_BASE_REF=a77b537d pnpm docs:check:ci` | 通用文档和基于变更的治理门禁通过 |
+| `cargo test --workspace` | 默认工作区 455 项通过，包含 Core、Host、Web 与 CLI 边界；既有真实 Runtime 手动 Smoke 1 项按原策略 ignored |
+| `pnpm docs:test` / `pnpm docs:check` / `DOCS_BASE_REF=4563d23d pnpm docs:check:ci` | 通用文档和基于变更的治理门禁通过 |
 | `pnpm typecheck` | Desktop/Web/共享合同类型一致 |
-| `pnpm exec vitest run` | 239 文件、2,603 项通过；包含异步代次、预览请求合并、失败重试、撤回缓存、只更新可撤回状态不重读目录、SSE 元数据与界面英文词条 |
-| `pnpm test:message-anchors` | 隔离 Electron 使用生产 ThreadWorkspace；240 条锚点保持既有样式，1,000 条完整目录仅挂载首屏及单个定位窗口，连续跳转不累积，分页和自动加载仍从正常区间起点读取；预览失败保留标题，键盘重试后焦点留在锚点 |
-| `cargo test -p rovai-core --features slow-tests --lib user_anchor` | 2 个 SQL owner：完整目录不受正文窗口影响，禁止读取 Run/Turn/Evidence/Managed 文件/事件历史仍成功；只读计数不变，Unicode/附件/提及/引用/空文本回退、外部用户与撤回删除过滤；Core 完整 Run 输入、显式回复优先、Turn 回退与顺序边界 |
-| `cargo test -p rovai-core --features slow-tests --lib command::tests::committed_results_replay_after_reopen_and_handler_errors_roll_back_atomically` | 复用事务 owner 验证提示只在提交后产生，回滚、重启后幂等回放不重发 |
-| `cargo test -p rovai-core --features slow-tests --lib read_model::slow_tests::message_around_reads_a_bounded_old_window_without_leaking_unavailable_sources` | 复用 around owner，验证 41 条窗口及真实下一行边界，保留不存在／跨会话／删除语义 |
+| `pnpm exec vitest run` | 239 文件、2,604 项通过；包含失效立即撤销信任、失败／旧响应不恢复信任、共享目录请求、等待刷新与 around 竞态、保留缓存窗口、预览合并／失败重试、撤回缓存、SSE 元数据与界面英文词条 |
+| `pnpm test:message-anchors` | 隔离 Electron 使用生产 ThreadWorkspace，14 个检查通过：首屏挂载后只启动一次目录，缓存重复点击保持目标；240 条锚点保持既有样式，1,000 条完整目录仅挂载首屏及单个定位窗口，连续跳转不累积，分页和自动加载仍从正常区间起点读取；预览失败保留标题，键盘重试后焦点留在锚点 |
+| `cargo test -p rovai-core --features slow-tests --lib user_anchor` | 3 项：2 个 SQL owner 加 1 个迁移 owner；完整目录不受正文窗口影响，禁止读取 Run/Turn/Evidence/Managed 文件/事件历史仍成功；只读计数不变，Unicode/附件/提及/引用/空文本回退、外部用户与撤回删除过滤；只选直接子回复，禁止 Run／Turn 读取；顺序、撤回／删除过滤；无关后续消息增加 10,001 条前后候选查询均为 18 VM steps，计划使用组合索引且无临时排序；迁移失败原子回滚并可重开 |
+| `cargo test -p rovai-core --features slow-tests --lib command::tests::committed_results_replay_after_reopen_and_handler_errors_roll_back_atomically` | 复用事务 owner 验证提示只在提交后产生，Handler／receipt 失败丢弃、重启后幂等回放不重发；authorizer 禁止导航读取时无关命令仍成功 |
+| `cargo test -p rovai-core --features slow-tests --lib read_model::slow_tests::message_around_reads_a_bounded_old_window_without_leaking_unavailable_sources` | 沿用基线结果，around 实现本轮未变；验证 41 条窗口及真实下一行边界，保留不存在／跨会话／删除语义 |
 
-两个新增 Rust owner 使用既有 `camp_open_slow_tests::business_fixture`。现有 Open owner 只拥有有界正文读取，不能证明
-全用户目录或完整回复身份，因此新增 SQL 读取边界 owner；普通前端回复推断及其测试随生产路径退出，关系矩阵由 Core
-唯一拥有。数据库 authorizer 与业务关系约束需要 SQLite，纯函数测试不足。其余事务与 around 性质扩展既有测试，未增加
-第二套进程或数据库夹具。所有数据来自临时隔离目录，不使用日常 App userData、真实模型或用户会话数据库写入。
+本轮保留两个已有 SQL owner；回复 owner 改名为 `user_anchor_preview_resolves_first_valid_direct_reply`，退出的
+Run／Turn 推断正向断言改为“不能产生预览”的负向回归，其余顺序和不可用来源边界保留。新增的
+`db::user_anchors::tests::direct_reply_index_migration_is_atomic` 拥有新的 schema 134→135 升级、receipt 失败回滚和重开
+边界：现有读取 owner 无法证明 DDL／marker 原子性，因此复用隔离的 seeded fixture，归入 extended-tests，最小命令为
+`cargo test -p rovai-core --features extended-tests --lib direct_reply_index_migration`（上表 slow-tests 同样包含它）。
+真实发布／撤回提示扩展既有 `recallable_local_composer_message_is_erased_and_cannot_be_republished`；事务失败／重放仍归
+原 Gateway owner。渠道绑定既有 `group_binding_freezes_messages_sends_one_card_and_promotes_fifo_atomically` 验证非发送
+命令内部发布的两条外部用户消息仍合并发出目录提示；迁移 admission matrix 与旧 continuation 迁移链也定向通过。
+不建立新进程夹具。Electron 首次运行暴露夹具未等待轨道滚动结束的 hover 竞态，已补齐等待并重跑通过，
+未改动产品预览样式。所有数据库和 Electron userData 均由隔离 fixture 创建，不写日常数据库，不启动真实模型。
 
 ## 性能与验证范围
 
 目录传输随用户问题数增长，每项只含 ID、顺序、短标题和版本；传输摘要沿用 240 scalar 预算，不限制 UI 行数。
 正文窗口仍有界，预览只按访问目标读取，普通执行事件不发起全量目录请求。索引的读取成本仍与该会话用户文本总量
-相关；极大数量问题的负载和网络时延没有通过这次功能夹具推断成性能承诺。此记录证明读取边界和有界正文挂载，
+相关；纯格式化已离开共享锁，但必要 SQL 和提及解析仍随用户材料量增长。极大数量问题的负载和网络时延没有通过这次功能夹具推断成性能承诺。此记录证明读取边界和有界正文挂载，
 不把模拟数据的响应时间作为真实会话或跨设备压测结果。

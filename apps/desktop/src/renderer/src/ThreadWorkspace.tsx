@@ -2457,7 +2457,7 @@ export function ThreadWorkspace({
     ? structuredThreadContentPlainText(message.content, snapshot.members, currentUserName)
     : message.body, [snapshot.members, currentUserName])
   const anchorNavigation = useThreadUserAnchors(snapshot.thread.id, client, snapshot.messages, optimisticMessages,
-    JSON.stringify([currentUserName, snapshot.members.map(member => [member.agentId, agents.find(agent => agent.agentId === member.agentId)?.displayName ?? member.displayName])]), anchorText, userAnchorNavigation, snapshot.throughGlobalSequence)
+    JSON.stringify([currentUserName, snapshot.members.map(member => [member.agentId, agents.find(agent => agent.agentId === member.agentId)?.displayName ?? member.displayName])]), anchorText, userAnchorNavigation, workspaceEntrySnapshotReady)
   const visibleThreadMessages = useMemo(() => mergeNavigationMessages(
     anchoredMessages, anchorNavigation.navigation.windowMessages(), optimisticMessages, snapshot.messages
   ).filter(message => !message.missionStart),
