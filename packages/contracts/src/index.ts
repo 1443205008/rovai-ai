@@ -2067,6 +2067,8 @@ export interface AgentRunExecutionWindowPage {
   throughSequence: number
   throughChangeSequence: number
   runtimePhase?: 'thinking' | 'executing'
+  /** Ephemeral native short title; never a reasoning body or historical evidence. */
+  runtimeThinkingTitle?: string | null
   hasMore: boolean
   /** Unfinished operations older than the first page remain visible, outside the cursor. */
   activeEvidence?: AgentRunExecutionEvidenceView[]
@@ -2083,6 +2085,8 @@ export interface AgentRunExecutionWindowChanges {
   throughSequence: number
   throughChangeSequence: number
   runtimePhase?: 'thinking' | 'executing'
+  /** Ephemeral native short title; never a reasoning body or historical evidence. */
+  runtimeThinkingTitle?: string | null
   hasMore: boolean
   evidence: AgentRunExecutionEvidenceView[]
   /** In-place updates of previously loaded, unfinished evidence (including text). */
@@ -2547,6 +2551,7 @@ export interface ThreadMessageFindParams {
 }
 
 interface MessageDeliveryBaseView {
+  continuationRequest?: boolean
   id: string
   messageId: string
   threadTurnId: string | null
@@ -4199,6 +4204,7 @@ export type CoreMethod =
   | 'singleChat.pendingInputs.addSourceAttachmentFromPath'
   | 'singleChat.pendingInputs.edit'
   | 'agentRuns.cancel'
+  | 'agentRuns.continue'
   | 'agentRuns.diagnostic.get'
   | 'executionTrace.export'
   | 'threads.snapshot'

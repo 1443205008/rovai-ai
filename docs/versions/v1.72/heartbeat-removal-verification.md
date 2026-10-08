@@ -132,3 +132,10 @@ Run；若其准备结果为无进展、没有其他通知或重试 deadline，�
 - `pnpm test:rust:pr` 453 项通过、1 项既有真实 Runtime smoke 按声明忽略；`pnpm docs:test` 10 项通过；
   `cargo fmt --all --check`、`git diff --check` 通过。文档门禁在同提交的干净验证 worktree 执行，命令为
   `pnpm docs:check` 与 `DOCS_BASE_REF=2881a26a pnpm docs:check:ci`，本机忽略的原型保持原样。
+
+## 与 main 集成
+
+合入前同步 `ed90fa9b`，保留 main 的用户授权续做入口和 `RuntimeThinking` 状态类型，同时保留本次独立唤醒与
+cleanup deadline 所有权。当前规范合并到 [Message Delivery v11](../../contracts/message-delivery-v11.md) 与
+[Run Process Detail Surface v45](../../contracts/run-process-detail-surface-v45.md)；已退为历史的 v10／v43 保持
+main 原文，不把本次新行为反写到历史合同。
