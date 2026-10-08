@@ -1456,6 +1456,13 @@ fn log_camp_open_projection(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ThreadMessageAnchorIndexParams {
+    #[serde(rename = "threadId", alias = "campId")]
+    camp_id: ThreadId,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ThreadMessageAroundParams {
     #[serde(rename = "threadId", alias = "campId")]
     camp_id: ThreadId,
@@ -10144,6 +10151,27 @@ impl Core {
                     params.limit,
                 )?)?)
             }
+            "camp.messages.anchors" => {
+                let params: ThreadMessageAnchorIndexParams =
+                    serde_json::from_value(request.params.clone())?;
+                let mut database = self.database.lock().await;
+                let index =
+                    ReadModelService.user_anchors(&mut database, params.camp_id.as_str())?;
+                drop(database);
+                Ok(serde_json::to_value(index)?)
+            }
+            "camp.messages.anchorPreview" => {
+                let params: ThreadMessageAroundParams =
+                    serde_json::from_value(request.params.clone())?;
+                let mut database = self.database.lock().await;
+                let preview = ReadModelService.user_anchor_preview(
+                    &mut database,
+                    params.camp_id.as_str(),
+                    &params.message_id,
+                )?;
+                drop(database);
+                Ok(serde_json::to_value(preview)?)
+            }
             "camp.messages.around" => {
                 let params: ThreadMessageAroundParams =
                     serde_json::from_value(request.params.clone())?;
@@ -17696,6 +17724,7 @@ async fn run_core(
     let (pi_tx, pi_rx) = mpsc::unbounded_channel();
     let (acp_tx, acp_rx) = mpsc::unbounded_channel();
     let (output_tx, output_rx) = mpsc::unbounded_channel();
+    database.message_changes = Some(output_tx.clone());
     let (output_control_tx, output_control_rx) = mpsc::channel(1);
     let (runtime_check_tx, runtime_check_rx) = mpsc::unbounded_channel();
     let (attachment_projection_tx, attachment_projection_rx) = mpsc::unbounded_channel();

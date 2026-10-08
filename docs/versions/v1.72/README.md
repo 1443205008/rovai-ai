@@ -345,3 +345,11 @@ User 于 2026-10-06 授权在独立 worktree 实施并推送分支。Codex 仅�
 正文、计划和工具之后的根思考均可显示；活动工具与根思考并列，实际压缩、等待/取消/恢复和终态保留优先级。
 Codex/Copilot 的合格原生短标题瞬时替换“思考中”；Claude 暂不接入短标题。实现与验证以任务分支测试和真实
 Runtime Smoke 为证据，不从合同 accepted 状态推断所有 Provider 都能返回标题。
+
+
+## 全会话用户消息导航
+
+按 User 确认的范围，将左侧锚点改为完整用户消息目录，保留正文分页和现有外观。Core 负责完整回复关系，
+预览按需读取；锚点定位窗口独立且有界，分页入口与自动加载跟随正常连续区间。合同见
+[Camp Open Projection v26](../../contracts/camp-open-projection-v26.md)，实现与验证见
+[用户锚点验收](thread-user-anchors-verification.md)。这是局部读取正确性修复，不增加持久副本、全局缓存框架或时间线重构。

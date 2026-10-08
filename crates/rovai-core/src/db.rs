@@ -157,6 +157,7 @@ pub struct V2RecoverySummary {
 
 pub struct Database {
     pub(crate) execution_wake: crate::execution_wake::ExecutionWake,
+    pub(crate) message_changes: Option<tokio::sync::mpsc::UnboundedSender<String>>,
     pub(crate) execution_text: crate::execution_text::ExecutionTextBuffer,
     connection: Connection,
     path: PathBuf,
@@ -6550,6 +6551,7 @@ impl Database {
         Ok(Self {
             execution_text: Default::default(),
             execution_wake: Default::default(),
+            message_changes: None,
             connection,
             path: path.into(),
             runtime_camp_files_root,
@@ -6642,6 +6644,7 @@ impl Database {
         let mut database = Self {
             execution_text: Default::default(),
             execution_wake: Default::default(),
+            message_changes: None,
             connection,
             path,
             runtime_camp_files_root: runtime_camp_files_root.to_path_buf(),
@@ -6767,6 +6770,7 @@ impl Database {
             let mut staged = Self {
                 execution_text: Default::default(),
                 execution_wake: Default::default(),
+                message_changes: None,
                 connection,
                 path: temporary.clone(),
                 runtime_camp_files_root: runtime_camp_files_root.to_path_buf(),
@@ -6841,6 +6845,7 @@ impl Database {
         Ok(Self {
             execution_text: Default::default(),
             execution_wake: Default::default(),
+            message_changes: None,
             connection,
             path: target,
             runtime_camp_files_root: runtime_camp_files_root.to_path_buf(),
@@ -6912,6 +6917,7 @@ impl Database {
         let mut database = Self {
             execution_text: Default::default(),
             execution_wake: Default::default(),
+            message_changes: None,
             connection: connection?,
             path: path.clone(),
             runtime_camp_files_root: runtime_camp_files_root.to_path_buf(),
@@ -6978,6 +6984,7 @@ impl Database {
         let mut staged = Self {
             execution_text: Default::default(),
             execution_wake: Default::default(),
+            message_changes: None,
             connection,
             path: path.to_path_buf(),
             runtime_camp_files_root: runtime_camp_files_root.to_path_buf(),
@@ -7119,6 +7126,7 @@ impl Database {
         let mut database = Self {
             execution_text: Default::default(),
             execution_wake: Default::default(),
+            message_changes: None,
             connection,
             path,
             runtime_camp_files_root: runtime_camp_files_root.to_path_buf(),
@@ -7194,6 +7202,7 @@ impl Database {
         Ok(Self {
             execution_text: Default::default(),
             execution_wake: Default::default(),
+            message_changes: None,
             connection,
             path,
             runtime_camp_files_root,
@@ -40229,6 +40238,7 @@ mod tests {
             let mut database = Database {
                 execution_text: Default::default(),
                 execution_wake: Default::default(),
+                message_changes: None,
                 connection,
                 path: PathBuf::from("unused-memory-fixture"),
                 runtime_camp_files_root: PathBuf::new(),
@@ -41560,6 +41570,7 @@ mod tests {
             let mut database = Database {
                 execution_text: Default::default(),
                 execution_wake: Default::default(),
+                message_changes: None,
                 connection,
                 path: PathBuf::new(),
                 runtime_camp_files_root: PathBuf::new(),
@@ -54048,6 +54059,7 @@ mod tests {
         let mut database = Database {
             execution_text: Default::default(),
             execution_wake: Default::default(),
+            message_changes: None,
             connection,
             path,
             runtime_camp_files_root,

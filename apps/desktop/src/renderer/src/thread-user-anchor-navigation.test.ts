@@ -1,0 +1,137 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ThreadMessageAroundSnapshot, ThreadMessageView, ThreadUserAnchorIndex, ThreadUserAnchorPreview } from '@contracts'
+import type { ThreadClient } from './camp-client'
+import { mergeNavigationMessages, ThreadUserAnchorNavigation } from './thread-user-anchor-navigation'
+const threadId = 'thread-fixture'
+function message(id: string, sequence: number, patch: Partial<ThreadMessageView> = {}): ThreadMessageView {
+  return { id, sequence, authorType: 'user', authorId: 'local_user', body: id, content: [], attachments: [], quotes: [],
+    addressMode: 'default', addressedAgentIds: [], sourceAgentRunId: null, replyToThreadMessageId: null,
+    threadTurnId: null, timelineGlobalSequence: null, presentation: null, withdrawn: false, canWithdraw: false,
+    version: 1, createdAt: '2026-10-01T00:00:00Z', ...patch }
+}
+const index = (sequence = 10, ids = ['old', 'latest']): ThreadUserAnchorIndex => ({ schemaVersion: 1, threadId,
+  throughGlobalSequence: sequence, totalCount: ids.length, items: ids.map((id, n) => ({ messageId: id, sequence: n + 1, title: id, messageVersion: 1 })) })
+const windowAt = (id: string, sequence = 10): ThreadMessageAroundSnapshot => ({ schemaVersion: 1, threadId,
+  throughGlobalSequence: sequence, anchorMessageId: id, sourceAvailable: true, messages: [message(id, 1)], nextMessageSequence: 2 })
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  return { resolve, reject, promise }
+}
+afterEach(() => vi.useRealTimers())
+
+describe('Thread user navigation owns asynchronous identity, never body pagination', () => {
+  it('coalesces relevant invalidations and rejects a stale index while preserving confirmed public inputs', async () => {
+    vi.useFakeTimers()
+    const stale = deferred<ThreadUserAnchorIndex>()
+    const request = vi.fn().mockReturnValueOnce(stale.promise).mockResolvedValue(index(20, ['latest']))
+    const navigation = new ThreadUserAnchorNavigation(threadId, { request } as unknown as ThreadClient)
+    const stop = navigation.start()
+    navigation.observe([], [message('confirmed', 30)], value => value.body)
+    expect(navigation.getSnapshot().anchors.map(anchor => anchor.id)).toEqual(['confirmed'])
+    navigation.changed({ threadId: 'other', indexChanged: true, throughGlobalSequence: 99 })
+    navigation.changed({ threadId, indexChanged: true, throughGlobalSequence: 20 })
+    navigation.changed({ threadId, indexChanged: true, throughGlobalSequence: 20 })
+    stale.resolve(index())
+    await Promise.resolve()
+    expect(navigation.getSnapshot().index).toBeNull()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(navigation.getSnapshot().anchors.map(anchor => anchor.id)).toEqual(['latest', 'confirmed'])
+    navigation.changed({ threadId, indexChanged: false, throughGlobalSequence: 21 })
+    await vi.advanceTimersByTimeAsync(200)
+    expect(request).toHaveBeenCalledTimes(2)
+    stop()
+  })
+
+  it('starts index prefetch independently, fences an older entry response and ignores version-only recallability changes', async () => {
+    vi.useFakeTimers()
+    const prefetched = deferred<ThreadUserAnchorIndex>()
+    const request = vi.fn().mockReturnValueOnce(prefetched.promise).mockResolvedValue(index(20))
+    const navigation = new ThreadUserAnchorNavigation(threadId, { request } as unknown as ThreadClient)
+    navigation.prefetch()
+    expect(request).toHaveBeenCalledTimes(1)
+    const stop = navigation.start(20)
+    prefetched.resolve(index(10))
+    await vi.advanceTimersByTimeAsync(100)
+    expect(request).toHaveBeenCalledTimes(2)
+    navigation.observe([message('latest', 2)], [], value => value.body)
+    navigation.observe([message('latest', 2, { version: 2 })], [], value => value.body)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(request).toHaveBeenCalledTimes(2)
+    stop()
+  })
+
+  it('deduplicates delayed previews, distinguishes empty/error/unrequested and re-reads after reply invalidation', async () => {
+    vi.useFakeTimers()
+    const reply = deferred<ThreadUserAnchorPreview>()
+    const request = vi.fn().mockResolvedValueOnce(index()).mockReturnValueOnce(reply.promise)
+    const navigation = new ThreadUserAnchorNavigation(threadId, { request } as unknown as ThreadClient)
+    const stop = navigation.start()
+    await Promise.resolve()
+    navigation.preview('old'); navigation.preview('latest'); navigation.preview(null)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(request).toHaveBeenCalledTimes(1)
+    const first = navigation.readPreview('old')
+    expect(navigation.readPreview('old')).toBe(first)
+    expect(navigation.getSnapshot().previews.get('old')?.status).toBe('loading')
+    reply.resolve({ schemaVersion: 1, threadId, messageId: 'old', throughGlobalSequence: 10, sourceAvailable: true, firstReply: null })
+    await first
+    expect(navigation.getSnapshot().previews.get('old')).toMatchObject({ status: 'ready', value: { firstReply: null } })
+    await navigation.readPreview('old')
+    expect(request).toHaveBeenCalledTimes(2)
+    navigation.changed({ threadId, indexChanged: false, throughGlobalSequence: 11 })
+    expect(navigation.getSnapshot().previews.has('old')).toBe(false)
+    request.mockRejectedValueOnce(new Error('offline'))
+    await navigation.readPreview('old')
+    expect(navigation.getSnapshot().previews.get('old')?.status).toBe('error')
+    request.mockResolvedValueOnce({ schemaVersion: 1, threadId, messageId: 'old', throughGlobalSequence: 11, sourceAvailable: true,
+      firstReply: { messageId: 'reply', sequence: 3, summary: 'Core selected first reply', messageVersion: 1 } })
+    await navigation.readPreview('old')
+    expect(navigation.getSnapshot().previews.get('old')).toMatchObject({ status: 'ready', value: { firstReply: { messageId: 'reply' } } })
+    stop()
+  })
+
+  it('lets only the last click locate, replaces its window, validates cached withdrawal and fences a closed Thread', async () => {
+    const old = deferred<ThreadMessageAroundSnapshot>()
+    const request = vi.fn().mockResolvedValueOnce(index()).mockReturnValueOnce(old.promise).mockResolvedValueOnce(windowAt('latest'))
+    const navigation = new ThreadUserAnchorNavigation(threadId, { request } as unknown as ThreadClient)
+    const stop = navigation.start()
+    await Promise.resolve()
+    const first = navigation.locate('old', new Map())
+    const second = await navigation.locate('latest', new Map())
+    old.resolve(windowAt('old'))
+    expect(await first).toBeNull()
+    expect(navigation.currentNavigation(second!)).toBe(true)
+    expect(navigation.getSnapshot().window?.anchorMessageId).toBe('latest')
+    const count = request.mock.calls.length
+    await navigation.locate('latest', new Map([['latest', message('latest', 2)]]))
+    expect(request).toHaveBeenCalledTimes(count)
+    navigation.observe([message('latest', 2, { version: 2, withdrawn: true })], [], value => value.body)
+    await expect(navigation.locate('latest', new Map([['latest', message('latest', 2)]]))).rejects.toThrow('不可用')
+    const closed = deferred<ThreadMessageAroundSnapshot>()
+    request.mockReturnValueOnce(closed.promise)
+    const pending = navigation.locate('old', new Map())
+    stop(); closed.resolve(windowAt('old'))
+    expect(await pending).toBeNull()
+    expect(navigation.getSnapshot().window).toBeNull()
+  })
+
+  it('rejects wrong identities and ineligible around targets even when sourceAvailable is true', async () => {
+    const request = vi.fn().mockResolvedValueOnce(index())
+    const navigation = new ThreadUserAnchorNavigation(threadId, { request } as unknown as ThreadClient)
+    const stop = navigation.start(); await Promise.resolve()
+    for (const value of [
+      { ...windowAt('old'), threadId: 'another' },
+      { ...windowAt('old'), anchorMessageId: 'another' },
+      { ...windowAt('old'), messages: [message('old', 1, { withdrawn: true })] },
+    ]) {
+      request.mockResolvedValueOnce(value)
+      await expect(navigation.locate('old', new Map())).rejects.toThrow('不可用')
+    }
+    stop()
+    const fresh = message('old', 1, { version: 3, withdrawn: true })
+    expect(mergeNavigationMessages([fresh], [message('old', 1)])).toEqual([fresh])
+  })
+})
