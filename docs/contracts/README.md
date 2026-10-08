@@ -378,7 +378,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Durable Task v5（当前）](durable-task-v5.md) | Task 对象全面去版本化，字段补丁后写覆盖，Agent 四类结果精简 |
 | [Durable Task v4（历史）](durable-task-v4.md) | 继承 v3 authority；单一 description、历史要求只读合成/编辑清理、16000 上限、精简 get Agent projection 与旧输入拒绝 |
 | [Durable Task v3（历史）](durable-task-v3.md) | User/Lead 责任定义、Assignee execution-state update、Camp-wide read、explicit owner、unassigned holding 与 advisory actions；字段 surface 由 v4 替代 |
-| [Camp Message Send v25（当前）](camp-message-send-v25.md) | User 发送事件保存明确 Task 关联，续做按全部原输入校验当前范围；输入、回执和模型格式不变 |
+| [Camp Message Send v26（当前）](camp-message-send-v26.md) | Pending 首条 User 消息从结构化提及原子邀请队外队员 |
+| [Camp Message Send v25（历史）](camp-message-send-v25.md) | User 发送事件保存明确 Task 关联，续做按全部原输入校验当前范围；输入、回执和模型格式不变 |
 | [Camp Message Send v24（历史）](camp-message-send-v24.md) | 继承 v23；正文 Principal 与参数合并、PublicOnly 保留用户提及、昵称与 Markdown 投影 |
 | [Camp Message Send v23（历史）](camp-message-send-v23.md) | 继承 v22；用户消息轻量处理回执、权威 `canWithdraw`、确认弹窗与 Desktop/Web 撤回运输 |
 | [Camp Message Send v22（历史）](camp-message-send-v22.md) | 继承 v21；发布事务为每个显式目标幂等建立 Camp-member Conversation 路由后创建 waiting Delivery |
@@ -420,7 +421,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Current User Attention v1 (historical)](current-user-attention-v1.md) | 当前用户身份、结构化内容与原子通知基线；不含独立已读、锚点窗口与 Markdown 保真勘误 |
 | [Missing-Send Recovery Publication v2（当前）](missing-send-recovery-publication-v2.md) | v1 candidate/replay 不变；普通输出与 Missing-Send 均受 frozen membership lifetime publication fence 约束 |
 | [Missing-Send Recovery Publication v1（历史）](missing-send-recovery-publication-v1.md) | 成功 AgentRun 的 typed final candidate、同 Run accepted-send 抑制、recipient-free 原子恢复消息与 terminal replay/竞态语义 |
-| [Pending Camp Activation v4（当前）](pending-camp-activation-v4.md) | 普通一键草稿按 Thread 本机保存，客户端 presence 驱动导航与启动保护；首发送原子激活 |
+| [Pending Camp Activation v5（当前）](pending-camp-activation-v5.md) | User 首条输入原子邀请、激活与发布，拒绝回滚及幂等并发 |
+| [Pending Camp Activation v4（历史）](pending-camp-activation-v4.md) | 普通一键草稿按 Thread 本机保存，客户端 presence 驱动导航与启动保护；首发送原子激活 |
 | [Pending Camp Activation v3（历史）](pending-camp-activation-v3.md) | AI 创建队员草稿可在同窗口侧栏切换；Core 导航与持久恢复仍排除 Pending |
 | [Pending Camp Activation v2（历史）](pending-camp-activation-v2.md) | 一键 Pending 保留首消息原子激活，未发送输入改为 Renderer-local，不进入导航或恢复 |
 | [Pending Camp Activation v1（历史）](pending-camp-activation-v1.md) | 一键 Pending 创建、Draft-backed Navigation/恢复、首消息原子激活与受控清理 |
