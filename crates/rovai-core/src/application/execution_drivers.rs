@@ -70,7 +70,8 @@ pub(super) fn start_execution_workers(
 
 pub(super) async fn process_non_batch_runs(core: Arc<Core>, mut shutdown: watch::Receiver<bool>) {
     let (completed_tx, mut completed_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut inflight = HashSet::new();
+    // Each in-flight preparation retains whether a state-change wake arrived.
+    let mut inflight = HashMap::new();
     let mut pending = std::collections::VecDeque::new();
     let mut scan = true;
     loop {
@@ -114,7 +115,7 @@ pub(super) async fn process_non_batch_runs(core: Arc<Core>, mut shutdown: watch:
             let Some(candidate) = pending.pop_front() else {
                 break;
             };
-            if inflight.contains(&candidate.agent_run_id) {
+            if inflight.contains_key(&candidate.agent_run_id) {
                 continue;
             }
             let id = candidate.agent_run_id.clone();
@@ -124,7 +125,7 @@ pub(super) async fn process_non_batch_runs(core: Arc<Core>, mut shutdown: watch:
                 sender: completed_tx.clone(),
                 result: None,
             };
-            inflight.insert(id);
+            inflight.insert(id, false);
             let mut tasks = core.agent_run_tasks.lock().await;
             while tasks.try_join_next().is_some() {}
             tasks.spawn(async move {
@@ -149,9 +150,9 @@ pub(super) async fn process_non_batch_runs(core: Arc<Core>, mut shutdown: watch:
         tokio::select! {
             biased;
             Some((id, result)) = completed_rx.recv() => {
-                inflight.remove(&id);
+                let changed_during_preparation = inflight.remove(&id).unwrap_or(false);
                 match result {
-                    Ok(progress) => scan |= progress,
+                    Ok(progress) => scan |= progress || changed_during_preparation,
                     Err(error) => {
                         eprintln!("non-batch preparation deferred: {error:#}");
                         core.defer_non_batch_dispatch(DRIVER_RETRY_DELAY).await;
@@ -161,7 +162,12 @@ pub(super) async fn process_non_batch_runs(core: Arc<Core>, mut shutdown: watch:
             wake = wait_for_wake(&core.execution_wake.runs, retry, &mut shutdown) => {
                 match wake {
                     Wake::Shutdown => break,
-                    Wake::Changed => scan = true,
+                    Wake::Changed => {
+                        // This scan skips in-flight Runs. Recheck each once after
+                        // completion, even if preparation reports no progress.
+                        inflight.values_mut().for_each(|changed| *changed = true);
+                        scan = true;
+                    }
                     Wake::Deadline => {
                         let mut at = core.non_batch_retry_at.lock().await;
                         if at.is_some_and(|at| at <= tokio::time::Instant::now()) { *at = None; }
@@ -589,6 +595,187 @@ mod tests {
             wait_for_wake(&hints.automation, None, &mut shutdown).await,
             Wake::Shutdown
         ));
+    }
+
+    // Owns the in-flight notification/completion interleaving. Poll the actual
+    // coordinator on a current-thread runtime before allowing its preparation
+    // to finish; Notify-only tests cannot observe a skipped in-flight Run.
+    #[cfg(all(feature = "slow-tests", any(target_os = "macos", windows)))]
+    #[tokio::test(start_paused = true)]
+    async fn non_batch_preparation_rechecks_coalesced_wakes_once_without_spinning() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let root =
+            std::env::temp_dir().join(format!("rovai-preparation-wake-{}", uuid::Uuid::new_v4()));
+        let workspace = root.join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let core = Arc::new(super::super::tests::runtime_resolution_test_core(&root).unwrap());
+        fn command<P>(id: &str, camp_id: Option<&str>, payload: P) -> CommandEnvelope<P> {
+            CommandEnvelope {
+                command_id: id.into(),
+                actor: ActorRef::User {
+                    user_id: "local-user".into(),
+                },
+                camp_id: camp_id.map(str::to_owned),
+                expected_versions: Vec::new(),
+                execution_epoch: None,
+                payload,
+            }
+        }
+        let run_id = {
+            let mut database = core.database.lock().await;
+            crate::agent_profile::configure_test_runtime(&database, &["agent_1"]);
+            let created = CollaborationService::default()
+                .create_camp(
+                    &mut database,
+                    &command(
+                        "wake-camp",
+                        None,
+                        CreateThreadCommand::for_test(workspace.to_string_lossy().into()),
+                    ),
+                )
+                .unwrap();
+            let camp_id = created.result.payload["threadId"].as_str().unwrap();
+            let opened = SingleChatService::default()
+                .open(
+                    &mut database,
+                    &command(
+                        "wake-open",
+                        Some(camp_id),
+                        OpenSingleChatCommand {
+                            draft_client: Default::default(),
+                            camp_id: camp_id.into(),
+                            agent_id: "agent_1".into(),
+                        },
+                    ),
+                )
+                .unwrap();
+            let conversation_id = opened.result.payload["conversationId"].as_str().unwrap();
+            let draft_revision = database
+                .connection()
+                .query_row(
+                    "SELECT revision FROM single_chat_composer_draft WHERE conversation_id=?1",
+                    [conversation_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let sent = SingleChatService::default()
+                .send(
+                    &mut database,
+                    &command(
+                        "wake-send",
+                        Some(camp_id),
+                        SendSingleChatMessageCommand {
+                            draft_client: Default::default(),
+                            camp_id: camp_id.into(),
+                            conversation_id: conversation_id.into(),
+                            body: "Check after readiness changes".into(),
+                            draft_revision,
+                        },
+                    ),
+                )
+                .unwrap();
+            assert_eq!(sent.result.status, CommandResultStatus::Accepted);
+            sent.result.payload["agentRunId"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        // Both gates start blocked. Later one becomes ready while the other
+        // stays blocked, so the required recheck must not turn into busy retry.
+        for subsystem in ["skills", "mcp"] {
+            core.subsystems
+                .finish(subsystem, Err(anyhow::anyhow!("initializing")));
+        }
+        // Consume setup's permit before starting the controlled interleaving.
+        core.execution_wake.runs.notified().await;
+        let operations = Arc::new(AtomicUsize::new(0));
+        let count = operations.clone();
+        core.database
+            .lock()
+            .await
+            .connection()
+            .progress_handler(
+                1,
+                Some(move || {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    false
+                }),
+            )
+            .unwrap();
+        let (stop, shutdown) = watch::channel(false);
+        let mut driver = Box::pin(process_non_batch_runs(core.clone(), shutdown));
+        fn poll_pending(driver: std::pin::Pin<&mut impl std::future::Future<Output = ()>>) {
+            assert!(
+                std::future::Future::poll(
+                    driver,
+                    &mut std::task::Context::from_waker(std::task::Waker::noop()),
+                )
+                .is_pending()
+            );
+        }
+        // The initial scan spawns one preparation and yields. No await between
+        // these polls lets that task complete before the new wake is consumed.
+        poll_pending(driver.as_mut());
+        assert_eq!(core.agent_run_tasks.try_lock().unwrap().len(), 1);
+        core.finish_subsystem("skills", Ok(()));
+        core.execution_wake.runs.notify_one();
+        core.execution_wake.runs.notify_one();
+        poll_pending(driver.as_mut());
+        assert_eq!(
+            core.agent_run_tasks.try_lock().unwrap().len(),
+            1,
+            "a wake cannot start a second preparation for the in-flight Run"
+        );
+        {
+            let mut tasks = core.agent_run_tasks.lock().await;
+            tasks.join_next().await.unwrap().unwrap();
+            assert!(tasks.is_empty());
+        }
+        assert!(core.non_batch_retry_at.try_lock().unwrap().is_none());
+        // No further notification or deadline: completion must retain the
+        // consumed wake even though the first preparation made no progress.
+        poll_pending(driver.as_mut());
+        assert_eq!(
+            core.agent_run_tasks.try_lock().unwrap().len(),
+            1,
+            "a wake consumed during preparation must cause one recheck on completion"
+        );
+        {
+            let mut tasks = core.agent_run_tasks.lock().await;
+            tasks.join_next().await.unwrap().unwrap();
+            assert!(tasks.is_empty());
+        }
+        poll_pending(driver.as_mut());
+        assert!(
+            core.agent_run_tasks.try_lock().unwrap().is_empty(),
+            "completion without a new wake or progress must wait"
+        );
+        assert!(core.non_batch_retry_at.try_lock().unwrap().is_none());
+        let idle_operations = operations.load(Ordering::SeqCst);
+        tokio::time::advance(Duration::from_secs(60)).await;
+        poll_pending(driver.as_mut());
+        assert_eq!(
+            operations.load(Ordering::SeqCst),
+            idle_operations,
+            "the blocked Run must not cause periodic or completion-driven scans"
+        );
+        let status: String = core
+            .database
+            .lock()
+            .await
+            .connection()
+            .query_row(
+                "SELECT status FROM agent_run WHERE id=?1",
+                [&run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "queued");
+        stop.send(true).unwrap();
+        driver.await;
+        core.abort_agent_run_tasks().await;
+        drop(core);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // The production drivers and SQLite VM counter are necessary here: a mock

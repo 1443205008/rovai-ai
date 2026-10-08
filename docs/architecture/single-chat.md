@@ -64,6 +64,8 @@ CampTurn/AgentRun，也不推进 Conversation version。
 
 正常发送、Pending 编辑／移除／发布、前一 Run 终态提交、Runtime readiness 与 cleanup 变化主动通知
 non-batch 推进者。通知各自保留一个合并许可，读取状态与进入等待之间的提交不会丢失；通知不代替准入。
+准备期间收到的变化通知同时标记当时的 in-flight Run；本轮扫描跳过它们后，准备完成仍补一次重验。
+重复通知合并；没有新通知且准备未推进时继续等待，准备结果读取失败仍走原退避。
 事务提交后即通知，文本收尾等后续失败不能吞掉提示。`needs_repair` 等待用户，readiness 等待状态变化；
 只有暂时读取／准备失败或既有 cleanup 等待期限安排一次性重试，不以周期扫描维持 FIFO。
 启动对账仍区分旧 Run 恢复与未发布 Pending，不重发旧回复或已接受输入。

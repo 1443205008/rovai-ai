@@ -110,3 +110,25 @@ cleanup 重试、native failure gate、launch 取消、网络恢复各 1，Autom
 本次使用自动验收通道，Core/数据库／Skill Library／MCP／Runtime files 均由临时 fixture 隔离；没有启动日常
 App/Core 或真实模型。未实测 Windows/Linux 原生休眠、实际设备睡眠及 NTP 调钟；时钟分类使用已有确定性测试，
 不能代替这些平台实机证据。旧基线每 500ms 进入一次全局业务扫描来自基线代码，不冒充旧二进制的实测计数。
+
+## 2026-10-08 准备期间唤醒补查修复
+
+基线 `2881a26a`，分支 `rovai/non-batch-wake-recheck`。旧协调器消费条件变化通知后，会跳过仍在准备的
+Run；若其准备结果为无进展、没有其他通知或重试 deadline，完成后就可能永久等待。
+
+- `process_non_batch_runs` 在消费变化通知时，给当时每个 in-flight Run 标记一次待重验；准备完成后消费标记，
+  即使未推进也补查数据库。多个通知合并为一个标记；没有新通知且未推进时继续等待，读取失败沿用既有退避。
+- 只补充协调器的内存标记，没有新增定时器、任务、持久状态或调度抽象；原准入、并发上限与退出监督不变。
+- 新增独立 regression owner
+  `application::execution_drivers::tests::non_batch_preparation_rechecks_coalesced_wakes_once_without_spinning`。
+  现有 Notify owner 不拥有“扫描跳过 in-flight Run 后准备完成”的窗口；复用隔离 Core fixture，使用真实
+  Single Chat Run、生产协调器、实际 readiness 通知和 SQLite VM 计数。通过单线程手动 poll 固定顺序，
+  在通知被消费前不允许准备任务完成，无真实 Runtime、网络、随机延迟或新增生产测试 hook。
+- 同一测试在旧生产逻辑上失败：完成后预期一次重验，实际为零。修复后通过：重复通知不并发准备同一 Run，
+  无进展完成后只补一次检查；另一 readiness 条件仍阻塞时，继续推进 60 秒没有 SQL 增量或重试 deadline。
+- 定向回归使用 `cargo test -p rovai-core --features slow-tests --lib <owner>`，先核对 `-- --list` 非零：
+  execution drivers 3、Single Chat 9、Planned Shutdown 11，共 23 项通过。既有空闲、48 小时无预算唤醒、
+  FIFO、停止和关闭断言保留。此交错验证在 macOS 隔离 fixture 执行，未启动日常 App 或真实模型。
+- `pnpm test:rust:pr` 453 项通过、1 项既有真实 Runtime smoke 按声明忽略；`pnpm docs:test` 10 项通过；
+  `cargo fmt --all --check`、`git diff --check` 通过。文档门禁在同提交的干净验证 worktree 执行，命令为
+  `pnpm docs:check` 与 `DOCS_BASE_REF=2881a26a pnpm docs:check:ci`，本机忽略的原型保持原样。
