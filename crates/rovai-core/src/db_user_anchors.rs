@@ -26,7 +26,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
     anyhow::ensure!(
         matches!(
             classify_database_contract(&tx)?,
-            DatabaseContractClassification::Current(_)
+            DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 136
         ),
         "Direct reply index admission failed"
     );
@@ -36,6 +36,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 
 #[cfg(test)]
 pub(super) fn downgrade_for_test(connection: &Connection) {
+    message_mentions::downgrade_for_test(connection);
     connection.execute_batch("DROP INDEX IF EXISTS camp_message_direct_reply_idx;
         DELETE FROM schema_migration WHERE version=186;
         UPDATE rovai_data_contract SET projection_schema_version=135 WHERE singleton=1 AND projection_schema_version=136;").unwrap();
@@ -71,6 +72,7 @@ mod tests {
             .execute_batch("DROP TRIGGER reject_anchor_receipt")
             .unwrap();
         migrate(&mut database).unwrap();
+        message_mentions::migrate(&mut database).unwrap();
         assert_eq!(
             public_history_claim_preserved_evidence_digest(database.connection()).unwrap(),
             before

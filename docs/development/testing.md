@@ -1066,3 +1066,17 @@ version/auth 零调用及一次正文/零重放。Codex 既有真实 Host owner 
 以及关闭参数被原生协议拒绝时返回错误且不重放。
 最小命令：`cargo test -p rovai-core --features extended-tests --lib camp_fast::`、相同参数的 `claude::`、`codex::`，
 以及 `execution_evidence::tests::` 的字段脱敏、Run/epoch 所属和逻辑执行窗口回归。
+
+
+### 模型消息 Mention 测试准入（2026-10-09）
+
+`camp_content::model_mention_tests` 拥有保存目标的顺序、去重与一次投影名称复用。此前只有正文渲染 owner，
+无法发现正文之外的显式目标丢失或离队目标被过滤；使用三行 profile 的内存 SQLite，不创建完整 Core。
+`context::slow_tests::claimed_legacy_batch_keeps_its_format_after_mention_upgrade` 拥有已领取、未物化 Run 的升级恢复，
+单纯 formatter 断言不能证明数据库新约束允许旧版本物化；复用既有 Run fixture，检查重试字节和摘要。
+`db::message_mentions::tests` 拥有 schema 136 → 137 的 DDL 回滚和冻结证据保留；纯投影测试无法证明事务原子性。
+其余作者、三种 read 模式、旧回执、封闭 Schema、输入大小和非 batch 字段扩展既有 owner，不删除或停用测试。
+
+最小命令为 `cargo test -p rovai-core --lib model_mention_tests`、
+`cargo test -p rovai-core --features slow-tests --lib claimed_legacy_batch_keeps_its_format_after_mention_upgrade`、
+`cargo test -p rovai-core --features extended-tests --lib db::message_mentions::`。
