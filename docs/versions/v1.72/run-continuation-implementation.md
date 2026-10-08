@@ -119,3 +119,30 @@ Thread 为 `rvcamp_01m4bk35n4f4rac0hr9pree7kp`。报告同时保存源码 diff�
 修正后复验：`pnpm test:rust:pr` 为 453 项通过、1 项既有忽略；`pnpm docs:test`、
 `DOCS_BASE_REF=b20b1f69 pnpm docs:check:ci`、`cargo fmt --all -- --check`、
 `node --check scripts/accept-run-continuation.mjs` 与 `git diff --check` 均通过。
+
+## 原业务消息 Task 关联修正
+
+User 对 `0dd10916` 的复核确认，batch Run 的 `task_id` 为 NULL，旧续做检查没有读到原输入的
+明确 Task 关联。改为从全部 `AgentRunInput.message_id` 查询同 Thread 公开发送事件的 `taskId`，
+逐项检查 Task 是否仍存在、未完成或取消且负责人未变化。提交和领取共用 `eligible_source()`；
+任何一项失效都拒绝整个续做范围，已入队请求取消后仍可领取下一条普通输入。
+
+User 发送在既有事务事件中补存 `execution.taskId`，Agent Send 保留现有写入。
+新增 [Camp Message Send v25](../../contracts/camp-message-send-v25.md) 记录该内部事件字段与关联读取边界；
+没有新增请求参数、Schema、提示词、队列或恢复状态系统。历史事件不回填，未记录关联的旧 User
+输入仍无法按 Task 校验，不从正文或当前 Tasks 推断。
+
+测试继续由 `continuation_rechecks_scope_and_requires_explicit_session_replacement` 拥有，
+移除手工补写 `run.task_id` 的片段，替换为 16 个表驱动场景：User / Agent 正式发送持久化路径 ×
+取消 / 完成 / 改派 / 清空负责人 × 提交前变化 / 入队后变化。每个 batch 都包含两个 Task 输入和一个
+普通输入，失效关联位于非末尾消息；通过正式 Stop 与 Task update 命令推进状态，验证来源 Run 终态不变。
+Agent 入队后变化场景先生成并停止一次续做 Run，再从它继续，检查关联仍来自原业务消息。
+这条跨发送、持久化、调度和取消事务的路径由既有 SQLite fixture 承担；不新增独立 Rust owner。
+
+修复前新场景实际失败：Task 取消后仍返回 `agent_run.continuation_requested`；修复后
+`cargo test -p rovai-core --lib --features extended-tests delivery_queue:: -- --test-threads=2`
+的 24 项通过。此回归未调用真实模型；此前真实 Runtime 专项的范围和限制保持原记录。
+
+默认 `pnpm test:rust:pr` 为 453 项通过、1 项既有忽略。另用 `--features slow-tests` 运行既有
+`collaboration::slow_tests::queued_run_remains_dispatchable_after_task_changes`，1 项通过，确认普通
+已准入执行仍遵守原有 Task 变化规则。`pnpm docs:test`、diff-aware 文档治理、Rust 格式及 diff 检查通过。

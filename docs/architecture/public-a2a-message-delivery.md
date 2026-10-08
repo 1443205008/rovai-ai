@@ -3,12 +3,12 @@ document_type: architecture
 architecture: public-a2a-message-delivery
 authority: public-message-delivery-and-agent-run-boundaries
 status: accepted
-last_updated: 2026-09-24
+last_updated: 2026-10-08
 ---
 
 # Public Camp Message、Delivery 与 AgentRun
 
-本架构定义公开 Camp 的统一消息执行主链。字段合同见 [Camp Message Send v24](../contracts/camp-message-send-v24.md)、
+本架构定义公开 Camp 的统一消息执行主链。字段合同见 [Camp Message Send v25](../contracts/camp-message-send-v25.md)、
 [Message Delivery v11](../contracts/message-delivery-v11.md)、[ContextManifest 30](../contracts/context-manifest-evidence-v30.md)
 与 [Camp History v11](../contracts/camp-history-v11.md)。Single Chat 不使用本主链。
 
@@ -131,7 +131,7 @@ Migration 172/schema 122 只扩展新公开 Formatter/Manifest 29、Profile 9 �
 
 Agent Send 在共享解析模块识别行首连续提及中的稳定 `@Principal`，并与显式 `mentionUser` 合并为当前用户结构化身份。
 PublicOnly 只抑制 Agent 路由，仍允许用户提及；通知沿用当前原子、消息局部和幂等投影。显示名称由当前用户资料解析，
-不持久化到身份字段。精确位置、排除规则与未改变的 Runtime final/quote 来源见 [Send v24](../contracts/camp-message-send-v24.md)。
+不持久化到身份字段。精确位置、排除规则与未改变的 Runtime final/quote 来源见 [Send v25](../contracts/camp-message-send-v25.md)。
 
 ## 公开执行查询
 

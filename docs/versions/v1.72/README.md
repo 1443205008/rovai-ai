@@ -6,7 +6,7 @@ authority: version-scope-and-status
 design_status: confirmed
 implementation_status: in_progress
 model_context_change: true
-last_updated: 2026-10-07
+last_updated: 2026-10-08
 ---
 
 # Rovai-ai v1.72：Lark 独立渠道
@@ -18,6 +18,9 @@ User 已确认 [r2 输入对照](model-context-change-run-continuation.md) 并�
 每次完整选择原业务输入，现有 builder 重建当前上下文，同一来源可多次独立执行。按钮为 24×24 纯图标，
 原卡片状态不关联新 Run。Migration 184 / schema 134 增量保留旧证据；实现与验证见
 [续做实施记录](run-continuation-implementation.md)。
+
+Task 准入修正按 [Camp Message Send v25](../../contracts/camp-message-send-v25.md) 保留发送时明确关联，
+提交和领取均检查全部原业务输入，不依赖 batch Run 的单值 `task_id`；提示词及 Schema 不变。
 
 ## 并行实施：Member CLI
 

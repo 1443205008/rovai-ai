@@ -1,7 +1,7 @@
 ---
 document_type: current-decision-navigation
 authority: current-authority-and-rationale-routing
-last_updated: 2026-10-05
+last_updated: 2026-10-08
 ---
 
 # 当前规范与决定理由导航
@@ -250,5 +250,5 @@ User 命名与旧 Session 恢复：当前规范为 [User Naming v1](../contracts
 
 ## 用户主动继续执行
 
-- 当前规范：[AgentRun Continuation v1](../contracts/agent-run-continuation-v1.md)、[AgentRun Recovery](../architecture/agent-run-recovery.md)、[Run Process Detail Surface v44](../contracts/run-process-detail-surface-v44.md)。
+- 当前规范：[AgentRun Continuation v1](../contracts/agent-run-continuation-v1.md)、[Camp Message Send v25](../contracts/camp-message-send-v25.md)、[AgentRun Recovery](../architecture/agent-run-recovery.md)、[Run Process Detail Surface v44](../contracts/run-process-detail-surface-v44.md)。
 - 理由：[V1.72-D16](../versions/v1.72/decisions.md#v1-72-d16)：新授权接入唯一 lane，原业务输入复用与旧投递不重放分开，允许同一来源多次独立执行。

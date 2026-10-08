@@ -48,8 +48,10 @@ pub(crate) fn eligible_source(
     camp_id: &str,
     run_id: &str,
 ) -> Result<Option<ContinuationSource>> {
+    // Batch Runs have no single Task. Inspect the original business messages,
+    // including when their Delivery belongs to a previous continuation request.
     Ok(connection.query_row(
-        "SELECT conversation.id, conversation.agent_id, profile.display_name
+        &format!("SELECT conversation.id, conversation.agent_id, profile.display_name
          FROM agent_run AS run
          JOIN conversation ON conversation.id=run.conversation_id
          JOIN camp ON camp.id=run.camp_id
@@ -59,8 +61,16 @@ pub(crate) fn eligible_source(
            AND conversation.kind='camp_member' AND run.invocation_kind='batch'
            AND run.status IN ('failed','cancelled') AND camp.deletion_operation_id IS NULL
            AND member.status='active' AND member.leave_requested_at IS NULL AND profile.profile_status='present'
-           AND (run.task_id IS NULL OR EXISTS(SELECT 1 FROM task WHERE task.id=run.task_id
-                AND task.status NOT IN ('cancelled','completed') AND task.assignee_agent_id=conversation.agent_id))
+           AND NOT EXISTS(SELECT 1 FROM agent_run_input AS input
+               JOIN event_log AS publication ON publication.entity_type='camp_message'
+                 AND publication.entity_id=input.message_id AND publication.camp_id=?2
+                 AND {}
+               WHERE input.agent_run_id=run.id
+                 AND json_extract(publication.payload_json,'$.taskId') IS NOT NULL
+                 AND NOT EXISTS(SELECT 1 FROM task
+                     WHERE task.id=json_extract(publication.payload_json,'$.taskId') AND task.camp_id=?2
+                       AND task.status NOT IN ('cancelled','completed')
+                       AND task.assignee_agent_id=conversation.agent_id))
            AND NOT EXISTS(SELECT 1 FROM mission WHERE mission.camp_id=run.camp_id AND mission.status='completed')
            AND EXISTS(SELECT 1 FROM agent_run_input WHERE agent_run_id=run.id)
            AND NOT EXISTS(SELECT 1 FROM agent_run_input AS input
@@ -68,6 +78,7 @@ pub(crate) fn eligible_source(
                WHERE input.agent_run_id=run.id AND (message.id IS NULL OR message.camp_id<>?2
                    OR message.tombstoned_at IS NOT NULL OR message.recall_state='withdrawn'
                    OR message.content_digest<>input.message_content_digest))",
+            crate::camp_message_publication::public_camp_message_event_predicate("publication.event_type")),
         params![run_id, camp_id],
         |row| Ok(ContinuationSource { conversation_id: row.get(0)?, agent_id: row.get(1)?, display_name: row.get(2)? }),
     ).optional()?)
