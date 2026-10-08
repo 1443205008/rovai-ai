@@ -85,3 +85,19 @@ Run／Turn 推断正向断言改为“不能产生预览”的负向回归，其
 | `pnpm docs:test` / `pnpm docs:check` / `DOCS_BASE_REF=0d449a91 pnpm docs:check:ci` | 通用文档与变更治理门禁通过 |
 
 本次验证为局部状态回归，未新增真实会话性能测量；上方 Rust、全量 Vitest 与隔离 Electron 记录属于前一轮修正。
+
+## PR #673 主线集成
+
+集成 `52ecf398` 主线时，Migration 185 / schema 135 已用于使命描述。锚点索引迁移顺延为 **Migration 186，
+schema 135 → 136**；主线的使命描述表和既有迁移保持，准入矩阵、升级入口与测试降级链同步衔接。上方 185 / 135
+是独立分支阶段的验证记录，最终发布编号以 [Camp Open Projection v26](../../contracts/camp-open-projection-v26.md) 为准。
+
+合并后 `pnpm typecheck` 与全量 Vitest（239 文件、2,612 项）通过，`pnpm test:message-anchors` 的隔离 Electron
+生产界面验收通过；双方文案、使命提及、草稿邀请和直接回复目录功能均保留。
+
+`cargo test --workspace` 通过 456 项，保留 1 项既有手动 Runtime smoke 忽略；`cargo fmt --all --check` 与
+`pnpm build:desktop` 通过。显式启用 `slow-tests` 后，`user_anchor`、`current_migration_state_admission_matrix`、
+`migration_preserves_literal_text_and_rolls_back_schema_receipt_and_evidence`、
+`continuation_migration_rolls_back_and_preserves_frozen_evidence` 和 `v163_requeues_unfrozen_public_work` 五组过滤
+共 7 项通过，覆盖直接回复查询、186 原子回滚、135 准入、使命描述保留及旧续接升级链。未新增平行 Rust owner。
+文档门禁以 `DOCS_BASE_REF=52ecf398` 核对主线差异。

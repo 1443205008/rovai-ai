@@ -26,13 +26,15 @@ Automation、预算和文本收尾按业务 deadline／实际失败退避等待�
 ## 并行实施：用户主动继续执行
 
 User 已确认 [r2 输入对照](model-context-change-run-continuation.md) 并授权独立 worktree 实现、推送。
-[AgentRun Continuation v1](../../contracts/agent-run-continuation-v1.md) 将新授权接入现有 waiting lane；
+[AgentRun Continuation v2](../../contracts/agent-run-continuation-v2.md) 将新授权接入现有 waiting lane；
 每次完整选择原业务输入，现有 builder 重建当前上下文，同一来源可多次独立执行。按钮为 24×24 纯图标，
 原卡片状态不关联新 Run。Migration 184 / schema 134 增量保留旧证据；实现与验证见
 [续做实施记录](run-continuation-implementation.md)。
 
 Task 准入修正按 [Camp Message Send v25](../../contracts/camp-message-send-v25.md) 保留发送时明确关联，
 提交和领取均检查全部原业务输入，不依赖 batch Run 的单值 `task_id`；提示词及 Schema 不变。
+2026-10-08 按 User 可用性优先要求取消新会话确认，复用正常 Runtime 的兼容判断，允许投递前一次降级；
+旧输入未知时在清理完成后自动选择新会话，工作区和提示词保持不变。
 
 ## 并行实施：Member CLI
 
@@ -56,7 +58,7 @@ Claude 2.1.280 专用查询与 2.1.100 旧协议回退分别实测通过；Windo
 User 于 2026-10-07 明确取消此功能。移除两种智能体的连接方式、登录状态、地址、Key 和自定义模型表单，
 退出原生写回、目录生成及专用观察接口。程序路径、环境变量、显式检查和本地保存继续保留。
 已有原生文件、凭据及模型目录保持原样，执行由原生 CLI 处理；只读快照兼容与输出脱敏保留。
-模型选择回到原生目录，不增加推理强度 fallback。当前合同为 [Runtime Launch v52](../../contracts/runtime-launch-and-verification-v52.md)，
+模型选择回到原生目录，不增加推理强度 fallback。当前合同为 [Runtime Launch v53](../../contracts/runtime-launch-and-verification-v53.md)，
 实现与验证见[实施计划](implementation-plan.md#2026-10-07-移除自定义-api-配置)。此前编辑器的验证仅为历史证据，
 见[原验收记录](runtime-custom-api-verification.md)。
 
@@ -283,7 +285,7 @@ Antigravity 四项与 Context、Qoder 数量、TRAE Context、Kiro 窗口已补�
 
 按 User 的 HTML 交互稿确认与 worktree/PR 合入要求，Run 主线按正文或完整折叠组分页；展开组按独立游标读取，
 首次短内容自动补齐，失败保持内容并在原位重试。无新表、迁移、模型上下文或渠道公开数据变化。
-当前合同为 [Run Process Detail Surface v45](../../contracts/run-process-detail-surface-v45.md)，理由见
+当前合同为 [Run Process Detail Surface v46](../../contracts/run-process-detail-surface-v46.md)，理由见
 [V1.72-D10](decisions.md#v1-72-d10)，实现与验证见[实施记录](implementation-plan.md#2026-10-02-run-内容块与-command-组分页)。
 跨版本影响：Contract、读取架构、UI 和当前导航已同步；版本指针、Runtime 兼容、原始 Evidence、结果预算与根 README 无需变化。
 
@@ -341,7 +343,7 @@ User 于 2026-10-06 授权在独立 worktree 实施并推送分支。Codex 仅�
 
 ## Run 思考反馈补充
 
-当前思考反馈扩展遵循 [Run Process Detail Surface v45](../../contracts/run-process-detail-surface-v45.md)：
+当前思考反馈扩展遵循 [Run Process Detail Surface v46](../../contracts/run-process-detail-surface-v46.md)：
 正文、计划和工具之后的根思考均可显示；活动工具与根思考并列，实际压缩、等待/取消/恢复和终态保留优先级。
 Codex/Copilot 的合格原生短标题瞬时替换“思考中”；Claude 暂不接入短标题。实现与验证以任务分支测试和真实
 Runtime Smoke 为证据，不从合同 accepted 状态推断所有 Provider 都能返回标题。
@@ -355,4 +357,19 @@ Runtime Smoke 为证据，不从合同 accepted 状态推断所有 Provider 都�
 [用户锚点验收](thread-user-anchors-verification.md)。这是局部读取正确性修复，不增加持久副本、全局缓存框架或时间线重构。
 
 本轮以 `4563d23d` 为修正基线，修复缓存清窗和重同步可信状态，正文先显示再请求目录，格式化移出数据库锁，
-消息提示在实际写入路径收集、提交后发送。Migration 185 / schema 135 仅增加直接回复组合索引，无历史回填。
+消息提示在实际写入路径收集、提交后发送。Migration 186 / schema 136 仅增加直接回复组合索引，无历史回填。
+
+## 一键草稿邀请队外队员
+
+User 于 2026-10-08 授权独立 worktree、PR 与 main 合入。Pending Composer 沿用待邀请交互，
+首条 User inline 消息按 [Pending v5](../../contracts/pending-camp-activation-v5.md)和
+[Send v26](../../contracts/camp-message-send-v26.md)原子加入、激活与投递；Active 保持逐人邀请。
+无数据库或模型上下文格式变更。实施与验证见[实施计划](implementation-plan.md#一键草稿邀请队外队员)。
+
+
+## 并行交付：使命描述提及队员
+
+按 User 确认的交互稿与模型读取示例实现个人提及、保存时邀请队外成员和失败保留草稿。
+[Mission v12](../../contracts/mission-v12.md)冻结结构与原子性，Migration 185 将 schema 134 升至 135；
+模型 `mission get` 继续返回可读 description，不增加字段或修改 Bootstrap/Run Facts。
+决定见 [V1.72-D18](decisions.md#v1-72-d18)，测试与交付证据见[实施记录](mission-member-mentions-implementation.md)。

@@ -72,7 +72,7 @@ Desktop 只编辑草稿，不拥有第二份有效配置。SQLite 保存与旧 m
 显式程序路径失效时保持缺失，不能换用自动候选；用户恢复自动后再使用原有发现来源。
 草稿浅检不写安装，草稿深检复用 Check Manager 的并发、deadline 与清理 owner，结果只回到编辑器。
 环境只传入对应 Runtime 进程与原生配置读取，既不修改系统环境，也不投影到公共上下文。
-字段、CAS、迁移和错误边界由 [Runtime Launch v52](../contracts/runtime-launch-and-verification-v52.md)拥有。
+字段、CAS、迁移和错误边界由 [Runtime Launch v53](../contracts/runtime-launch-and-verification-v53.md)拥有。
 
 主动正式检查在后端先读取最新基础环境、加载已保存启动设置，再将不可变环境快照交给 Check Manager。
 刷新后的请求不与旧搜索代数合并；结果写回与保存/刷新共用更新锁并重验代数和程序身份。
@@ -92,7 +92,7 @@ Desktop 只编辑草稿，不拥有第二份有效配置。SQLite 保存与旧 m
 
 执行仍保留只读连接摘要、凭据来源引用和输出脱敏，以保持旧快照与 Host/binding 兼容隔离；
 内部历史快照名不代表可编辑 API 配置。队员模型选择使用原生目录及能力，不附加编辑器允许名单或
-推理强度 fallback。边界由 [Runtime Launch v52](../contracts/runtime-launch-and-verification-v52.md)拥有。
+推理强度 fallback。边界由 [Runtime Launch v53](../contracts/runtime-launch-and-verification-v53.md)拥有。
 
 <a id="浅检测与按需深检"></a>
 ## 安装发现与真实 Host 验证

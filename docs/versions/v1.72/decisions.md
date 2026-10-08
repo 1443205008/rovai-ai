@@ -361,7 +361,7 @@ D14 的原生来源权威继续保留；用户进一步撤回“保存官方后�
 
 - 状态：accepted
 - 日期：2026-10-07
-- 当前权威：[AgentRun Continuation v1](../../contracts/agent-run-continuation-v1.md)、[Accepted Input Recovery v7](../../contracts/accepted-input-recovery-v7.md)、[Message Delivery v11](../../contracts/message-delivery-v11.md)、[AgentRun Recovery](../../architecture/agent-run-recovery.md)
+- 当前权威：[AgentRun Continuation v2](../../contracts/agent-run-continuation-v2.md)、[Accepted Input Recovery v8](../../contracts/accepted-input-recovery-v8.md)、[Message Delivery v11](../../contracts/message-delivery-v11.md)、[AgentRun Recovery](../../architecture/agent-run-recovery.md)
 
 ### 背景与选择
 
@@ -373,4 +373,40 @@ D14 的原生来源权威继续保留；用户进一步撤回“保存官方后�
 
 需要增量迁移表示一条授权 Delivery 对应原多条业务输入，并保留其单 Run 归属约束。旧输入事实不改写，
 清理门禁不放宽。拒绝重置旧 Run、复制冻结投递或单后继链，也不建设恢复协调器、效果对账系统或语义审批器。
-提示词不追加来源 ID、证据和恢复指令；会话真正恢复失败时结束当前尝试，显式确认才能以新会话继续。
+提示词不追加来源 ID、证据和恢复指令。2026-10-08 User 明确要求可用性优先与默认降级，
+替代早期显式新会话确认：继续即授权，兼容时优先恢复，已知不适用则自动新建；实际恢复失败在本次
+输入尚未投递时允许一次新会话尝试。清理和接受后不重放的边界不变，不增加另一套恢复流程。
+
+<a id="v1-72-d17"></a>
+## V1.72-D17：Pending 首条消息原子邀请队外队员
+
+- 状态：accepted
+- 日期：2026-10-08
+- 当前权威：[Pending Camp Activation v5](../../contracts/pending-camp-activation-v5.md)、[Camp Message Send v26](../../contracts/camp-message-send-v26.md)与[Public Camp Composer](../../architecture/camp-composer-draft.md#发送)
+
+User 确认一键草稿也应允许队外 Mention。延伸 D05 的编辑交互，在首消息事务中复用成员写入，
+同时完成邀请、激活与发布；命令正常拒绝也显式撤销暂写成员，再保存拒绝回执。Active 路径仍按 D05。
+
+直接放开 Pending 的单独成员命令会改变空草稿清理和放弃语义；先激活再邀请会留下零消息正式会话。
+选择首消息原子提交保住现有生命周期，也把邀请权限限定在 User inline 输入；并发败方按当前 Active
+名册重验。代价是发送准入与成员写入在事务内组合，须用数据库回归证明拒绝、异常与回放无残留。
+
+
+<a id="v1-72-d18"></a>
+## V1.72-D18：使命提及复用稳定身份，保存与入队原子提交
+
+- 状态：accepted
+- 日期：2026-10-08
+- 当前权威：[Mission v12](../../contracts/mission-v12.md)、[Mission 架构](../../architecture/missions.md#inline-member-references)、[使命板 UI](../../ui/components/mission-board.md#description-member-mentions)
+
+### 背景与选择
+
+User 确认交互稿及模型仍读取 `@名字` 文字后，授权实现、创建 PR 并合入 main。使命描述需要保留每次提及的
+位置与稳定身份，同时允许保存时邀请队外队员。采用文本/个人引用片段，在 Core 同一事务内保存描述与成员关系；
+编辑器复用现有 Composer，模型接口继续返回原有 description 字符串。
+
+### 后果与替代方案
+
+需要一次增量迁移；旧字符串按字面迁移，重命名不会重绑身份。未采用按显示名解析，避免同名、改名和纯文本粘贴
+产生隐式邀请。未复用会话先入队再发消息的跨命令流程，因为使命保存失败必须保持原队伍。成员准入与事件仍复用
+现有 Camp owner；不引入第二套队伍、执行路由或模型正文数组。

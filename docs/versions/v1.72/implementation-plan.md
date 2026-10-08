@@ -1187,3 +1187,29 @@ API 专用 UI/CLI fixture 退役，启动页 UI 回归由既有 settings-workspa
 - 文档门禁使用同基线、包含完整改动的干净验证 worktree，执行 `pnpm docs:check` 与
   `DOCS_BASE_REF=3e6c22fc pnpm docs:check:ci`；日常工作区的本机原型保持原样。
   仅使用隔离测试 fixture，不启动日常 App 或真实模型；48 小时推进使用确定性测试时间，并非实机连续运行两天。
+
+
+## 一键草稿邀请队外队员
+
+- Work item：Pending Composer outsider invitations；User 2026-10-08 已确认实现、PR 与合入 main。
+- Worktree：`/Users/murray.xue/VSCodeProjects/opensource/rovai-ai-pending-composer-invitations`。
+- Branch：`rovai/pending-composer-invitations`；Base：`a77b537d59d7cc8c01d520d9fd1d0174a194e1e7`；Governance：none（同 PR 同步当前权威）。
+- Status：ready；前端复用候选/提示，Pending 首发直接提交，Core 复用成员写入并用局部 savepoint 撤销业务拒绝。
+- Rust 新增唯一 owner `collaboration::pending_invitation_tests::pending_invitations_commit_with_first_message_and_roll_back_every_failure`：
+  修复前当前 inline 入口拒绝队外 Atom；既有 legacy Draft 激活 owner 无法覆盖这一入口。此 owner 拥有成员与首发布
+  的跨表原子性，需隔离 SQLite 来证明业务拒绝、SQL 错误、presence trigger、回放和串行首发竞争；归入 `extended-tests`。
+  最小命令：`cargo test -p rovai-core --features extended-tests --lib pending_invitation_tests`。没有删除或停用 Rust owner。
+- Renderer 验收使用生产 ThreadWorkspace 与隔离 Electron transport，覆盖候选、失败保留、本机恢复、成功清空、Active 邀请顺序；
+  不启动 Core 或真实 Runtime。事务事实由上述 SQLite owner 拥有。
+- 规格审查发现成功回执早于名册投影时会丢失续发目标，已修复并补回归：延迟 Active 投影时先清空、保留 continuation，
+  输入、清空、离开及重挂载不再写 Pending presence/discard；投影前阻止误发，投影后无 @ 续发仍指向新队员。
+  激活事实只按成功回执在 transport 生命周期内缓存，不复制成员权威，也不修改本机持久格式。
+- Validation：`pnpm typecheck`、`pnpm test`（Node 334 通过、2 项 Windows 跳过）、
+  最终 `pnpm exec vitest run`（238 文件、2606 项通过）、
+  `cargo test --workspace`（455 通过、1 项既有忽略）、上述定向 Rust owner（1 通过）、
+  `cargo test -p rovai-core --features slow-tests --lib collaboration::slow_tests::`（46 通过）、
+  `pnpm test:composer-input`（28 项既有编辑用例 + 新增生产 Composer 流程）、`pnpm build:desktop`、
+  `DOCS_BASE_REF=a77b537d59d7cc8c01d520d9fd1d0174a194e1e7 pnpm docs:check:ci` 全部通过。
+  同步 main `7f1562f3` 后完整 Rust、JavaScript、类型、构建与文档门再次通过；最终文档 diff 基线为该提交。
+  隔离 Electron 验收覆盖 1040×700 日夜主题及键盘选择；未调用真实模型，也不宣称 Windows 真机验收。
+- Next：review、推送 PR、CI 与合入后清理。

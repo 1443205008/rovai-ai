@@ -82,6 +82,7 @@ pub mod memory_tool;
 mod message_changes;
 pub mod message_delivery;
 pub mod mission;
+pub mod mission_description;
 pub mod mission_workspace;
 pub mod monitoring;
 pub mod native_skills;

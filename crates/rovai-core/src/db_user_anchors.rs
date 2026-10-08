@@ -17,12 +17,12 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
     anyhow::ensure!(
         matches!(classify_database_contract(&tx)?,
         DatabaseContractClassification::SupportedMigrationSource(ref marker)
-        if marker.contract_version == "v1.72" && marker.projection_schema_version == 134),
-        "Direct reply index requires v1.72/schema 134"
+        if marker.contract_version == "v1.72" && marker.projection_schema_version == 135),
+        "Direct reply index requires v1.72/schema 135"
     );
     tx.execute_batch(INDEX)?;
-    tx.execute_batch("INSERT INTO schema_migration VALUES(185,datetime('now'));
-        UPDATE rovai_data_contract SET projection_schema_version=135,updated_at=datetime('now') WHERE singleton=1;")?;
+    tx.execute_batch("INSERT INTO schema_migration VALUES(186,datetime('now'));
+        UPDATE rovai_data_contract SET projection_schema_version=136,updated_at=datetime('now') WHERE singleton=1;")?;
     anyhow::ensure!(
         matches!(
             classify_database_contract(&tx)?,
@@ -37,15 +37,15 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 #[cfg(test)]
 pub(super) fn downgrade_for_test(connection: &Connection) {
     connection.execute_batch("DROP INDEX IF EXISTS camp_message_direct_reply_idx;
-        DELETE FROM schema_migration WHERE version=185;
-        UPDATE rovai_data_contract SET projection_schema_version=134 WHERE singleton=1 AND projection_schema_version=135;").unwrap();
+        DELETE FROM schema_migration WHERE version=186;
+        UPDATE rovai_data_contract SET projection_schema_version=135 WHERE singleton=1 AND projection_schema_version=136;").unwrap();
 }
 
 #[cfg(all(test, feature = "extended-tests"))]
 mod tests {
     use super::*;
 
-    // Owns the new schema 134 -> 135 admission/DDL atomicity; query tests cannot
+    // Owns the new schema 135 -> 136 admission/DDL atomicity; query tests cannot
     // prove an installed database survives a failed receipt and an exact reopen.
     #[test]
     fn direct_reply_index_migration_is_atomic() {
@@ -56,15 +56,15 @@ mod tests {
             .connection()
             .execute_batch(
                 "CREATE TRIGGER reject_anchor_receipt BEFORE INSERT ON schema_migration
-            WHEN NEW.version=185 BEGIN SELECT RAISE(ABORT,'fixture failure'); END;",
+            WHEN NEW.version=186 BEGIN SELECT RAISE(ABORT,'fixture failure'); END;",
             )
             .unwrap();
         assert!(migrate(&mut database).is_err());
         assert!(!schema_matches(database.connection()).unwrap());
-        assert!(!database.schema_migration_applied(185).unwrap());
+        assert!(!database.schema_migration_applied(186).unwrap());
         assert!(
             matches!(classify_database_contract(database.connection()).unwrap(),
-            DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 134)
+            DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version == 135)
         );
         database
             .connection()

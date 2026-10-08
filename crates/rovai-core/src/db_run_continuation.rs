@@ -95,7 +95,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 
 #[cfg(test)]
 pub(super) fn downgrade_for_test(connection: &Connection) {
-    super::user_anchors::downgrade_for_test(connection);
+    mission_description::downgrade_for_test(connection);
     if !connection
         .table_exists(None, "camp_run_continuation")
         .unwrap()
@@ -184,7 +184,6 @@ mod tests {
             .unwrap();
         migrate(&mut database).unwrap();
         assert!(schema_matches(database.connection()).unwrap());
-        super::super::user_anchors::migrate(&mut database).unwrap();
         drop(database);
         let database = Database::open(&directory).unwrap();
         assert_eq!(

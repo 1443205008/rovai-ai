@@ -1878,7 +1878,9 @@ export function ThreadWorkspace({
           }
         }
         const continuation = draft.continuationIntent
-        if (continuation) {
+        // A Pending projection can lag an accepted first-send invitation. Only
+        // the Active roster can establish whether that recipient is unavailable.
+        if (continuation && activationStateRef.current === 'active') {
           const member = activeSnapshotRef.current.members.find(
             ({ agentId }) => agentId === continuation.recipient.agentId
           )
@@ -2201,7 +2203,7 @@ export function ThreadWorkspace({
     })),
     [snapshot.members]
   )
-  const canInviteFromComposer = snapshot.thread.activationState === 'active' && Boolean(onAddMembers)
+  const canInviteFromComposer = snapshot.thread.activationState === 'pending' || Boolean(onAddMembers)
   const composerMentionCandidates = useMemo(() => {
     if (!canInviteFromComposer) return composerRosterMembers
     const activeIds = new Set(snapshot.members
@@ -2701,6 +2703,7 @@ export function ThreadWorkspace({
       const flushed = await composerHandle?.flush()
       const draft = flushed?.draft ?? await draftCoordinator.waitForIdle()
       const settlePending = activationStateRef.current === 'pending'
+        && !pendingDraftPersistence.current!.isActivated(snapshot.thread.id)
         ? pendingThreadLeaveRef.current
         : undefined
       let completed = false
@@ -2722,7 +2725,7 @@ export function ThreadWorkspace({
       setComposerPersistenceError(normalized)
       throw normalized
     }
-  }, [draftCoordinator, draftLoadState.state])
+  }, [draftCoordinator, draftLoadState.state, snapshot.thread.id])
 
   useLayoutEffect(() => {
     const threadId = snapshot.thread.id
@@ -3304,6 +3307,7 @@ export function ThreadWorkspace({
     const sourceMessageId = continuationIntent?.sourceThreadMessageId ?? null
     if (
       !sourceMessageId
+      || snapshot.thread.activationState === 'pending'
       || continuationRecipientAvailable
       || composerDraft?.replyIntent
       || hasExplicitRecipient
@@ -3319,6 +3323,7 @@ export function ThreadWorkspace({
     autoSuppressedContinuationSourceRef.current = sourceMessageId
     void dismissContinuation(false)
   }, [
+    snapshot.thread.activationState,
     composerDraft?.replyIntent,
     continuationIntent?.sourceThreadMessageId,
     continuationRecipientAvailable,
@@ -4030,12 +4035,13 @@ export function ThreadWorkspace({
         composerMemberMentionIds(routedDraft.content),
         currentSnapshot.members,
         agents,
-        currentSnapshot.thread.activationState === 'active' && Boolean(onAddMembers)
+        currentSnapshot.thread.activationState === 'pending' || Boolean(onAddMembers)
       )
       if (inviteTargets.unavailableAgentIds.length > 0) {
         throw new Error(uiAttribute('提及的队员当前不可接收，请调整后重试。'))
       }
-      if (inviteTargets.inviteAgentIds.length > 0) {
+      // Pending invitations are committed atomically by the first-message command.
+      if (inviteTargets.inviteAgentIds.length > 0 && currentSnapshot.thread.activationState === 'active') {
         if (!onAddMembers) throw new Error(uiAttribute('当前无法邀请队员，请稍后重试。'))
         const outcome = await onAddMembers(inviteTargets.inviteAgentIds)
         addedAgentIds = outcome.addedAgentIds
@@ -4053,6 +4059,9 @@ export function ThreadWorkspace({
       const sendReceipt = await onSend(routedDraft)
       if (!sendReceipt) throw new Error(uiAttribute('消息未被当前 Thread 接受。'))
       sendAccepted = true
+      if (currentSnapshot.thread.activationState === 'pending' && sendReceipt.threadMessageId) {
+        pendingDraftPersistence.current!.acknowledgeActivation(threadId)
+      }
       if (mountedThreadId.current === threadId
         && (sendReceipt.deliveryIds.length || sendReceipt.agentRunIds.length)) {
         setSubmittedExecutionRequests((current) => [...current, {

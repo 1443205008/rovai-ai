@@ -62,9 +62,9 @@ Core 只查询 `reply_to_camp_message_id` 直接等于目标用户消息 ID 的�
 回复链，不查询 Run、Run input 或 Turn，不按时间或语义推断。历史缺少直接 reply 时允许没有预览，不回填历史或修改发送规则。
 先通过等值前缀和顺序索引确定回复 ID，再读取这一条的摘要字段，沿用相同传输预算。
 
-Migration 185 从精确 `v1.72/schema 134` 原子增加
+Migration 186 从精确 `v1.72/schema 135` 原子增加
 `camp_message_direct_reply_idx(camp_id, reply_to_camp_message_id, sequence, id)`，仅索引 reply 非空的消息，并发布
-`v1.72/schema 135`。该索引无需读取全会话后续消息或排序全部候选；不建立摘要表，失败时索引与 receipt 一起回滚。
+`v1.72/schema 136`。该索引无需读取全会话后续消息或排序全部候选；不建立摘要表，失败时索引与 receipt 一起回滚。
 
 索引首开不计算任何回复预览。悬浮／键盘聚焦延迟 120ms 后读取，离开取消尚未启动的读取；同一目标在途合并，
 只缓存访问过的结果。普通正文里碰巧出现的回复不用于认定首条回复。失败保留标题和定位能力，允许重试。
