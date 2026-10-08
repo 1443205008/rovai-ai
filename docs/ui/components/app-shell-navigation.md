@@ -282,7 +282,7 @@ Claude Code / Codex 的自定义 API 配置功能已退出。启动页只显示�
 
 保存收到本地回执即更新基线、结束加载并显示“已保存”，不追加观察或列表刷新。
 普通字段冲突继续按项选择并保留草稿。已有本机原生配置不删除、不重写，连接由原生 CLI 使用；
-完整边界见 [Runtime Launch v52](../../contracts/runtime-launch-and-verification-v52.md)。
+完整边界见 [Runtime Launch v53](../../contracts/runtime-launch-and-verification-v53.md)。
 
 ## 宿主平台交互
 
