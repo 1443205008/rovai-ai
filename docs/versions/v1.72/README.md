@@ -348,6 +348,13 @@ User 于 2026-10-06 授权在独立 worktree 实施并推送分支。Codex 仅�
 Codex/Copilot 的合格原生短标题瞬时替换“思考中”；Claude 暂不接入短标题。实现与验证以任务分支测试和真实
 Runtime Smoke 为证据，不从合同 accepted 状态推断所有 Provider 都能返回标题。
 
+## 一键草稿邀请队外队员
+
+User 于 2026-10-08 授权独立 worktree、PR 与 main 合入。Pending Composer 沿用待邀请交互，
+首条 User inline 消息按 [Pending v5](../../contracts/pending-camp-activation-v5.md)和
+[Send v26](../../contracts/camp-message-send-v26.md)原子加入、激活与投递；Active 保持逐人邀请。
+无数据库或模型上下文格式变更。实施与验证见[实施计划](implementation-plan.md#一键草稿邀请队外队员)。
+
 
 ## 并行交付：使命描述提及队员
 

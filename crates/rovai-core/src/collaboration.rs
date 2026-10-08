@@ -632,6 +632,11 @@ impl CollaborationService {
                 }
                 let content = composer_document_to_content(&envelope.payload.content)?;
                 validate_user_authored_content(&content)?;
+                if let Some(rejection) =
+                    invite_pending_thread_mentions(transaction, envelope, &content)?
+                {
+                    return Ok(Err(rejection));
+                }
                 load_structured_content_submission(
                     transaction,
                     &command.camp_id,
@@ -3005,6 +3010,15 @@ impl CollaborationService {
         Self::validate_send_message_input(command)?;
         let camp_message_id = Uuid::new_v4().to_string();
         self.gateway.execute(database, envelope, |transaction| {
+            // A rejected command receipt is committed by the gateway. Roll back
+            // tentative first-send membership even on a normal business rejection.
+            let pending_submission =
+                matches!(attachment_commit.source, UserThreadMessageSource::Inline(_))
+                    && matches!(envelope.actor, ActorRef::User { .. })
+                    && camp_is_pending(transaction, &command.camp_id)?;
+            if pending_submission {
+                transaction.execute_batch("SAVEPOINT pending_thread_submission")?;
+            }
             let prepared = prepare(transaction)?;
             let prepared = match prepared {
                 Ok(submission) => {
@@ -3187,9 +3201,157 @@ impl CollaborationService {
                 })(),
                 Err(rejection) => Ok(rejection),
             }?;
+            if pending_submission {
+                if result.status == crate::command::CommandResultStatus::Rejected {
+                    transaction.execute_batch("ROLLBACK TO pending_thread_submission")?;
+                }
+                transaction.execute_batch("RELEASE pending_thread_submission")?;
+            }
             Ok(result)
         })
     }
+}
+
+// Both ordinary additions and first-message invitations use the same membership
+// lifetime, generation and event write. Callers own admission and transaction rollback.
+fn commit_camp_member_add(
+    transaction: &Transaction<'_>,
+    actor: &ActorRef,
+    execution_epoch: Option<i64>,
+    command: &AddThreadMemberCommand,
+    now: &str,
+) -> Result<i64> {
+    let capability_overrides_json = serde_json::to_string(&command.capability_overrides)?;
+    transaction.execute(
+        r#"
+        INSERT INTO camp_member(
+            camp_id, agent_id, status, capability_overrides_json,
+            leave_requested_at, leave_request_command_id,
+            pending_default_lead_successor_agent_id,
+            version, joined_at, left_at
+        ) VALUES (?1, ?2, 'active', ?3, NULL, NULL, NULL, 1, ?4, NULL)
+        ON CONFLICT(camp_id, agent_id) DO UPDATE SET
+            status = 'active',
+            capability_overrides_json = excluded.capability_overrides_json,
+            leave_requested_at = NULL,
+            leave_request_command_id = NULL,
+            pending_default_lead_successor_agent_id = NULL,
+            joined_at = excluded.joined_at,
+            left_at = NULL,
+            version = camp_member.version + 1
+        "#,
+        params![
+            command.camp_id,
+            command.agent_id,
+            capability_overrides_json,
+            now,
+        ],
+    )?;
+
+    transaction.execute(
+        r#"
+        UPDATE camp
+        SET default_lead_agent_id = COALESCE(default_lead_agent_id, ?2),
+            membership_generation = membership_generation + 1,
+            version = version + 1, updated_at = ?3
+        WHERE id = ?1 AND membership_generation = ?4
+        "#,
+        params![
+            command.camp_id,
+            command.agent_id,
+            now,
+            command.expected_membership_generation,
+        ],
+    )?;
+    let membership_version: i64 = transaction.query_row(
+        "SELECT version FROM camp_member WHERE camp_id = ?1 AND agent_id = ?2",
+        params![command.camp_id, command.agent_id],
+        |row| row.get(0),
+    )?;
+    advance_membership_source_generation(
+        transaction,
+        actor,
+        &command.camp_id,
+        command.source.as_ref(),
+        now,
+    )?;
+    append_domain_event(
+        transaction,
+        "camp.member_added",
+        Some(&command.camp_id),
+        Some(("agent_profile", &command.agent_id)),
+        actor,
+        execution_epoch,
+        &json!({
+            "agentId": command.agent_id,
+            "membershipVersion": membership_version,
+            "membershipGeneration": command.expected_membership_generation + 1,
+        }),
+    )?;
+    Ok(membership_version)
+}
+
+// Only a User's first local Composer submission may turn a Member Atom into
+// membership. Active sends, Agent/System sends and standalone add stay unchanged.
+fn invite_pending_thread_mentions(
+    transaction: &Transaction<'_>,
+    envelope: &CommandEnvelope<SendUserThreadMessageCommand>,
+    content: &[StructuredThreadMessageSegment],
+) -> Result<Option<CommandHandlerResult>> {
+    let camp_id = &envelope.payload.camp_id;
+    if !matches!(envelope.actor, ActorRef::User { .. }) || !camp_is_pending(transaction, camp_id)? {
+        return Ok(None);
+    }
+    let mut invite_ids = Vec::new();
+    for agent_id in member_mention_ids(content) {
+        if active_address_target(transaction, camp_id, &agent_id)?.is_some() {
+            continue;
+        }
+        let eligible: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM agent_profile WHERE id=?1 AND profile_status='present')
+             AND NOT EXISTS(SELECT 1 FROM camp_member WHERE camp_id=?2 AND agent_id=?1 AND status='active')",
+            params![agent_id, camp_id], |row| row.get(0),
+        )?;
+        if !eligible {
+            return Ok(Some(rejected(
+                "mention_target_unavailable",
+                "Every invited Member Mention must identify a present available AgentProfile",
+            )));
+        }
+        invite_ids.push(agent_id);
+    }
+    if invite_ids.is_empty() {
+        return Ok(None);
+    }
+    let (default_lead, mut generation): (Option<String>, i64) = transaction.query_row(
+        "SELECT default_lead_agent_id, membership_generation FROM camp WHERE id=?1",
+        [camp_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    if active_member_count(transaction, camp_id)? > 0 && default_lead.is_none() {
+        return Ok(Some(rejected(
+            "camp.default_lead_invariant",
+            "Camp has active members but no Default Lead",
+        )));
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    for agent_id in invite_ids {
+        commit_camp_member_add(
+            transaction,
+            &envelope.actor,
+            envelope.execution_epoch,
+            &AddThreadMemberCommand {
+                camp_id: camp_id.clone(),
+                agent_id,
+                expected_membership_generation: generation,
+                capability_overrides: json!({}),
+                source: None,
+            },
+            &now,
+        )?;
+        generation += 1;
+    }
+    Ok(None)
 }
 
 /// Shared member admission for commands composing membership in their own transaction.
@@ -3327,72 +3489,12 @@ pub(crate) fn add_camp_member_in_tx(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    let capability_overrides_json = serde_json::to_string(&envelope.payload.capability_overrides)?;
-    transaction.execute(
-        r#"
-        INSERT INTO camp_member(
-            camp_id, agent_id, status, capability_overrides_json,
-            leave_requested_at, leave_request_command_id,
-            pending_default_lead_successor_agent_id,
-            version, joined_at, left_at
-        ) VALUES (?1, ?2, 'active', ?3, NULL, NULL, NULL, 1, ?4, NULL)
-        ON CONFLICT(camp_id, agent_id) DO UPDATE SET
-            status = 'active',
-            capability_overrides_json = excluded.capability_overrides_json,
-            leave_requested_at = NULL,
-            leave_request_command_id = NULL,
-            pending_default_lead_successor_agent_id = NULL,
-            joined_at = excluded.joined_at,
-            left_at = NULL,
-            version = camp_member.version + 1
-        "#,
-        params![
-            envelope.payload.camp_id,
-            envelope.payload.agent_id,
-            capability_overrides_json,
-            now,
-        ],
-    )?;
-
-    transaction.execute(
-        r#"
-        UPDATE camp
-        SET default_lead_agent_id = COALESCE(default_lead_agent_id, ?2),
-            membership_generation = membership_generation + 1,
-            version = version + 1, updated_at = ?3
-        WHERE id = ?1 AND membership_generation = ?4
-        "#,
-        params![
-            envelope.payload.camp_id,
-            envelope.payload.agent_id,
-            now,
-            membership_generation,
-        ],
-    )?;
-    let membership_version: i64 = transaction.query_row(
-        "SELECT version FROM camp_member WHERE camp_id = ?1 AND agent_id = ?2",
-        params![envelope.payload.camp_id, envelope.payload.agent_id],
-        |row| row.get(0),
-    )?;
-    advance_membership_source_generation(
+    let membership_version = commit_camp_member_add(
         transaction,
-        &envelope.actor,
-        &envelope.payload.camp_id,
-        envelope.payload.source.as_ref(),
-        &now,
-    )?;
-    append_domain_event(
-        transaction,
-        "camp.member_added",
-        Some(&envelope.payload.camp_id),
-        Some(("agent_profile", &envelope.payload.agent_id)),
         &envelope.actor,
         envelope.execution_epoch,
-        &json!({
-            "agentId": envelope.payload.agent_id,
-            "membershipVersion": membership_version,
-            "membershipGeneration": membership_generation + 1,
-        }),
+        &envelope.payload,
+        &now,
     )?;
     Ok(CommandHandlerResult::applied(
         "camp.member_added",
@@ -11714,3 +11816,7 @@ mod slow_tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
 }
+
+#[cfg(all(test, feature = "extended-tests"))]
+#[path = "collaboration_pending_invitation_tests.rs"]
+mod pending_invitation_tests;
