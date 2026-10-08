@@ -43,4 +43,4 @@ as unrecorded. Catalogs may supply display labels for the frozen IDs, never repl
 
 继承 v20 的 buffer、失败退避、幂等与进程内恢复限制；原 `process_agent_run_maintenance` 500ms tick
 由最早 `retry_not_before` 的一次性提醒替代。无失败不设 timer，成功移除，重试只调用原文本路径，
-不重放已提交的业务事务。当前详细合同见 [Run Process Detail Surface v43](run-process-detail-surface-v43.md#终态文本定稿重试)。
+不重放已提交的业务事务。当前详细合同见 [Run Process Detail Surface v45](run-process-detail-surface-v45.md#终态文本定稿重试)。
