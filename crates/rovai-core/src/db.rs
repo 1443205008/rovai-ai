@@ -58,8 +58,8 @@ use crate::database_admission::{
     TicketValidationError,
 };
 use crate::execution_budget::{
-    CAMP_TURN_EXECUTION_BUDGET_SCHEMA_VERSION, PRODUCT_MAX_ACCEPTED_A2A,
-    PRODUCT_MAX_AGENT_RUN_RESPONSIBILITIES, PRODUCT_MAX_EXECUTION_ELAPSED_SECONDS,
+    CAMP_TURN_EXECUTION_BUDGET_SCHEMA_VERSION, LEGACY_EXECUTION_ELAPSED_SECONDS,
+    PRODUCT_MAX_ACCEPTED_A2A, PRODUCT_MAX_AGENT_RUN_RESPONSIBILITIES,
 };
 use crate::member_avatar::{
     BUILTIN_PROFILE_AVATARS, LUOKE_AVATAR_REF, MIANZHI_AVATAR_REF, MUWA_AVATAR_REF, QILU_AVATAR_REF,
@@ -11856,9 +11856,7 @@ impl Database {
     fn migrate_camp_turn_execution_budget_v47(&mut self) -> Result<()> {
         let accepted_at = chrono::Utc::now();
         let deadline_at = accepted_at
-            .checked_add_signed(chrono::Duration::seconds(
-                PRODUCT_MAX_EXECUTION_ELAPSED_SECONDS,
-            ))
+            .checked_add_signed(chrono::Duration::seconds(LEGACY_EXECUTION_ELAPSED_SECONDS))
             .context("failed to derive the v47 legacy CampTurn deadline")?;
         let transaction = self
             .connection
@@ -11896,7 +11894,7 @@ impl Database {
                 CAMP_TURN_EXECUTION_BUDGET_SCHEMA_VERSION,
                 accepted_at.to_rfc3339(),
                 deadline_at.to_rfc3339(),
-                PRODUCT_MAX_EXECUTION_ELAPSED_SECONDS,
+                LEGACY_EXECUTION_ELAPSED_SECONDS,
                 PRODUCT_MAX_AGENT_RUN_RESPONSIBILITIES,
                 PRODUCT_MAX_ACCEPTED_A2A,
             ],
@@ -53648,7 +53646,7 @@ mod tests {
         assert_eq!(budget.0, CAMP_TURN_EXECUTION_BUDGET_SCHEMA_VERSION);
         assert!(chrono::DateTime::parse_from_rfc3339(&budget.1).is_ok());
         assert!(chrono::DateTime::parse_from_rfc3339(&budget.2).is_ok());
-        assert_eq!(budget.3, PRODUCT_MAX_EXECUTION_ELAPSED_SECONDS);
+        assert_eq!(budget.3, LEGACY_EXECUTION_ELAPSED_SECONDS);
         assert_eq!(budget.4, PRODUCT_MAX_AGENT_RUN_RESPONSIBILITIES);
         assert_eq!(budget.5, PRODUCT_MAX_ACCEPTED_A2A);
         assert_eq!(budget.6, 0);

@@ -68,6 +68,11 @@ non-batch 推进者。通知各自保留一个合并许可，读取状态与进�
 只有暂时读取／准备失败或既有 cleanup 等待期限安排一次性重试，不以周期扫描维持 FIFO。
 启动对账仍区分旧 Run 恢复与未发布 Pending，不重发旧回复或已接受输入。
 
+新 Single Chat 的直接发送和 Pending 发布通过公共预算入口冻结 `schemaVersion: 2`、`elapsedSeconds: null`、
+`deadlineAt: null`，默认没有总时长上限，也不为这些执行安排预算闹钟。数量限制、手动停止、权限与恢复隔离
+仍生效；旧执行继续按已冻结预算收尾，不批量迁移。有限预算及字段规则见
+[Execution Evaluation v15](../contracts/execution-evaluation-v15.md#case-与-core-冻结证据)。
+
 ## Runtime 与附件数据流
 
 ```text

@@ -791,6 +791,79 @@ mod tests {
             stopped,
             "stopped drivers cannot write or scan"
         );
+
+        // An active unbounded Turn must not arm even a clock-only budget reminder.
+        // Keep the other workers stopped so their retained housekeeping is unrelated.
+        let accepted_at = chrono::Utc::now();
+        let camp_id = {
+            let mut database = core.database.lock().await;
+            let workspace = root.join("budget-workspace");
+            std::fs::create_dir_all(&workspace).unwrap();
+            let created = CollaborationService::default()
+                .create_camp(
+                    &mut database,
+                    &CommandEnvelope {
+                        command_id: "unbounded-budget-camp".into(),
+                        actor: ActorRef::User {
+                            user_id: "local-user".into(),
+                        },
+                        camp_id: None,
+                        expected_versions: Vec::new(),
+                        execution_epoch: None,
+                        payload: CreateThreadCommand::for_test(workspace.to_string_lossy().into()),
+                    },
+                )
+                .unwrap();
+            created.result.payload["threadId"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let unbounded =
+            crate::execution_budget::freeze_camp_turn_execution_budget(None, accepted_at, 1)
+                .unwrap();
+        {
+            let database = core.database.lock().await;
+            database.connection().execute(
+                "INSERT INTO camp_turn(id,camp_id,trigger_type,trigger_id,status,created_at,updated_at,
+                 execution_budget_schema_version,execution_budget_accepted_at,execution_budget_deadline_at,
+                 execution_budget_elapsed_seconds,execution_budget_max_agent_run_responsibilities,
+                 execution_budget_max_accepted_a2a,execution_budget_root_agent_run_responsibilities)
+                 VALUES ('unbounded-budget-turn',?1,'camp_message','budget-test','running',?2,?2,?3,?2,?4,?5,?6,?7,1)",
+                rusqlite::params![camp_id, unbounded.accepted_at, unbounded.schema_version, unbounded.deadline_at,
+                    unbounded.elapsed_seconds, unbounded.max_agent_run_responsibilities, unbounded.max_accepted_a2a],
+            ).unwrap();
+        }
+        let (budget_stop, shutdown) = watch::channel(false);
+        let polls = Arc::new(AtomicUsize::new(0));
+        let poll_count = polls.clone();
+        let budget_core = core.clone();
+        let budget_worker = tokio::spawn(async move {
+            let mut driver = Box::pin(process_execution_budgets(budget_core, shutdown));
+            std::future::poll_fn(|context| {
+                poll_count.fetch_add(1, Ordering::SeqCst);
+                std::future::Future::poll(driver.as_mut(), context)
+            })
+            .await
+        });
+        settle().await;
+        let before = (
+            polls.load(Ordering::SeqCst),
+            operations.load(Ordering::SeqCst),
+        );
+        tokio::time::advance(Duration::from_secs(172_800)).await;
+        settle().await;
+        assert_eq!(
+            (
+                polls.load(Ordering::SeqCst),
+                operations.load(Ordering::SeqCst)
+            ),
+            before,
+            "without a finite deadline, two days must cause no budget wake or SQL"
+        );
+        budget_stop.send(true).unwrap();
+        budget_worker.await.unwrap();
+
         drop(core);
         std::fs::remove_dir_all(root).unwrap();
     }
