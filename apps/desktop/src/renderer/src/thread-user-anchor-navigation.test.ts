@@ -25,7 +25,7 @@ describe('Thread user navigation owns asynchronous identity, never body paginati
   it('coalesces relevant invalidations and rejects a stale index while preserving confirmed public inputs', async () => {
     vi.useFakeTimers()
     const stale = deferred<ThreadUserAnchorIndex>()
-    const request = vi.fn().mockReturnValueOnce(stale.promise).mockResolvedValue(index(20, ['latest']))
+    const request = vi.fn().mockReturnValueOnce(stale.promise).mockResolvedValue(index(20, ['latest', 'confirmed']))
     const navigation = new ThreadUserAnchorNavigation(threadId, { request } as unknown as ThreadClient)
     const stop = navigation.start()
     navigation.observe([], [message('confirmed', 30)], value => value.body)
@@ -41,6 +41,103 @@ describe('Thread user navigation owns asynchronous identity, never body paginati
     expect(navigation.getSnapshot().anchors.map(anchor => anchor.id)).toEqual(['latest', 'confirmed'])
     navigation.changed({ threadId, indexChanged: false, throughGlobalSequence: 21 })
     await vi.advanceTimersByTimeAsync(200)
+    expect(request).toHaveBeenCalledTimes(2)
+    stop()
+  })
+
+  it('keeps receipt caches across Thread switches and removes a withdrawn receipt before directory takeover', async () => {
+    vi.useFakeTimers()
+    const cached = index(10, ['old'])
+    const request = vi.fn().mockResolvedValueOnce(cached)
+    const navigation = new ThreadUserAnchorNavigation(threadId, { request } as unknown as ThreadClient)
+    const stop = navigation.start(); await navigation.refresh()
+    const receipts = [message('withdrawn', 2), message('kept', 3)]
+    navigation.observe([], receipts, value => value.body)
+    const anchors = navigation.getSnapshot().anchors
+    stop()
+    expect(navigation.getSnapshot().index).toBe(cached)
+    expect(navigation.getSnapshot().anchors).toBe(anchors)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(request).toHaveBeenCalledTimes(1)
+
+    // Returning body arrives before start(), while the send receipt can still be stale.
+    navigation.observe([message('withdrawn', 2, { version: 2, withdrawn: true })], receipts, value => value.body)
+    expect(navigation.getSnapshot().anchors.map(anchor => anchor.id)).toEqual(['old', 'kept'])
+    request.mockResolvedValueOnce(index(20, ['old', 'kept']))
+    const stopAgain = navigation.start(); await navigation.refresh()
+    navigation.observe([], receipts, value => value.body)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(navigation.getSnapshot().anchors.map(anchor => anchor.id)).toEqual(['old', 'kept'])
+    expect(request).toHaveBeenCalledTimes(2)
+    await expect(navigation.locate('withdrawn', new Map([['withdrawn', receipts[0]]]))).rejects.toThrow('不可用')
+    expect(request).toHaveBeenCalledTimes(2)
+    stopAgain()
+  })
+
+  it('removes only unavailable receipts on a message change and prevents stale receipts from returning', async () => {
+    vi.useFakeTimers()
+    const request = vi.fn().mockResolvedValueOnce(index(10, ['old'])).mockResolvedValue(index(20, ['old', 'kept']))
+    const navigation = new ThreadUserAnchorNavigation(threadId, { request } as unknown as ThreadClient)
+    const stop = navigation.start(); await navigation.refresh()
+    const receipts = [message('deleted', 2), message('kept', 3)]
+    navigation.observe([], receipts, value => value.body)
+    navigation.changed({ threadId, indexChanged: true, throughGlobalSequence: 20, unavailableMessageIds: ['deleted'] })
+    expect(navigation.getSnapshot().anchors.map(anchor => anchor.id)).toEqual(['old', 'kept'])
+    navigation.observe([], receipts, value => value.body)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(navigation.getSnapshot().anchors.map(anchor => anchor.id)).toEqual(['old', 'kept'])
+    stop()
+  })
+
+  it('only lets a successful authoritative directory retire pre-request receipts, preserving preview caches', async () => {
+    vi.useFakeTimers()
+    const preview: ThreadUserAnchorPreview = { schemaVersion: 1, threadId, messageId: 'old',
+      throughGlobalSequence: 10, sourceAvailable: true, firstReply: null }
+    const request = vi.fn().mockResolvedValueOnce(index(10, ['old'])).mockResolvedValueOnce(preview)
+      .mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(index(20, ['old', 'kept']))
+    const navigation = new ThreadUserAnchorNavigation(threadId, { request } as unknown as ThreadClient)
+    const stop = navigation.start(); await navigation.refresh()
+    await navigation.readPreview('old')
+    const previews = navigation.getSnapshot().previews
+    const receipts = [message('missing', 2), message('kept', 3)]
+    navigation.observe([], receipts, value => value.body)
+    await navigation.refresh()
+    expect(navigation.getSnapshot().status).toBe('error')
+    expect(navigation.getSnapshot().anchors.map(anchor => anchor.id)).toEqual(['old', 'missing', 'kept'])
+    await navigation.refresh()
+    expect(navigation.getSnapshot().status).toBe('ready')
+    expect(navigation.getSnapshot().anchors.map(anchor => anchor.id)).toEqual(['old', 'kept'])
+    expect(navigation.getSnapshot().previews).toBe(previews)
+    navigation.observe([], receipts, value => value.body)
+    await navigation.readPreview('old')
+    await vi.advanceTimersByTimeAsync(200)
+    expect(navigation.getSnapshot().anchors.map(anchor => anchor.id)).toEqual(['old', 'kept'])
+    expect(request).toHaveBeenCalledTimes(4)
+    await expect(navigation.locate('missing', new Map([['missing', receipts[0]]]))).rejects.toThrow('不可用')
+    expect(request).toHaveBeenCalledTimes(4)
+    stop()
+  })
+
+  it('preserves newer receipts when an older directory response arrives', async () => {
+    vi.useFakeTimers()
+    const stale = deferred<ThreadUserAnchorIndex>()
+    const fresh = deferred<ThreadUserAnchorIndex>()
+    const request = vi.fn().mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise)
+    const navigation = new ThreadUserAnchorNavigation(threadId, { request } as unknown as ThreadClient)
+    const early = message('early', 2)
+    const late = message('late', 3)
+    navigation.observe([], [early], value => value.body)
+    const stop = navigation.start()
+    const reading = navigation.refresh()
+    navigation.observe([], [early, late], value => value.body)
+    stale.resolve(index(10, ['old'])); await reading
+    expect(navigation.getSnapshot().index).toBeNull()
+    expect(navigation.getSnapshot().anchors.map(anchor => anchor.id)).toEqual(['early', 'late'])
+    await vi.advanceTimersByTimeAsync(100)
+    const refreshing = navigation.refresh()
+    fresh.resolve(index(20, ['old', 'late'])); await refreshing
+    expect(navigation.getSnapshot().anchors.map(anchor => anchor.id)).toEqual(['old', 'late'])
     expect(request).toHaveBeenCalledTimes(2)
     stop()
   })

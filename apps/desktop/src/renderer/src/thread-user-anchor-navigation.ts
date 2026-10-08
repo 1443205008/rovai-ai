@@ -127,6 +127,7 @@ export class ThreadUserAnchorNavigation {
   async #readIndex(generation: number): Promise<void> {
     this.#set({ status: 'loading' })
     try {
+      const confirmedBeforeRead = new Set(this.#confirmedSequences.keys())
       const index = await this.client.request<ThreadUserAnchorIndex>('thread.messages.anchors', { threadId: this.threadId })
       if (!index) throw new Error('anchor index unavailable')
       if (!this.#active || generation !== this.#indexGeneration) return
@@ -140,8 +141,9 @@ export class ThreadUserAnchorNavigation {
         if (!known || navigableUserMessage(known)) this.#unavailable.delete(item.messageId)
       }
       for (const item of this.#state.index?.items ?? []) if (!ids.has(item.messageId)) this.#unavailable.add(item.messageId)
+      // This read can retire missing receipts only if they were public before it started.
+      for (const id of confirmedBeforeRead) if (!ids.has(id)) this.#unavailable.add(id)
       this.#indexedById = new Map(index.items.map(item => [item.messageId, item]))
-      this.#confirmed = this.#confirmed.filter(anchor => !ids.has(anchor.id))
       this.#indexTrusted = true
       this.#set({ index, status: 'ready' })
       this.#rebuildAnchors()
@@ -150,6 +152,11 @@ export class ThreadUserAnchorNavigation {
     }
   }
   #rebuildAnchors(): void {
+    this.#confirmed = this.#confirmed.filter(item => {
+      if (!this.#indexedById.has(item.id) && !this.#unavailable.has(item.id)) return true
+      this.#confirmedSequences.delete(item.id)
+      return false
+    })
     const items = (this.#state.index?.items ?? []).filter(item => !this.#unavailable.has(item.messageId))
       .map(item => ({ id: item.messageId, title: item.title, sequence: item.sequence }))
     const ids = new Set(items.map(item => item.id))
@@ -179,13 +186,16 @@ export class ThreadUserAnchorNavigation {
           || JSON.stringify(previous.quotes.map(value => value.text)) !== JSON.stringify(message.quotes.map(value => value.text))
         if (item && (!navigableUserMessage(message) || (item.messageVersion < message.version && titleChanged))) indexChanged = true
       }
-      if (!navigableUserMessage(message) && index.has(message.id) && !this.#unavailable.has(message.id)) {
+      if (!navigableUserMessage(message) && (index.has(message.id) || this.#confirmedSequences.has(message.id))
+        && !this.#unavailable.has(message.id)) {
         this.#unavailable.add(message.id); removed = true
       }
     }
     for (const message of confirmed) {
+      const known = this.#known.get(message.id)
       if (!message.id || !navigableUserMessage(message) || index.has(message.id)
-        || this.#confirmedSequences.has(message.id)) continue
+        || this.#confirmedSequences.has(message.id) || this.#unavailable.has(message.id)
+        || (known && !navigableUserMessage(known))) continue
       this.#confirmed.push({ id: message.id, title: text(message).replace(/\s+/gu, ' ').trim() || '（无文本）' })
       this.#confirmedSequences.set(message.id, message.sequence)
       indexChanged = true; removed = true
