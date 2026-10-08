@@ -2197,7 +2197,7 @@ export function ThreadWorkspace({
     })),
     [snapshot.members]
   )
-  const canInviteFromComposer = snapshot.thread.activationState === 'active' && Boolean(onAddMembers)
+  const canInviteFromComposer = snapshot.thread.activationState === 'pending' || Boolean(onAddMembers)
   const composerMentionCandidates = useMemo(() => {
     if (!canInviteFromComposer) return composerRosterMembers
     const activeIds = new Set(snapshot.members
@@ -4023,12 +4023,13 @@ export function ThreadWorkspace({
         composerMemberMentionIds(routedDraft.content),
         currentSnapshot.members,
         agents,
-        currentSnapshot.thread.activationState === 'active' && Boolean(onAddMembers)
+        currentSnapshot.thread.activationState === 'pending' || Boolean(onAddMembers)
       )
       if (inviteTargets.unavailableAgentIds.length > 0) {
         throw new Error(uiAttribute('提及的队员当前不可接收，请调整后重试。'))
       }
-      if (inviteTargets.inviteAgentIds.length > 0) {
+      // Pending invitations are committed atomically by the first-message command.
+      if (inviteTargets.inviteAgentIds.length > 0 && currentSnapshot.thread.activationState === 'active') {
         if (!onAddMembers) throw new Error(uiAttribute('当前无法邀请队员，请稍后重试。'))
         const outcome = await onAddMembers(inviteTargets.inviteAgentIds)
         addedAgentIds = outcome.addedAgentIds

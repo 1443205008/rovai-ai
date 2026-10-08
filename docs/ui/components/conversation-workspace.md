@@ -1017,7 +1017,7 @@ Draft Coordinator，因此直接呈现已恢复内容或就绪的默认接收人
 Draft 首次读取只有 loading、ready 和 error。loading 与 error 时正文、附件、Reply/Continuation 和发送不可操作；
 error 在 Composer 上方原位显示“草稿无法加载”、具体错误与“重新加载草稿”，不能渲染可编辑的 revision-zero 空
 Draft。发送和路由 mutation 在第一个异步等待前同步禁用编辑器；本地路由 mutation 改变正文时在解除禁用前回写
-Lexical。发送前需要邀请队员时，先冻结并保存草稿，逐人沿用 Camp 成员加入命令；全部成功后沿用原发送入口。
+Lexical。发送前需要邀请队员时，先冻结并保存草稿。Active 会话逐人沿用成员加入命令，全部成功后发送；Pending 草稿直接以首消息事务原子邀请、激活和发布。
 邀请部分成功时显示已加入与失败名单，消息不发送，草稿与每处 Mention 保留。加入成功后发送失败时提示先查会话
 再重试；成员加入不回滚。发送失败保留正文并恢复交互，成功则以空 Draft/continuation 替换。导航或卸载前的同步本地保存失败时，
 留在当前 Camp、显示保存错误并恢复交互；打开新会话 Dialog、展开或选择 Project 等未卸载 Composer 的动作不

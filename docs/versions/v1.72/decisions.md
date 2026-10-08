@@ -374,3 +374,18 @@ D14 的原生来源权威继续保留；用户进一步撤回“保存官方后�
 需要增量迁移表示一条授权 Delivery 对应原多条业务输入，并保留其单 Run 归属约束。旧输入事实不改写，
 清理门禁不放宽。拒绝重置旧 Run、复制冻结投递或单后继链，也不建设恢复协调器、效果对账系统或语义审批器。
 提示词不追加来源 ID、证据和恢复指令；会话真正恢复失败时结束当前尝试，显式确认才能以新会话继续。
+
+
+<a id="v1-72-d17"></a>
+## V1.72-D17：Pending 首条消息原子邀请队外队员
+
+- 状态：accepted
+- 日期：2026-10-08
+- 当前权威：[Pending Camp Activation v5](../../contracts/pending-camp-activation-v5.md)、[Camp Message Send v26](../../contracts/camp-message-send-v26.md)与[Public Camp Composer](../../architecture/camp-composer-draft.md#发送)
+
+User 确认一键草稿也应允许队外 Mention。延伸 D05 的编辑交互，在首消息事务中复用成员写入，
+同时完成邀请、激活与发布；命令正常拒绝也显式撤销暂写成员，再保存拒绝回执。Active 路径仍按 D05。
+
+直接放开 Pending 的单独成员命令会改变空草稿清理和放弃语义；先激活再邀请会留下零消息正式会话。
+选择首消息原子提交保住现有生命周期，也把邀请权限限定在 User inline 输入；并发败方按当前 Active
+名册重验。代价是发送准入与成员写入在事务内组合，须用数据库回归证明拒绝、异常与回放无残留。
