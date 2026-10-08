@@ -29,7 +29,7 @@ last_updated: 2026-10-08
 | --- | --- |
 | 产品与 UI | 执行卡片纯图标；等待请求与新 Run 独立显示 |
 | 架构 | 继续是 User 新授权，沿用现有 lane 与 Conversation |
-| 合同与传输 | Continue v1、Recovery v7、Delivery v11、Host Web v5、Surface v44；Web protocolVersion 仍为 4 |
+| 合同与传输 | Continue v1、Recovery v7、Delivery v11、Host Web v5、Surface v45；Web protocolVersion 仍为 4 |
 | 数据与迁移 | v1.72/schema 133 → 134，保留全部旧证据，不做 clean break |
 | 模型上下文 | 输入选择入口新增；现有 builder、字段、Formatter 32、Run Facts 9、Profile 10 保持 |
 | Runtime 与工作区 | 清理门禁保持，续做恢复失败不得空会话回退，工作区不重置 |
@@ -75,8 +75,9 @@ last_updated: 2026-10-08
 2026-10-08 已完成下述真实 Codex 续做专项；通用 12 Case 新旧模型／Judge 对照 Gate **未执行**。
 专项运行不替代该语义 Gate，本项尚无冻结的通用评测模型、Judge 和预算配置；不沿用其他工作项的豁免。
 按[上下文变更治理](../../development/model-context-change-governance.md#真实任务-gate)“PR 前保留新旧实际执行对照”的要求，
-完成 User 授权的分支提交／推送后，保留 worktree，暂不创建 PR 或合入主线。
-下一步是冻结本项真实任务评测配置、补齐 Gate 证据，再进入 PR review。
+首次分支提交／推送后保留了 worktree，未创建 PR。2026-10-08，User 在收到该验证缺口说明后明确要求
+“pr到main merge”（Thread 消息 `74345281-cd4c-437f-9143-7deb956a07ee`）。按本次 User 指令推进 PR 与合入，
+保留 Gate 未执行的事实，不把已有专项或 CI 通过表述为通用模型评测通过。
 
 ## 恢复失败历史修正与真实 Runtime 专项
 

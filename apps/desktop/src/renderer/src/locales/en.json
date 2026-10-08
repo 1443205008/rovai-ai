@@ -3590,5 +3590,13 @@
   "当前执行无法继续，请刷新后查看。": "This execution cannot continue. Refresh to view its current state.",
   "未确认提交结果，请再次点击核对。": "Submission is unconfirmed. Click again to check.",
   "使用新会话继续": "Continue in a new session",
-  "原会话无法恢复，将使用新会话继续。当前工作区会保留。": "The original session cannot be resumed. Continue in a new session and keep the current workspace."
+  "原会话无法恢复，将使用新会话继续。当前工作区会保留。": "The original session cannot be resumed. Continue in a new session and keep the current workspace.",
+  "图片操作：{0}": "Image actions: {0}",
+  "正在复制图片…": "Copying image…",
+  "复制图片": "Copy image",
+  "保存图片…": "Save image…",
+  "查看大图": "View full image",
+  "已复制图片": "Image copied",
+  "未能复制图片，请重试或保存图片。": "Could not copy the image. Try again or save it.",
+  "未能保存图片，请重试。": "Could not save the image. Try again."
 }

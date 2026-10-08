@@ -271,7 +271,7 @@ Antigravity 四项与 Context、Qoder 数量、TRAE Context、Kiro 窗口已补�
 
 按 User 的 HTML 交互稿确认与 worktree/PR 合入要求，Run 主线按正文或完整折叠组分页；展开组按独立游标读取，
 首次短内容自动补齐，失败保持内容并在原位重试。无新表、迁移、模型上下文或渠道公开数据变化。
-当前合同为 [Run Process Detail Surface v43](../../contracts/run-process-detail-surface-v43.md)，理由见
+当前合同为 [Run Process Detail Surface v45](../../contracts/run-process-detail-surface-v45.md)，理由见
 [V1.72-D10](decisions.md#v1-72-d10)，实现与验证见[实施记录](implementation-plan.md#2026-10-02-run-内容块与-command-组分页)。
 跨版本影响：Contract、读取架构、UI 和当前导航已同步；版本指针、Runtime 兼容、原始 Evidence、结果预算与根 README 无需变化。
 
@@ -325,3 +325,11 @@ User 于 2026-10-06 授权在独立 worktree 实施并推送分支。Codex 仅�
 和 worker 回收；初始化失败保留受管进程，冷恢复验证精确 Thread，未知投递沿既有 v6 轮换，正文不自动重放。
 当前规范见 [Runtime Launch v49](../../contracts/runtime-launch-and-verification-v49.md)，改动与验证范围见
 [实施记录](implementation-plan.md#2026-10-06-codex-host-失败恢复)。不改变数据库 schema、Runtime 容量策略或模型上下文。
+
+
+## Run 思考反馈补充
+
+当前思考反馈扩展遵循 [Run Process Detail Surface v45](../../contracts/run-process-detail-surface-v45.md)：
+正文、计划和工具之后的根思考均可显示；活动工具与根思考并列，实际压缩、等待/取消/恢复和终态保留优先级。
+Codex/Copilot 的合格原生短标题瞬时替换“思考中”；Claude 暂不接入短标题。实现与验证以任务分支测试和真实
+Runtime Smoke 为证据，不从合同 accepted 状态推断所有 Provider 都能返回标题。
