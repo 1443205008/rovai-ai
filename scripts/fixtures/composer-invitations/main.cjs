@@ -44,6 +44,12 @@ app.whenReady().then(async () => {
     await wait(`!document.querySelector('#camp-message[contenteditable="true"]')`)
     await evaluate('invitationTest.show()')
     await wait('invitationTest.state().invite && !invitationTest.state().button')
+    const geometry = await evaluate(`(() => {
+      const form = document.getElementById('camp-message').closest('form').getBoundingClientRect()
+      const button = document.querySelector('form.composer:has(#camp-message) button[type=submit]').getBoundingClientRect()
+      return { width: form.width, left: button.left, right: button.right, viewport: innerWidth }
+    })()`)
+    assert.ok(geometry.width > 500 && geometry.left >= 0 && geometry.right <= geometry.viewport, JSON.stringify(geometry))
     for (const theme of ['day', 'night']) {
       await evaluate(`document.documentElement.dataset.theme = '${theme}'`)
       writeFileSync(join(evidence, `${theme}.png`), (await window.webContents.capturePage()).toPNG())

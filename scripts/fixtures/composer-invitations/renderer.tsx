@@ -43,7 +43,7 @@ function Fixture() {
   const [snapshot, setSnapshot] = useState(initial)
   const [visible, show] = useState(true)
   setFixture = setSnapshot; setVisible = show
-  return <ThreadClientProvider client={client}><main style={{ height: '100vh', display: 'flex' }}>
+  return <ThreadClientProvider client={client}><main className="content task-content" style={{ height: '100vh', width: '100vw' }}>
     {visible && <ThreadWorkspace snapshot={snapshot} agents={[agent, outside]} busy={false} stopping={false}
       worldMapEnabled={false} onChangeLead={async () => {}} onTasksChanged={async () => {}} onResolveApproval={() => {}}
       onAddMembers={async ids => {
