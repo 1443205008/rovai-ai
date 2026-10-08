@@ -9,7 +9,7 @@ last_updated: 2026-10-08
 
 ## 范围与工作区
 
-- 基线：`52ecf3987b2cb599559b503500417ce26106ce83`。
+- 基线：`52ecf3987b2cb599559b503500417ce26106ce83`；实现提交：`ddf0425b`。
 - 分支：`rovai/continuation-reliability`；worktree：`/Users/murray.xue/VSCodeProjects/opensource/rovai-ai-continuation-reliability`，状态 ready。
 - 根据 User 的 A → B/D → C 批复修实现缺陷。保留取消快速受理、既有清理／lane 隔离、旧 Run 终态与按次独立续做。
 - **提示词改动：无。** Charter、业务输入文本、动态上下文格式、Tool Schema 均不改。
@@ -115,4 +115,3 @@ continuation 5、引用保留与终态归因各 1 项通过；Antigravity 另有
 `public_text_streams_and_success_fallback_create_narration_without_thinking` 的 thinking 空事件断言
 在未修改的 `52ecf398` 独立 worktree 同样失败。本次保留测试与生产行为，未改写或跳过以制造全绿。
 macOS 为本轮真实验证平台；Linux / Windows 原生执行未复测，不推断通过。
-
