@@ -28,7 +28,11 @@ mod windows;
 
 #[cfg(target_os = "linux")]
 #[path = "managed_process/linux.rs"]
-mod linux;
+mod process_tree;
+
+#[cfg(target_os = "macos")]
+#[path = "managed_process/macos.rs"]
+mod process_tree;
 
 #[cfg(unix)]
 pub type ManagedChildStdin = ChildStdin;
@@ -520,10 +524,12 @@ pub struct ManagedProcess {
     child: Child,
     #[cfg(unix)]
     process_group_id: Option<i32>,
-    #[cfg(target_os = "linux")]
-    linux_tree: linux::ProcessTree,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    owned_tree: process_tree::ProcessTree,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     descendants_captured: bool,
+    #[cfg(target_os = "macos")]
+    descendant_capture_failed: bool,
     #[cfg(windows)]
     child: windows::WindowsManagedProcess,
     tree_termination_requested: bool,
@@ -542,17 +548,19 @@ impl ManagedProcess {
                 )
             })?;
             let process_group_id = child.id().and_then(|pid| i32::try_from(pid).ok());
-            #[cfg(target_os = "linux")]
-            let linux_tree = linux::ProcessTree::new(
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let owned_tree = process_tree::ProcessTree::new(
                 process_group_id.context("managed process PID unavailable")?,
             )?;
             Ok(Self {
                 child,
                 process_group_id,
-                #[cfg(target_os = "linux")]
-                linux_tree,
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                owned_tree,
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 descendants_captured: false,
+                #[cfg(target_os = "macos")]
+                descendant_capture_failed: false,
                 tree_termination_requested: false,
             })
         }
@@ -691,12 +699,24 @@ impl ManagedProcess {
         self.child.tree_is_empty()
     }
 
+    #[cfg(target_os = "macos")]
+    pub(crate) fn tree_is_empty(&self) -> io::Result<bool> {
+        self.captured_tree_is_empty()
+    }
+
     /// Preserve descendants before a native cancellation protocol can sever
     /// their ancestry. Adapters with their own owner ledger retain that ledger.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn capture_descendants(&mut self) -> io::Result<()> {
         self.descendants_captured = true;
-        self.linux_tree.capture()
+        let capture = self.owned_tree.capture();
+        #[cfg(target_os = "macos")]
+        if capture.is_err() {
+            // Once termination can reparent unknown descendants, a later
+            // empty snapshot cannot repair an incomplete ownership capture.
+            self.descendant_capture_failed = true;
+        }
+        capture
     }
 
     #[cfg(target_os = "linux")]
@@ -704,21 +724,37 @@ impl ManagedProcess {
         if !self.descendants_captured {
             return Ok(());
         }
-        let capture = self.linux_tree.capture();
-        let signal = self.linux_tree.signal(signal);
+        let capture = self.owned_tree.capture();
+        let signal = self.owned_tree.signal(signal);
         capture.and(signal)
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn captured_tree_is_empty(&self) -> io::Result<bool> {
+        #[cfg(target_os = "macos")]
+        if self.descendant_capture_failed {
+            return Err(io::Error::other(
+                "managed descendant ownership capture was incomplete",
+            ));
+        }
         if !self.descendants_captured {
             return Ok(false);
         }
-        self.linux_tree.is_empty()
+        self.owned_tree.is_empty()
     }
 
     pub fn force_terminate_tree(&mut self) -> io::Result<()> {
+        // Capture before killing the root: native tools may own a different
+        // process group and are reparented as soon as their parent exits.
+        #[cfg(target_os = "macos")]
+        let descendants = {
+            let captured = self.capture_descendants();
+            let signalled = self.owned_tree.signal(libc::SIGKILL);
+            captured.and(signalled)
+        };
         if self.tree_termination_requested {
+            #[cfg(target_os = "macos")]
+            descendants?;
             return Ok(());
         }
         #[cfg(target_os = "linux")]
@@ -728,7 +764,7 @@ impl ManagedProcess {
             // SAFETY: the process group is created and owned by this instance.
             let result = unsafe { libc::killpg(process_group_id, libc::SIGKILL) };
             if result == 0 {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 descendants?;
                 self.tree_termination_requested = true;
                 return Ok(());
@@ -740,7 +776,7 @@ impl ManagedProcess {
         }
         #[cfg(unix)]
         {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             descendants?;
             return match self.child.start_kill() {
                 Ok(()) => {
@@ -1057,16 +1093,22 @@ mod tests {
         assert_eq!(bytes, b"managed");
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
-    async fn linux_cancellation_reaps_captured_detached_children_after_parent_exit() {
+    async fn cancellation_reaps_captured_detached_children_after_parent_exit() {
         use std::time::Duration;
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
         let mut command = Command::new("/bin/sh");
+        #[cfg(target_os = "linux")]
         command.args([
             "-c",
             "setsid /bin/sleep 120 & printf '%s\\n' \"$!\"; read -r finish",
+        ]);
+        #[cfg(target_os = "macos")]
+        command.args([
+            "-c",
+            "set -m; /bin/sleep 120 & printf '%s\\n' \"$!\"; read -r finish",
         ]);
         let spec = ManagedProcessLaunchSpec::capture(
             &command,
@@ -1088,7 +1130,7 @@ mod tests {
         let detached = tokio::time::timeout(Duration::from_secs(3), async {
             // The handshake observes the actual setsid boundary, not a sleep
             // that assumes a scheduler has run the child by then.
-            while unsafe { libc::getsid(detached_pid) } != detached_pid {
+            while unsafe { libc::getpgid(detached_pid) } != detached_pid {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })

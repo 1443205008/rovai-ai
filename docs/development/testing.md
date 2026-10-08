@@ -1,7 +1,7 @@
 ---
 document_type: development-guide
 authority: test-policy-and-command-routing
-last_updated: 2026-10-07
+last_updated: 2026-10-08
 ---
 
 # 测试与 Smoke Test
@@ -89,6 +89,26 @@ Rust owner 分成四个可执行层级；feature gating 只改变日常路由，
 修改 feature-gated owner 时，定向命令必须显式加 `--features extended-tests`；若 owner 同时标为
 `slow-tests`，则使用 `--features slow-tests`。过滤命令显示 `0 tests` 不构成验证证据，提交前先用
 `-- --list` 确认目标 owner 实际进入清单。
+
+## 续做可靠性回归
+
+复用 `managed_process::tests::cancellation_reaps_captured_detached_children_after_parent_exit`，将既有 Linux
+owner 扩展到 macOS，证明捕获后脱离进程组的子进程被回收、无关进程仍存活。Claude 既有初始化失败和
+stdin 中断 owner 增加缺失会话、投递门禁取消；ACP 模型目录 owner 增加恢复成功后的配置 RPC 拒绝。
+`delivery_queue::tests::continuation_rechecks_scope_and_selects_safe_session_at_claim` 增加可信失败终态和
+binding/epoch/native turn 不匹配矩阵；既有 unknown、取消、Task 关联和整批范围断言保留。
+
+新增 `runtime::tests::failed_session_replacement_retains_reference_without_reviving_old_binding` 拥有替代启动
+失败后的持久引用恢复：修复前旧引用清空；须同时验证凭证不复活、旧 epoch/unknown 不准入和新会话不覆盖。
+已有会话选择 owner 不拥有凭证轮换事务，故复用最小 claimed-run SQLite fixture，纯函数不足以证明该 seam。
+新增 `antigravity::tests::stream_input_waits_for_exact_session_and_dispatch_authority` 拥有真实 pipe 的初始化／
+输入边界；输出 parser owner 无法证明输入尚未发送，覆盖明确缺失、非缺失身份冲突、门禁取消、调用方 abort
+和释放后原始字节。使用本地受控子进程，不访问模型或真实用户数据，属于扩展层。
+
+最小命令：`cargo test -p rovai-core --features extended-tests --lib` 后分别过滤以上 owner，以及
+`managed_process::`、`claude::`、`antigravity::`、`acp::`、`planned_shutdown::`、`continuation_`。
+真实模型、透明代理终止原生进程和隔离数据目录的验收单列于
+[续做可靠性验收](../versions/v1.72/continuation-reliability-verification.md)，不以协议夹具替代真实结果。
 
 ## Run 思考反馈
 

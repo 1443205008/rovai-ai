@@ -35,6 +35,8 @@ Task 准入修正按 [Camp Message Send v25](../../contracts/camp-message-send-v
 提交和领取均检查全部原业务输入，不依赖 batch Run 的单值 `task_id`；提示词及 Schema 不变。
 2026-10-08 按 User 可用性优先要求取消新会话确认，复用正常 Runtime 的兼容判断，允许投递前一次降级；
 旧输入未知时在清理完成后自动选择新会话，工作区和提示词保持不变。
+后续真实验收发现的进程树清理、ACP 启动结算、旧 Session 引用保留与投递前降级问题，
+修复和逐 Adapter 验证见[续做可靠性验收](continuation-reliability-verification.md)。提示词保持不变。
 
 ## 并行实施：Member CLI
 
