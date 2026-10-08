@@ -1,7 +1,7 @@
 ---
 document_type: implementation-plan
 version: v1.72
-status: in-progress
+status: implemented
 last_updated: 2026-10-08
 ---
 
@@ -36,6 +36,27 @@ Migration 185：v1.72/schema 134 → 135。新增带 Mission 级联外键的 des
 - 扩展既有 Mission board Electron fixture，使用生产组件和内存 API，覆盖候选选择、失败重试、保存入队与阅读。
   它不证明真实 Core 事务；该边界由上述 Rust owner 证明。无测试被退役或永久禁用。
 
+最小 Core 命令：
+
+```sh
+cargo test -p rovai-core --features extended-tests --lib mission_description::
+cargo test -p rovai-core --features extended-tests --lib description_members_commit_together_preserve_identity_and_never_schedule
+```
+
+合入 main 的 Pending 首消息邀请后，Mission 和 Pending 继续共享 `commit_camp_member_add`；Mission 复用
+独立成员命令的完整准入。定向复跑两个原子提交 owner 和原有 generation/idempotency owner，均通过。
+
 ## 验证记录
 
-定向 Core 和迁移测试已通过；完整门禁、桌面验收与 PR 结果在收口时补齐。
+- `pnpm typecheck`、`pnpm test` 通过：238 个 Vitest 文件、2,608 项测试；Node 检查 334 项通过、2 项平台跳过。
+- `pnpm test:rust:pr` 通过：456 项通过、1 项既有忽略。Mission 扩展定向 26 项通过。
+- `db::` 扩展矩阵 98 项通过；其余 2 项历史使命夹具按旧 schema 准备数据、完整升级后调用当前读取器，
+  各自定向重跑通过。保留原有升级、回滚、记录保留及外键断言。
+- `node --test scripts/lib/mission-board.test.mjs`：7 项通过；重复提及去重、取消全部引用、失败保留、重试入队、
+  Enter 换行、保存不执行及阅读资料卡均取得浏览器证据。深浅主题截图已人工检查。
+- `node --test scripts/lib/composer-invitations.test.mjs` 验证合入 main 后的 Pending/Active 会话邀请路径。
+- `pnpm build:desktop`、`DOCS_BASE_REF=b4745527 pnpm docs:check:ci` 通过；`pnpm test` 已包含文档与 Skill 治理。
+
+桌面验收使用隔离 userData 和内存 API；Core 使用临时 SQLite，不启动真实 Runtime，不升级日常 App 数据。
+验收夹具同步当前 Thread API 与通知 schema 9；窄窗口回归同时修复最后状态列在滚动到底后被前列覆盖选中状态，
+保留并稳定执行原有导航断言。
