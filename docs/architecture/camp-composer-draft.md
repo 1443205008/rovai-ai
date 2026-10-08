@@ -3,7 +3,7 @@ document_type: architecture
 architecture: camp-composer-draft
 authority: desktop-local-public-camp-composer
 status: accepted
-last_updated: 2026-10-03
+last_updated: 2026-10-08
 ---
 
 # Public Camp Composer
@@ -42,6 +42,10 @@ mounted Renderer edit
 提交期间 Composer 防止重复发送。成功后用空 Draft 替换已发送内容，并在唯一显式非 Lead 目标时记录 continuation；
 明确失败时保留原内容供用户修正或再次发送。未知提交结果通过
 原 command ID 查询/回放，不能先清空再猜测。附件继续是源文件引用；发送不会移动或删除用户文件。
+
+首发成功回执可能早于 Active 名册投影：客户端按回执保留唯一显式续发身份，旧 Pending 名册不能清掉它；
+实际续发仍等待当前成员资格。该 transport 内记住已接受的激活事实，跨 Composer 重挂载停止 Pending
+presence/discard 操作并继续本机保存；不推测或补造成员名册，也不新增持久草稿字段。
 
 待邀请身份只从冻结后的 `ComposerDocument` Member Atom 派生，不进入 Core Draft，也不单独持久化。Active Camp 的
 队外、资料仍在的队员可在 Composer 选中；重复提及仅加入一次，正文中的每处 Atom 均保留。发送时先完成全部

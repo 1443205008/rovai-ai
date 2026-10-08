@@ -33,6 +33,12 @@ rolls back the transaction, including activation's presence trigger. Neither out
 messages or Deliveries. The client retains its complete local draft. Runtime execution follows accepted publication;
 a later Runtime failure does not reverse membership or publication.
 
+An accepted publication also establishes activation before its refreshed membership projection reaches the Renderer.
+The client stops Pending presence/discard operations on that transport, including after Composer remounts, while
+continuing local saves. It preserves the accepted unique explicit non-Lead continuation using the frozen identity;
+the old Pending roster cannot dismiss it. Follow-up publication still requires the refreshed, addressable membership.
+This receipt cache neither grants membership nor changes the persisted local draft format.
+
 ## Replay and concurrent submission
 
 Same command ID and payload replay the original receipt without repeating any effect. Changed payload with the same

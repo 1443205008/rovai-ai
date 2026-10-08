@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { AgentProfile, ThreadSnapshot, ThreadComposerDraftView } from '@contracts'
-import { ThreadWorkspace } from '../../../apps/desktop/src/renderer/src/ThreadWorkspace'
+import { ThreadWorkspace, type ThreadLeaveGuard } from '../../../apps/desktop/src/renderer/src/ThreadWorkspace'
 import { ThreadClientProvider, type ThreadClient } from '../../../apps/desktop/src/renderer/src/camp-client'
+import { loadLocalThreadComposerDraft } from '../../../apps/desktop/src/renderer/src/camp-composer-local-store'
 import '../../../apps/desktop/src/renderer/src/styles.css'
 
 // Only the real Renderer and local draft store run here. Core transactions have
@@ -27,6 +28,9 @@ const initial: ThreadSnapshot = { schemaVersion: 35, throughGlobalSequence: 1,
 const calls: string[] = []
 const submissions: ThreadComposerDraftView[] = []
 let rejectSend = true
+let coreActivated = false
+let acceptedSends = 0
+let prepareLeave: ThreadLeaveGuard | null = null
 let setFixture: React.Dispatch<React.SetStateAction<ThreadSnapshot>>
 let setVisible: React.Dispatch<React.SetStateAction<boolean>>
 const client = {
@@ -34,7 +38,10 @@ const client = {
   request: async (method: string) => {
     calls.push(method)
     if (method === 'skills.candidates') return { skills: [], errors: [] }
-    if (method === 'threads.pendingDraft.setPresence') return { changed: true }
+    if (method === 'threads.pendingDraft.setPresence') {
+      if (coreActivated) throw new Error('camp.pending_draft_unavailable')
+      return { changed: true }
+    }
     throw new Error(`Unexpected invitation fixture request: ${method}`)
   },
   composerAttachments: { discard: async () => {} }
@@ -46,6 +53,8 @@ function Fixture() {
   return <ThreadClientProvider client={client}><main className="content task-content" style={{ height: '100vh', width: '100vw' }}>
     {visible && <ThreadWorkspace snapshot={snapshot} agents={[agent, outside]} busy={false} stopping={false}
       worldMapEnabled={false} onChangeLead={async () => {}} onTasksChanged={async () => {}} onResolveApproval={() => {}}
+      onThreadLeaveGuardChange={(_id, guard) => { prepareLeave = guard }}
+      onPendingThreadLeave={async () => { calls.push('discard-pending') }}
       onAddMembers={async ids => {
         calls.push('add:' + ids.join(','))
         setSnapshot(current => ({ ...current, members: [...current.members, member(outside)] }))
@@ -54,8 +63,9 @@ function Fixture() {
       onSend={async draft => {
         calls.push('send'); submissions.push(structuredClone(draft))
         if (rejectSend) throw new Error('Fixture rejects this send')
-        setSnapshot(current => ({ ...current, thread: { ...current.thread, activationState: 'active' }, members: [member(agent), member(outside)] }))
-        return { threadMessageId: 'published', publishedMessageSequence: 1, deliveryIds: ['delivery'], agentRunIds: [], addressedAgentIds: ['outside'] }
+        coreActivated = true
+        acceptedSends += 1
+        return { threadMessageId: 'published-' + acceptedSends, publishedMessageSequence: acceptedSends, deliveryIds: ['delivery'], agentRunIds: [], addressedAgentIds: ['outside'] }
       }} />}
     </main></ThreadClientProvider>
 }
@@ -67,10 +77,14 @@ Object.assign(window, { invitationTest: {
   state: () => ({ calls, submissions, errors, text: document.getElementById('camp-message')?.textContent,
     atoms: document.querySelectorAll('[data-composer-atom="member"]').length,
     invite: !!document.querySelector('[aria-label="发送时邀请 爱丽丝"]'),
+    continuation: !!document.querySelector('[aria-label="继续发给 爱丽丝"]'),
+    draft: loadLocalThreadComposerDraft(threadId),
     button: document.querySelector<HTMLButtonElement>('form.composer:has(#camp-message) button[type="submit"]')?.disabled,
     stored: Object.values(localStorage).join(' ') }),
   accept: () => { rejectSend = false },
+  projectActivation: () => setFixture(current => ({ ...current, thread: { ...current.thread, activationState: 'active' }, members: [member(agent), member(outside)] })),
   hide: () => setVisible(false), show: () => setVisible(true),
+  leave: async () => { if (!prepareLeave) throw new Error('Leave guard missing'); (await prepareLeave()).complete(true); setVisible(false) },
   active: () => { localStorage.clear(); setFixture({ ...initial, thread: { ...initial.thread, activationState: 'active' } }); rejectSend = false; calls.length = 0 },
   submit: () => document.querySelector<HTMLButtonElement>('form.composer:has(#camp-message) button[type="submit"]')!.click(),
   focus: () => document.querySelector<HTMLElement>('#camp-message[contenteditable="true"]')!.focus(),
