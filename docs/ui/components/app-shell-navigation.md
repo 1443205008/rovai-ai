@@ -142,8 +142,8 @@ macOS 与 Web 设置展开后不显示上述三个按钮，也不提供调宽操
 
 快捷键复用 `shouldHandlePrimaryShortcut`：Mac 为 ⌘[ / ⌘]，Windows 为 Ctrl+[ / Ctrl+]。
 冒泡到稳定容器后才处理；输入框、编辑器、终端、IME、已消费事件和模态工作面不触发全局导航。
-macOS 在根层读取 mouseup 的 button=3/4；Windows 互斥使用宿主 `app-command`，忽略 Renderer 的同次侧键。
-支持的原生 Mac swipe 也发送到同一接口。Main 不执行默认 Chromium 导航，所有监听随容器/窗口清理。
+Desktop 不监听或拦截 `mouseup` / `auxclick` 的 button=3/4，也不把 Windows `app-command` 映射为历史导航。
+鼠标侧键保留给用户的系统或设备配置。支持的原生 Mac swipe 仍发送到同一接口；所有监听随容器/窗口清理。
 
 历史不写文件、数据库、localStorage 或 sessionStorage，不引入 schema/存储迁移。
 最小化、托盘隐藏、原窗口内普通数据刷新不清空；前端重载、窗口销毁或新的 App 会话重新初始化。
