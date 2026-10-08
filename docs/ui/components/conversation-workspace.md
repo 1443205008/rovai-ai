@@ -597,12 +597,12 @@ Renderer 以公开消息和 Delivery ID 跟踪刚提交输入；Scheduler claim 
 不创建 pending-input 占位，也不夺走 Composer 焦点。
 删除待发送消息、无执行发布或离开 Camp 会消费或丢弃意图；其他窗口的发送和后台新 Run 不触发该行为。
 
-单聊与执行台的发送确认前和排队显示“连接中”；开始处理但尚未输出时，未收到明确 phase 显示“执行中”，收到 `thinking` phase 显示“思考中”。正文、计划、工具或 final 到达即移除初始等待提示。执行台在最新阅读窗口的已结算尾部 Tool 组若再次收到 `thinking` phase，且 Run 仍运行、没有活动 Tool／压缩或后续正文、计划、final，则组收口并在尾部显示一条瞬时“思考中”；新正文、计划、Tool、等待／停止或 Run 终态到来时撤下，不留下历史思考条目。单聊仍不在后续正文尾部追加普通等待提示。
-Runtime 的 private thought/reasoning 文本不进入 Renderer state、搜索、缓存或 disclosure；仅消费不含正文的
-`thinking | executing` phase 来切换上述等待反馈，并把 phase edge 作为匿名公开正文的分段边界。
+单聊与执行台的发送确认前和排队显示“连接中”；开始处理但尚未输出时，未收到明确 phase 显示“执行中”，收到 `thinking` phase 显示“思考中”。正文、计划、工具或 final 到达即移除初始等待提示。执行台与单聊在最新阅读窗口再次收到根 `thinking` phase 时，若 Run 仍运行、没有活动压缩或 final，在正文、计划或 Tool 后均显示一条瞬时思考提示。活动 Tool 保留真实运行状态，可与根思考并列；已结算尾组收口。Codex/Copilot 的已准入原生短标题直接替换“思考中”，缺失或无效时回退；新正文、计划、根 Tool、等待／停止或 Run 终态到来时撤下，不留下历史思考条目。折叠与 Mobile 使用相同标题规则，详见 [Run Process Detail Surface v44](../../contracts/run-process-detail-surface-v44.md)。
+Runtime 的 private thought/reasoning 文本不进入 Renderer state、搜索、缓存或 disclosure；仅消费不含思考正文的
+`thinking | executing` phase 与独立准入的短标题来切换上述反馈，并把 phase edge 作为匿名公开正文的分段边界。
 Camp 执行卡片的普通等待提示与正文共用字号、行高和文字起点，加载图标放在提示文字后；底部、桌面浮层和手机端切入首行正文时不改变卡片位置或单行高度。
 运行中 Run 卡片保留原有耗时；终态卡片有用量字段时仅显示 `xxk` 入口，点击的气泡显示 Input Token、Output Token、Cache Read、Cache Write 四项及分隔后的执行耗时。缺失字段显示未知，不加用量合计行、Run 编号或摘要。仅成功且 Input/Output 完整结算时计算入口值 `Input + Output`，Cache 不再叠加。完全没有用量字段的终态卡片使用时钟入口单独查看耗时；迟到用量到达后切换成 token 入口。执行台标题右侧的弱化圆环默认并排显示一位小数百分比，与气泡保持一致（未知为 `—`），读取当前队员 Camp Conversation 的原生 Session 上下文；切换同一会话的 Run 卡片不改变圆环归属。气泡只显示 `used / window` 和比例，单有窗口不显示 `0%`；只有可信原生比例时显示该比例，数量仍为 `— / —`，不反推 used 或窗口。来源、栅栏和字段语义见 [Runtime Execution Metrics v5](../../contracts/runtime-execution-metrics-v5.md)。
-需要审批、网络恢复、重试或停止时继续显示明确状态。非终态过程不显示耗时总结，非聚焦执行摘要在已有输出时显示“执行中”。成功后才显示“工作了 {时长}”
+需要审批、网络恢复、重试或停止时继续显示明确状态。非终态过程不显示耗时总结，非聚焦执行摘要在已有输出且没有思考反馈时显示“执行中”。成功后才显示“工作了 {时长}”
 并自动折叠过程；失败保留明确失败摘要及可操作错误，取消保持停止语义。正文或工具首次到达、单条工具返回、步骤组
 收口都不能触发整轮耗时总结。关闭 Run 后卸载详情；再次打开读取最新窗口。组跨页按稳定操作身份保留展开意图。
 
@@ -654,7 +654,7 @@ elapsed、Runtime/事件/Session identity、trigger 与 phase 单独存在时保
 非终态 Run 的 `started` 显示 running 状态并暂停重复的底部进行中提示，`completed` 使用完成状态。
 
 当已投影的最后一个 process item 是 Tool 组且父 Run 仍为 running 时，该尾组在当前 Tool 已结算后继续保持
-provisional 活动态，显示“<最近一条指令>”，也不在下方追加普通等待提示；唯一例外是收到 `thinking` phase 且 Run 内已无活动 Tool 时，组显示“已完成 x 个步骤”，下方由瞬时“思考中”接替。此处活动态表达父 Run
+provisional 活动态，显示“<最近一条指令>”，也不在下方追加普通等待提示；收到根 `thinking` phase 时，已结算组显示“已完成 x 个步骤”，下方由瞬时思考反馈接替；仍有活动 Tool 时保留其真实状态，并可同时显示根思考反馈。此处活动态表达父 Run
 仍在运行，不改写上一条 Tool 的真实终态；下一条连续 Tool 到达后只在同一组原位替换为新指令。
 narration、plan、diagnostic、`thinking` phase、waiting/cancelling 或 Run 终态才构成真实收口边界。该规则按 process/Run 事实
 判断，不使用时间防抖。
