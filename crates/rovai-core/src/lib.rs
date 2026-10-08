@@ -90,6 +90,7 @@ pub mod pending_thread_draft;
 pub mod planned_shutdown;
 pub mod platform;
 pub mod read_model;
+pub mod run_continuation;
 pub mod runtime;
 pub mod runtime_activity_mapping;
 pub mod runtime_basis;

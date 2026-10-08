@@ -2551,6 +2551,7 @@ export interface ThreadMessageFindParams {
 }
 
 interface MessageDeliveryBaseView {
+  continuationRequest?: boolean
   id: string
   messageId: string
   threadTurnId: string | null
@@ -4203,6 +4204,7 @@ export type CoreMethod =
   | 'singleChat.pendingInputs.addSourceAttachmentFromPath'
   | 'singleChat.pendingInputs.edit'
   | 'agentRuns.cancel'
+  | 'agentRuns.continue'
   | 'agentRuns.diagnostic.get'
   | 'executionTrace.export'
   | 'threads.snapshot'
