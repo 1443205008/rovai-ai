@@ -361,7 +361,7 @@ D14 的原生来源权威继续保留；用户进一步撤回“保存官方后�
 
 - 状态：accepted
 - 日期：2026-10-07
-- 当前权威：[AgentRun Continuation v1](../../contracts/agent-run-continuation-v1.md)、[Accepted Input Recovery v7](../../contracts/accepted-input-recovery-v7.md)、[Message Delivery v11](../../contracts/message-delivery-v11.md)、[AgentRun Recovery](../../architecture/agent-run-recovery.md)
+- 当前权威：[AgentRun Continuation v2](../../contracts/agent-run-continuation-v2.md)、[Accepted Input Recovery v8](../../contracts/accepted-input-recovery-v8.md)、[Message Delivery v11](../../contracts/message-delivery-v11.md)、[AgentRun Recovery](../../architecture/agent-run-recovery.md)
 
 ### 背景与选择
 
@@ -373,8 +373,9 @@ D14 的原生来源权威继续保留；用户进一步撤回“保存官方后�
 
 需要增量迁移表示一条授权 Delivery 对应原多条业务输入，并保留其单 Run 归属约束。旧输入事实不改写，
 清理门禁不放宽。拒绝重置旧 Run、复制冻结投递或单后继链，也不建设恢复协调器、效果对账系统或语义审批器。
-提示词不追加来源 ID、证据和恢复指令；会话真正恢复失败时结束当前尝试，显式确认才能以新会话继续。
-
+提示词不追加来源 ID、证据和恢复指令。2026-10-08 User 明确要求可用性优先与默认降级，
+替代早期显式新会话确认：继续即授权，兼容时优先恢复，已知不适用则自动新建；实际恢复失败在本次
+输入尚未投递时允许一次新会话尝试。清理和接受后不重放的边界不变，不增加另一套恢复流程。
 
 <a id="v1-72-d17"></a>
 ## V1.72-D17：Pending 首条消息原子邀请队外队员

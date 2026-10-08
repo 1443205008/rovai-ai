@@ -15,7 +15,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 
 ## 用户主动继续
 
-- [AgentRun Continuation v1（当前）](agent-run-continuation-v1.md)：新用户授权、原业务输入、当前上下文，独立 Run 与现有队列。
+- [AgentRun Continuation v2（当前）](agent-run-continuation-v2.md)：新用户授权、自动会话选择与投递前有界降级，独立 Run 与现有队列。
+- [AgentRun Continuation v1（历史）](agent-run-continuation-v1.md)：独立续做与显式新会话确认；确认规则由 v2 替代。
 
 ## Navigation
 
@@ -102,7 +103,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [Camp Open Projection v10（历史）](camp-open-projection-v10.md) | main Snapshot 34/Open 6；Open 不读取 event_log，移除 timeline/coverage.timeline，保留 high-water 与业务卡片 |
 | [Camp Open Projection v10（渠道分支历史）](camp-open-projection-channel-v10.md) | v9 保留；Camp/Navigation 增加可选 channelSource，原始 title 不变；合并时保留原文以区分同号合同 |
 | [Camp Open Projection v9（历史）](camp-open-projection-v9.md) | v8 保留；Snapshot 34/Open 5 增加可选 member.fast，仅查询安全缓存 |
-| [Runtime Launch and Verification v52（当前）](runtime-launch-and-verification-v52.md) | 继承 v51；移除 Claude/Codex 原生连接编辑，保留本地启动设置、原生执行、只读兼容与脱敏 |
+| [Runtime Launch and Verification v53（当前）](runtime-launch-and-verification-v53.md) | 继承 v52；用户续做复用原生恢复路径，Codex 投递前允许一次新 Thread 降级 |
+| [Runtime Launch and Verification v52（历史）](runtime-launch-and-verification-v52.md) | 继承 v51；移除 Claude/Codex 原生连接编辑，保留本地启动设置、原生执行、只读兼容与脱敏 |
 | [Runtime Launch and Verification v51](runtime-launch-and-verification-v51.md) | 继承 v50；保存只做本地提交，不触发发现、检查、目录或 Host 工作；保存回执不含完整 Key，界面按回执结束保存 |
 | [Runtime Launch and Verification v50（历史）](runtime-launch-and-verification-v50.md) | 继承 v49；Owner 设置回显可读的原生静态 API Key，默认隐藏，查看不写入，不增加持久副本 |
 | [Runtime Launch and Verification v49（历史）](runtime-launch-and-verification-v49.md) | 继承 v48；Codex 可信原生终态决定复用、事务清理门禁、明确回收证据和精确冷恢复 |
@@ -318,7 +320,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [User Automation v1（历史）](user-automation-v1.md) | 普通用户 `rovai app` 的独立本机 IPC、Runtime OS 隔离、原子 Camp/Run 自动化、真实 shell exit、双 cursor Diagnostic Trial、安全投影与私有 bundle |
 | [Network Interruption Recovery v2（当前）](network-interruption-recovery-v2.md) | v1 分类/退避/wake 不变；同 Run 恢复不再依赖 CampTurn 或协作预算 |
 | [Network Interruption Recovery v1（历史）](network-interruption-recovery-v1.md) | App/Core 持续运行期间的严格网络分类、Core 内存固定退避、ACP terminal 接管与 CampTurn 时期准入 |
-| [Accepted Input Recovery v7（当前）](accepted-input-recovery-v7.md) | 保留冻结投递与隔离边界，增加 User 显式授权的独立续做 |
+| [Accepted Input Recovery v8（当前）](accepted-input-recovery-v8.md) | 保留输入不重放与隔离门禁；续做自动选择会话并允许投递前一次降级 |
+| [Accepted Input Recovery v7（历史）](accepted-input-recovery-v7.md) | 保留冻结投递与隔离边界，增加 User 显式授权的独立续做 |
 | [Accepted Input Recovery v6（历史）](accepted-input-recovery-v6.md) | accepted/unknown 自动失败且不重放；旧执行隔离确认独立门禁后继 Delivery |
 | [Accepted Input Recovery v5（历史）](accepted-input-recovery-v5.md) | v4 发送边界不变；普通恢复失败与业务取消终态分离 |
 | [Accepted Input Recovery v4（历史）](accepted-input-recovery-v4.md) | 新增 `dispatch_started_at`；发送/取消事务排序，迟到回执只补证据 |
@@ -541,7 +544,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 | [ContextManifest Evidence v9 (historical)](context-manifest-evidence-v9.md) | bounded public omission evidence；不作为 Formatter v13 恢复入口 |
 | [Context Delivery Profile v2 (historical)](context-delivery-profile-v2.md) | 公共引用链与历史 budget 的旧当前合同；不选择 self-active Task |
 | [Context Delivery Profile v1 (historical)](context-delivery-profile-v1.md) | AgentRun 公共消息窗口、Unicode scalar 正文截断、历史字符预算与遗漏提示 |
-| [Run Process Detail Surface v45（当前）](run-process-detail-surface-v45.md) | 继承 v44；失败／停止卡片的紧凑继续图标与独立排队请求 |
+| [Run Process Detail Surface v46（当前）](run-process-detail-surface-v46.md) | 继承 v45；继续图标直接提交，取消新会话确认弹窗 |
+| [Run Process Detail Surface v45（历史）](run-process-detail-surface-v45.md) | 继承 v44；失败／停止卡片的紧凑继续图标与独立排队请求 |
 | [Run Process Detail Surface v44（历史）](run-process-detail-surface-v44.md) | 继承 v43；根思考全阶段反馈、Codex/Copilot 有界原生短标题与瞬时读取 |
 | [Run Process Detail Surface v43（历史）](run-process-detail-surface-v43.md) | 继承 v42；主线按完整内容块分页、Tool 组独立游标与有界自动补齐，不新增表或迁移 |
 | [Run Process Detail Surface v42](run-process-detail-surface-v42.md) | 继承 v41；新 Tool 持久化输出限 7,680 UTF-8 字节，显式三态归约与可缺省丢失标记 |
