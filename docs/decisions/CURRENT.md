@@ -1,7 +1,7 @@
 ---
 document_type: current-decision-navigation
 authority: current-authority-and-rationale-routing
-last_updated: 2026-10-08
+last_updated: 2026-10-09
 ---
 
 # 当前规范与决定理由导航
@@ -17,6 +17,8 @@ User 命名与旧 Session 恢复：当前规范为 [User Naming v1](../contracts
 完整规范内核迁移对应关系见[当前决策权威覆盖](AUTHORITY-COVERAGE.md)，旧数字 ID 查找见[迁移映射](LEGACY-MAP.md)。
 
 ## Public Camp 消息与多输入 AgentRun
+
+- 模型 Mention 统一：[Message Mentions v1](../contracts/message-mentions-v1.md)、[ContextManifest v33](../contracts/context-manifest-evidence-v33.md)、[Camp History v12](../contracts/camp-history-v12.md)；仅合并两处元数据、按 Run 冻结的取舍见 [V1.72-D19](../versions/v1.72/decisions.md#v1-72-d19)。
 
 - 当前主链：[Public Camp Message/Delivery 架构](../architecture/public-a2a-message-delivery.md)、
   [Message Delivery v11](../contracts/message-delivery-v11.md)、[Camp Message Send v23](../contracts/camp-message-send-v23.md)；

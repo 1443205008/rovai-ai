@@ -1213,3 +1213,9 @@ API 专用 UI/CLI fixture 退役，启动页 UI 回归由既有 settings-workspa
   同步 main `7f1562f3` 后完整 Rust、JavaScript、类型、构建与文档门再次通过；最终文档 diff 基线为该提交。
   隔离 Electron 验收覆盖 1040×700 日夜主题及键盘选择；未调用真实模型，也不宣称 Windows 真机验收。
 - Next：review、推送 PR、CI 与合入后清理。
+
+## 2026-10-09 消息 Mention 元数据
+
+按[确认稿 r1](model-context-change-message-mentions.md)实施公开 batch/read 的公共目标投影，
+复用名称与正文、原版本恢复、封闭 Schema、预算与摘要。仅 Agent Output 升至 10；
+Transport/CLI、Bootstrap、非 batch 与 Binding 兼容身份保持。验证记录统一追加在确认稿，避免多份验收状态。

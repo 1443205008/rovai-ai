@@ -3,7 +3,7 @@ document_type: version-decisions
 version: v1.72
 authority: decision-rationale
 lifecycle: current
-last_updated: 2026-10-05
+last_updated: 2026-10-09
 ---
 
 # v1.72 版本决定
@@ -410,3 +410,18 @@ User 确认交互稿及模型仍读取 `@名字` 文字后，授权实现、创�
 需要一次增量迁移；旧字符串按字面迁移，重命名不会重绑身份。未采用按显示名解析，避免同名、改名和纯文本粘贴
 产生隐式邀请。未复用会话先入队再发消息的跨命令流程，因为使命保存失败必须保持原队伍。成员准入与事件仍复用
 现有 Camp owner；不引入第二套队伍、执行路由或模型正文数组。
+
+<a id="v1-72-d19"></a>
+## V1.72-D19：Mention 只统一模型消息元数据，格式按 Run 冻结
+
+- 状态：accepted
+- 日期：2026-10-09
+- 当前权威：[Message Mentions v1](../../contracts/message-mentions-v1.md)、[ContextManifest v33](../../contracts/context-manifest-evidence-v33.md)、[Camp History v12](../../contracts/camp-history-v12.md)
+
+公开自动输入与 read 需要向模型提供完整目标身份，但两者已有不同的正文、作者字段和恢复证据。
+选择共用已保存目标的 Mention 投影，保留各入口正文；格式切换沿用 Run 的冻结版本，旧回执原样回放。
+这样已有 Session 的后续 Run 能直接生效，旧 Run 未物化的中间态仍可按原格式恢复。
+
+重解析 @文字或查询当前 Lead/队伍会改变历史目标；把切换绑到 Session 会扩大升级、轮换与上下文成本。
+本次均不采用。代价是保留旧 Run formatter 与旧回执的封闭输出分支，并在既有数据库约束中准入新版本；
+不建设第二套名称、预算或格式协商机制。

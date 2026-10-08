@@ -375,3 +375,12 @@ User 于 2026-10-08 授权独立 worktree、PR 与 main 合入。Pending Compose
 [Mission v12](../../contracts/mission-v12.md)冻结结构与原子性，Migration 185 将 schema 134 升至 135；
 模型 `mission get` 继续返回可读 description，不增加字段或修改 Bootstrap/Run Facts。
 决定见 [V1.72-D18](decisions.md#v1-72-d18)，测试与交付证据见[实施记录](mission-member-mentions-implementation.md)。
+
+## 消息 Mention 元数据统一
+
+User 于 2026-10-09 确认[完整方案及补充边界 r1](model-context-change-message-mentions.md)。
+仅公开 batch RUN_INPUT.messages 与 thread.read 正常条目改为 mentions；正文、作者、渠道和非 batch 保持。
+新公开 Formatter/Manifest 33，Profile 10/Facts 9，旧 Run 和成功回执按原版本恢复，无 Session 轮换。
+Migration 187/schema 137 只扩展现有格式约束；当前合同见 [Mention v1](../../contracts/message-mentions-v1.md)、
+[ContextManifest v33](../../contracts/context-manifest-evidence-v33.md)、[History v12](../../contracts/camp-history-v12.md)。
+状态与证据见[确认稿实施记录](model-context-change-message-mentions.md#实施与验证记录)。
