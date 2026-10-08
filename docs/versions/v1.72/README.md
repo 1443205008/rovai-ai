@@ -354,3 +354,11 @@ User 于 2026-10-08 授权独立 worktree、PR 与 main 合入。Pending Compose
 首条 User inline 消息按 [Pending v5](../../contracts/pending-camp-activation-v5.md)和
 [Send v26](../../contracts/camp-message-send-v26.md)原子加入、激活与投递；Active 保持逐人邀请。
 无数据库或模型上下文格式变更。实施与验证见[实施计划](implementation-plan.md#一键草稿邀请队外队员)。
+
+
+## 并行交付：使命描述提及队员
+
+按 User 确认的交互稿与模型读取示例实现个人提及、保存时邀请队外成员和失败保留草稿。
+[Mission v12](../../contracts/mission-v12.md)冻结结构与原子性，Migration 185 将 schema 134 升至 135；
+模型 `mission get` 继续返回可读 description，不增加字段或修改 Bootstrap/Run Facts。
+决定见 [V1.72-D18](decisions.md#v1-72-d18)，测试与交付证据见[实施记录](mission-member-mentions-implementation.md)。

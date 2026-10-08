@@ -105,7 +105,9 @@ User 命名与旧 Session 恢复：当前规范为 [User Naming v1](../contracts
 
 ## Mission
 
-- 当前规范：[Mission 架构](../architecture/missions.md)、[Mission v11](../contracts/mission-v11.md)、[使命板 UI](../ui/components/mission-board.md)、[ContextManifest v32](../contracts/context-manifest-evidence-v32.md)及 [`CONTEXT.md`](../../CONTEXT.md)。
+- 稳定身份与原子入队的理由：[V1.72-D18](../versions/v1.72/decisions.md#v1-72-d18)。
+
+- 当前规范：[Mission 架构](../architecture/missions.md)、[Mission v12](../contracts/mission-v12.md)、[使命板 UI](../ui/components/mission-board.md)、[ContextManifest v32](../contracts/context-manifest-evidence-v32.md)及 [`CONTEXT.md`](../../CONTEXT.md)。
 - 复用 Camp、preparing 才创建持久工作区、固定基准与无模型业务版本的理由：[V1.59-D11](../versions/v1.59/decisions.md#v1-59-d11)；稳定公开编号、无历史正文与 accepted 投递水位的理由：[V1.59-D12](../versions/v1.59/decisions.md#v1-59-d12)；附件原路径读取的初始理由：[V1.59-D13](../versions/v1.59/decisions.md#v1-59-d13)；删除默认保留与最小双检查点的原始理由：[V1.59-D14](../versions/v1.59/decisions.md#v1-59-d14)；内部 ID 贯通 Agent/模型、UI 展示编号、全局发现和当前 Mission 写入边界的理由：[V1.61-D01](../versions/v1.61/decisions.md#v1-61-d01)；状态操作与消息发布解耦的当前理由：[V1.62-D01](../versions/v1.62/decisions.md#v1-62-d01)；持久清理意图、后台执行与先删使命的当前理由：[V1.62-D02](../versions/v1.62/decisions.md#v1-62-d02)；状态列独立纵向滚动与拖拽边缘滚动的理由：[V1.62-D03](../versions/v1.62/decisions.md#v1-62-d03)；受管分支与实时 checkout 分离、分支不作为执行门禁的理由：[V1.62-D04](../versions/v1.62/decisions.md#v1-62-d04)。
 
 ## Single Chat

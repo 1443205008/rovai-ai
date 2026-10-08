@@ -26,7 +26,8 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 
 | 合同 | 范围 |
 | --- | --- |
-| [Mission v11（当前）](mission-v11.md) | 继承 v10；清理请求只做领域准入，worker 的正常成功路径最多启动 4 个 Git 进程，安全拒绝保留可用工作区与可重试诊断 |
+| [Mission v12（当前）](mission-v12.md) | 结构化个人提及与描述原子保存、自动加入队外成员；Agent 仍读取 description 文本 |
+| [Mission v11（历史）](mission-v11.md) | 继承 v10；清理请求只做领域准入，worker 的正常成功路径最多启动 4 个 Git 进程，安全拒绝保留可用工作区与可重试诊断 |
 | [Mission v10（历史）](mission-v10.md) | 继承 v9；Worktree 归属与受管分支删除解耦，安全保留非受管分支、脏现场与不可达 detached 提交，并恢复未发生删除的失败状态；其重复预检与同步拒绝由 v11 替代 |
 | [Mission v9（历史）](mission-v9.md) | 继承 v8；持久 Worktree 的当前检出不再作为执行门禁，实时 checkout 与受管分支身份分离，Diff 视图不复用旧临时 index；其非受管 checkout 清理拒绝由 v10 替代 |
 | [Mission v8（历史）](mission-v8.md) | 继承 v7；启动入口复用等待中的启动 Delivery 与非终态 Run，执行提示覆盖 queued/running/waiting；其分支执行门禁与 Diff session 由 v9 替代 |
