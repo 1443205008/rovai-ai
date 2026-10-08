@@ -34,7 +34,8 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
     anyhow::ensure!(
         matches!(
             classify_database_contract(&tx)?,
-            DatabaseContractClassification::Current(_)
+            DatabaseContractClassification::SupportedMigrationSource(ref marker)
+                if marker.projection_schema_version == 135
         ),
         "Mission description schema admission failed"
     );
@@ -44,6 +45,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 
 #[cfg(test)]
 pub(super) fn downgrade_for_test(connection: &Connection) {
+    user_anchors::downgrade_for_test(connection);
     if !connection
         .table_exists(None, "mission_description")
         .unwrap()

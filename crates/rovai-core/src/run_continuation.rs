@@ -178,6 +178,7 @@ pub fn continue_agent_run(
             params![delivery.delivery_id,command.agent_run_id,command.use_new_session])?;
         append_domain_event(tx,"camp_message.sent",Some(&command.camp_id),Some(("camp_message",&message_id)),&envelope.actor,None,
             &json!({"sequence":sequence,"recipientFree":true,"operation":"continue_execution"}))?;
+        crate::message_changes::record(tx, &command.camp_id, false, &[]);
         Ok(CommandHandlerResult::applied("agent_run.continuation_requested",
             json!({"threadId":command.camp_id,"deliveryId":delivery.delivery_id,"messageId":message_id}),
             Some(EntityReference { entity_type:"camp_message_delivery".into(),entity_id:delivery.delivery_id })))
