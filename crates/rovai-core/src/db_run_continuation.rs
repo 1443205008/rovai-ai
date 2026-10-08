@@ -79,7 +79,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
         anyhow::ensure!(
             matches!(
                 classify_database_contract(&tx)?,
-                DatabaseContractClassification::Current(_)
+                DatabaseContractClassification::SupportedMigrationSource(ref marker) if marker.projection_schema_version==134
             ),
             "Continuation schema admission failed"
         );
@@ -94,6 +94,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 
 #[cfg(test)]
 pub(super) fn downgrade_for_test(connection: &Connection) {
+    mission_description::downgrade_for_test(connection);
     if !connection
         .table_exists(None, "camp_run_continuation")
         .unwrap()

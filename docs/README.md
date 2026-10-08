@@ -28,7 +28,7 @@ last_updated: 2026-10-08
 
 | 任务 | 必读资料 |
 |---|---|
-| 修改 Mission、使命工作区、累计 Git Diff、使命上下文或桌面使命板 | [使命架构](architecture/missions.md)、[Mission v11](contracts/mission-v11.md)、[ContextManifest v31](contracts/context-manifest-evidence-v31.md)及[使命板 UI](ui/components/mission-board.md) |
+| 修改 Mission、使命工作区、累计 Git Diff、使命上下文或桌面使命板 | [使命架构](architecture/missions.md)、[Mission v12](contracts/mission-v12.md)、[ContextManifest v31](contracts/context-manifest-evidence-v31.md)及[使命板 UI](ui/components/mission-board.md) |
 | 修改共享 Core 运行层、Host、Desktop Web 或独立 Server | [统一 Rust Host](architecture/unified-rust-host.md)、[当前版本](versions/README.md)、[Availability-first Runtime](architecture/availability-first-runtime.md)与[本地隔离流程](development/local-workflow.md) |
 | 修改 Runtime 结构化图片、原生生图自动展示准入、混合临时文件生命周期、Run 图片读取、图片附件 Gallery、消息附件分区/几何或本地图片与飞书显式文件交付边界 | [Runtime 图片架构](architecture/runtime-images.md)、[Runtime Images v5](contracts/runtime-images-v5.md)、[Camp Open Projection v24](contracts/camp-open-projection-v24.md)、[v1.53 交付范围](versions/v1.53/README.md)及[统一图片与文件展示](ui/components/conversation-workspace.md#runtime-图片与消息图片) |
 | 修改 Camp 成员 Fast、二态控件、可空偏好、绑定代次或单次执行档位 | [Camp Member Fast v3](contracts/camp-member-fast-v3.md)、[Runtime Launch v53](contracts/runtime-launch-and-verification-v53.md)、[Usage v8](contracts/runtime-usage-monitoring-v8.md)、[Camp 会话工作区](ui/components/conversation-workspace.md) |

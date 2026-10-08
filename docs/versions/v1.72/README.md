@@ -347,3 +347,11 @@ User 于 2026-10-06 授权在独立 worktree 实施并推送分支。Codex 仅�
 正文、计划和工具之后的根思考均可显示；活动工具与根思考并列，实际压缩、等待/取消/恢复和终态保留优先级。
 Codex/Copilot 的合格原生短标题瞬时替换“思考中”；Claude 暂不接入短标题。实现与验证以任务分支测试和真实
 Runtime Smoke 为证据，不从合同 accepted 状态推断所有 Provider 都能返回标题。
+
+
+## 并行交付：使命描述提及队员
+
+按 User 确认的交互稿与模型读取示例实现个人提及、保存时邀请队外成员和失败保留草稿。
+[Mission v12](../../contracts/mission-v12.md)冻结结构与原子性，Migration 185 将 schema 134 升至 135；
+模型 `mission get` 继续返回可读 description，不增加字段或修改 Bootstrap/Run Facts。
+决定见 [V1.72-D18](decisions.md#v1-72-d18)，测试与交付证据见[实施记录](mission-member-mentions-implementation.md)。

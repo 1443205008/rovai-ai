@@ -6422,6 +6422,7 @@ impl Core {
                                     request.runtime_tool_call_id,
                                     &authenticated_run,
                                     crate::mission::UpdateMissionCommand {
+            description_content: None,
                                         mission_id: mission.info.mission_id,
                                         title: input.title,
                                         description: input.description,
@@ -29127,6 +29128,7 @@ done
                     expected_versions: Vec::new(),
                     execution_epoch: None,
                     payload: crate::mission::CreateMissionCommand {
+                        description_content: None,
                         title: "Mission Git background dispatch".into(),
                         description: String::new(),
                         project_path: source.to_string_lossy().into_owned(),
@@ -29715,6 +29717,7 @@ done
                         expected_versions: Vec::new(),
                         execution_epoch: None,
                         payload: crate::mission::CreateMissionCommand {
+                            description_content: None,
                             title: "Camp deletion Mission race".into(),
                             description: String::new(),
                             project_path: source.to_string_lossy().into_owned(),
