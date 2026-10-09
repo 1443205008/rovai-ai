@@ -2602,6 +2602,7 @@ export interface ThreadMessageFindParams {
 
 interface MessageDeliveryBaseView {
   continuationRequest?: boolean
+  inputMessageIds?: string[]
   id: string
   messageId: string
   threadTurnId: string | null
