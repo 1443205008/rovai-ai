@@ -111,6 +111,8 @@ pub mod runtime_resolution;
 pub mod runtime_search_operation;
 pub mod runtime_startup;
 pub mod remote_worker;
+pub mod remote_worker_api;
+pub mod remote_worker_registry;
 mod runtime_thinking;
 pub mod single_chat;
 pub mod skill;
