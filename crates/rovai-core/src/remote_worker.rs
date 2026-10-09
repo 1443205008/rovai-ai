@@ -246,7 +246,11 @@ pub fn validate_registration(value: &WorkerRegistration) -> Result<(), &'static 
         || value.capabilities.platform.len() > MAX_CAPABILITY_ID_LEN
         || value.capabilities.architecture.len() > MAX_CAPABILITY_ID_LEN
         || value.capabilities.platform.chars().any(char::is_control)
-        || value.capabilities.architecture.chars().any(char::is_control)
+        || value
+            .capabilities
+            .architecture
+            .chars()
+            .any(char::is_control)
     {
         return Err("worker_platform_required");
     }
@@ -452,7 +456,10 @@ mod tests {
         assert_eq!(validate_heartbeat(&heartbeat), Err("duplicate_task_id"));
         heartbeat.running_task_ids = vec![];
         heartbeat.load_percent = 101;
-        assert_eq!(validate_heartbeat(&heartbeat), Err("heartbeat_load_invalid"));
+        assert_eq!(
+            validate_heartbeat(&heartbeat),
+            Err("heartbeat_load_invalid")
+        );
     }
 
     #[test]
@@ -472,7 +479,10 @@ mod tests {
             registration_nonce: "nonce".into(),
         };
         registration.worker_id = "worker/1".into();
-        assert_eq!(validate_registration(&registration), Err("worker_identity_invalid"));
+        assert_eq!(
+            validate_registration(&registration),
+            Err("worker_identity_invalid")
+        );
     }
 
     #[test]
@@ -549,6 +559,9 @@ mod tests {
         registration.capabilities.agents[0].kind = "codex_cli".into();
         let duplicate_agent = registration.capabilities.agents[0].clone();
         registration.capabilities.agents.push(duplicate_agent);
-        assert_eq!(validate_registration(&registration), Err("agent_capability_invalid"));
+        assert_eq!(
+            validate_registration(&registration),
+            Err("agent_capability_invalid")
+        );
     }
 }
