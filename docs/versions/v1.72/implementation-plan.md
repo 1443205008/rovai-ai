@@ -3,7 +3,7 @@ document_type: implementation-plan
 version: v1.72
 authority: version-implementation-and-acceptance
 status: in_progress
-last_updated: 2026-10-08
+last_updated: 2026-10-09
 ---
 
 # v1.72 实施与验收
@@ -1219,3 +1219,28 @@ API 专用 UI/CLI fixture 退役，启动页 UI 回归由既有 settings-workspa
 按[确认稿 r1](model-context-change-message-mentions.md)实施公开 batch/read 的公共目标投影，
 复用名称与正文、原版本恢复、封闭 Schema、预算与摘要。仅 Agent Output 升至 10；
 Transport/CLI、Bootstrap、非 batch 与 Binding 兼容身份保持。验证记录统一追加在确认稿，避免多份验收状态。
+
+## 2026-10-09 Windows Claude 后继任务排队修复
+
+本节按 [V1.72-D20](decisions.md#v1-72-d20) 取代上文 2026-10-07 Windows Job 回收证明的当前执行要求；
+旧段落保留当时的实现和验收记录，不再要求累计计数、完成端口通知及逐后代句柄退出。
+Windows Managed Process 现在只以本次有效 Job 查询 `ActiveProcesses == 0` 放行。
+Claude 的可信原生成功或失败先结算业务，未确认的 Job 清理保留精确 Run/epoch 门禁并唤醒现有 worker；
+启动临时文件删除失败仅记录诊断，启动时对本 Core 私有 `claude-inputs` 做限定范围的尽力回收。
+用户 Stop 在 Windows 使用五秒单次总预算与既有局部重试；直接排队请求在清理期间保留，
+执行台以清理中／清理未确认重试中代替普通排队提示。macOS/Linux 原有预算保持。
+
+验收以隔离 Windows Core、Thread 和工作区中第二条非队长 Claude 消息实际执行为准，另查
+Stop 后续做、真实工具停止、Job 活跃成员、暂时查询失败、文件删除错误及持久回执门禁。
+定向 owner 为 `managed_process::tests::windows_job_contains_an_immediate_grandchild_after_leader_exit`
+和 `claude::tests::cmd_and_native_roots_keep_both_files_until_the_job_descendants_exit`；真实模型复测
+及未覆盖环境须在合入前记录，不把测试函数返回当作队列验收结果。
+
+隔离实测使用 Windows 10 22H2（19045）、Core 0.4.6 开发构建、Claude Code 2.1.288、
+本机已有的 Claude 默认模型配置；新建独立 Core 数据目录、Thread 和 Git 工作区，没有操作日常 Core。
+非队长 Claude 的第一条执行期间提交第二条：正常结束时两条 Run 均 succeeded，第二条无需重启即启动；
+Stop 场景中取消命令在两次实测中分别用时 26 和 23 毫秒，第一条 cancelled，第二条自动 succeeded，等待 22 秒后
+被取消工具预定的延迟写入没有出现。两组原始报告保存在本次会话附件的
+`claude-final-normal-report.json` 与 `claude-final-stop-report.json`（另保留先前构建的对照报告）。
+这两次真实模型试验使用环境现有的 `bypassPermissions` 默认值；修复没有改变权限配置。
+Windows 11、打包版和其他模型／权限模式尚未在本机验收，Job 查询持续失败需在现场诊断中观察。

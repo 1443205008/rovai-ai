@@ -1,7 +1,7 @@
 ---
 document_type: development-guide
 authority: test-policy-and-command-routing
-last_updated: 2026-10-08
+last_updated: 2026-10-09
 ---
 
 # 测试与 Smoke Test
@@ -479,8 +479,9 @@ pnpm test:rust:full
 Windows Runtime 改动可用 `Full check` 的 `windows-runtime` scope 单独执行既有 Windows 原生 job，
 其中 Fleet 回收凭据及 Codex 释放策略显式启用 `extended-tests`。该 runner 证据不替代实体 Windows 10/11、
 真实 CLI 账号，或仍由 Unix/macOS 条件编译限定的 Codex/Core 集成测试。
-既有 Managed Process 孙进程 owner 用稳定 handle 验证 Job 计数不能抢先确认退出，并覆盖首次观察后
-新增后代、缺失/重复/非法成员通知；Fleet receipt owner 验证跨 Core 仅凭已持久化回执放行。
+既有 Managed Process 孙进程 owner 验证根进程退出后仍有活跃后代时继续阻塞，以及
+`ActiveProcesses` 归零时直接放行；完成端口通知、累计计数与后代句柄不再是必需条件。
+Fleet receipt owner 继续验证精确 Run/epoch 的持久化回执与跨 Core 恢复边界。
 
 默认 fast suite 保留纯 parser/serde、确定性 policy、常量和最小原子 regression，并以 400 项作为当前
 反馈预算。`extended-tests` 承担大型模块矩阵、SQLite、子进程、并发与跨边界 owner；`slow-tests`
