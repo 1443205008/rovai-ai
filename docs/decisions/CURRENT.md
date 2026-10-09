@@ -238,7 +238,7 @@ User 命名与旧 Session 恢复：当前规范为 [User Naming v1](../contracts
 
 - 当前 Agent 附件原路径发布、默认输出与归属理由：[V1.59-D08](../versions/v1.59/decisions.md#v1-59-d08)。
 
-- DeepSeek Harness ACP 接入：[Runtime Catalog Boundaries](../architecture/runtime-catalog-boundaries.md#deepseek-harness-acp)、[平台准入](../contracts/runtime-platform-admission-v2.md#deepseek-harness-增量准入)；理由：[V1.59-D10](../versions/v1.59/decisions.md#v1-59-d10)。
+- DeepSeek Harness ACP 接入：[Runtime Catalog Boundaries](../architecture/runtime-catalog-boundaries.md#deepseek-harness-acp)、[平台准入](../contracts/runtime-platform-admission-v2.md#deepseek-harness-增量准入)；理由：[V1.59-D10](../versions/v1.59/decisions.md#v1-59-d10)；Web 补充与原生迁移期间的 Patch 隔离见 [V1.72-D21](../versions/v1.72/decisions.md#v1-72-d21)。
 
 当前侧栏范围读取、Camp 摘要与完整快照恢复的取舍见 [V1.72-D02](../versions/v1.72/decisions.md#v1-72-d02)；
 当前权威为 [Desktop Navigation Refresh](../architecture/desktop-navigation-refresh.md) 与

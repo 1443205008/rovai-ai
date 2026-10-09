@@ -2637,6 +2637,31 @@ pub fn acp_model_catalog_for_adapter(
     session_result: &Value,
 ) -> Result<Vec<ModelDescriptor>> {
     let mut models = acp_model_catalog_from_session(session_result)?;
+    if adapter_kind == AdapterKind::DeepseekHarness
+        && let Some(preparation) = session_result.pointer("/_meta/rovaiDshModels")
+    {
+        models.retain(|model| {
+            crate::dsh::selected_route_available(
+                preparation,
+                &model.id,
+                Some(crate::dsh::model_source(preparation, &model.id)),
+            )
+        });
+        for model in &mut models {
+            let origin = crate::dsh::model_source(preparation, &model.id);
+            model.runtime_metadata = Some(json!({"dshSource": origin}));
+            let web = origin == crate::agent_profile::DshModelSource::Web;
+            let source = if web {
+                "来自 DSH Web"
+            } else {
+                "DSH 原生配置"
+            };
+            model.description = Some(match crate::dsh::preparation_diagnostic(preparation) {
+                Some(diagnostic) => format!("{source} · {diagnostic}"),
+                None => source.to_string(),
+            });
+        }
+    }
     if adapter_kind == AdapterKind::CodebuddyCli
         && let Some(current) = acp_runtime_model_id_from_session(session_result)
         && !models.iter().any(|model| model.id == current)
@@ -3528,6 +3553,50 @@ mod tests {
 
     #[test]
     fn grouped_acp_models_keep_opaque_provider_routes_and_reject_empty_catalogs() {
+        let native_id = r#"["native","same-model"]"#;
+        let web_id = r#"["web","same-model"]"#;
+        let session = json!({"configOptions":[{"id":"model","options":[
+            {"group":"native","options":[{"value":native_id,"name":"Same"}]},
+            {"group":"web","options":[{"value":web_id,"name":"Same"}]}
+        ]}],"_meta":{"rovaiDshModels":{"webProviders":["web"],"rejectedProviders":[],"diagnostics":[]}}});
+        let models = acp_model_catalog_for_adapter(AdapterKind::DeepseekHarness, &session).unwrap();
+        assert_eq!(models.len(), 2);
+        assert_eq!(
+            models
+                .iter()
+                .find(|model| model.id == web_id)
+                .unwrap()
+                .runtime_metadata,
+            Some(json!({"dshSource":"web"}))
+        );
+        assert_eq!(
+            models
+                .iter()
+                .find(|model| model.id == web_id)
+                .unwrap()
+                .description
+                .as_deref(),
+            Some("来自 DSH Web")
+        );
+        let mut rejected = session;
+        rejected["_meta"]["rovaiDshModels"]["rejectedProviders"] = json!(["web"]);
+        let models =
+            acp_model_catalog_for_adapter(AdapterKind::DeepseekHarness, &rejected).unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, native_id);
+        assert!(validate_live_model_selection(&models, web_id, &json!({})).is_err());
+        // Once the supplement is withdrawn, ACP may still advertise a native
+        // model with that ID. It stays selectable with its native provenance.
+        rejected["_meta"]["rovaiDshModels"]["webProviders"] = json!([]);
+        rejected["_meta"]["rovaiDshModels"]["webUnavailable"] = json!(true);
+        let native =
+            acp_model_catalog_for_adapter(AdapterKind::DeepseekHarness, &rejected).unwrap();
+        assert_eq!(native.len(), 2);
+        assert!(
+            native
+                .iter()
+                .all(|model| model.runtime_metadata == Some(json!({"dshSource":"native"})))
+        );
         let model = r#"["deepseek-official","deepseek-v4-flash"]"#;
         let session = json!({"configOptions":[{"id":"model","category":"model","type":"select","currentValue":model,"options":[{"group":"deepseek-official","name":"DeepSeek","options":[{"value":model,"name":"DeepSeek-V4-Flash"}]}]}]});
         let models = acp_model_catalog_from_session(&session).unwrap();
