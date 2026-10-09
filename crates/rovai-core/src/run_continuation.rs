@@ -1,18 +1,16 @@
 //! Explicit User authorization for a new Run, queued through the ordinary Delivery lane.
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use uuid::Uuid;
 
 use crate::{
-    camp_content::{StructuredThreadMessageSegment, canonical_content_digest},
     command::{
         ActorRef, CommandEnvelope, CommandExecution, CommandHandlerResult, DomainCommand,
         DomainCommandGateway, EntityReference, sealed,
     },
     db::Database,
-    delivery_queue::enqueue_message_deliveries,
+    delivery_queue::enqueue_continuation_delivery,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,26 +157,12 @@ pub fn continue_agent_run(
             return Ok(rejected("agent_run.continuation_unavailable", "This execution no longer has an available input and member scope"));
         };
         let now=chrono::Utc::now().to_rfc3339();
-        let message_id=Uuid::new_v4().to_string();
-        // Delivery still requires a message foreign key. This empty, unpublished
-        // carrier exists only for queue identity; public readers and FTS exclude
-        // it through the existing tombstone boundary.
-        let content: Vec<StructuredThreadMessageSegment> = vec![];
-        tx.execute("UPDATE camp SET last_message_sequence=last_message_sequence+1, version=version+1, updated_at=?2 WHERE id=?1",
-            params![command.camp_id, now])?;
-        let sequence:i64=tx.query_row("SELECT last_message_sequence FROM camp WHERE id=?1", [&command.camp_id], |r|r.get(0))?;
-        tx.execute("INSERT INTO camp_message(id,camp_id,sequence,author_type,author_id,body,
-            structured_content_json,content_digest,address_mode,addressed_agent_ids_json,
-            effective_recipient_ids_json,recipient_presentation_json,source_operation_id,origin_kind,recall_state,
-            tombstoned_at,version,created_at,updated_at)
-            VALUES(?1,?2,?3,'system','run-continuation','','[]',?4,'explicit','[]','[]','{}',?5,'system','ineligible',?6,1,?6,?6)",
-            params![message_id,command.camp_id,sequence,canonical_content_digest(&content)?,envelope.command_id,now])?;
-        let delivery=enqueue_message_deliveries(tx,&command.camp_id,&message_id,sequence,&[source.agent_id],&now)?
-            .into_iter().next().context("Continuation did not enqueue its Delivery")?;
+        tx.execute("UPDATE camp SET version=version+1,updated_at=?2 WHERE id=?1",params![command.camp_id,now])?;
+        let delivery=enqueue_continuation_delivery(tx,&command.camp_id,source.agent_id,&now)?;
         tx.execute("INSERT INTO camp_run_continuation(delivery_id,source_agent_run_id,use_new_session) VALUES(?1,?2,?3)",
             params![delivery.delivery_id,command.agent_run_id,command.use_new_session])?;
         Ok(CommandHandlerResult::applied("agent_run.continuation_requested",
-            json!({"threadId":command.camp_id,"deliveryId":delivery.delivery_id,"messageId":message_id}),
+            json!({"threadId":command.camp_id,"deliveryId":delivery.delivery_id}),
             Some(EntityReference { entity_type:"camp_message_delivery".into(),entity_id:delivery.delivery_id })))
     })
 }

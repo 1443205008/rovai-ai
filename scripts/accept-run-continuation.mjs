@@ -77,15 +77,18 @@ async function finish(id, expected = 'succeeded') {
   return result
 }
 async function continueRun(source) {
-  const receipt = await request('agentRuns.continue', { commandId: randomUUID(), command: { threadId, agentRunId: source } })
+  const before = one('SELECT last_message_sequence FROM camp WHERE id=?', threadId)
+  const commandId = randomUUID()
+  const receipt = await request('agentRuns.continue', { commandId, command: { threadId, agentRunId: source } })
   assert.equal(receipt.status, 'applied', JSON.stringify(receipt))
-  const carrier = one('SELECT body,tombstoned_at FROM camp_message WHERE id=?', receipt.payload.messageId)
-  assert.equal(carrier.body, '')
-  assert.ok(carrier.tombstoned_at)
-  const snapshot = await request('threads.snapshot', { threadId })
-  assert.ok(snapshot.messages.every(message => message.id !== receipt.payload.messageId))
-  assert.equal(one("SELECT count(*) AS n FROM event_log WHERE entity_id=? AND event_type='camp_message.sent'", receipt.payload.messageId).n, 0)
-  await check('continuation_has_no_public_message', { deliveryId: receipt.payload.deliveryId })
+  assert.equal(receipt.payload.messageId, undefined)
+  const delivery = one('SELECT source_kind,message_id FROM camp_message_delivery WHERE id=?', receipt.payload.deliveryId)
+  assert.equal(delivery.source_kind, 'continuation')
+  assert.equal(delivery.message_id, null)
+  assert.equal(one("SELECT count(*) AS n FROM camp_message WHERE camp_id=? AND author_type='system' AND author_id='run-continuation'", threadId).n, 0)
+  assert.equal(one('SELECT last_message_sequence FROM camp WHERE id=?', threadId).last_message_sequence, before.last_message_sequence)
+  assert.equal(one("SELECT count(*) AS n FROM event_log WHERE command_id=? AND entity_type='camp_message'", commandId).n, 0)
+  await check('continuation_has_no_message_record', { deliveryId: receipt.payload.deliveryId })
   return receipt
 }
 async function cancel(id) {

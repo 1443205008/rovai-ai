@@ -5,7 +5,7 @@ authority: user-authorized-independent-run-continuation
 status: accepted
 version: 3
 source_version: v1.72
-last_updated: 2026-10-09
+last_updated: 2026-10-10
 ---
 
 # AgentRun Continuation v3
@@ -15,24 +15,26 @@ last_updated: 2026-10-09
 
 ## 内部操作与公开读取
 
-新请求不发布 `camp_message.sent`、不生成系统文案或消息变更通知。
-现有 Delivery 非空 message 外键仍引用内部载体：空 body、空 structured content、
-system/run-continuation、origin_kind=system，创建时即设置 tombstoned_at，不进入 FTS 或引用索引。
-该载体的 ID 仍保留在原命令回执中，仅用于内部定位，不是可读取的公开消息。
+新请求不创建 camp_message、不推进 last_message_sequence、不发布 camp_message.sent 或消息变更通知。
+现有 camp_message_delivery 使用 source_kind 区分普通消息和续做：普通来源必须有 message_id，
+续做来源的 message_id 必须为空，授权与原 Run 来源仍由 camp_run_continuation 保存。
+新 Applied 回执 payload 为 `{threadId, deliveryId}`；已有幂等回执按原字节回放。
 
-Desktop/Web 消息列表、分页、定位、会话查找、Agent 的 thread.read（timeline/item/replyChain）、
-thread.search、history.search 和 historyHint 额外消息判断均沿既有 tombstone 规则排除这些记录。
-既有其他 system 消息不受影响；waiting Delivery 和新 Run 仍在执行区独立可见。
+Desktop/Web 消息列表、分页、定位、查找和 Agent 历史均没有新续做记录；其他系统消息和已有记录保持。
+单一 FIFO 由 Camp 的 last_delivery_sequence 分配，独立于公共消息序号。领取前照常重验原 Run 的业务输入、
+Task 和成员资格；新 Run 只领取完整原业务输入，公开边界仍取现有 last_message_sequence。
 
-队列读取仅对已具备 camp_run_continuation 来源事实的请求允许隐藏载体，
-并照常重验原 Run 的业务输入、Task 和成员资格。新 Run 只领取原业务输入；载体永不成为 RUN_INPUT。
-内部序号维持原 FIFO。新 claim 的公开边界使用仍可见的消息尾及已接受历史边界的较大值，
-避免内部载体推进新公共边界，并保持已接受边界单调。
+## 排队投影与锚点
+
+thread.runs 字段保持；queued messageCount 统计业务输入次数，续做按来源 Run 的完整输入数量计数，
+重复请求分别计数。队首预览取其首条业务输入，并沿用既有历史可见性规则；已创建 Run 的返回保持。
+Desktop Delivery 保留 continuationRequest，以首条原输入作为 messageId，并用可选 inputMessageIds
+提供完整有序输入。Run inputMessageIds、anchorMessageId、用户锚点导航和直接回复预览沿用原规则。
 
 ## 历史记录与证据
 
-按 User 最新要求，仅改变新请求；已生成的公开记录保留原样，不批量删除、隐藏或改写索引。
-不增加 migration 或 schema 版本。原事件、队列／来源外键、旧 Run、冻结 Manifest 和工具回执保留原字节。
-未领取的旧续做请求继续排队，不重新授权、不重复发布。
-模型模板、字段、预算和版本轴均不变，不清空原生会话；历史中已经实际投递的内容不能追溯撤回。
-范围与前后对照见 [r2](../versions/v1.72/model-context-change-quiet-continuation.md)。
+Migration 188 / schema 138 调整内部队列来源与序号，既有续做 Delivery 转为无消息外键的内部来源。
+已生成的公开记录不批量删除、隐藏或改写索引；原事件、旧 Run、冻结 Manifest、Runtime 输入和工具回执保留。
+未领取请求继续排队，不重新授权、不重复发布。旧 Core 拒绝新 schema。
+模型模板、字段和会话兼容版本轴保持，不清空原生会话。范围与前后对照见
+[r3](../versions/v1.72/model-context-change-quiet-continuation.md)。
