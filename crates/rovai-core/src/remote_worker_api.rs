@@ -16,8 +16,7 @@ use crate::remote_worker_registry::{
 };
 
 pub use crate::remote_worker_registry::{
-    WORKER_HEARTBEAT_ENDPOINT_PREFIX, WORKER_PAIRING_ENDPOINT,
-    WORKER_REGISTRATION_ENDPOINT,
+    WORKER_HEARTBEAT_ENDPOINT_PREFIX, WORKER_PAIRING_ENDPOINT, WORKER_REGISTRATION_ENDPOINT,
 };
 
 /// Request payload for `POST /v1/workers/register`.
@@ -126,10 +125,7 @@ impl RemoteWorkerApi {
         &mut self,
         request: WorkerRegistrationRequest,
         server_time_ms: u64,
-    ) -> Result<
-        (RegistrationApiResponse, WorkerRegistrationOutcome),
-        WorkerRegistryError,
-    > {
+    ) -> Result<(RegistrationApiResponse, WorkerRegistrationOutcome), WorkerRegistryError> {
         let worker_id = request.worker_id.clone();
         let outcome = self.registry.register(request, server_time_ms)?;
         Ok((
@@ -197,8 +193,8 @@ pub type HeartbeatApiResponse = WorkerHeartbeatAck;
 mod tests {
     use super::*;
     use crate::remote_worker::{
-        AgentCapability, WorkspaceCapability, WorkerCapabilities,
-        WorkerStatus, REMOTE_WORKER_PROTOCOL_VERSION,
+        AgentCapability, WorkerCapabilities, WorkerStatus, WorkspaceCapability,
+        REMOTE_WORKER_PROTOCOL_VERSION,
     };
 
     fn registration() -> WorkerRegistration {
@@ -281,13 +277,9 @@ mod tests {
     #[test]
     fn registration_exposes_new_vs_idempotent_outcome() {
         let mut api = RemoteWorkerApi::default();
-        let first = api
-            .register_with_outcome(registration(), 100)
-            .unwrap();
+        let first = api.register_with_outcome(registration(), 100).unwrap();
         assert_eq!(first.1, WorkerRegistrationOutcome::Registered);
-        let retry = api
-            .register_with_outcome(registration(), 101)
-            .unwrap();
+        let retry = api.register_with_outcome(registration(), 101).unwrap();
         assert_eq!(retry.1, WorkerRegistrationOutcome::AlreadyRegistered);
     }
 }
