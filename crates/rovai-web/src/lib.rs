@@ -7,6 +7,7 @@ mod operations;
 mod resources;
 mod updates;
 mod uploads;
+mod workers;
 mod workspaces;
 pub use updates::{UpdateFuture, UpdateHost, UpdateRequest};
 
@@ -61,6 +62,11 @@ struct WebState {
     requests: Arc<Semaphore>,
     uploads: Arc<Semaphore>,
     files: Arc<resources::Handles>,
+    // M2's HTTP adapter deliberately reuses the existing authenticated web
+    // session boundary.  Worker machine credentials/pairing are not yet a
+    // web concern; keeping this state behind the session-authenticated routes
+    // avoids introducing an anonymous registration endpoint.
+    worker_api: Arc<tokio::sync::Mutex<rovai_core::remote_worker_api::RemoteWorkerApi>>,
 }
 
 /// Owns only a network listener and its credentials. Stopping or dropping it
@@ -141,6 +147,9 @@ impl WebServer {
             requests: Arc::new(Semaphore::new(64)),
             uploads: Arc::new(Semaphore::new(4)),
             files: Arc::new(resources::Handles::default()),
+            worker_api: Arc::new(tokio::sync::Mutex::new(
+                rovai_core::remote_worker_api::RemoteWorkerApi::default(),
+            )),
         };
         sessions.enable();
         let app = routes(state);
@@ -229,6 +238,12 @@ fn routes(state: WebState) -> Router {
         .route("/files", post(resources::files))
         .route("/files/bytes", post(resources::binary))
         .route("/attachments", post(resources::attachment))
+        // These routes are intentionally nested in the same middleware layer
+        // as every other business API.  Until machine credential pairing is
+        // implemented, only an authenticated Host session may use this
+        // internal transport adapter.
+        .route("/workers/register", post(workers::register))
+        .route("/workers/{worker_id}/heartbeat", post(workers::heartbeat))
         .route_layer(middleware::from_fn_with_state(state.clone(), authenticate));
     Router::new()
         .nest("/api/v1", api)
