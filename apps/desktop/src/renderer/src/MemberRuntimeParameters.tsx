@@ -449,6 +449,7 @@ function ModelFields({
     : null
   const targetKey = dshOptionReadKey(identity, draft.model)
   const [optionRead, setOptionRead] = useState<{ key: string; status: 'loading' | 'ready' | 'failed' } | null>(null)
+  const [optionLoadingKey, setOptionLoadingKey] = useState<string | null>(null)
   const [optionRetry, setOptionRetry] = useState(0)
   const pendingModelSwitch = useRef<{ key: string; model: string } | null>(null)
   const latest = useRef({ draft, onChange, onOpenModelCatalog, selectedModel })
@@ -460,6 +461,8 @@ function ModelFields({
     if (disabled) pendingModelSwitch.current = null
     if (!isDsh || draft.model.mode !== 'explicit' || disabled || !pageActive) return
     let active = true
+    let loadingTimer: ReturnType<typeof setTimeout> | undefined
+    setOptionLoadingKey(null)
     const target = { modelId: draft.model.modelId, dshSource: draft.model.dshSource }
     const accept = (model: ModelDescriptor): void => {
       if (!active) return
@@ -500,6 +503,8 @@ function ModelFields({
         accept(cachedModel)
         return
       }
+      // Fast cache hits never flash a loading indicator; only the actual read can show one.
+      loadingTimer = setTimeout(() => { if (active) setOptionLoadingKey(targetKey) }, 240)
       const catalog = await read(target)
       if (!active) return
       const model = publish(catalog)
@@ -508,8 +513,11 @@ function ModelFields({
       accept(model)
     }).catch(() => {
       if (active) setOptionRead({ key: targetKey, status: 'failed' })
+    }).finally(() => {
+      clearTimeout(loadingTimer)
+      if (active) setOptionLoadingKey(null)
     })
-    return () => { active = false }
+    return () => { active = false; clearTimeout(loadingTimer) }
   }, [isDsh, targetKey, installation.modelCatalog.observedAt, optionRetry, disabled, pageActive])
 
   useEffect(() => {
@@ -565,6 +573,8 @@ function ModelFields({
           value={optionValue}
           disabled={disabled}
           onChange={setOption}
+          loadingLabel={isDsh && pageActive && !disabled && readStatus === 'loading' && optionLoadingKey === targetKey
+            ? uiAttribute('正在读取可选思考强度，当前选择仍可保存') : undefined}
           defaultChoice={{ value: '', label: isDsh ? uiAttribute('模型默认') : uiAttribute("跟随模型默认值") }}
           choices={[
             ...(optionInvalid ? [{ value: optionValue, label: optionsKnown
