@@ -13,23 +13,30 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use rovai_core::remote_worker_api::{WorkerHeartbeatRequest, WorkerRegistrationRequest};
+use rovai_core::remote_worker::{RemoteTaskRequest, WorkerEnvelope};
+use rovai_core::remote_worker_api::{
+    WorkerHeartbeatRequest, WorkerPollRequest, WorkerRegistrationRequest, WorkerTaskAckRequest,
+};
 use rovai_core::remote_worker_registry::WorkerRegistryError;
-use serde_json::json;
+use serde_json::{Value, json};
 
 fn registry_error(error: WorkerRegistryError) -> Response {
     let status = match error {
         WorkerRegistryError::InvalidRegistration(_)
         | WorkerRegistryError::InvalidHeartbeat(_)
         | WorkerRegistryError::InvalidTask(_)
+        | WorkerRegistryError::InvalidEvent(_)
         | WorkerRegistryError::UnknownAgent
         | WorkerRegistryError::UnknownWorkspace
         | WorkerRegistryError::WorkspaceReadOnly => StatusCode::UNPROCESSABLE_ENTITY,
         WorkerRegistryError::WorkerNotFound => StatusCode::NOT_FOUND,
+        WorkerRegistryError::WorkerOffline => StatusCode::CONFLICT,
         WorkerRegistryError::WorkerAlreadyRegistered
         | WorkerRegistryError::RegistrationNonceMismatch
         | WorkerRegistryError::WorkerIdMismatch
-        | WorkerRegistryError::HeartbeatOutOfOrder => StatusCode::CONFLICT,
+        | WorkerRegistryError::HeartbeatOutOfOrder
+        | WorkerRegistryError::EventOutOfOrder => StatusCode::CONFLICT,
+        WorkerRegistryError::TaskNotFound => StatusCode::NOT_FOUND,
     };
     (status, Json(json!({"error": {"code": error.to_string()}}))).into_response()
 }
@@ -73,6 +80,83 @@ pub(crate) async fn heartbeat(
     };
     let mut api = state.worker_api.lock().await;
     match api.heartbeat(&worker_id, body) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => registry_error(error),
+    }
+}
+
+/// Queue a task for a registered Worker.  The Core API performs capability,
+/// workspace, permission and queue-capacity validation before admitting it.
+pub(crate) async fn dispatch(
+    State(state): State<WebState>,
+    body: Result<Json<RemoteTaskRequest>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    let Ok(Json(body)) = body else {
+        return error(StatusCode::BAD_REQUEST, "invalid_worker_task");
+    };
+    let mut api = state.worker_api.lock().await;
+    match api.dispatch_task(body) {
+        Ok(outcome) => Json(json!({
+            "accepted": true,
+            "outcome": match outcome {
+                rovai_core::remote_worker_api::WorkerTaskQueueOutcome::Queued => "queued",
+                rovai_core::remote_worker_api::WorkerTaskQueueOutcome::AlreadyQueued => "already_queued",
+                rovai_core::remote_worker_api::WorkerTaskQueueOutcome::AlreadyLeased => "already_leased",
+            }
+        }))
+        .into_response(),
+        Err(error) => registry_error(error),
+    }
+}
+
+/// Lease pending tasks for a Worker.  Leases remain in Core until acked.
+pub(crate) async fn poll(
+    State(state): State<WebState>,
+    Path(worker_id): Path<String>,
+    body: Result<Json<WorkerPollRequest>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    let Ok(Json(body)) = body else {
+        return error(StatusCode::BAD_REQUEST, "invalid_worker_poll");
+    };
+    let mut api = state.worker_api.lock().await;
+    match api.poll_tasks(&worker_id, body.limit) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => registry_error(error),
+    }
+}
+
+/// Acknowledge a previously leased task.  The path and body Worker IDs are
+/// compared before any state change, preventing cross-Worker acknowledgements.
+pub(crate) async fn acknowledge(
+    State(state): State<WebState>,
+    Path((worker_id, task_id)): Path<(String, String)>,
+    body: Result<Json<WorkerTaskAckRequest>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    let Ok(Json(mut body)) = body else {
+        return error(StatusCode::BAD_REQUEST, "invalid_worker_task_ack");
+    };
+    if body.task_id != task_id {
+        return registry_error(WorkerRegistryError::InvalidTask("task_id_mismatch"));
+    }
+    let mut api = state.worker_api.lock().await;
+    match api.acknowledge_task(&worker_id, body) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => registry_error(error),
+    }
+}
+
+/// Accept a strictly ordered Worker event.  M3 stores bounded envelopes for a
+/// later Core projector; it never executes an event's payload as a command.
+pub(crate) async fn event(
+    State(state): State<WebState>,
+    Path(worker_id): Path<String>,
+    body: Result<Json<WorkerEnvelope<Value>>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    let Ok(Json(body)) = body else {
+        return error(StatusCode::BAD_REQUEST, "invalid_worker_event");
+    };
+    let mut api = state.worker_api.lock().await;
+    match api.accept_event(&worker_id, body) {
         Ok(response) => Json(response).into_response(),
         Err(error) => registry_error(error),
     }
