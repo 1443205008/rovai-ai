@@ -112,7 +112,9 @@ impl WorkerRegistry {
 
     pub fn from_snapshot(snapshot: WorkerRegistrySnapshot) -> Result<Self, WorkerRegistryError> {
         if snapshot.protocol_version != REMOTE_WORKER_PROTOCOL_VERSION {
-            return Err(WorkerRegistryError::InvalidRegistration("protocol_incompatible"));
+            return Err(WorkerRegistryError::InvalidRegistration(
+                "protocol_incompatible",
+            ));
         }
 
         let mut workers = BTreeMap::new();
@@ -129,19 +131,25 @@ impl WorkerRegistry {
                     "registry_timestamp_out_of_order",
                 ));
             }
-            validate_heartbeat_for_record(&record.registration.worker_id, &record.registration, &WorkerHeartbeat {
-                worker_id: record.registration.worker_id.clone(),
-                status: record.status.clone(),
-                running_task_ids: record.running_task_ids.clone(),
-                load_percent: record.load_percent,
-                observed_at_ms: record.last_heartbeat_at_ms,
-            })
+            validate_heartbeat_for_record(
+                &record.registration.worker_id,
+                &record.registration,
+                &WorkerHeartbeat {
+                    worker_id: record.registration.worker_id.clone(),
+                    status: record.status.clone(),
+                    running_task_ids: record.running_task_ids.clone(),
+                    load_percent: record.load_percent,
+                    observed_at_ms: record.last_heartbeat_at_ms,
+                },
+            )
             .map_err(WorkerRegistryError::InvalidHeartbeat)?;
             if workers
                 .insert(record.registration.worker_id.clone(), record)
                 .is_some()
             {
-                return Err(WorkerRegistryError::InvalidRegistration("duplicate_worker_id"));
+                return Err(WorkerRegistryError::InvalidRegistration(
+                    "duplicate_worker_id",
+                ));
             }
         }
         Ok(Self { workers })
@@ -181,8 +189,7 @@ impl WorkerRegistry {
         registration: WorkerRegistration,
         registered_at_ms: u64,
     ) -> Result<WorkerRegistrationOutcome, WorkerRegistryError> {
-        validate_registration(&registration)
-            .map_err(WorkerRegistryError::InvalidRegistration)?;
+        validate_registration(&registration).map_err(WorkerRegistryError::InvalidRegistration)?;
         if registered_at_ms == 0 {
             return Err(WorkerRegistryError::InvalidRegistration(
                 "registration_timestamp_required",
@@ -345,7 +352,7 @@ fn validate_heartbeat_for_record(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::remote_worker::{AgentCapability, WorkspaceCapability, WorkerCapabilities};
+    use crate::remote_worker::{AgentCapability, WorkerCapabilities, WorkspaceCapability};
 
     fn registration(nonce: &str) -> WorkerRegistration {
         WorkerRegistration {
@@ -436,7 +443,10 @@ mod tests {
         let mut registry = WorkerRegistry::new();
         registry.register(registration("nonce"), 100).unwrap();
         assert_eq!(registry.expire_stale(1_000, 100), vec!["worker-1"]);
-        assert_eq!(registry.get("worker-1").unwrap().status, WorkerStatus::Offline);
+        assert_eq!(
+            registry.get("worker-1").unwrap().status,
+            WorkerStatus::Offline
+        );
         let snapshot = registry.snapshot();
         let restored = WorkerRegistry::from_snapshot(snapshot).unwrap();
         assert_eq!(restored, registry);
