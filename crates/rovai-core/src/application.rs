@@ -314,6 +314,9 @@ use tokio::{
 };
 
 const RUNTIME_CANCELLATION_INTERRUPT_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(windows)]
+const RUNTIME_CANCELLATION_TOTAL_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(not(windows))]
 const RUNTIME_CANCELLATION_TOTAL_TIMEOUT: Duration = Duration::from_secs(3);
 const RUNTIME_CANCELLATION_INGRESS_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 const PLANNED_SHUTDOWN_PROTOCOL_VERSION: u32 = 3;
@@ -12028,6 +12031,12 @@ impl Core {
         match pending_cleanup {
             Ok(Some(requested_at)) => {
                 self.agent_run_cancellation_notify.notify_one();
+                if cfg!(windows) {
+                    // Preserve the queued request while the scoped Job cleanup
+                    // worker retries. Its ACK wakes this scheduler directly.
+                    self.defer_non_batch_dispatch(Duration::from_secs(1)).await;
+                    return;
+                }
                 let expired =
                     chrono::DateTime::parse_from_rfc3339(&requested_at).map_or(true, |at| {
                         chrono::Utc::now()
@@ -12742,6 +12751,10 @@ impl Core {
             .await;
         if fence == RuntimeCancellationIngressFence::Unproven {
             // Rotate retries without changing business state or its version.
+            eprintln!(
+                "Runtime cleanup is unconfirmed for run={} epoch={} adapter={}; retrying locally",
+                candidate.agent_run_id, candidate.execution_epoch, candidate.adapter_kind
+            );
             let database = self.database.lock().await;
             let _ = ExecutionRuntimeService::default().defer_runtime_cleanup(
                 &database,
@@ -15714,6 +15727,7 @@ impl Core {
                 MissingSendRecoveryBoundary::ClaudeSuccessResult,
                 result.final_output.clone(),
             ),
+            !result.cleanup_confirmed,
             output,
         )
         .await
@@ -15893,6 +15907,7 @@ impl Core {
         native_turn_id: &str,
         final_output: &str,
         missing_send_recovery_candidate: &MissingSendRecoveryCandidate,
+        cleanup_required: bool,
         output: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         if let Err(error) = flush_runtime_monitoring_run(
@@ -15988,13 +16003,21 @@ impl Core {
             let terminal = {
                 let mut database = self.database.lock().await;
                 let service = ExecutionRuntimeService::default();
-                match terminal_admission.planned_permit() {
-                    Some(permit) => service.succeed_agent_run_during_planned_shutdown(
+                if cleanup_required {
+                    service.succeed_agent_run_requiring_cleanup(
                         &mut database,
-                        permit,
                         &terminal_envelope,
-                    ),
-                    None => service.succeed_agent_run(&mut database, &terminal_envelope),
+                        terminal_admission.planned_permit(),
+                    )
+                } else {
+                    match terminal_admission.planned_permit() {
+                        Some(permit) => service.succeed_agent_run_during_planned_shutdown(
+                            &mut database,
+                            permit,
+                            &terminal_envelope,
+                        ),
+                        None => service.succeed_agent_run(&mut database, &terminal_envelope),
+                    }
                 }
             }?;
             if terminal.result.status != CommandResultStatus::Rejected {
@@ -16019,6 +16042,9 @@ impl Core {
                 );
                 self.delivery_batch_scheduler_notify.notify_one();
                 self.execution_wake.runs.notify_one();
+                if cleanup_required {
+                    self.agent_run_cancellation_notify.notify_one();
+                }
                 self.reconcile_skill_projection_after_run_terminal(
                     &current.workspace.execution_root,
                 )
@@ -16545,6 +16571,7 @@ impl Core {
                 MissingSendRecoveryBoundary::AntigravityPrintStdout,
                 result.final_output.clone(),
             ),
+            false,
             output,
         )
         .await
@@ -17095,7 +17122,13 @@ impl Core {
                     ending_git_observation,
                 },
             };
-            if runtime_terminal_observed {
+            if runtime_terminal_observed
+                && error
+                    .downcast_ref::<claude::ClaudeCodeCleanupPending>()
+                    .is_some()
+            {
+                service.fail_agent_run_requiring_cleanup(&mut database, &envelope)
+            } else if runtime_terminal_observed {
                 service.fail_agent_run(&mut database, &envelope)
             } else {
                 service.fail_agent_run_without_runtime_terminal(&mut database, &envelope)
@@ -17166,6 +17199,7 @@ impl Core {
                     .claude_code_cli
                     .interrupt(&execution.agent_run_id, execution.execution_epoch)
                     .await;
+                self.agent_run_cancellation_notify.notify_one();
             }
         }
         if failure_persisted {

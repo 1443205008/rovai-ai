@@ -425,3 +425,26 @@ User 确认交互稿及模型仍读取 `@名字` 文字后，授权实现、创�
 重解析 @文字或查询当前 Lead/队伍会改变历史目标；把切换绑到 Session 会扩大升级、轮换与上下文成本。
 本次均不采用。代价是保留旧 Run formatter 与旧回执的封闭输出分支，并在既有数据库约束中准入新版本；
 不建设第二套名称、预算或格式协商机制。
+
+<a id="v1-72-d20"></a>
+## V1.72-D20：Windows 以当前 Job 活跃数归零解除后继执行门禁
+
+- 状态：accepted
+- 日期：2026-10-09
+- 当前权威：[Managed Runtime Process v2](../../contracts/managed-runtime-process-v2.md#4-ownership-and-termination)、[Windows Desktop Platform](../../architecture/windows-desktop-platform.md#3-managed-processes-and-shutdown)、[Cancellation Settlement v2](../../contracts/cancellation-settlement-v2.md#后续执行与清理)、[Camp 会话工作区](../../ui/components/conversation-workspace.md#public-camp-v160-当前边界)
+
+### 背景与选择
+
+非队长 Claude 完成后，Windows 收尾曾要求 Job 的生命周期累计成员数、完成端口通知和逐成员退出句柄
+全部吻合。普通 Job 通知可能丢失；现场可出现 `ActiveProcesses=0` 而累计 91、通知 90 的状态，
+使已完成 Run 的下一条 Delivery 长期 waiting，直到重启。现改为本次持有的有效 Job 成功查询
+`ActiveProcesses == 0` 即完成资源收尾，提交 ACK 并唤醒现有调度器。用户停止和正常结束使用
+同一判据；查询失败或仍有活动成员只在一次有界预算内重试，并通过现有 worker 局部恢复。
+
+### 后果与替代方案
+
+这是可用性优先的边界：不额外等待所有历史进程对象和在途 I/O 完成；可信原生业务结果
+与 Job 清理分别结算，临时启动文件删除错误不延迟后继执行。保留原子 Job 所有权、
+`KILL_ON_JOB_CLOSE`、精确 Run/epoch 持久回执和会话恢复规则。
+未保留累计计数与通知对账，也未改用 PID 枚举或逐进程句柄补扫；前者依赖不保证送达的消息，
+后两者重新引入历史身份与等待门禁。macOS、Linux 进程管理不随此决定改变。
