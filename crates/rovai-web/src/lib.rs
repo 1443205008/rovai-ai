@@ -244,6 +244,13 @@ fn routes(state: WebState) -> Router {
         // internal transport adapter.
         .route("/workers/register", post(workers::register))
         .route("/workers/{worker_id}/heartbeat", post(workers::heartbeat))
+        .route("/workers/tasks", post(workers::dispatch))
+        .route("/workers/{worker_id}/poll", post(workers::poll))
+        .route(
+            "/workers/{worker_id}/tasks/{task_id}/ack",
+            post(workers::acknowledge),
+        )
+        .route("/workers/{worker_id}/events", post(workers::event))
         .route_layer(middleware::from_fn_with_state(state.clone(), authenticate));
     Router::new()
         .nest("/api/v1", api)
