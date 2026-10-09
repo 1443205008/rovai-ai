@@ -1536,6 +1536,16 @@ impl AcpHost {
         });
         Self::spawn_stdout_reader(host.clone(), stdout);
         Self::spawn_stderr_reader(host.clone(), stderr);
+        if host.adapter_kind == AdapterKind::DeepseekHarness {
+            let root = host
+                .private_config_root
+                .as_deref()
+                .context("DSH private configuration missing")?;
+            if let Err(error) = crate::dsh::await_model_preparation(root).await {
+                host.shutdown().await;
+                return Err(error);
+            }
+        }
         let mut initialize_params = json!({
             "protocolVersion": 1,
             "clientCapabilities": {
@@ -3854,6 +3864,21 @@ impl AcpRuntime {
             }
         }
         if model_source == "explicit" {
+            if self.host.adapter_kind == AdapterKind::DeepseekHarness {
+                let root = self
+                    .host
+                    .private_config_root
+                    .as_deref()
+                    .context("DSH private configuration missing")?;
+                let prepared = crate::dsh::await_model_preparation(root).await?;
+                if !crate::dsh::selected_route_available(&prepared, model) {
+                    return Err(anyhow::Error::new(AcpLiveModelValidationError {
+                        code: "runtime_model_unavailable",
+                        model_id: model.to_string(),
+                        detail: "DSH Web Provider 配置不可用；未切换到同名原生路由".to_string(),
+                    }));
+                }
+            }
             let session_result = session_result.as_ref().ok_or_else(|| {
                 anyhow::Error::new(AcpLiveModelValidationError {
                     code: "runtime_model_catalog_unavailable",

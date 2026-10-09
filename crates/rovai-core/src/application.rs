@@ -4432,11 +4432,18 @@ impl Core {
             return Ok(Some(RuntimeCheckOutcome::Superseded));
         }
         match catalog {
-            Ok(models) => {
+            Ok(catalog) => {
+                if catalog
+                    .dsh_preparation
+                    .as_ref()
+                    .is_some_and(|prepared| !crate::dsh::model_inputs_unchanged(prepared))
+                {
+                    return Ok(Some(RuntimeCheckOutcome::Superseded));
+                }
                 let committed = service.commit_runtime_model_catalog(
                     &mut database,
                     &installation,
-                    &models,
+                    &catalog.models,
                     &chrono::Utc::now().to_rfc3339(),
                 )?;
                 Ok(Some(if committed {

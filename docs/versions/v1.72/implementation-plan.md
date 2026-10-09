@@ -1244,3 +1244,34 @@ Stop 场景中取消命令在两次实测中分别用时 26 和 23 毫秒，第�
 `claude-final-normal-report.json` 与 `claude-final-stop-report.json`（另保留先前构建的对照报告）。
 这两次真实模型试验使用环境现有的 `bypassPermissions` 默认值；修复没有改变权限配置。
 Windows 11、打包版和其他模型／权限模式尚未在本机验收，Job 查询持续失败需在现场诊断中观察。
+
+
+<a id="dsh-native-web-models"></a>
+### 2026-10-09：DSH 原生 ACP 与 Web 模型配置兼容
+
+范围收敛为一个模型准备入口，最低支持仍为 `0.1.5-rc.2`。迁移归 DSH，术语统一为
+“DSH 原生迁移期间的 Patch 隔离”。普通 Web 的 llm-pi-ai 模型可受控补充，原生模型和权限、
+Bootstrap、Session/Fleet 主路径保留；不建设配置平台、迁移数据库或持久化来源账本。
+
+Probe 与 Host 注入相同插件，在原生初始化后准备完整配置并原位应用到 Loader 的内存 entry。
+私有结果只含来源 ID、诊断、摘要与文件指纹；目录来自 ACP。变化检测覆盖 Web 模型设置，
+发布前检查过期结果，失败时保留原生能力，显式失败选择不切换同名路由。
+
+测试延伸既有 `dsh::tests`、`grouped_acp_models_keep_opaque_provider_routes_and_reject_empty_catalogs`
+与 `scripts/lib/dsh-host.test.mjs` owner。Rust settings 转换的 Provider/Model 显式 true/false/null、
+其他协议与空配置断言移到实际 JS 转换 owner；Rust 继续拥有命令私密性、文件不变、权限与摘要。
+没有删除、合并或禁用 Rust owner。新增 JS owner 分别拥有 Provider 冲突、兼容默认与原生异步导入完成。
+
+| 验收 | 证据与边界 |
+| --- | --- |
+| 最低版与旧共享版 | `smoke-dsh-model-configuration.mjs` 在 `0.1.5-rc.2`、`0.1.5-rc.3` 各完成 3 次本地 HTTP 请求，原路由、Provider/Model 显式兼容参数通过；旧版不等待迁移 |
+| Profile 版补充 | `0.2.1-alpha.1` 普通 Web-only、原生冲突保留、不同 Provider 同名模型、坏 Web、补充拒绝、迁移后删除 Web、先 Web 后 ACP 等原生进程场景通过；端点、凭据与 strict 在接收端核验 |
+| Core 主链 | `smoke-dsh-responses-tools.mjs` 检查、实际 Host、两轮工具调用/结果完成，包含缺省 strict、Provider/Model 显式关闭及原生参数拒绝；使用独立 data-dir、Skill Library、DSH Home 和本地服务 |
+| 真实中转 | 仅一次模型请求：隔离复制当前 Web 的 `sub2api / gpt-6.1-sol`，原生选模后返回 `OK`；没有改动日常配置，不推广为其他中转站或所有模型资格 |
+| 单元与命令 | 默认 workspace 通过；DSH 与 grouped ACP 定向 owner、JS 模型准备及 Bootstrap owner 通过 |
+| 限制 | 其他真实中转服务、Windows/Linux 实机与 Renderer 点击不由本轮本地 HTTP 证据代替；不存在模型质量或所有 Web 专用插件可复用的承诺 |
+
+可重复入口：`node scripts/smoke-dsh-model-configuration.mjs <DSH 安装包目录>`；
+`node scripts/smoke-dsh-responses-tools.mjs`，或设置 `ROVAI_DSH_SMOKE_SOURCE=web` 验证 Web-only。
+后者需先构建当前 worktree 的 Core/CLI；`ROVAI_DEEPSEEK_HARNESS_BIN` 可指定隔离安装的原生 DSH。
+所有夹具只使用合成凭据，结束时回收自身进程与目录，日常 App 与 DSH 配置不参与。
