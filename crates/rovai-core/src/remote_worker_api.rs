@@ -10,9 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::remote_worker::{WorkerHeartbeat, WorkerRegistration};
 use crate::remote_worker_registry::{
-    WorkerHeartbeatAck, WorkerRecord, WorkerRegistrationOutcome, WorkerRegistrationResponse,
-    WorkerRegistry, WorkerRegistryError, DEFAULT_HEARTBEAT_INTERVAL_MS,
-    DEFAULT_HEARTBEAT_TIMEOUT_MS,
+    DEFAULT_HEARTBEAT_INTERVAL_MS, DEFAULT_HEARTBEAT_TIMEOUT_MS, WorkerHeartbeatAck, WorkerRecord,
+    WorkerRegistrationOutcome, WorkerRegistrationResponse, WorkerRegistry, WorkerRegistryError,
 };
 
 pub use crate::remote_worker_registry::{
@@ -193,8 +192,8 @@ pub type HeartbeatApiResponse = WorkerHeartbeatAck;
 mod tests {
     use super::*;
     use crate::remote_worker::{
-        AgentCapability, WorkerCapabilities, WorkerStatus, WorkspaceCapability,
-        REMOTE_WORKER_PROTOCOL_VERSION,
+        AgentCapability, REMOTE_WORKER_PROTOCOL_VERSION, WorkerCapabilities, WorkerStatus,
+        WorkspaceCapability,
     };
 
     fn registration() -> WorkerRegistration {
