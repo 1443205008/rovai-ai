@@ -2830,6 +2830,7 @@ mod tests {
                 capabilities: vec!["cli.print".to_string()],
                 protocol_version: "claude-code-cli-v1".to_string(),
                 model: ResolvedModelSelection {
+                    dsh_source: None,
                     source: "runtime_default".to_string(),
                     model_id: CLAUDE_CODE_RUNTIME_DEFAULT_MODEL_ID.to_string(),
                     options: json!({}),

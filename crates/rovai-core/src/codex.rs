@@ -2307,6 +2307,7 @@ mod tests {
             capabilities: vec!["codex.app_server_v2".to_string()],
             protocol_version: "codex-app-server-v2".to_string(),
             model: rovai_core::agent_profile::ResolvedModelSelection {
+                dsh_source: None,
                 source: "explicit".to_string(),
                 model_id: "gpt-test".to_string(),
                 options: json!({"reasoning_effort": "medium"}),
@@ -3092,6 +3093,7 @@ for line in sys.stdin:
             capabilities: vec!["codex.app_server_v2".to_string()],
             protocol_version: "codex-app-server-v2".to_string(),
             model: rovai_core::agent_profile::ResolvedModelSelection {
+                dsh_source: None,
                 source: "runtime_default".to_string(),
                 model_id: "default".to_string(),
                 options: json!({}),

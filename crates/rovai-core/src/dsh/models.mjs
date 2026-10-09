@@ -134,17 +134,17 @@ export function prepareModels(native, web, explicit, diagnostics, builtin = new 
   const rejectedProviders = []
   if (web !== undefined && !record(web)) diagnostics.push({ code: 'web_model_configuration_opaque' })
   for (const [id, source] of Object.entries(record(web) ? web : {})) {
-    if (!record(source)) {
-      diagnostics.push({ code: 'web_provider_configuration_opaque', provider: id })
-      rejectedProviders.push(id)
-      continue
-    }
     if (own(providers, id) && explicit.has(id)) {
       if (!isDeepStrictEqual(providers[id], source)) diagnostics.push({ code: 'native_provider_preferred', provider: id })
       continue
     }
     if (own(providers, id) && (!builtin.has(id) || !record(providers[id]))) {
       diagnostics.push({ code: 'native_provider_source_unknown', provider: id })
+      continue
+    }
+    if (!record(source)) {
+      diagnostics.push({ code: 'web_provider_configuration_opaque', provider: id })
+      rejectedProviders.push(id)
       continue
     }
     if (isDeepStrictEqual(providers[id], source)) continue
@@ -181,7 +181,6 @@ async function prepare(ctx, settings, profile, diagnostics) {
   const effective = descriptor(settings)?.value ?? original
   const baseline = withResponsesDefaults(original, effective)
   let prepared = { config: baseline, webProviders: [], rejectedProviders: [] }
-  let nativeProviders = Object.keys(original.providers ?? {})
   let webUnavailable = false
   let inspectingWeb = false
   try {
@@ -203,7 +202,6 @@ async function prepare(ctx, settings, profile, diagnostics) {
     const builtin = explicitProviders(nativeProfile.layers.filter(layer =>
       ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-acp-app'].includes(layer.packageName)).flatMap(layer => layer.patches))
     for (const id of Object.keys(descriptor(settings)?.user?.providers ?? {})) explicit.add(id)
-    nativeProviders = [...explicit]
     // Shared settings are still applied by old native plugins, above composition.
     // Represent these routes only for conflict decisions, never replace that layer.
     const nativeRoutes = { ...original.providers }
@@ -281,7 +279,7 @@ async function prepare(ctx, settings, profile, diagnostics) {
     if (prepared.rejectedProviders.length) diagnostics.push({ code: 'web_supplement_rejected' })
   }
   return { webProviders: prepared.webProviders, rejectedProviders: prepared.rejectedProviders,
-    nativeProviders, webUnavailable, modelDigest: digest(prepared.config) }
+    webUnavailable, modelDigest: digest(prepared.config) }
 }
 
 export function apply(ctx, config) {

@@ -1899,7 +1899,11 @@ async fn run_acp_probe_with_scope(
         let (stdin, lines) = process.split_io()?;
         let exchange = async {
             let model_preparation = if kind == AdapterKind::DeepseekHarness {
-                Some(crate::dsh::await_model_preparation(&probe_root).await?)
+                let prepared = crate::dsh::await_model_preparation(&probe_root).await?;
+                if !crate::dsh::model_inputs_unchanged(&prepared) {
+                    bail!("dsh_model_configuration_changed_during_preparation");
+                }
+                Some(prepared)
             } else {
                 None
             };

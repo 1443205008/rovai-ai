@@ -6,10 +6,13 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
 use tokio::process::Command;
 
-use crate::{agent_profile::AdapterKind, command::canonical_json_digest};
+use crate::{
+    agent_profile::{AdapterKind, DshModelSource},
+    command::canonical_json_digest,
+};
 
 pub const MINIMUM_VERSION: &str = "0.1.5-rc.2";
-pub const BOOTSTRAP_REVISION: &str = "dsh-native-web-models-v5";
+pub const BOOTSTRAP_REVISION: &str = "dsh-native-web-models-v6";
 const BOOTSTRAP_PLUGIN: &str = include_str!("dsh/bootstrap.mjs");
 const MODEL_PLUGIN: &str = include_str!("dsh/models.mjs");
 const MAX_OBSERVED_FILE_CONTENT_BYTES: usize = 2 * 1024 * 1024;
@@ -139,9 +142,6 @@ pub async fn await_model_preparation(root: &Path) -> Result<Value> {
                     {
                         bail!("dsh_model_preparation_failed");
                     }
-                    if !model_inputs_unchanged(&result) {
-                        bail!("dsh_model_configuration_changed_during_preparation");
-                    }
                     return Ok(result);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -184,19 +184,34 @@ pub fn model_provider(model: &str) -> Option<String> {
     (identity.len() == 2).then(|| identity[0].clone())
 }
 
-pub fn selected_route_available(result: &Value, model: &str) -> bool {
-    let Some(provider) = model_provider(model) else {
-        return true;
-    };
-    let contains = |field: &str| {
-        result[field]
+pub fn model_source(result: &Value, model: &str) -> DshModelSource {
+    if model_provider(model).is_some_and(|provider| {
+        result["webProviders"]
             .as_array()
             .is_some_and(|ids| ids.iter().any(|id| id == &provider))
-    };
-    !contains("rejectedProviders")
-        && (result["webUnavailable"] != true
-            || contains("nativeProviders")
-            || contains("webProviders"))
+    }) {
+        DshModelSource::Web
+    } else {
+        DshModelSource::Native
+    }
+}
+
+pub fn selected_route_available(
+    result: &Value,
+    model: &str,
+    selected: Option<DshModelSource>,
+) -> bool {
+    // Selections predating Web supplementation retain native semantics. New Web
+    // selections carry their source through the existing member/frozen JSON.
+    // A failed supplement says nothing about unrelated native plugin routes.
+    let selected = selected.unwrap_or(DshModelSource::Native);
+    model_source(result, model) == selected
+        && (selected != DshModelSource::Web
+            || model_provider(model).is_some_and(|provider| {
+                !result["rejectedProviders"]
+                    .as_array()
+                    .is_some_and(|ids| ids.iter().any(|id| id == &provider))
+            }))
 }
 
 pub fn preparation_diagnostic(result: &Value) -> Option<&'static str> {
@@ -548,8 +563,8 @@ fn private_file(path: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn dsh_native_configuration_fences_profile_and_credentials() {
+    #[tokio::test]
+    async fn dsh_native_configuration_fences_profile_and_credentials() {
         let root = std::env::temp_dir().join(format!("rovai-dsh-config-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("profiles/acp")).unwrap();
         fs::create_dir_all(root.join("profiles/web")).unwrap();
@@ -576,9 +591,28 @@ mod tests {
         fs::write(&web, r#"[{"id":"web-ui","config":{"theme":"dark"}},{"id":"llm-pi-ai","config":{"providers":{"web":{"api":"openai-responses"}}}}]"#).unwrap();
         assert_eq!(previous, configuration_digest(&root, &root).unwrap());
         let bytes = fs::read(&web).unwrap();
-        let preparation =
-            json!({"inputs":[{"path":web,"digest":format!("{:x}",Sha256::digest(bytes))}]});
+        let preparation = json!({"schemaVersion":1,"status":"ready","inputs":[{"path":web,"digest":format!("{:x}",Sha256::digest(&bytes))}]});
         assert!(model_inputs_unchanged(&preparation));
+        fs::write(
+            root.join("models.result.json"),
+            serde_json::to_vec(&preparation).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            &web,
+            String::from_utf8(bytes).unwrap().replace("dark", "light"),
+        )
+        .unwrap();
+        assert_eq!(previous, configuration_digest(&root, &root).unwrap());
+        assert!(
+            !model_inputs_unchanged(&preparation),
+            "publication must discard an obsolete probe"
+        );
+        assert_eq!(
+            await_model_preparation(&root).await.unwrap(),
+            preparation,
+            "a compatible prepared Host reads its result without rechecking raw inputs"
+        );
         fs::write(&web, "[]").unwrap();
         assert!(!model_inputs_unchanged(&preparation));
         assert_ne!(previous, configuration_digest(&root, &root).unwrap());
@@ -798,27 +832,36 @@ mod tests {
     }
     #[test]
     fn responses_tool_defaults_preserve_native_overrides_and_private_settings() {
-        let rejected = json!({"rejectedProviders":["web"],"nativeProviders":["native"]});
+        // The same native ID is usable as a native choice, never as a failed Web choice.
+        for preparation in [
+            json!({"rejectedProviders":["web"]}),
+            json!({"webUnavailable":true,"webProviders":["known-web"]}),
+        ] {
+            for provider in ["native", "web", "other-plugin", "builtin"] {
+                let id = json!([provider, "same-model"]).to_string();
+                assert!(selected_route_available(
+                    &preparation,
+                    &id,
+                    Some(DshModelSource::Native)
+                ));
+                assert!(selected_route_available(&preparation, &id, None));
+                assert!(!selected_route_available(
+                    &preparation,
+                    &id,
+                    Some(DshModelSource::Web)
+                ));
+            }
+        }
+        let available = json!({"webProviders":["web"]});
+        assert!(selected_route_available(
+            &available,
+            r#"["web","same-model"]"#,
+            Some(DshModelSource::Web)
+        ));
         assert!(!selected_route_available(
-            &rejected,
-            r#"["web","same-model"]"#
-        ));
-        assert!(selected_route_available(
-            &rejected,
-            r#"["native","same-model"]"#
-        ));
-        let unreadable = json!({"webUnavailable":true,"nativeProviders":["native"],"webProviders":["known-web"]});
-        assert!(selected_route_available(
-            &unreadable,
-            r#"["native","same-model"]"#
-        ));
-        assert!(selected_route_available(
-            &unreadable,
-            r#"["known-web","same-model"]"#
-        ));
-        assert!(!selected_route_available(
-            &unreadable,
-            r#"["ambiguous","same-model"]"#
+            &available,
+            r#"["web","same-model"]"#,
+            Some(DshModelSource::Native)
         ));
         let root =
             std::env::temp_dir().join(format!("rovai-dsh-responses-{}", uuid::Uuid::new_v4()));

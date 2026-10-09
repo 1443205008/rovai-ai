@@ -30,6 +30,13 @@ test('DSH Web supplementation preserves whole native routes and localizes unknow
   const partial = prepareModels({ providers: {} }, { bad: opaque, good: web.extra }, new Set(), [])
   assert.deepEqual(partial.webProviders, ['good'])
   assert.deepEqual(partial.rejectedProviders, ['bad'])
+  for (const source of [opaque, null, false]) {
+    const failed = prepareModels(native, { relay: source, disabled: source, unknown: source,
+      extra: source }, new Set(['relay', 'disabled']), [])
+    assert.deepEqual(failed.config.providers, native.providers)
+    assert.deepEqual(failed.webProviders, [])
+    assert.deepEqual(failed.rejectedProviders, ['extra'], 'Web failure must not reject preserved native routes')
+  }
 })
 
 test('DSH Responses defaults preserve explicit Provider and Model compatibility parameters', () => {

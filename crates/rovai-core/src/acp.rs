@@ -1541,7 +1541,16 @@ impl AcpHost {
                 .private_config_root
                 .as_deref()
                 .context("DSH private configuration missing")?;
-            if let Err(error) = crate::dsh::await_model_preparation(root).await {
+            if let Err(error) =
+                crate::dsh::await_model_preparation(root)
+                    .await
+                    .and_then(|prepared| {
+                        if !crate::dsh::model_inputs_unchanged(&prepared) {
+                            bail!("dsh_model_configuration_changed_during_preparation");
+                        }
+                        Ok(())
+                    })
+            {
                 host.shutdown().await;
                 return Err(error);
             }
@@ -3479,6 +3488,7 @@ pub struct AcpRuntime {
     attachment_access_root: Option<PathBuf>,
     workspace_access: String,
     session_permission_mode: Option<String>,
+    dsh_model_source: Option<rovai_core::agent_profile::DshModelSource>,
     active_observation: Mutex<Option<AcpPromptObservation>>,
     native_usage: Mutex<Option<Arc<std::sync::Mutex<NativeUsageReader>>>>,
 }
@@ -3615,6 +3625,7 @@ impl AcpRuntime {
         attachment_access_root: Option<PathBuf>,
         workspace_access: String,
         session_permission_mode: Option<String>,
+        dsh_model_source: Option<rovai_core::agent_profile::DshModelSource>,
     ) -> Arc<Self> {
         Arc::new(Self {
             owner,
@@ -3627,6 +3638,7 @@ impl AcpRuntime {
             attachment_access_root,
             workspace_access,
             session_permission_mode,
+            dsh_model_source,
             active_observation: Mutex::new(None),
             native_usage: Mutex::new(None),
         })
@@ -3871,11 +3883,11 @@ impl AcpRuntime {
                     .as_deref()
                     .context("DSH private configuration missing")?;
                 let prepared = crate::dsh::await_model_preparation(root).await?;
-                if !crate::dsh::selected_route_available(&prepared, model) {
+                if !crate::dsh::selected_route_available(&prepared, model, self.dsh_model_source) {
                     return Err(anyhow::Error::new(AcpLiveModelValidationError {
                         code: "runtime_model_unavailable",
                         model_id: model.to_string(),
-                        detail: "DSH Web Provider 配置不可用；未切换到同名原生路由".to_string(),
+                        detail: "所选 DSH 模型来源不可用；未切换到同名的其他来源".to_string(),
                     }));
                 }
             }
@@ -4791,6 +4803,7 @@ impl AcpCliRuntimeAdapter {
                 "runtime_managed".to_string()
             },
             session_permission_mode,
+            frozen_runtime.model.dsh_source,
         );
         self.runtimes
             .lock()
@@ -7643,6 +7656,7 @@ mod tests {
             capabilities: Vec::new(),
             protocol_version: "acp-v1".to_string(),
             model: ResolvedModelSelection {
+                dsh_source: None,
                 source: "runtime_default".to_string(),
                 model_id: TRAE_RUNTIME_DEFAULT_MODEL_ID.to_string(),
                 options: json!({}),
@@ -7674,6 +7688,7 @@ mod tests {
             capabilities: Vec::new(),
             protocol_version: "acp-v1".to_string(),
             model: ResolvedModelSelection {
+                dsh_source: None,
                 source: "runtime_default".to_string(),
                 model_id: "kiro-cli://runtime-default".to_string(),
                 options: json!({}),
@@ -7709,6 +7724,7 @@ mod tests {
             ],
             protocol_version: "acp-v1".to_string(),
             model: ResolvedModelSelection {
+                dsh_source: None,
                 source: "runtime_default".to_string(),
                 model_id: "cursor-agent://runtime-default".to_string(),
                 options: json!({}),
@@ -7743,6 +7759,7 @@ mod tests {
             capabilities: vec!["session.load".to_string(), "session.resume".to_string()],
             protocol_version: "acp-v1".to_string(),
             model: ResolvedModelSelection {
+                dsh_source: None,
                 source: "runtime_default".to_string(),
                 model_id: "runtime_default".to_string(),
                 options: json!({}),
@@ -7774,6 +7791,7 @@ mod tests {
             capabilities: vec!["session.resume".to_string()],
             protocol_version: "acp-v1".to_string(),
             model: ResolvedModelSelection {
+                dsh_source: None,
                 source: "runtime_default".to_string(),
                 model_id: "MiniMax-M3".to_string(),
                 options: json!({}),
@@ -7979,6 +7997,7 @@ while IFS= read -r ignored; do :; done
             Some(exact_attachment_root(&root)),
             "read_only".to_string(),
             None,
+            None,
         );
         let target = outside.join("runtime-owned.txt");
         let first_write = runtime
@@ -8120,6 +8139,7 @@ while IFS= read -r ignored; do :; done
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
             Some("yolo".to_string()),
+            None,
         );
         runtime
             .start_or_resume_session(
@@ -8691,6 +8711,7 @@ done
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
             Some("default".to_string()),
+            None,
         );
         runtime
             .start_or_resume_session(
@@ -9257,6 +9278,7 @@ while IFS= read -r ignored; do :; done
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
             None,
+            None,
         );
         let session_id = runtime
             .start_or_resume_session(
@@ -9451,6 +9473,7 @@ while IFS= read -r ignored; do :; done
                 Some(exact_attachment_root(&root)),
                 "runtime_managed".to_string(),
                 None,
+                None,
             );
             runtime
                 .start_or_resume_session(
@@ -9567,6 +9590,7 @@ while IFS= read -r ignored; do :; done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
+            None,
             None,
         );
         let session_id = runtime
@@ -9703,6 +9727,7 @@ while IFS= read -r ignored; do :; done
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
             None,
+            None,
         );
 
         let session_id = runtime
@@ -9801,6 +9826,7 @@ while IFS= read -r ignored; do :; done
                 root.clone(),
                 Some(exact_attachment_root(&root)),
                 "runtime_managed".to_string(),
+                None,
                 None,
             );
 
@@ -9910,6 +9936,7 @@ while IFS= read -r ignored; do :; done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
+            None,
             None,
         );
         let session_id = runtime
@@ -10037,6 +10064,7 @@ while IFS= read -r ignored; do :; done
                 root.clone(),
                 Some(exact_attachment_root(&root)),
                 "runtime_managed".to_string(),
+                None,
                 None,
             );
             let error = runtime
@@ -10666,6 +10694,7 @@ while IFS= read -r ignored; do :; done
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
             Some("default".to_string()),
+            None,
         );
         let session_id = runtime
             .start_or_resume_session(
@@ -10833,6 +10862,7 @@ while IFS= read -r ignored; do :; done
             root.clone(),
             Some(exact_attachment_root(&root)),
             "runtime_managed".to_string(),
+            None,
             None,
         );
         let prompt_id = "prompt-final-assistant-suffix";

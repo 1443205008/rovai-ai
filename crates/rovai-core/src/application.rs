@@ -31185,6 +31185,7 @@ for line in sys.stdin:
             capabilities: vec!["codex.app_server_v2".into()],
             protocol_version: "codex-app-server-v2".into(),
             model: rovai_core::agent_profile::ResolvedModelSelection {
+                dsh_source: None,
                 source: "runtime_default".into(),
                 model_id: "default".into(),
                 options: json!({}),

@@ -1275,3 +1275,24 @@ Probe 与 Host 注入相同插件，在原生初始化后准备完整配置并�
 `node scripts/smoke-dsh-responses-tools.mjs`，或设置 `ROVAI_DSH_SMOKE_SOURCE=web` 验证 Web-only。
 后者需先构建当前 worktree 的 Core/CLI；`ROVAI_DEEPSEEK_HARNESS_BIN` 可指定隔离安装的原生 DSH。
 所有夹具只使用合成凭据，结束时回收自身进程与目录，日常 App 与 DSH 配置不参与。
+
+#### 858e8295 后的两处可用性修复
+
+先保留原生 Provider，再处理无法解析的同名 Web Provider；Web 整体故障不再用局部 nativeProviders
+集合拒绝其他原生插件。沿用目录 runtime metadata 和现有成员/冻结选择 JSON，增加可选 dshSource
+标记，区分同 ID 的原生与 Web 选择；不新增表，不改模型 ID、参数或提示词。
+目录刷新不改写已有选择。准备完成与目录发布继续检查输入，后续显式选模只读取准备结果并校验路由，
+配置更新由已有 Host 兼容性入口负责，活动 Run 与清理机制保持原行为。
+
+扩展既有 JS Provider 冲突、Rust DSH 摘要/路由、grouped ACP 目录、成员无健康证据配置/冻结及 Renderer 选择 owner：
+同名不透明 Web、显式禁用、非 pi 原生身份、同 ID 不同来源、主题变化与过期准备结果均在原矩阵中验证，
+没有新增或删除 Rust owner。新增 smoke 入口
+`node scripts/smoke-dsh-model-availability.mjs` 使用隔离 Core/DSH 与本地 Responses/Messages 接收服务，
+验证实际端点、合成凭据、来源保存与冻结、复用 Host 以及失效 Web 选择的零业务请求。
+纯配置函数无法证明这些跨 Run 行为，因此由真实进程 smoke 单独拥有。
+定向入口：`cargo test -p rovai-core --lib dsh::`；
+`cargo test -p rovai-core --features extended-tests --lib grouped_acp_models_keep_opaque_provider_routes_and_reject_empty_catalogs`；
+`cargo test -p rovai-core --features slow-tests --lib discovered_entry_configures_and_freezes_without_health_evidence`。
+目录迟到结果的共享代次门禁沿用并运行
+`cargo test -p rovai-core --features slow-tests --lib codex_catalog_waiters_share_refresh_without_satisfying_full_validation`；
+DSH 输入在准备期间变化的检查由其摘要 owner 验证，两者不互相替代。
