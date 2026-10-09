@@ -482,13 +482,13 @@ function ModelFields({
       setOptionRead({ key: targetKey, status: 'failed' })
       return () => { active = false }
     }
-    const publish = (catalog: RuntimeModelCatalogView): ModelDescriptor => {
+    const publish = (catalog: RuntimeModelCatalogView): ModelDescriptor | null => {
       if (catalog.runtimeKind !== 'deepseek-harness' || catalog.selectedModelId !== target.modelId) {
         throw new Error('Model options identity changed')
       }
-      const model = catalog.models.find((candidate) => candidate.id === target.modelId)
-      if (!model) throw new Error('Model options unavailable')
-      if (active) setLive({ identity, catalog })
+      const model = catalog.models.find((candidate) => candidate.id === target.modelId) ?? null
+      // A cache miss is not evidence that the native target is unavailable.
+      if (active && model) setLive({ identity, catalog })
       return model
     }
     // Every visit checks local configuration, even inside the freshness window.
@@ -496,14 +496,14 @@ function ModelFields({
     void read({ ...target, cacheOnly: true }).then(async (cached) => {
       if (!active) return
       const cachedModel = publish(cached)
-      if (cached.refreshStatus === 'not_required' && dshModelOptionsResolved(cachedModel, target.dshSource)) {
+      if (cachedModel && cached.refreshStatus === 'not_required' && dshModelOptionsResolved(cachedModel, target.dshSource)) {
         accept(cachedModel)
         return
       }
       const catalog = await read(target)
       if (!active) return
       const model = publish(catalog)
-      if (!['completed', 'not_required'].includes(catalog.refreshStatus)
+      if (!model || !['completed', 'not_required'].includes(catalog.refreshStatus)
         || !dshModelOptionsResolved(model, target.dshSource)) throw new Error('Model options unavailable')
       accept(model)
     }).catch(() => {
