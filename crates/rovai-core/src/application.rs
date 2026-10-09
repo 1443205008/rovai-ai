@@ -14,6 +14,7 @@ pub use transport::{
 };
 #[path = "core_subsystems.rs"]
 mod core_subsystems;
+use crate::remote_worker_bridge::WorkerWorkspaceId;
 use crate::{acp, antigravity, builtin_tool_runtime, claude, codex, health, pi, runtime_fleet};
 #[path = "runtime_check_environment.rs"]
 mod runtime_check_environment;
@@ -2342,6 +2343,169 @@ struct ClaudeInputAcceptanceTarget<'a> {
     is_new_session: bool,
 }
 
+/// The execution target selected by Core for an already-admitted AgentRun.
+///
+/// This is deliberately a typed, transport-neutral seam. A remote target
+/// carries only the Worker identity and its opaque workspace ID; callers can
+/// never pass a shell command or a machine-local filesystem path to Core.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerDispatchTarget {
+    Local,
+    Remote {
+        worker_id: String,
+        workspace_id: WorkerWorkspaceId,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerDispatchTargetError {
+    WorkerIdentityInvalid,
+    WorkspaceIdInvalid,
+}
+
+impl std::fmt::Display for WorkerDispatchTargetError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::WorkerIdentityInvalid => "worker_identity_invalid",
+            Self::WorkspaceIdInvalid => "workspace_id_invalid",
+        })
+    }
+}
+
+impl std::error::Error for WorkerDispatchTargetError {}
+
+impl WorkerDispatchTarget {
+    pub fn local() -> Self {
+        Self::Local
+    }
+
+    /// Build a remote target from opaque IDs. Workspace IDs are parsed by the
+    /// Worker bridge and reject path-like values before they reach Core.
+    pub fn remote(
+        worker_id: impl Into<String>,
+        workspace_id: &str,
+    ) -> Result<Self, WorkerDispatchTargetError> {
+        let worker_id = worker_id.into();
+        if !valid_worker_dispatch_identity(&worker_id) {
+            return Err(WorkerDispatchTargetError::WorkerIdentityInvalid);
+        }
+        let workspace_id = WorkerWorkspaceId::parse(workspace_id)
+            .map_err(|_| WorkerDispatchTargetError::WorkspaceIdInvalid)?;
+        Ok(Self::Remote {
+            worker_id,
+            workspace_id,
+        })
+    }
+
+    fn validate(&self) -> Result<(), WorkerDispatchError> {
+        match self {
+            Self::Local => Ok(()),
+            Self::Remote {
+                worker_id,
+                workspace_id,
+            } => {
+                if !valid_worker_dispatch_identity(worker_id) {
+                    return Err(WorkerDispatchError::WorkerIdentityInvalid);
+                }
+                WorkerWorkspaceId::parse(workspace_id.as_str())
+                    .map(|_| ())
+                    .map_err(|_| WorkerDispatchError::WorkspaceIdInvalid)
+            }
+        }
+    }
+}
+
+fn valid_worker_dispatch_identity(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.trim() == value
+        && value.len() <= rovai_core::remote_worker::MAX_WORKER_ID_LEN
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.chars().any(char::is_control)
+}
+
+/// Typed identity for dispatching an existing, already-claimed AgentRun.
+/// The execution workspace, frozen Runtime configuration, prompt material,
+/// and attachment authorization remain owned by Core and are never accepted
+/// from this facade.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkerDispatchRequest {
+    pub agent_run_id: String,
+    pub execution_epoch: i64,
+    pub target: WorkerDispatchTarget,
+}
+
+impl WorkerDispatchRequest {
+    pub fn local(agent_run_id: impl Into<String>, execution_epoch: i64) -> Self {
+        Self {
+            agent_run_id: agent_run_id.into(),
+            execution_epoch,
+            target: WorkerDispatchTarget::Local,
+        }
+    }
+
+    pub fn remote(
+        agent_run_id: impl Into<String>,
+        execution_epoch: i64,
+        worker_id: impl Into<String>,
+        workspace_id: &str,
+    ) -> Result<Self, WorkerDispatchTargetError> {
+        Ok(Self {
+            agent_run_id: agent_run_id.into(),
+            execution_epoch,
+            target: WorkerDispatchTarget::remote(worker_id, workspace_id)?,
+        })
+    }
+
+    fn validate(&self, execution: &AgentRunExecution) -> Result<(), WorkerDispatchError> {
+        self.target.validate()?;
+        if self.agent_run_id.trim().is_empty() || self.agent_run_id.chars().any(char::is_control) {
+            return Err(WorkerDispatchError::AgentRunIdentityInvalid);
+        }
+        if self.execution_epoch <= 0 {
+            return Err(WorkerDispatchError::ExecutionEpochInvalid);
+        }
+        if self.agent_run_id != execution.agent_run_id
+            || self.execution_epoch != execution.execution_epoch
+        {
+            return Err(WorkerDispatchError::ExecutionIdentityMismatch);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerDispatchError {
+    AgentRunIdentityInvalid,
+    ExecutionEpochInvalid,
+    ExecutionIdentityMismatch,
+    WorkerIdentityInvalid,
+    WorkspaceIdInvalid,
+    RemoteWorkerNotConnected,
+}
+
+impl std::fmt::Display for WorkerDispatchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::AgentRunIdentityInvalid => "agent_run_identity_invalid",
+            Self::ExecutionEpochInvalid => "execution_epoch_invalid",
+            Self::ExecutionIdentityMismatch => "execution_identity_mismatch",
+            Self::WorkerIdentityInvalid => "worker_identity_invalid",
+            Self::WorkspaceIdInvalid => "workspace_id_invalid",
+            Self::RemoteWorkerNotConnected => "remote_worker_not_connected",
+        })
+    }
+}
+
+impl std::error::Error for WorkerDispatchError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkerDispatchReceipt {
+    pub agent_run_id: String,
+    pub execution_epoch: i64,
+    pub target: WorkerDispatchTarget,
+}
+
 struct Core {
     execution_wake: crate::execution_wake::ExecutionWake,
     non_batch_retry_at: Mutex<Option<tokio::time::Instant>>,
@@ -2810,6 +2974,46 @@ impl AgentRunRuntime {
 }
 
 impl Core {
+    /// Dispatch an already-claimed AgentRun through the typed Worker seam.
+    ///
+    /// Local execution deliberately delegates to the existing launcher. That
+    /// path owns Context preparation, Runtime Input Delivery, and the Fleet
+    /// lease, so this facade cannot accidentally create a second lifecycle.
+    /// Remote execution is intentionally rejected until Core owns a durable
+    /// Worker task queue and a terminal-event projector; no remote request is
+    /// queued here and no native input-delivery identity is fabricated.
+    async fn dispatch_worker_execution(
+        self: &Arc<Self>,
+        request: WorkerDispatchRequest,
+        execution: &AgentRunExecution,
+        attachment_admission: &ThreadAttachmentReadAdmission,
+        attachment_authorization: &ThreadOutputDirectory,
+        output: &mpsc::UnboundedSender<String>,
+        launch_permit: &mut ExecutionLaunchPermit,
+    ) -> Result<WorkerDispatchReceipt> {
+        request.validate(execution).map_err(anyhow::Error::new)?;
+        match &request.target {
+            WorkerDispatchTarget::Local => {
+                self.launch_agent_run(
+                    execution,
+                    attachment_admission,
+                    attachment_authorization,
+                    output,
+                    launch_permit,
+                )
+                .await?;
+                Ok(WorkerDispatchReceipt {
+                    agent_run_id: request.agent_run_id,
+                    execution_epoch: request.execution_epoch,
+                    target: WorkerDispatchTarget::Local,
+                })
+            }
+            WorkerDispatchTarget::Remote { .. } => Err(anyhow::Error::new(
+                WorkerDispatchError::RemoteWorkerNotConnected,
+            )),
+        }
+    }
+
     async fn attachment_view_gate(&self, camp_id: &str) -> Arc<RwLock<()>> {
         let mut gates = self.attachment_view_gates.lock().await;
         gates
@@ -12309,7 +12513,11 @@ impl Core {
         agent_run_tasks.spawn(async move {
             let mut launch_permit = launch_permit;
             let launch_result = core
-                .launch_agent_run(
+                .dispatch_worker_execution(
+                    WorkerDispatchRequest::local(
+                        execution.agent_run_id.clone(),
+                        execution.execution_epoch,
+                    ),
                     &execution,
                     &attachment_view_admission,
                     &attachment_authorization,
@@ -25453,6 +25661,39 @@ mod tests {
     use super::*;
     #[cfg(feature = "slow-tests")]
     use std::fs;
+
+    #[test]
+    fn worker_dispatch_target_accepts_only_opaque_workspace_ids() {
+        let target = WorkerDispatchTarget::remote("worker-1", "workspace-main").unwrap();
+        assert!(matches!(target, WorkerDispatchTarget::Remote { .. }));
+        assert_eq!(
+            WorkerDispatchTarget::remote("worker-1", "../workspace"),
+            Err(WorkerDispatchTargetError::WorkspaceIdInvalid)
+        );
+        assert_eq!(
+            WorkerDispatchTarget::remote("worker/1", "workspace-main"),
+            Err(WorkerDispatchTargetError::WorkerIdentityInvalid)
+        );
+
+        // Public enum fields remain defensive at the Core boundary: callers
+        // cannot bypass validation by constructing a variant directly.
+        let forged = WorkerDispatchTarget::Remote {
+            worker_id: "worker/1".into(),
+            workspace_id: WorkerWorkspaceId::parse("workspace-main").unwrap(),
+        };
+        assert_eq!(
+            forged.validate(),
+            Err(WorkerDispatchError::WorkerIdentityInvalid)
+        );
+    }
+
+    #[test]
+    fn worker_dispatch_request_has_no_path_or_shell_input() {
+        let request = WorkerDispatchRequest::local("run-1", 7);
+        assert_eq!(request.agent_run_id, "run-1");
+        assert_eq!(request.execution_epoch, 7);
+        assert_eq!(request.target, WorkerDispatchTarget::Local);
+    }
 
     #[cfg(feature = "slow-tests")]
     fn test_git_binary() -> PathBuf {
