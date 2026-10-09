@@ -2650,16 +2650,7 @@ pub fn acp_model_catalog_for_adapter(
         for model in &mut models {
             let origin = crate::dsh::model_source(preparation, &model.id);
             model.runtime_metadata = Some(json!({"dshSource": origin}));
-            let web = origin == crate::agent_profile::DshModelSource::Web;
-            let source = if web {
-                "来自 DSH Web"
-            } else {
-                "DSH 原生配置"
-            };
-            model.description = Some(match crate::dsh::preparation_diagnostic(preparation) {
-                Some(diagnostic) => format!("{source} · {diagnostic}"),
-                None => source.to_string(),
-            });
+            model.description = crate::dsh::preparation_diagnostic(preparation).map(str::to_owned);
         }
     }
     if adapter_kind == AdapterKind::CodebuddyCli
@@ -3576,7 +3567,7 @@ mod tests {
                 .unwrap()
                 .description
                 .as_deref(),
-            Some("来自 DSH Web")
+            None
         );
         let mut rejected = session;
         rejected["_meta"]["rovaiDshModels"]["rejectedProviders"] = json!(["web"]);
