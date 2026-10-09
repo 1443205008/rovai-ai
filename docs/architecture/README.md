@@ -53,6 +53,7 @@ last_updated: 2026-10-08
 | [Skill Projection Reconciliation（历史）](skill-projection-reconciliation.md) | 旧 Library desired state、项目投递、SkillExposureSnapshot 与旧 Run 审计/清理 |
 | [Structured Run Input Skill Links（历史）](structured-current-input-skill-links.md) | 旧 Library/Exposure 的 Picker SkillMention、claim-time snapshot 与消息链接 |
 | [User Automation](user-automation.md) | 一个 `rovai` binary 下隔离的 Agent/User transport、Main-owned 本机 IPC、封闭 dispatch、Camp navigation、CLI-owned Diagnostic Trial、双 cursor 与安全导出边界 |
+| [Remote Machine Workers](remote-machine-workers.md) | 跨机器 Worker 注册、能力上报、任务协议、事件顺序、权限边界与分阶段接入 |
 | [Windows Desktop Platform](windows-desktop-platform.md) | Windows x64 host envelope、平台 seam、原子 Job 启动、Transport v14、私有 local storage、hidden title strip + top-level menu projection + native controls、NSIS 与真实 Windows 验收组合 |
 | [Runtime File Change Observation](runtime-file-change-observation.md) | Runtime 文件操作、Command Diff、每 AgentRun/epoch 的版本化文件变化归约、exact managed-output exclusion、Managed Blob、迟到事实重算、恢复与授权读取边界；不扫描工作区或依赖 Git |
 | [消息选文引用](message-quotes.md) | 正文选择、owner 隔离与 Context 投影 |
