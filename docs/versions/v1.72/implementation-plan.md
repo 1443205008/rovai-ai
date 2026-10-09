@@ -1358,7 +1358,7 @@ HTTP 场景验证首次完整检查、重复刷新和投递，无真实中转请
 
 ## 2026-10-09 续做公屏记录移除
 
-User 按 [r1](model-context-change-quiet-continuation.md) 授权去除公开消息、PR 合入 main 并本机安装。
-实现复用既有 tombstone 和 Delivery；迁移、回滚、FTS、公共读取、FIFO 和原输入证据由
+User 按 [r2](model-context-change-quiet-continuation.md) 授权去除新请求公开消息、PR 合入 main 并本机安装；
+已生成的记录保留原样，不迁移。实现复用既有 tombstone 和 Delivery；FTS、公共读取、FIFO 和原输入证据由
 `delivery_queue::tests::user_continuation_preserves_source_and_claims_independent_fifo_batches` 扩展覆盖。
 未新增平行 SQLite fixture 或独立 Rust 测试；既有正负向测试保留。验证结果在交付时补齐。

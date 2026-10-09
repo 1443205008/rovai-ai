@@ -15,7 +15,7 @@ Architecture 解释组件如何组成，Version 概览记录交付范围；它�
 
 ## 用户主动继续
 
-- [AgentRun Continuation v3（当前）](agent-run-continuation-v3.md)：续做操作只留内部记录，公屏、历史、搜索和上下文提示排除新旧载体。
+- [AgentRun Continuation v3（当前）](agent-run-continuation-v3.md)：续做新请求只留内部记录，公屏、历史、搜索和上下文提示排除新载体；已生成的记录保留原样。
 - [AgentRun Continuation v2（历史）](agent-run-continuation-v2.md)：新用户授权、自动会话选择与投递前有界降级，独立 Run 与现有队列。
 - [AgentRun Continuation v1（历史）](agent-run-continuation-v1.md)：独立续做与显式新会话确认；确认规则由 v2 替代。
 

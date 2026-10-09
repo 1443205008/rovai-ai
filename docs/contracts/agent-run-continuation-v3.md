@@ -27,12 +27,12 @@ thread.search、history.search 和 historyHint 额外消息判断均沿既有 to
 队列读取仅对已具备 camp_run_continuation 来源事实的请求允许隐藏载体，
 并照常重验原 Run 的业务输入、Task 和成员资格。新 Run 只领取原业务输入；载体永不成为 RUN_INPUT。
 内部序号维持原 FIFO。新 claim 的公开边界使用仍可见的消息尾及已接受历史边界的较大值，
-避免内部载体推进新公共边界，也避免隐藏旧记录后使边界回退。
+避免内部载体推进新公共边界，并保持已接受边界单调。
 
-## 升级与证据
+## 历史记录与证据
 
-Migration 188 / schema 138 把已有 system/run-continuation、origin_kind=system 行设为 tombstone，
-FTS 触发器同步去索引。保留正文、原事件、队列／来源外键、旧 Run、冻结 Manifest 和工具回执原字节。
-未领取的旧续做请求在升级后继续排队，不重新授权、不重复发布。
+按 User 最新要求，仅改变新请求；已生成的公开记录保留原样，不批量删除、隐藏或改写索引。
+不增加 migration 或 schema 版本。原事件、队列／来源外键、旧 Run、冻结 Manifest 和工具回执保留原字节。
+未领取的旧续做请求继续排队，不重新授权、不重复发布。
 模型模板、字段、预算和版本轴均不变，不清空原生会话；历史中已经实际投递的内容不能追溯撤回。
-范围与前后对照见 [r1](../versions/v1.72/model-context-change-quiet-continuation.md)。
+范围与前后对照见 [r2](../versions/v1.72/model-context-change-quiet-continuation.md)。

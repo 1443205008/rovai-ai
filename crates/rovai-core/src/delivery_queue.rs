@@ -1541,36 +1541,22 @@ mod tests {
             );
         }
         fixture.publish_visible_without_delivery("other-system", "system", "ordinary-system");
-        // Upgrade real legacy operation rows while both requests are still waiting.
-        // A failed receipt must roll back tombstones and FTS together; frozen input
-        // and model evidence are checked below by the existing transaction owner.
-        fixture.database.connection().execute_batch("DELETE FROM schema_migration WHERE version=188;
-            UPDATE rovai_data_contract SET projection_schema_version=137 WHERE singleton=1;
-            UPDATE camp_message SET body='你继续了爱丽丝的执行。',
-                structured_content_json='[{\"kind\":\"text\",\"text\":\"你继续了爱丽丝的执行。\"}]',tombstoned_at=NULL
-                WHERE author_type='system' AND author_id='run-continuation';
-            CREATE TRIGGER fail_retirement BEFORE INSERT ON schema_migration WHEN NEW.version=188
-                BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
-        assert!(Database::open(&fixture._directory).is_err());
-        assert_eq!(fixture.database.connection().query_row(
-            "SELECT count(*) FROM camp_message WHERE author_id='run-continuation' AND tombstoned_at IS NULL",
-            [], |r|r.get::<_,i64>(0)).unwrap(), 2);
-        assert_eq!(
-            fixture
-                .database
-                .connection()
-                .query_row(
-                    "SELECT count(*) FROM camp_message_fts WHERE camp_message_fts MATCH '继续了'",
-                    [],
-                    |r| r.get::<_, i64>(0)
-                )
-                .unwrap(),
-            2
+        // Existing published continuation records stay unchanged. This feature
+        // has not shipped, so there is no historical rewrite or schema migration.
+        fixture.publish_visible_without_delivery(
+            "legacy-continuation",
+            "system",
+            "run-continuation",
         );
         fixture
             .database
             .connection()
-            .execute_batch("DROP TRIGGER fail_retirement")
+            .execute_batch(
+                "UPDATE camp_message
+            SET body='你继续了爱丽丝的执行。',origin_kind='system',
+                structured_content_json='[{\"kind\":\"text\",\"text\":\"你继续了爱丽丝的执行。\"}]'
+            WHERE id='legacy-continuation';",
+            )
             .unwrap();
         fixture
             .database
@@ -1582,22 +1568,14 @@ mod tests {
             .unwrap();
         // The requests remain durable across a database reopen before the first claim.
         fixture.database = Database::open(&fixture._directory).unwrap();
-        assert_eq!(
-            fixture
-                .database
-                .connection()
-                .query_row(
-                    "SELECT count(*) FROM camp_message_fts WHERE camp_message_fts MATCH '继续了'",
-                    [],
-                    |r| r.get::<_, i64>(0)
-                )
-                .unwrap(),
-            0
-        );
+        let legacy: (String, Option<String>, i64) = fixture.database.connection().query_row(
+            "SELECT body,tombstoned_at,version FROM camp_message WHERE id='legacy-continuation'",
+            [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(legacy, ("你继续了爱丽丝的执行。".into(), None, 1));
         let page = crate::read_model::ReadModelService
             .camp_messages_page(&mut fixture.database, &fixture.camp_id, 100, 0, 100)
             .unwrap();
-        assert_eq!(page.messages.len(), 5);
+        assert_eq!(page.messages.len(), 6);
         assert!(!page.has_more);
         for id in &carrier_ids {
             let around = crate::read_model::ReadModelService
@@ -1709,7 +1687,7 @@ mod tests {
                         &serde_json::from_value::<ThreadReadInput>(json!({"limit":100})).unwrap(),
                     )
                     .unwrap();
-                assert_eq!(history["items"].as_array().unwrap().len(), 5);
+                assert_eq!(history["items"].as_array().unwrap().len(), 6);
                 for id in &carrier_ids {
                     for selector in [json!({"messageId":id}), json!({"replyChain":id})] {
                         assert!(
@@ -1723,7 +1701,7 @@ mod tests {
                         );
                     }
                 }
-                for (query, expected_count) in [("继续了", 0), ("原目标", 2)] {
+                for (query, expected_count) in [("继续了", 1), ("原目标", 2)] {
                     let found = ThreadHistoryService
                         .search_camp(
                             &mut fixture.database,
@@ -1790,15 +1768,16 @@ mod tests {
         assert_eq!(old_digest, frozen_source.rendered_payload_digest);
 
         let system_messages:i64=fixture.database.connection().query_row("SELECT count(*) FROM camp_message WHERE author_type='system' AND author_id='run-continuation'",[],|r|r.get(0)).unwrap();
-        assert_eq!(system_messages, 2);
-        // The same Thread as history: publication fences must not resurrect old
-        // system-operation events, while normal and unrelated system rows remain readable.
+        assert_eq!(system_messages, 3);
+        // New internal carriers stay hidden even behind publication fences.
+        // Previously published operation rows and normal messages remain readable.
         {
             let tx = fixture.database.connection_mut().transaction().unwrap();
             for id in [
                 "original-a",
                 "original-b",
                 "other-system",
+                "legacy-continuation",
                 &carrier_ids[0],
                 &carrier_ids[1],
             ] {
@@ -1830,7 +1809,7 @@ mod tests {
             agent_run_id: observer_run,
             execution_epoch: 1,
         };
-        for (query, count) in [("继续了", 0), ("原目标", 2), ("visible history", 1)] {
+        for (query, count) in [("继续了", 1), ("原目标", 2), ("visible history", 1)] {
             let result = crate::camp_history::ThreadHistoryService
                 .search_history(
                     &mut fixture.database,

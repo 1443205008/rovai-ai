@@ -28,6 +28,6 @@ builtin_cli.transport.v36, IPC **2**, Envelope/receipt **1**, and Native Binding
 The per-operation current output Schema and model-facing description explain IDs, names, fixed user and
 the distinction from execution state. Other operation inputs/results are unchanged.
 
-Continuation operation carriers are not public history. [Continuation v3](agent-run-continuation-v3.md)
-retires legacy carriers using the existing tombstone visibility rule; all read and search modes exclude them.
-Frozen historical tool results remain unchanged.
+New continuation operation carriers are not public history. [Continuation v3](agent-run-continuation-v3.md)
+creates them under the existing tombstone visibility rule; all read and search modes exclude them.
+Previously published records and frozen historical tool results remain unchanged.

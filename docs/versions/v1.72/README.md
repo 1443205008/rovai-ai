@@ -25,8 +25,8 @@ Automation、预算和文本收尾按业务 deadline／实际失败退避等待�
 
 ## 续做操作退出公开消息
 
-User 已授权移除新旧续做公屏记录并合入、安装；范围见 [r1 输入／历史对照](model-context-change-quiet-continuation.md)。
-Migration 188 / schema 138 只调整内部操作可见性，保留 FIFO、原输入、清理与冻结证据。
+User 已授权停止发布新的续做公屏记录并合入、安装；最新范围见 [r2 输入／历史对照](model-context-change-quiet-continuation.md)。
+已生成的记录保留原样，不增加 migration；保留 FIFO、原输入、清理与冻结证据。
 
 ## 并行实施：用户主动继续执行
 

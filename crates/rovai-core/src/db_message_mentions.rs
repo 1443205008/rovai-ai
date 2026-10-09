@@ -107,8 +107,7 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
         anyhow::ensure!(
             matches!(
                 classify_database_contract(&tx)?,
-                DatabaseContractClassification::SupportedMigrationSource(ref marker)
-                    if marker.projection_schema_version == 137
+                DatabaseContractClassification::Current(_)
             ),
             "Message Mention schema admission failed"
         );
@@ -123,7 +122,6 @@ pub(super) fn migrate(database: &mut Database) -> Result<()> {
 
 #[cfg(test)]
 pub(super) fn downgrade_for_test(connection: &Connection) {
-    run_continuation::downgrade_publication_for_test(connection);
     let applied: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=187)",

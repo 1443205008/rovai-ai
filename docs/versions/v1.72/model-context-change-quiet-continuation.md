@@ -1,21 +1,21 @@
 ---
 document_type: model-context-change
 version: v1.72
-revision: 1
+revision: 2
 confirmation_status: confirmed
-confirmed_revision: 1
+confirmed_revision: 2
 confirmed_by: local_user
-confirmed_at: 2026-10-09
-confirmation_message_id: 35e8bd36-37f6-4e2e-9d54-82a6ca25db97
-last_updated: 2026-10-09
+confirmed_at: 2026-10-10
+confirmation_message_id: d37611df-603b-4a2e-9050-e5c6183b8305
+last_updated: 2026-10-10
 ---
 
-# 续做操作退出公开消息 r1
+# 续做操作退出公开消息 r2
 
 本说明记录 Thread 中已逐项讨论并授权的边界：User 要求界面和消息历史均移除续做系统消息；
-答复明确提出内部授权／排队／审计保留、历史与搜索排除、historyHint 不受操作记录影响、
-已有同类记录隐藏但冻结证据保留。User 随后明确要求按此实施、PR 合入 main 并安装本机。
-确认来源为上述消息；本文是该已确认范围的技术展开，不声称 User 此前阅读过此文件。
+答复明确提出内部授权／排队／审计保留、新请求不进入历史与搜索、historyHint 不受操作记录影响。
+User 已授权实施、PR 合入 main 并安装本机，并进一步明确“已生成的记录不需要批量删除，功能还没发布版本”。
+r2 因此收窄为仅处理新请求；本文是该已确认范围的技术展开，不声称 User 此前阅读过此文件。
 
 ## 变更前
 
@@ -48,9 +48,9 @@ Desktop/Web 历史、thread.read 的 timeline/item/replyChain、thread.search �
 [/RUN_INPUT]
 ```
 
-不发布新的续做公屏消息，不向模型附加“继续”。新旧内部续做记录不参与界面消息、
+不发布新的续做公屏消息，不向模型附加“继续”。新请求的内部续做记录不参与界面消息、
 消息分页／定位／搜索、Agent 历史读取／搜索或额外消息判断。仍有其他可见消息时继续使用原来的 true 提示。
-消息返回 shape、分页预算、withdrawn 占位与其他 system 消息均保留。
+消息返回 shape、分页预算、withdrawn 占位与其他 system 消息均保留；已生成的公开续做记录也保留原样。
 排队和新 Run 仍从原执行区观察；内部操作记录不作为业务输入或消息预览。
 
 ## 明确不变
@@ -63,25 +63,27 @@ Formatter/Manifest 33、Run Facts 9、Profile 10、Agent Output 10、CLI/Transpo
 
 ## 迁移与兼容
 
-Migration 188 将 schema 137 升至 138。已有 system/run-continuation 行通过现有 tombstone
-隐藏机制退出公共读取与 FTS，原正文及事件留作审计。新请求沿用 Delivery 的非空外键，
+不增加 migration 或 schema 版本，不批量删除、隐藏已生成的记录或改写其索引。
+新请求沿用 Delivery 的非空外键，
 只创建空正文且生来不可见的内部载体，不产生 publication event、引用索引或消息变更通知。
 保留唯一 lane 与原来源记录，领取与执行队列允许该内部载体，但仍重验原业务消息资格。
 内部序号继续分配以保持 FIFO；新 claim 的公共边界排除隐藏载体，且不得回退到已经接受的历史边界之前。
-未 claim 的旧请求升级后继续可调度；旧 Core 不能写入新 schema；不执行 clean break。
+未 claim 的旧请求继续可调度；沿用当前 schema 137；不执行 clean break。
 
 ## 二次确认
 
 User 消息 5e2e02ed-f24d-4ccf-b690-78846df02fff 提出移除；答复
-12dc0642-0270-4dd2-b53c-74fed06ba4ac 列明新旧记录及上下文边界后，User 在
-35e8bd36-37f6-4e2e-9d54-82a6ca25db97 明确授权完整交付。实现严格限于该范围。
+12dc0642-0270-4dd2-b53c-74fed06ba4ac 列明上下文边界后，User 在
+35e8bd36-37f6-4e2e-9d54-82a6ca25db97 明确授权完整交付，再在
+d37611df-603b-4a2e-9050-e5c6183b8305 明确已有记录无需批量处理。
+实现遵循这次最新收窄，不要求 User 重复批准已授权的新请求变更。
 
 ## 验证
 
 扩展现有 delivery_queue 事务 owner，验证公开历史、搜索、分页和额外消息判断不包含载体，
 普通消息及普通 system 消息仍可见，源输入与证据保持，重复点击、幂等、FIFO、cleanup 和重启仍成立。
-同一 owner 增加 schema 137→138 的原子隐藏、失败回滚、FTS 与冻结证据保留，复用两条 waiting 请求；
-必须用隔离 SQLite，纯函数无法覆盖触发器与迁移事务。
+同一 owner 复用两条 waiting 请求，并验证已有公开续做记录在重启后正文、可见性、版本和搜索结果不变；
+必须用隔离 SQLite，纯函数无法覆盖 FTS 触发器与队列事务。
 最小命令为 cargo test -p rovai-core --features extended-tests --lib continuation。
 同环境真实 Codex 续做专项验证记录为补充证据；通用语义 Judge Gate 的覆盖单独如实报告，
 不能以确定性测试或专项 Runtime 测试冒充通用 Gate。
