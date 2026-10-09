@@ -27,3 +27,7 @@ axis and read shape in [Transport v36](builtin-tool-transport-v36.md); transport
 builtin_cli.transport.v36, IPC **2**, Envelope/receipt **1**, and Native Binding compatibility stay fixed.
 The per-operation current output Schema and model-facing description explain IDs, names, fixed user and
 the distinction from execution state. Other operation inputs/results are unchanged.
+
+Continuation operation carriers are not public history. [Continuation v3](agent-run-continuation-v3.md)
+retires legacy carriers using the existing tombstone visibility rule; all read and search modes exclude them.
+Frozen historical tool results remain unchanged.

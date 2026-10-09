@@ -1,6 +1,59 @@
 //! A continuation is an authorized input source on the existing Delivery, not a second queue.
 use super::*;
 
+/// Retain legacy operation bodies and their audit events, but remove the rows
+/// from every public reader and the FTS index through the existing tombstone.
+/// Waiting Deliveries keep their foreign keys and remain claimable.
+pub(super) fn retire_public_messages(database: &mut Database) -> Result<()> {
+    let tx = database
+        .connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)?;
+    anyhow::ensure!(
+        matches!(classify_database_contract(&tx)?,
+            DatabaseContractClassification::SupportedMigrationSource(ref marker)
+                if marker.contract_version == "v1.72" && marker.projection_schema_version == 137),
+        "Internal continuation requires v1.72/schema 137"
+    );
+    let before = public_history_claim_preserved_evidence_digest(&tx)?;
+    tx.execute_batch(
+        "UPDATE camp SET version=version+1 WHERE id IN (
+            SELECT camp_id FROM camp_message
+            WHERE author_type='system' AND author_id='run-continuation'
+              AND origin_kind='system' AND tombstoned_at IS NULL);
+         UPDATE camp_message SET tombstoned_at=datetime('now'),
+            version=version+1,updated_at=datetime('now')
+            WHERE author_type='system' AND author_id='run-continuation'
+              AND origin_kind='system' AND tombstoned_at IS NULL;
+         INSERT INTO schema_migration VALUES(188,datetime('now'));
+         UPDATE rovai_data_contract SET projection_schema_version=138,
+            updated_at=datetime('now') WHERE singleton=1;",
+    )?;
+    anyhow::ensure!(
+        public_history_claim_preserved_evidence_digest(&tx)? == before,
+        "Retiring continuation messages changed frozen evidence"
+    );
+    anyhow::ensure!(
+        matches!(
+            classify_database_contract(&tx)?,
+            DatabaseContractClassification::Current(_)
+        ),
+        "Internal continuation schema admission failed"
+    );
+    tx.commit()?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn downgrade_publication_for_test(connection: &Connection) {
+    connection
+        .execute_batch(
+            "UPDATE rovai_data_contract SET projection_schema_version=137
+            WHERE singleton=1 AND EXISTS(SELECT 1 FROM schema_migration WHERE version=188);
+         DELETE FROM schema_migration WHERE version=188;",
+        )
+        .unwrap();
+}
+
 const OBJECTS: &[(&str, &str)] = &[
     ("camp_run_continuation", "CREATE TABLE camp_run_continuation (
         delivery_id TEXT PRIMARY KEY REFERENCES camp_message_delivery(id) ON DELETE CASCADE,

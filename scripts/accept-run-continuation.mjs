@@ -77,7 +77,16 @@ async function finish(id, expected = 'succeeded') {
   return result
 }
 async function continueRun(source) {
-  return request('agentRuns.continue', { commandId: randomUUID(), command: { threadId, agentRunId: source } })
+  const receipt = await request('agentRuns.continue', { commandId: randomUUID(), command: { threadId, agentRunId: source } })
+  assert.equal(receipt.status, 'applied', JSON.stringify(receipt))
+  const carrier = one('SELECT body,tombstoned_at FROM camp_message WHERE id=?', receipt.payload.messageId)
+  assert.equal(carrier.body, '')
+  assert.ok(carrier.tombstoned_at)
+  const snapshot = await request('threads.snapshot', { threadId })
+  assert.ok(snapshot.messages.every(message => message.id !== receipt.payload.messageId))
+  assert.equal(one("SELECT count(*) AS n FROM event_log WHERE entity_id=? AND event_type='camp_message.sent'", receipt.payload.messageId).n, 0)
+  await check('continuation_has_no_public_message', { deliveryId: receipt.payload.deliveryId })
+  return receipt
 }
 async function cancel(id) {
   const before = run(id)

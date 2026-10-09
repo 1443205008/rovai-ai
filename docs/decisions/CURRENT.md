@@ -255,5 +255,5 @@ User 命名与旧 Session 恢复：当前规范为 [User Naming v1](../contracts
 
 ## 用户主动继续执行
 
-- 当前规范：[AgentRun Continuation v2](../contracts/agent-run-continuation-v2.md)、[Camp Message Send v25](../contracts/camp-message-send-v25.md)、[AgentRun Recovery](../architecture/agent-run-recovery.md)、[Run Process Detail Surface v46](../contracts/run-process-detail-surface-v46.md)。
+- 当前规范：[AgentRun Continuation v3](../contracts/agent-run-continuation-v3.md)、[Camp Message Send v25](../contracts/camp-message-send-v25.md)、[AgentRun Recovery](../architecture/agent-run-recovery.md)、[Run Process Detail Surface v46](../contracts/run-process-detail-surface-v46.md)。
 - 理由：[V1.72-D16](../versions/v1.72/decisions.md#v1-72-d16)：新授权接入唯一 lane，原业务输入复用与旧投递不重放分开，允许同一来源多次独立执行。

@@ -23,10 +23,15 @@ Automation 超时与恢复隔离保持。既有冻结预算不改写，预算等
 Automation、预算和文本收尾按业务 deadline／实际失败退避等待。保留普通 Delivery 的单一 Scheduler 与原有
 低频恢复，不新增持久队列或调度框架。原消费者、计时器和验证边界见[验收记录](heartbeat-removal-verification.md)。
 
+## 续做操作退出公开消息
+
+User 已授权移除新旧续做公屏记录并合入、安装；范围见 [r1 输入／历史对照](model-context-change-quiet-continuation.md)。
+Migration 188 / schema 138 只调整内部操作可见性，保留 FIFO、原输入、清理与冻结证据。
+
 ## 并行实施：用户主动继续执行
 
 User 已确认 [r2 输入对照](model-context-change-run-continuation.md) 并授权独立 worktree 实现、推送。
-[AgentRun Continuation v2](../../contracts/agent-run-continuation-v2.md) 将新授权接入现有 waiting lane；
+[AgentRun Continuation v3](../../contracts/agent-run-continuation-v3.md) 将新授权接入现有 waiting lane；
 每次完整选择原业务输入，现有 builder 重建当前上下文，同一来源可多次独立执行。按钮为 24×24 纯图标，
 原卡片状态不关联新 Run。Migration 184 / schema 134 增量保留旧证据；实现与验证见
 [续做实施记录](run-continuation-implementation.md)。

@@ -1901,7 +1901,8 @@ fn load_camp_open_counts(transaction: &Transaction<'_>, camp_id: &str) -> Result
                JOIN camp_message AS message
                  ON message.id = current_delivery.message_id
                WHERE current_delivery.camp_id = ?1
-                 AND message.tombstoned_at IS NULL)
+                 AND (message.tombstoned_at IS NULL OR EXISTS (
+                   SELECT 1 FROM camp_run_continuation WHERE delivery_id=current_delivery.id)))
               +
               (SELECT COUNT(*)
                FROM message_delivery AS legacy_delivery
@@ -2814,7 +2815,8 @@ fn load_message_deliveries(
           LEFT JOIN agent_run AS source_run
             ON source_run.id = message.source_agent_run_id
           WHERE current_delivery.camp_id = ?1
-            AND message.tombstoned_at IS NULL
+            AND (message.tombstoned_at IS NULL OR EXISTS (
+              SELECT 1 FROM camp_run_continuation WHERE delivery_id=current_delivery.id))
 
           UNION ALL
 

@@ -1355,3 +1355,10 @@ Windows 探测路径经 `canonicalize()` 带有长路径前缀，提交目录使
 指纹相等及程序、配置、环境变化失效。`scripts/smoke-dsh-model-availability.mjs` 为 Windows 使用
 `.cmd` 记录入口，`ROVAI_DSH_SMOKE_CORE` 可指定本次构建 Core；既有隔离协议、合成凭据与本地
 HTTP 场景验证首次完整检查、重复刷新和投递，无真实中转请求，不改日常 DSH 配置。
+
+## 2026-10-09 续做公屏记录移除
+
+User 按 [r1](model-context-change-quiet-continuation.md) 授权去除公开消息、PR 合入 main 并本机安装。
+实现复用既有 tombstone 和 Delivery；迁移、回滚、FTS、公共读取、FIFO 和原输入证据由
+`delivery_queue::tests::user_continuation_preserves_source_and_claims_independent_fifo_batches` 扩展覆盖。
+未新增平行 SQLite fixture 或独立 Rust 测试；既有正负向测试保留。验证结果在交付时补齐。

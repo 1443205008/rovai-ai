@@ -359,8 +359,11 @@ pub fn claim_waiting_delivery_batches(database: &mut Database, limit: i64) -> Re
                 continue;
             }
             let camp_public_tail: i64 = transaction.query_row(
-                "SELECT last_message_sequence FROM camp WHERE id = ?1",
-                [&camp_id],
+                "SELECT MAX(COALESCE((SELECT MAX(sequence) FROM camp_message
+                    WHERE camp_id=?1 AND tombstoned_at IS NULL),0),
+                    last_accepted_public_boundary_sequence)
+                 FROM conversation WHERE id=?2",
+                params![camp_id, conversation_id],
                 |row| row.get(0),
             )?;
             let conversation_tail: i64 = transaction.query_row(
@@ -537,7 +540,7 @@ fn load_waiting_prefix(
         WHERE delivery.camp_id = ?1
           AND delivery.recipient_agent_id = ?2
           AND delivery.status = 'waiting'
-          AND message.tombstoned_at IS NULL
+          AND (message.tombstoned_at IS NULL OR continuation.delivery_id IS NOT NULL)
           AND message.recall_state <> 'withdrawn'
         ORDER BY delivery.queue_sequence
         "#,
@@ -1455,6 +1458,32 @@ mod tests {
             accepted.result.payload["deliveryId"],
             another.result.payload["deliveryId"]
         );
+        let carrier_ids = [
+            accepted.result.payload["messageId"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            another.result.payload["messageId"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        ];
+        let publications: i64 = fixture.database.connection().query_row(
+            "SELECT count(*) FROM event_log WHERE entity_type='camp_message'
+             AND entity_id IN (?1,?2) AND event_type IN ('camp_message.sent','camp_message.public_a2a_sent')",
+            params![carrier_ids[0], carrier_ids[1]], |r| r.get(0)).unwrap();
+        assert_eq!(publications, 0);
+        let internal: i64 = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT count(*) FROM camp_message WHERE id IN (?1,?2) AND body=''
+             AND structured_content_json='[]' AND tombstoned_at IS NOT NULL",
+                params![carrier_ids[0], carrier_ids[1]],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(internal, 2);
         fixture.enqueue("later-message", "排在续做后面的普通消息");
         assert_eq!(fixture.batch_run_count(), 1);
         assert!(
@@ -1473,6 +1502,76 @@ mod tests {
                 .count(),
             2
         );
+        assert!(
+            projected
+                .messages
+                .iter()
+                .all(|message| !carrier_ids.contains(&message.id))
+        );
+        let public_ids = [
+            "original-a",
+            "original-b",
+            "earlier-message",
+            "later-message",
+        ]
+        .map(str::to_string);
+        {
+            let tx = fixture.database.connection_mut().transaction().unwrap();
+            assert!(
+                !has_additional_public_messages(
+                    &tx,
+                    &fixture.camp_id,
+                    "agent_1",
+                    0,
+                    6,
+                    &public_ids
+                )
+                .unwrap()
+            );
+            assert!(
+                has_additional_public_messages(
+                    &tx,
+                    &fixture.camp_id,
+                    "agent_1",
+                    0,
+                    6,
+                    &public_ids[..2]
+                )
+                .unwrap()
+            );
+        }
+        fixture.publish_visible_without_delivery("other-system", "system", "ordinary-system");
+        // Upgrade real legacy operation rows while both requests are still waiting.
+        // A failed receipt must roll back tombstones and FTS together; frozen input
+        // and model evidence are checked below by the existing transaction owner.
+        fixture.database.connection().execute_batch("DELETE FROM schema_migration WHERE version=188;
+            UPDATE rovai_data_contract SET projection_schema_version=137 WHERE singleton=1;
+            UPDATE camp_message SET body='你继续了爱丽丝的执行。',
+                structured_content_json='[{\"kind\":\"text\",\"text\":\"你继续了爱丽丝的执行。\"}]',tombstoned_at=NULL
+                WHERE author_type='system' AND author_id='run-continuation';
+            CREATE TRIGGER fail_retirement BEFORE INSERT ON schema_migration WHEN NEW.version=188
+                BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+        assert!(Database::open(&fixture._directory).is_err());
+        assert_eq!(fixture.database.connection().query_row(
+            "SELECT count(*) FROM camp_message WHERE author_id='run-continuation' AND tombstoned_at IS NULL",
+            [], |r|r.get::<_,i64>(0)).unwrap(), 2);
+        assert_eq!(
+            fixture
+                .database
+                .connection()
+                .query_row(
+                    "SELECT count(*) FROM camp_message_fts WHERE camp_message_fts MATCH '继续了'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            2
+        );
+        fixture
+            .database
+            .connection()
+            .execute_batch("DROP TRIGGER fail_retirement")
+            .unwrap();
         fixture
             .database
             .connection()
@@ -1483,6 +1582,30 @@ mod tests {
             .unwrap();
         // The requests remain durable across a database reopen before the first claim.
         fixture.database = Database::open(&fixture._directory).unwrap();
+        assert_eq!(
+            fixture
+                .database
+                .connection()
+                .query_row(
+                    "SELECT count(*) FROM camp_message_fts WHERE camp_message_fts MATCH '继续了'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        let page = crate::read_model::ReadModelService
+            .camp_messages_page(&mut fixture.database, &fixture.camp_id, 100, 0, 100)
+            .unwrap();
+        assert_eq!(page.messages.len(), 5);
+        assert!(!page.has_more);
+        for id in &carrier_ids {
+            let around = crate::read_model::ReadModelService
+                .camp_messages_around(&mut fixture.database, &fixture.camp_id, id)
+                .unwrap();
+            assert!(!around.source_available);
+            assert!(around.messages.is_empty());
+        }
         let source_before:serde_json::Value=fixture.database.connection().query_row("SELECT json_object('status',status,'version',version,'endedAt',ended_at,'epoch',execution_epoch,'workspace',workspace_json) FROM agent_run WHERE id=?1",[&source],|r|r.get::<_,String>(0)).map(|s|serde_json::from_str(&s).unwrap()).unwrap();
         let old_delivery_before: (String, Option<String>, i64) = fixture
             .database
@@ -1566,6 +1689,61 @@ mod tests {
                 assert!(context.rendered_payload.contains(&task_title));
                 assert!(!context.rendered_payload.contains(&source));
                 assert!(!context.rendered_payload.contains("continuation"));
+                use crate::{
+                    camp_history::{
+                        HistorySearchInput, ThreadHistoryService, ThreadReadInput,
+                        ThreadSearchInput,
+                    },
+                    team_tool::AuthenticatedTeamToolRun,
+                };
+                let reader = AuthenticatedTeamToolRun {
+                    camp_id: fixture.camp_id.clone(),
+                    agent_id: "agent_1".into(),
+                    agent_run_id: run.clone(),
+                    execution_epoch: 1,
+                };
+                let history = ThreadHistoryService
+                    .read(
+                        &mut fixture.database,
+                        &reader,
+                        &serde_json::from_value::<ThreadReadInput>(json!({"limit":100})).unwrap(),
+                    )
+                    .unwrap();
+                assert_eq!(history["items"].as_array().unwrap().len(), 5);
+                for id in &carrier_ids {
+                    for selector in [json!({"messageId":id}), json!({"replyChain":id})] {
+                        assert!(
+                            ThreadHistoryService
+                                .read(
+                                    &mut fixture.database,
+                                    &reader,
+                                    &serde_json::from_value::<ThreadReadInput>(selector).unwrap()
+                                )
+                                .is_err()
+                        );
+                    }
+                }
+                for (query, expected_count) in [("继续了", 0), ("原目标", 2)] {
+                    let found = ThreadHistoryService
+                        .search_camp(
+                            &mut fixture.database,
+                            &reader,
+                            &serde_json::from_value::<ThreadSearchInput>(json!({"query":query}))
+                                .unwrap(),
+                        )
+                        .unwrap();
+                    assert_eq!(found["results"].as_array().unwrap().len(), expected_count);
+                    let found = ThreadHistoryService
+                        .search_history(
+                            &mut fixture.database,
+                            &reader,
+                            &serde_json::from_value::<HistorySearchInput>(json!({"query":query}))
+                                .unwrap(),
+                        )
+                        .unwrap();
+                    // history.search deliberately excludes the current Thread.
+                    assert!(found["results"].as_array().unwrap().is_empty());
+                }
             }
             fixture
                 .database
@@ -1613,6 +1791,59 @@ mod tests {
 
         let system_messages:i64=fixture.database.connection().query_row("SELECT count(*) FROM camp_message WHERE author_type='system' AND author_id='run-continuation'",[],|r|r.get(0)).unwrap();
         assert_eq!(system_messages, 2);
+        // The same Thread as history: publication fences must not resurrect old
+        // system-operation events, while normal and unrelated system rows remain readable.
+        {
+            let tx = fixture.database.connection_mut().transaction().unwrap();
+            for id in [
+                "original-a",
+                "original-b",
+                "other-system",
+                &carrier_ids[0],
+                &carrier_ids[1],
+            ] {
+                crate::collaboration::append_domain_event(
+                    &tx,
+                    "camp_message.sent",
+                    Some(&fixture.camp_id),
+                    Some(("camp_message", id)),
+                    &ActorRef::User {
+                        user_id: "local_user".into(),
+                    },
+                    None,
+                    &json!({}),
+                )
+                .unwrap();
+            }
+            tx.commit().unwrap();
+        }
+        let observer_camp = fixture.add_camp_lane("history-reader");
+        fixture.enqueue_for(&observer_camp, "history-request", "检查旧会话");
+        let observer_run = claim_waiting_delivery_batches(&mut fixture.database, 1)
+            .unwrap()
+            .pop()
+            .unwrap();
+        fixture.materialize_run(&observer_run);
+        let reader = crate::team_tool::AuthenticatedTeamToolRun {
+            camp_id: observer_camp,
+            agent_id: "agent_1".into(),
+            agent_run_id: observer_run,
+            execution_epoch: 1,
+        };
+        for (query, count) in [("继续了", 0), ("原目标", 2), ("visible history", 1)] {
+            let result = crate::camp_history::ThreadHistoryService
+                .search_history(
+                    &mut fixture.database,
+                    &reader,
+                    &serde_json::from_value(json!({"query":query})).unwrap(),
+                )
+                .unwrap();
+            assert_eq!(
+                result["results"].as_array().unwrap().len(),
+                count,
+                "{result}"
+            );
+        }
         assert_eq!(
             fixture
                 .database

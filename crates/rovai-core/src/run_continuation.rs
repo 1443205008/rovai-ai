@@ -7,12 +7,10 @@ use uuid::Uuid;
 
 use crate::{
     camp_content::{StructuredThreadMessageSegment, canonical_content_digest},
-    collaboration::append_domain_event,
     command::{
         ActorRef, CommandEnvelope, CommandExecution, CommandHandlerResult, DomainCommand,
         DomainCommandGateway, EntityReference, sealed,
     },
-    context_index::index_camp_message,
     db::Database,
     delivery_queue::enqueue_message_deliveries,
 };
@@ -38,7 +36,6 @@ impl DomainCommand for ContinueAgentRunCommand {
 pub(crate) struct ContinuationSource {
     pub conversation_id: String,
     pub agent_id: String,
-    pub display_name: String,
 }
 
 /// Technical, current-fact admission only. No natural-language responsibility judgment.
@@ -50,7 +47,7 @@ pub(crate) fn eligible_source(
     // Batch Runs have no single Task. Inspect the original business messages,
     // including when their Delivery belongs to a previous continuation request.
     Ok(connection.query_row(
-        &format!("SELECT conversation.id, conversation.agent_id, profile.display_name
+        &format!("SELECT conversation.id, conversation.agent_id
          FROM agent_run AS run
          JOIN conversation ON conversation.id=run.conversation_id
          JOIN camp ON camp.id=run.camp_id
@@ -79,7 +76,7 @@ pub(crate) fn eligible_source(
                    OR message.content_digest<>input.message_content_digest))",
             crate::camp_message_publication::public_camp_message_event_predicate("publication.event_type")),
         params![run_id, camp_id],
-        |row| Ok(ContinuationSource { conversation_id: row.get(0)?, agent_id: row.get(1)?, display_name: row.get(2)? }),
+        |row| Ok(ContinuationSource { conversation_id: row.get(0)?, agent_id: row.get(1)? }),
     ).optional()?)
 }
 
@@ -163,26 +160,23 @@ pub fn continue_agent_run(
         };
         let now=chrono::Utc::now().to_rfc3339();
         let message_id=Uuid::new_v4().to_string();
-        let body=if command.use_new_session { format!("你使用新会话继续了{}的执行。", source.display_name) }
-            else { format!("你继续了{}的执行。", source.display_name) };
-        let content=vec![StructuredThreadMessageSegment::Text { text: body.clone() }];
+        // Delivery still requires a message foreign key. This empty, unpublished
+        // carrier exists only for queue identity; public readers and FTS exclude
+        // it through the existing tombstone boundary.
+        let content: Vec<StructuredThreadMessageSegment> = vec![];
         tx.execute("UPDATE camp SET last_message_sequence=last_message_sequence+1, version=version+1, updated_at=?2 WHERE id=?1",
             params![command.camp_id, now])?;
         let sequence:i64=tx.query_row("SELECT last_message_sequence FROM camp WHERE id=?1", [&command.camp_id], |r|r.get(0))?;
         tx.execute("INSERT INTO camp_message(id,camp_id,sequence,author_type,author_id,body,
             structured_content_json,content_digest,address_mode,addressed_agent_ids_json,
             effective_recipient_ids_json,recipient_presentation_json,source_operation_id,origin_kind,recall_state,
-            version,created_at,updated_at)
-            VALUES(?1,?2,?3,'system','run-continuation',?4,?5,?6,'explicit','[]','[]','{}',?7,'system','ineligible',1,?8,?8)",
-            params![message_id,command.camp_id,sequence,body,serde_json::to_string(&content)?,canonical_content_digest(&content)?,envelope.command_id,now])?;
-        index_camp_message(tx,&message_id,&command.camp_id,&body,"[]")?;
+            tombstoned_at,version,created_at,updated_at)
+            VALUES(?1,?2,?3,'system','run-continuation','','[]',?4,'explicit','[]','[]','{}',?5,'system','ineligible',?6,1,?6,?6)",
+            params![message_id,command.camp_id,sequence,canonical_content_digest(&content)?,envelope.command_id,now])?;
         let delivery=enqueue_message_deliveries(tx,&command.camp_id,&message_id,sequence,&[source.agent_id],&now)?
             .into_iter().next().context("Continuation did not enqueue its Delivery")?;
         tx.execute("INSERT INTO camp_run_continuation(delivery_id,source_agent_run_id,use_new_session) VALUES(?1,?2,?3)",
             params![delivery.delivery_id,command.agent_run_id,command.use_new_session])?;
-        append_domain_event(tx,"camp_message.sent",Some(&command.camp_id),Some(("camp_message",&message_id)),&envelope.actor,None,
-            &json!({"sequence":sequence,"recipientFree":true,"operation":"continue_execution"}))?;
-        crate::message_changes::record(tx, &command.camp_id, false, &[]);
         Ok(CommandHandlerResult::applied("agent_run.continuation_requested",
             json!({"threadId":command.camp_id,"deliveryId":delivery.delivery_id,"messageId":message_id}),
             Some(EntityReference { entity_type:"camp_message_delivery".into(),entity_id:delivery.delivery_id })))
