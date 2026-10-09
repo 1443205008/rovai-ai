@@ -11,9 +11,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::remote_worker::{
-    validate_heartbeat, validate_registration, validate_task as validate_task_request,
-    RemoteTaskPermission, RemoteTaskRequest, WorkerHeartbeat, WorkerRegistration, WorkerStatus,
-    REMOTE_WORKER_PROTOCOL_VERSION,
+    REMOTE_WORKER_PROTOCOL_VERSION, RemoteTaskPermission, RemoteTaskRequest, WorkerHeartbeat,
+    WorkerRegistration, WorkerStatus, validate_heartbeat, validate_registration,
+    validate_task as validate_task_request,
 };
 
 /// The default period used by the web API when asking a Worker to heartbeat.
