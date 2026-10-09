@@ -96,6 +96,7 @@ pub mod read_model;
 pub mod remote_worker;
 pub mod remote_worker_api;
 pub mod remote_worker_registry;
+pub mod remote_worker_runtime;
 pub mod run_continuation;
 pub mod runtime;
 pub mod runtime_activity_mapping;
