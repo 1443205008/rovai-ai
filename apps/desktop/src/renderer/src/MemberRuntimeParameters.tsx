@@ -455,6 +455,14 @@ function ModelFields({
   const latest = useRef({ draft, onChange, onOpenModelCatalog, selectedModel })
   latest.current = { draft, onChange, onOpenModelCatalog, selectedModel }
 
+  const updateCatalog = (catalog: RuntimeModelCatalogView): void => {
+    // The model menu and selected-model options read can finish out of order.
+    // A late catalog snapshot must not erase newer reasoning capabilities.
+    setLive(current => current?.identity === identity
+      && !liveCatalogIsAtLeastAsRecent(catalog, current.catalog.cache)
+      ? current : { identity, catalog })
+  }
+
   useEffect(() => {
     // Saving freezes the submitted draft. A later capability result may update
     // the menu, but must no longer clean up that now-saved selection.
@@ -491,7 +499,7 @@ function ModelFields({
       }
       const model = catalog.models.find((candidate) => candidate.id === target.modelId) ?? null
       // A cache miss is not evidence that the native target is unavailable.
-      if (active && model) setLive({ identity, catalog })
+      if (active && model) updateCatalog(catalog)
       return model
     }
     // Every visit checks local configuration, even inside the freshness window.
@@ -564,7 +572,7 @@ function ModelFields({
         disabled={disabled}
         onOpenModelCatalog={onOpenModelCatalog}
         onChange={changeModel}
-        onCatalogChange={(catalog) => setLive({ identity, catalog })}
+        onCatalogChange={updateCatalog}
       />
 
       {explicit && optionKey && (isDsh ? !optionsKnown || option || optionValue : option || optionValue) && (
