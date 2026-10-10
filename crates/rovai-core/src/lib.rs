@@ -93,6 +93,7 @@ pub mod pending_thread_draft;
 pub mod planned_shutdown;
 pub mod platform;
 pub mod read_model;
+pub mod remote_task_queue;
 pub mod remote_worker;
 pub mod remote_worker_api;
 pub mod remote_worker_bridge;
