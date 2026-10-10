@@ -15,12 +15,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::remote_worker::{
-    EventCursor, RemoteTaskPermission, RemoteTaskRequest, WorkerEnvelope, WorkerHeartbeat,
-    WorkerRegistration, validate_envelope,
+    validate_envelope, EventCursor, RemoteTaskPermission, RemoteTaskRequest, WorkerEnvelope,
+    WorkerHeartbeat, WorkerRegistration,
 };
 use crate::remote_worker_registry::{
-    DEFAULT_HEARTBEAT_INTERVAL_MS, DEFAULT_HEARTBEAT_TIMEOUT_MS, WorkerHeartbeatAck, WorkerRecord,
-    WorkerRegistrationOutcome, WorkerRegistrationResponse, WorkerRegistry, WorkerRegistryError,
+    WorkerHeartbeatAck, WorkerRecord, WorkerRegistrationOutcome, WorkerRegistrationResponse,
+    WorkerRegistry, WorkerRegistryError, DEFAULT_HEARTBEAT_INTERVAL_MS,
+    DEFAULT_HEARTBEAT_TIMEOUT_MS,
 };
 
 pub use crate::remote_worker_registry::{
@@ -42,6 +43,7 @@ pub type WorkerHeartbeatRequest = WorkerHeartbeat;
 pub const MAX_QUEUED_TASKS_PER_WORKER: usize = 256;
 pub const MAX_POLL_BATCH: usize = 64;
 pub const MAX_RETAINED_EVENTS_PER_WORKER: usize = 1024;
+pub const MAX_TASK_HISTORY_ENTRIES: usize = 512;
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -83,6 +85,37 @@ pub struct WorkerEventResponse {
     pub worker_id: String,
     pub accepted: bool,
     pub sequence: u64,
+}
+
+/// Read-only projection of the in-memory M3 queue.  This is intentionally a
+/// transport diagnostic, not an execution record: the queue does not launch a
+/// Runtime and therefore cannot claim that a task ran or completed.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerTaskHistoryEntry {
+    pub task_id: String,
+    pub agent_kind: Option<String>,
+    pub workspace_id: Option<String>,
+    pub state: WorkerTaskHistoryState,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkerTaskHistoryState {
+    Queued,
+    Leased,
+    Acknowledged,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerTaskQueueSnapshot {
+    pub pending: usize,
+    pub leased: usize,
+    pub acknowledged: usize,
+    pub retained_events: usize,
+    pub truncated: bool,
+    pub tasks: Vec<WorkerTaskHistoryEntry>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -252,6 +285,49 @@ impl RemoteWorkerApi {
 
     pub fn worker(&self, worker_id: &str) -> Option<&WorkerRecord> {
         self.registry.get(worker_id)
+    }
+
+    /// Return bounded queue state for read-only health/history views.  The
+    /// response deliberately contains task identity and target metadata only;
+    /// prompts and terminal results stay out of this diagnostic projection.
+    pub fn task_queue_snapshot(&self, worker_id: &str) -> Option<WorkerTaskQueueSnapshot> {
+        let queue = self.queues.get(worker_id)?;
+        let mut tasks =
+            Vec::with_capacity(queue.pending.len() + queue.leased.len() + queue.acknowledged.len());
+        tasks.extend(queue.pending.iter().map(|task| WorkerTaskHistoryEntry {
+            task_id: task.task_id.clone(),
+            agent_kind: Some(task.agent_kind.clone()),
+            workspace_id: Some(task.workspace_id.clone()),
+            state: WorkerTaskHistoryState::Queued,
+        }));
+        tasks.extend(queue.leased.values().map(|task| WorkerTaskHistoryEntry {
+            task_id: task.task_id.clone(),
+            agent_kind: Some(task.agent_kind.clone()),
+            workspace_id: Some(task.workspace_id.clone()),
+            state: WorkerTaskHistoryState::Leased,
+        }));
+        tasks.extend(
+            queue
+                .acknowledged
+                .iter()
+                .map(|task_id| WorkerTaskHistoryEntry {
+                    task_id: task_id.clone(),
+                    agent_kind: None,
+                    workspace_id: None,
+                    state: WorkerTaskHistoryState::Acknowledged,
+                }),
+        );
+        tasks.sort_by(|left, right| left.task_id.cmp(&right.task_id));
+        let truncated = tasks.len() > MAX_TASK_HISTORY_ENTRIES;
+        tasks.truncate(MAX_TASK_HISTORY_ENTRIES);
+        Some(WorkerTaskQueueSnapshot {
+            pending: queue.pending.len(),
+            leased: queue.leased.len(),
+            acknowledged: queue.acknowledged.len(),
+            retained_events: queue.events.len(),
+            truncated,
+            tasks,
+        })
     }
 
     /// Queue a validated task for a registered Worker.  Exact retries are
@@ -438,8 +514,8 @@ pub type HeartbeatApiResponse = WorkerHeartbeatAck;
 mod tests {
     use super::*;
     use crate::remote_worker::{
-        AgentCapability, REMOTE_WORKER_PROTOCOL_VERSION, WorkerCapabilities, WorkerStatus,
-        WorkspaceCapability,
+        AgentCapability, WorkerCapabilities, WorkerStatus, WorkspaceCapability,
+        REMOTE_WORKER_PROTOCOL_VERSION,
     };
 
     fn registration() -> WorkerRegistration {
@@ -578,6 +654,36 @@ mod tests {
                 "task_already_acknowledged"
             ))
         ));
+    }
+
+    #[test]
+    fn task_queue_snapshot_is_read_only_and_never_claims_execution() {
+        let mut api = RemoteWorkerApi::default();
+        api.register(registration(), 100).unwrap();
+        api.dispatch_task(task("task-1")).unwrap();
+        let queued = api.task_queue_snapshot("worker-api").unwrap();
+        assert_eq!(queued.pending, 1);
+        assert_eq!(queued.tasks[0].state, WorkerTaskHistoryState::Queued);
+        assert_eq!(queued.tasks[0].agent_kind.as_deref(), Some("codex_cli"));
+
+        api.poll_tasks("worker-api", 1).unwrap();
+        let leased = api.task_queue_snapshot("worker-api").unwrap();
+        assert_eq!(leased.leased, 1);
+        assert_eq!(leased.tasks[0].state, WorkerTaskHistoryState::Leased);
+
+        api.acknowledge_task(
+            "worker-api",
+            WorkerTaskAckRequest {
+                worker_id: "worker-api".into(),
+                task_id: "task-1".into(),
+                accepted: true,
+            },
+        )
+        .unwrap();
+        let acknowledged = api.task_queue_snapshot("worker-api").unwrap();
+        assert_eq!(acknowledged.acknowledged, 1);
+        assert_eq!(acknowledged.tasks[0].state, WorkerTaskHistoryState::Acknowledged);
+        assert!(!acknowledged.truncated);
     }
 
     #[test]
