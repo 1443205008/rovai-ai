@@ -66,9 +66,13 @@ pub enum WorkerRegistryError {
     WorkerAlreadyRegistered,
     RegistrationNonceMismatch,
     WorkerNotFound,
+    WorkerOffline,
     WorkerIdMismatch,
     HeartbeatOutOfOrder,
     InvalidTask(&'static str),
+    TaskNotFound,
+    InvalidEvent(&'static str),
+    EventOutOfOrder,
     UnknownAgent,
     UnknownWorkspace,
     WorkspaceReadOnly,
@@ -82,9 +86,13 @@ impl std::fmt::Display for WorkerRegistryError {
             Self::WorkerAlreadyRegistered => f.write_str("worker_already_registered"),
             Self::RegistrationNonceMismatch => f.write_str("registration_nonce_mismatch"),
             Self::WorkerNotFound => f.write_str("worker_not_found"),
+            Self::WorkerOffline => f.write_str("worker_offline"),
             Self::WorkerIdMismatch => f.write_str("worker_id_mismatch"),
             Self::HeartbeatOutOfOrder => f.write_str("heartbeat_out_of_order"),
             Self::InvalidTask(reason) => write!(f, "invalid_task:{reason}"),
+            Self::TaskNotFound => f.write_str("task_not_found"),
+            Self::InvalidEvent(reason) => write!(f, "invalid_event:{reason}"),
+            Self::EventOutOfOrder => f.write_str("event_out_of_order"),
             Self::UnknownAgent => f.write_str("unknown_agent"),
             Self::UnknownWorkspace => f.write_str("unknown_workspace"),
             Self::WorkspaceReadOnly => f.write_str("workspace_read_only"),
@@ -287,6 +295,9 @@ impl WorkerRegistry {
             .workers
             .get(&task.worker_id)
             .ok_or(WorkerRegistryError::WorkerNotFound)?;
+        if matches!(record.status, WorkerStatus::Offline) {
+            return Err(WorkerRegistryError::WorkerOffline);
+        }
         if !record
             .registration
             .capabilities

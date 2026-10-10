@@ -6,16 +6,20 @@
 //! acknowledged.  It intentionally does not start a process or resolve a
 //! machine-local path.
 
-use std::fmt;
+use std::{fmt, str::FromStr};
 
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::remote_worker::{
-    validate_envelope, validate_task, RemoteTaskPermission, RemoteTaskRequest, WorkerEnvelope,
-    WorkerEventKind,
+    RemoteTaskPermission, RemoteTaskRequest, WorkerEnvelope, WorkerEventKind, validate_envelope,
+    validate_task,
+};
+use crate::{
+    agent_profile::AdapterKind, planned_shutdown::RuntimeTerminalOutcome,
+    remote_worker_context::RuntimeTerminalObservation,
 };
 
 pub const MAX_LEASE_MS: u64 = 86_400_000;
@@ -36,6 +40,7 @@ CREATE TABLE IF NOT EXISTS remote_worker_task (
         'queued','leased','accepted','started','cancel_requested',
         'completed','failed','cancelled','lost')),
     lease_token TEXT,
+    terminal_lease_token TEXT,
     execution_epoch INTEGER NOT NULL DEFAULT 0,
     lease_expires_at_ms INTEGER,
     last_event_sequence INTEGER NOT NULL DEFAULT 0,
@@ -46,6 +51,17 @@ CREATE TABLE IF NOT EXISTS remote_worker_task (
 );
 CREATE INDEX IF NOT EXISTS remote_worker_task_claim_idx
     ON remote_worker_task(worker_id, state, created_at_ms, task_id);
+CREATE TABLE IF NOT EXISTS remote_worker_terminal_settlement (
+    task_id TEXT NOT NULL,
+    execution_epoch INTEGER NOT NULL CHECK(execution_epoch > 0),
+    attempt INTEGER NOT NULL CHECK(attempt > 0),
+    lease_token TEXT NOT NULL,
+    adapter_kind TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('succeeded','failed','cancelled','interrupted')),
+    fingerprint TEXT NOT NULL,
+    settled_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(task_id, execution_epoch)
+);
 CREATE TABLE IF NOT EXISTS remote_worker_event_cursor (
     worker_id TEXT PRIMARY KEY,
     next_sequence INTEGER NOT NULL CHECK(next_sequence > 0)
@@ -129,6 +145,10 @@ pub struct RemoteTaskRecord {
     pub attempt: u32,
     pub state: RemoteTaskState,
     pub lease_token: Option<String>,
+    /// Lease token retained after terminal settlement for read-side fence
+    /// reconstruction. The active `lease_token` is cleared on terminal
+    /// transitions so late Worker events cannot mutate a terminal task.
+    pub terminal_lease_token: Option<String>,
     /// Monotonically increasing claim fence. Worker events must echo it.
     pub execution_epoch: u64,
     pub lease_expires_at_ms: Option<u64>,
@@ -142,6 +162,61 @@ pub struct RemoteTaskRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemoteTaskLease {
     pub task: RemoteTaskRecord,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteTaskLeaseFence {
+    pub task_id: String,
+    pub attempt: u32,
+    pub execution_epoch: u64,
+    pub lease_token: String,
+}
+
+impl RemoteTaskRecord {
+    /// Convert a queue record to a queue-owned lease fence. This deliberately
+    /// does not create a `RuntimeLeaseFence`: `task_id` is not implicitly an
+    /// AgentRun ID. A trusted Core command must bind this value to its own
+    /// AgentRun identity before constructing a Runtime context.
+    pub fn lease_fence(&self) -> Result<RemoteTaskLeaseFence, QueueError> {
+        let epoch = i64::try_from(self.execution_epoch)
+            .map_err(|_| QueueError::InvalidRecord("execution_epoch_overflow"))?;
+        let token = self
+            .lease_token
+            .as_deref()
+            .or(self.terminal_lease_token.as_deref())
+            .ok_or(QueueError::LeaseNotFound)?;
+        if self.attempt == 0 || token.trim().is_empty() {
+            return Err(QueueError::InvalidRecord("lease_fence_invalid"));
+        }
+        // Keep the checked conversion above as part of validation even though
+        // the queue-owned fence retains the portable u64 representation.
+        let _ = epoch;
+        Ok(RemoteTaskLeaseFence {
+            task_id: self.task_id.clone(),
+            attempt: self.attempt,
+            execution_epoch: self.execution_epoch,
+            lease_token: token.to_owned(),
+        })
+    }
+}
+
+impl RemoteTaskLease {
+    pub fn lease_fence(&self) -> Result<RemoteTaskLeaseFence, QueueError> {
+        self.task.lease_fence()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteTaskTerminalSettlement {
+    pub task_id: String,
+    pub execution_epoch: u64,
+    pub attempt: u32,
+    pub lease_token: String,
+    pub adapter_kind: AdapterKind,
+    pub outcome: RuntimeTerminalOutcome,
+    pub fingerprint: String,
+    pub settled_at_ms: u64,
+    pub idempotent: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,6 +249,11 @@ pub enum QueueError {
     EventTaskMismatch,
     EventFenceMismatch,
     EventConflict,
+    InvalidRecord(&'static str),
+    TerminalTaskMismatch,
+    TerminalAdapterMismatch,
+    TerminalConflict,
+    TerminalSettlementMissing,
 }
 
 impl fmt::Display for QueueError {
@@ -191,6 +271,11 @@ impl fmt::Display for QueueError {
             Self::EventTaskMismatch => f.write_str("event_task_mismatch"),
             Self::EventFenceMismatch => f.write_str("event_fence_mismatch"),
             Self::EventConflict => f.write_str("event_conflict"),
+            Self::InvalidRecord(reason) => write!(f, "invalid_record:{reason}"),
+            Self::TerminalTaskMismatch => f.write_str("terminal_task_mismatch"),
+            Self::TerminalAdapterMismatch => f.write_str("terminal_adapter_mismatch"),
+            Self::TerminalConflict => f.write_str("terminal_conflict"),
+            Self::TerminalSettlementMissing => f.write_str("terminal_settlement_missing"),
         }
     }
 }
@@ -222,6 +307,17 @@ impl RemoteTaskQueue {
         if !has_epoch {
             tx.execute(
                 "ALTER TABLE remote_worker_task ADD COLUMN execution_epoch INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        let has_terminal_lease: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('remote_worker_task') WHERE name='terminal_lease_token')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_terminal_lease {
+            tx.execute(
+                "ALTER TABLE remote_worker_task ADD COLUMN terminal_lease_token TEXT",
                 [],
             )?;
         }
@@ -322,7 +418,8 @@ impl RemoteTaskQueue {
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute(
             "UPDATE remote_worker_task
-             SET state='lost', lease_token=NULL, lease_expires_at_ms=NULL,
+             SET state='lost', terminal_lease_token=COALESCE(terminal_lease_token, lease_token),
+                 lease_token=NULL, lease_expires_at_ms=NULL,
                  terminal_payload_json=COALESCE(terminal_payload_json, '{\"reason\":\"lease_expired\"}'),
                  updated_at_ms=?1
              WHERE state='leased' AND lease_expires_at_ms IS NOT NULL AND lease_expires_at_ms <= ?1",
@@ -478,9 +575,11 @@ impl RemoteTaskQueue {
             .query_row(
                 "SELECT next_sequence FROM remote_worker_event_cursor WHERE worker_id=?1",
                 [&event.worker_id],
-                |row| row.get::<_, i64>(0).map(|value| value as u64),
+                |row| row.get::<_, i64>(0),
             )
-            .optional()?;
+            .optional()?
+            .map(|value| sqlite_u64(value, "event_cursor"))
+            .transpose()?;
         if next.unwrap_or(1) != event.sequence {
             return Err(QueueError::EventOutOfOrder);
         }
@@ -514,6 +613,7 @@ impl RemoteTaskQueue {
                 tx.execute(
                     "UPDATE remote_worker_task SET state=?2, last_event_sequence=?3,
                         terminal_payload_json=COALESCE(?4, terminal_payload_json),
+                        terminal_lease_token=CASE WHEN ?6 THEN lease_token ELSE terminal_lease_token END,
                         lease_token=CASE WHEN ?6 THEN NULL ELSE lease_token END,
                         lease_expires_at_ms=NULL, updated_at_ms=?5
                      WHERE task_id=?1",
@@ -568,6 +668,147 @@ impl RemoteTaskQueue {
         })
     }
 
+    /// Persist a Core-admitted terminal observation in queue-owned records.
+    ///
+    /// This is deliberately separate from `project_event`: a Worker terminal
+    /// event is transport evidence, while this method accepts only a typed
+    /// `RuntimeTerminalObservation` that has already proved the complete Core
+    /// lease fence. It never writes `agent_run` or `event_log`.
+    pub fn settle_terminal(
+        connection: &mut Connection,
+        task_id: &str,
+        agent_run_id: &str,
+        observation: &RuntimeTerminalObservation,
+        now_ms: u64,
+    ) -> Result<RemoteTaskTerminalSettlement, QueueError> {
+        if task_id.trim().is_empty() {
+            return Err(QueueError::TerminalTaskMismatch);
+        }
+        if now_ms == 0 || now_ms > MAX_SQLITE_MS {
+            return Err(QueueError::InvalidTask("timestamp_required"));
+        }
+        if agent_run_id.trim().is_empty() || observation.agent_run_id() != agent_run_id {
+            return Err(QueueError::TerminalTaskMismatch);
+        }
+        if !valid_queue_fingerprint(observation.fingerprint()) {
+            return Err(QueueError::InvalidEvent("terminal_fingerprint_invalid"));
+        }
+        let execution_epoch = u64::try_from(observation.execution_epoch())
+            .map_err(|_| QueueError::InvalidRecord("execution_epoch_invalid"))?;
+        let outcome = observation.outcome();
+        let next_state = terminal_state(outcome);
+        Self::ensure_schema(connection)?;
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task = load_task(&tx, task_id)?.ok_or(QueueError::TaskNotFound)?;
+        if task.execution_epoch != execution_epoch {
+            return Err(QueueError::EventFenceMismatch);
+        }
+
+        let active_or_terminal_token = task
+            .lease_token
+            .as_deref()
+            .or(task.terminal_lease_token.as_deref());
+        if active_or_terminal_token != Some(observation.lease_token()) {
+            return Err(QueueError::EventFenceMismatch);
+        }
+
+        let adapter_kind = observation.adapter_kind();
+        if !agent_kind_matches_adapter(&task.agent_kind, adapter_kind) {
+            return Err(QueueError::TerminalAdapterMismatch);
+        }
+        if let Some(existing) = load_terminal_settlement(&tx, task_id, execution_epoch)? {
+            if existing.lease_token != observation.lease_token()
+                || existing.attempt != task.attempt
+                || existing.adapter_kind != adapter_kind
+                || existing.outcome != outcome
+                || existing.fingerprint != observation.fingerprint()
+            {
+                return Err(QueueError::TerminalConflict);
+            }
+            tx.commit()?;
+            return Ok(RemoteTaskTerminalSettlement {
+                task_id: existing.task_id,
+                execution_epoch: existing.execution_epoch,
+                attempt: existing.attempt,
+                lease_token: existing.lease_token,
+                adapter_kind: existing.adapter_kind,
+                outcome: existing.outcome,
+                fingerprint: existing.fingerprint,
+                settled_at_ms: existing.settled_at_ms,
+                idempotent: true,
+            });
+        }
+
+        if task.state.is_terminal() {
+            // A Worker event may have persisted terminal state before the Core
+            // Runtime callback arrived. The retained terminal token lets the
+            // typed observation complete the queue-owned settlement exactly
+            // once after a restart.
+            if task.state != next_state {
+                return Err(QueueError::TerminalConflict);
+            }
+        } else if !matches!(
+            task.state,
+            RemoteTaskState::Leased
+                | RemoteTaskState::Accepted
+                | RemoteTaskState::Started
+                | RemoteTaskState::CancelRequested
+        ) {
+            return Err(QueueError::InvalidState);
+        } else {
+            let payload = serde_json::json!({
+                "taskId": task_id,
+                "executionEpoch": execution_epoch,
+                "attempt": task.attempt,
+                "leaseToken": observation.lease_token(),
+                "outcome": outcome.as_str(),
+                "fingerprint": observation.fingerprint(),
+            });
+            let payload_json = serde_json::to_string(&payload)
+                .map_err(|_| QueueError::InvalidEvent("terminal_payload_invalid"))?;
+            if payload_json.len() > MAX_EVENT_PAYLOAD_BYTES {
+                return Err(QueueError::InvalidEvent("payload_too_large"));
+            }
+            tx.execute(
+                "UPDATE remote_worker_task SET state=?2,
+                    terminal_lease_token=lease_token,
+                    lease_token=NULL, lease_expires_at_ms=NULL,
+                    terminal_payload_json=?3, updated_at_ms=?4
+                 WHERE task_id=?1",
+                params![task_id, next_state.as_str(), payload_json, now_ms as i64],
+            )?;
+        }
+
+        tx.execute(
+            "INSERT INTO remote_worker_terminal_settlement(
+                task_id, execution_epoch, attempt, lease_token, adapter_kind,
+                outcome, fingerprint, settled_at_ms)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![
+                task_id,
+                execution_epoch as i64,
+                task.attempt as i64,
+                observation.lease_token(),
+                adapter_kind.as_str(),
+                outcome.as_str(),
+                observation.fingerprint(),
+                now_ms as i64,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(RemoteTaskTerminalSettlement {
+            task_id: task_id.to_owned(),
+            execution_epoch,
+            attempt: task.attempt,
+            lease_token: observation.lease_token().to_owned(),
+            adapter_kind,
+            outcome,
+            fingerprint: observation.fingerprint().to_owned(),
+            settled_at_ms: now_ms,
+            idempotent: false,
+        })
+    }
+
     pub fn get(
         connection: &Connection,
         task_id: &str,
@@ -591,7 +832,9 @@ impl RemoteTaskQueue {
         }
         Self::ensure_schema(connection)?;
         Ok(connection.execute(
-            "UPDATE remote_worker_task SET state='lost', lease_token=NULL,
+            "UPDATE remote_worker_task SET state='lost',
+                terminal_lease_token=COALESCE(terminal_lease_token, lease_token),
+                lease_token=NULL,
                 lease_expires_at_ms=NULL,
                 terminal_payload_json=COALESCE(terminal_payload_json, '{\"reason\":\"lease_expired\"}'),
                 updated_at_ms=?1
@@ -624,42 +867,228 @@ fn load_task(
 ) -> Result<Option<RemoteTaskRecord>, QueueError> {
     let mut statement = connection.prepare(
         "SELECT task_id, worker_id, agent_kind, workspace_id, prompt, permission,
-                timeout_seconds, attempt, state, lease_token, execution_epoch, lease_expires_at_ms,
-                last_event_sequence, cancel_requested_at_ms, terminal_payload_json,
-                created_at_ms, updated_at_ms
+                timeout_seconds, attempt, state, lease_token, terminal_lease_token,
+                execution_epoch, lease_expires_at_ms, last_event_sequence,
+                cancel_requested_at_ms, terminal_payload_json, created_at_ms, updated_at_ms
          FROM remote_worker_task WHERE task_id=?1",
     )?;
-    statement
+    let raw: Option<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        i64,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        Option<String>,
+        i64,
+        i64,
+    )> = statement
         .query_row([task_id], |row| {
-            let payload: Option<String> = row.get(14)?;
-            Ok(RemoteTaskRecord {
-                task_id: row.get(0)?,
-                worker_id: row.get(1)?,
-                agent_kind: row.get(2)?,
-                workspace_id: row.get(3)?,
-                prompt: row.get(4)?,
-                permission: permission_from_str(&row.get::<_, String>(5)?)
-                    .map_err(|_| rusqlite::Error::InvalidQuery)?,
-                timeout_seconds: row.get::<_, i64>(6)? as u32,
-                attempt: row.get::<_, i64>(7)? as u32,
-                state: state_from_str(&row.get::<_, String>(8)?)
-                    .map_err(|_| rusqlite::Error::InvalidQuery)?,
-                lease_token: row.get(9)?,
-                execution_epoch: row.get::<_, i64>(10)? as u64,
-                lease_expires_at_ms: row.get::<_, Option<i64>>(11)?.map(|value| value as u64),
-                last_event_sequence: row.get::<_, i64>(12)? as u64,
-                cancel_requested_at_ms: row.get::<_, Option<i64>>(13)?.map(|value| value as u64),
-                terminal_payload: payload
-                    .map(|value| {
-                        serde_json::from_str(&value).map_err(|_| rusqlite::Error::InvalidQuery)
-                    })
-                    .transpose()?,
-                created_at_ms: row.get::<_, i64>(15)? as u64,
-                updated_at_ms: row.get::<_, i64>(16)? as u64,
-            })
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+                row.get(9)?,
+                row.get(10)?,
+                row.get(11)?,
+                row.get(12)?,
+                row.get(13)?,
+                row.get(14)?,
+                row.get(15)?,
+                row.get(16)?,
+                row.get(17)?,
+            ))
         })
-        .optional()
-        .map_err(QueueError::from)
+        .optional()?;
+    let Some((
+        task_id,
+        worker_id,
+        agent_kind,
+        workspace_id,
+        prompt,
+        permission,
+        timeout_seconds,
+        attempt,
+        state,
+        lease_token,
+        terminal_lease_token,
+        execution_epoch,
+        lease_expires_at_ms,
+        last_event_sequence,
+        cancel_requested_at_ms,
+        terminal_payload,
+        created_at_ms,
+        updated_at_ms,
+    )) = raw
+    else {
+        return Ok(None);
+    };
+    let payload = terminal_payload
+        .map(|value| {
+            serde_json::from_str(&value)
+                .map_err(|_| QueueError::InvalidRecord("terminal_payload_invalid"))
+        })
+        .transpose()?;
+    Ok(Some(RemoteTaskRecord {
+        task_id,
+        worker_id,
+        agent_kind,
+        workspace_id,
+        prompt,
+        permission: permission_from_str(&permission)?,
+        timeout_seconds: sqlite_u32(timeout_seconds, "timeout_seconds")?,
+        attempt: sqlite_u32(attempt, "attempt")?,
+        state: state_from_str(&state)?,
+        lease_token,
+        terminal_lease_token,
+        execution_epoch: sqlite_u64(execution_epoch, "execution_epoch")?,
+        lease_expires_at_ms: lease_expires_at_ms
+            .map(|value| sqlite_u64(value, "lease_expires_at_ms"))
+            .transpose()?,
+        last_event_sequence: sqlite_u64(last_event_sequence, "last_event_sequence")?,
+        cancel_requested_at_ms: cancel_requested_at_ms
+            .map(|value| sqlite_u64(value, "cancel_requested_at_ms"))
+            .transpose()?,
+        terminal_payload: payload,
+        created_at_ms: sqlite_u64(created_at_ms, "created_at_ms")?,
+        updated_at_ms: sqlite_u64(updated_at_ms, "updated_at_ms")?,
+    }))
+}
+
+fn sqlite_u64(value: i64, field: &'static str) -> Result<u64, QueueError> {
+    u64::try_from(value).map_err(|_| QueueError::InvalidRecord(field))
+}
+
+fn sqlite_u32(value: i64, field: &'static str) -> Result<u32, QueueError> {
+    u32::try_from(value).map_err(|_| QueueError::InvalidRecord(field))
+}
+
+fn valid_queue_fingerprint(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.trim() == value
+        && value.len() <= 512
+        && !value.chars().any(char::is_control)
+        && !value.contains('/')
+        && !value.contains('\\')
+}
+
+fn terminal_state(outcome: RuntimeTerminalOutcome) -> RemoteTaskState {
+    match outcome {
+        RuntimeTerminalOutcome::Succeeded => RemoteTaskState::Completed,
+        RuntimeTerminalOutcome::Failed => RemoteTaskState::Failed,
+        RuntimeTerminalOutcome::Cancelled => RemoteTaskState::Cancelled,
+        RuntimeTerminalOutcome::Interrupted => RemoteTaskState::Lost,
+    }
+}
+
+/// Match the persisted Worker agent identity with the Adapter that Core
+/// admitted for the terminal observation.  Worker protocol identities use
+/// snake_case (for example, `codex_cli`), while [`AdapterKind::as_str`] uses
+/// the catalog's kebab-case names.  Accept both representations for the
+/// same catalog entry, but never normalize arbitrary strings: an unknown or
+/// malformed task agent kind must fail closed at settlement.
+fn agent_kind_matches_adapter(agent_kind: &str, adapter_kind: AdapterKind) -> bool {
+    let wire_name = match adapter_kind {
+        AdapterKind::CodexCli => "codex_cli",
+        AdapterKind::Pi => "pi",
+        AdapterKind::OpencodeCli => "opencode_cli",
+        AdapterKind::CopilotCli => "copilot_cli",
+        AdapterKind::ClaudeCodeCli => "claude_code_cli",
+        AdapterKind::KiroCli => "kiro_cli",
+        AdapterKind::QoderCli => "qoder_cli",
+        AdapterKind::CodebuddyCli => "codebuddy_cli",
+        AdapterKind::QwenCode => "qwen_code",
+        AdapterKind::TraeCnCli => "trae_cn_cli",
+        AdapterKind::CursorAgent => "cursor_agent",
+        AdapterKind::KimiCodeCli => "kimi_code_cli",
+        AdapterKind::GrokBuild => "grok_build",
+        AdapterKind::DeepseekHarness => "deepseek_harness",
+        AdapterKind::ZcodeApp => "zcode_app",
+        AdapterKind::AntigravityApp => "antigravity_app",
+    };
+    agent_kind == wire_name || agent_kind == adapter_kind.as_str()
+}
+
+fn parse_terminal_outcome(value: &str) -> Result<RuntimeTerminalOutcome, QueueError> {
+    match value {
+        "succeeded" => Ok(RuntimeTerminalOutcome::Succeeded),
+        "failed" => Ok(RuntimeTerminalOutcome::Failed),
+        "cancelled" => Ok(RuntimeTerminalOutcome::Cancelled),
+        "interrupted" => Ok(RuntimeTerminalOutcome::Interrupted),
+        _ => Err(QueueError::InvalidRecord("terminal_outcome")),
+    }
+}
+
+fn load_terminal_settlement(
+    connection: &Connection,
+    task_id: &str,
+    execution_epoch: u64,
+) -> Result<Option<RemoteTaskTerminalSettlement>, QueueError> {
+    let raw: Option<(String, i64, i64, String, String, String, String, i64)> = connection
+        .query_row(
+            "SELECT task_id, execution_epoch, attempt, lease_token, adapter_kind,
+                    outcome, fingerprint, settled_at_ms
+             FROM remote_worker_terminal_settlement
+             WHERE task_id=?1 AND execution_epoch=?2",
+            params![
+                task_id,
+                i64::try_from(execution_epoch)
+                    .map_err(|_| QueueError::InvalidRecord("execution_epoch_overflow"))?
+            ],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        task_id,
+        stored_epoch,
+        attempt,
+        lease_token,
+        adapter_kind,
+        outcome,
+        fingerprint,
+        settled_at_ms,
+    )) = raw
+    else {
+        return Ok(None);
+    };
+    Ok(Some(RemoteTaskTerminalSettlement {
+        task_id,
+        execution_epoch: sqlite_u64(stored_epoch, "execution_epoch")?,
+        attempt: sqlite_u32(attempt, "attempt")?,
+        lease_token,
+        adapter_kind: AdapterKind::from_str(&adapter_kind)
+            .map_err(|_| QueueError::InvalidRecord("adapter_kind"))?,
+        outcome: parse_terminal_outcome(&outcome)?,
+        fingerprint,
+        settled_at_ms: sqlite_u64(settled_at_ms, "settled_at_ms")?,
+        idempotent: false,
+    }))
 }
 
 struct EventFence {
@@ -734,7 +1163,17 @@ fn valid_event_transition(current: RemoteTaskState, next: RemoteTaskState) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::remote_worker::{WorkerEventKind, REMOTE_WORKER_PROTOCOL_VERSION};
+    use crate::{
+        agent_profile::{
+            AdapterPermissionConfig, FrozenAgentRuntimeConfig, ResolvedModelSelection,
+        },
+        remote_worker::{REMOTE_WORKER_PROTOCOL_VERSION, WorkerEventKind},
+        remote_worker_context::{
+            FrozenRuntimeConfig, RuntimeExecutionContext, RuntimeLeaseFence, WorkspaceAccess,
+            WorkspaceAdmission, WorkspaceIsolation,
+        },
+    };
+    use serde_json::json;
 
     fn request(id: &str) -> RemoteTaskRequest {
         RemoteTaskRequest {
@@ -747,6 +1186,65 @@ mod tests {
             timeout_seconds: 30,
             attempt: 1,
         }
+    }
+
+    fn runtime_context(adapter_kind: AdapterKind, lease_token: &str) -> RuntimeExecutionContext {
+        let frozen = FrozenAgentRuntimeConfig {
+            custom_api: None,
+            camp_fast: None,
+            adapter_kind,
+            installation_id: "install-1".into(),
+            installation_generation: 1,
+            search_environment_generation: 1,
+            executable_path: "runtime".into(),
+            auth_scope: "account".into(),
+            reported_version: Some("1.0.0".into()),
+            executable_fingerprint: "sha256:exe".into(),
+            capabilities: vec![],
+            protocol_version: "1".into(),
+            model: ResolvedModelSelection {
+                source: "runtime_default".into(),
+                model_id: "default".into(),
+                options: json!({}),
+            },
+            permissions: AdapterPermissionConfig {
+                adapter_kind,
+                schema_version: 1,
+                values: json!({}),
+            },
+            native_session_compatibility_key: None,
+            binding_compatibility_digest: "sha256:binding".into(),
+            host_config_digest: "sha256:host".into(),
+            config_digest: "sha256:config".into(),
+        };
+        RuntimeExecutionContext::admit(
+            RuntimeLeaseFence::new("run-1", 1, lease_token).unwrap(),
+            "camp-1",
+            "agent-1",
+            FrozenRuntimeConfig::freeze(frozen).unwrap(),
+            WorkspaceAdmission::from_worker_id(
+                "main",
+                WorkspaceAccess::ReadOnly,
+                WorkspaceIsolation::Shared,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn terminal_observation(
+        adapter_kind: AdapterKind,
+        lease_token: &str,
+    ) -> RuntimeTerminalObservation {
+        runtime_context(adapter_kind, lease_token)
+            .observe_terminal(
+                "run-1",
+                1,
+                lease_token,
+                RuntimeTerminalOutcome::Succeeded,
+                "sha256:terminal",
+            )
+            .unwrap()
     }
 
     fn event(
@@ -779,9 +1277,11 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(lease.task.execution_epoch, 1);
-        assert!(RemoteTaskQueue::claim(&mut connection, "worker-1", 26, 5)
-            .unwrap()
-            .is_none());
+        assert!(
+            RemoteTaskQueue::claim(&mut connection, "worker-1", 26, 5)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             RemoteTaskQueue::get(&connection, "task-1")
                 .unwrap()
@@ -974,5 +1474,111 @@ mod tests {
             )
             .unwrap();
         assert_eq!(status, "running");
+    }
+
+    #[test]
+    fn terminal_settlement_is_idempotent_after_restart_and_retains_token_fence() {
+        let path =
+            std::env::temp_dir().join(format!("rovai-remote-settlement-{}.sqlite", Uuid::new_v4()));
+        {
+            let mut connection = Connection::open(&path).unwrap();
+            RemoteTaskQueue::enqueue(&mut connection, &request("task-1"), 10).unwrap();
+            let lease = RemoteTaskQueue::claim(&mut connection, "worker-1", 20, 100)
+                .unwrap()
+                .unwrap();
+            let lease_token = lease.task.lease_token.clone().unwrap();
+            let observation = terminal_observation(AdapterKind::CodexCli, &lease_token);
+            // The queue task ID is not an AgentRun ID.  Settlement accepts
+            // only the trusted identity carried by the Core observation.
+            assert!(matches!(
+                RemoteTaskQueue::settle_terminal(
+                    &mut connection,
+                    "task-1",
+                    "task-1",
+                    &observation,
+                    30,
+                ),
+                Err(QueueError::TerminalTaskMismatch)
+            ));
+            let settled = RemoteTaskQueue::settle_terminal(
+                &mut connection,
+                "task-1",
+                "run-1",
+                &observation,
+                30,
+            )
+            .unwrap();
+            assert!(!settled.idempotent);
+            assert_eq!(settled.adapter_kind, AdapterKind::CodexCli);
+            let task = RemoteTaskQueue::get(&connection, "task-1")
+                .unwrap()
+                .unwrap();
+            assert_eq!(task.state, RemoteTaskState::Completed);
+            assert_eq!(task.lease_token, None);
+            assert_eq!(
+                task.terminal_lease_token.as_deref(),
+                Some(lease_token.as_str())
+            );
+        }
+        {
+            let mut connection = Connection::open(&path).unwrap();
+            let task = RemoteTaskQueue::get(&connection, "task-1")
+                .unwrap()
+                .unwrap();
+            let lease_token = task.terminal_lease_token.clone().unwrap();
+            assert_eq!(
+                task.terminal_lease_token.as_deref(),
+                Some(lease_token.as_str())
+            );
+            let observation = terminal_observation(AdapterKind::CodexCli, &lease_token);
+            let replay = RemoteTaskQueue::settle_terminal(
+                &mut connection,
+                "task-1",
+                "run-1",
+                &observation,
+                40,
+            )
+            .unwrap();
+            assert!(replay.idempotent);
+            assert_eq!(replay.settled_at_ms, 30);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn terminal_settlement_rejects_adapter_mismatch_without_mutating_task() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        RemoteTaskQueue::enqueue(&mut connection, &request("task-1"), 10).unwrap();
+        let lease = RemoteTaskQueue::claim(&mut connection, "worker-1", 20, 100)
+            .unwrap()
+            .unwrap();
+        let lease_token = lease.task.lease_token.clone().unwrap();
+        let observation = terminal_observation(AdapterKind::Pi, &lease_token);
+        assert!(matches!(
+            RemoteTaskQueue::settle_terminal(&mut connection, "task-1", "run-1", &observation, 30,),
+            Err(QueueError::TerminalAdapterMismatch)
+        ));
+        let task = RemoteTaskQueue::get(&connection, "task-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(task.state, RemoteTaskState::Leased);
+        assert_eq!(task.lease_token, lease.task.lease_token);
+        assert_eq!(task.terminal_lease_token, None);
+    }
+
+    #[test]
+    fn malformed_persisted_terminal_record_fails_closed() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        RemoteTaskQueue::enqueue(&mut connection, &request("task-1"), 10).unwrap();
+        connection
+            .execute(
+                "UPDATE remote_worker_task SET terminal_payload_json='{' WHERE task_id='task-1'",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            RemoteTaskQueue::get(&connection, "task-1"),
+            Err(QueueError::InvalidRecord("terminal_payload_invalid"))
+        ));
     }
 }

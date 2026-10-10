@@ -6,22 +6,22 @@
 //! intentionally not invented here: the routes stay behind the existing web
 //! session middleware until that authentication contract is available.
 
-use crate::{error, WebState};
+use crate::{WebState, error};
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use rovai_core::remote_worker::{
-    RemoteTaskRequest, WorkerEnvelope, WorkerStatus, REMOTE_WORKER_PROTOCOL_VERSION,
+    REMOTE_WORKER_PROTOCOL_VERSION, RemoteTaskRequest, WorkerEnvelope, WorkerStatus,
 };
 use rovai_core::remote_worker_api::{
     WorkerHeartbeatRequest, WorkerPollRequest, WorkerRegistrationRequest, WorkerTaskAckRequest,
     WorkerTaskQueueSnapshot,
 };
 use rovai_core::remote_worker_registry::{WorkerRecord, WorkerRegistryError};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// M3 is a transport fixture.  It accepts and queues protocol messages, but
 /// no Runtime Adapter is connected, so a read-only view must say so plainly.
@@ -287,8 +287,8 @@ pub(crate) async fn event(
 mod tests {
     use super::*;
     use rovai_core::remote_worker::{
-        AgentCapability, WorkerCapabilities, WorkerHeartbeat, WorkerRegistration, WorkerStatus,
-        WorkspaceCapability, REMOTE_WORKER_PROTOCOL_VERSION,
+        AgentCapability, REMOTE_WORKER_PROTOCOL_VERSION, WorkerCapabilities, WorkerHeartbeat,
+        WorkerRegistration, WorkerStatus, WorkspaceCapability,
     };
     use rovai_core::remote_worker_api::RemoteWorkerApi;
     use rovai_core::remote_worker_registry::WorkerRegistrationOutcome;
@@ -364,7 +364,12 @@ mod tests {
         let mut api = RemoteWorkerApi::default();
         api.register(registration(), 100).unwrap();
         let record = api.worker("worker-http").unwrap();
-        let view = worker_view(record, api.task_queue_snapshot("worker-http"), 60_100, 60_000);
+        let view = worker_view(
+            record,
+            api.task_queue_snapshot("worker-http"),
+            60_100,
+            60_000,
+        );
         assert_eq!(view["health"]["status"], "offline");
         assert_eq!(view["health"]["reportedStatus"], "online");
         assert_eq!(view["executionAvailable"], false);

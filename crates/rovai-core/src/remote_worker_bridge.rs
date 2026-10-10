@@ -11,6 +11,7 @@
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
 use crate::{
+    agent_profile::AdapterKind,
     remote_worker::{RemoteTaskPermission, RemoteTaskRequest, validate_task},
     remote_worker_runtime::{
         RemoteTaskExecutionEvent, RemoteTaskExecutionState, RuntimeDispatchReceipt,
@@ -121,6 +122,150 @@ impl WorkerExecutionRequest {
             attempt: self.attempt,
         }
     }
+
+    /// Bind a validated Worker request to an already-admitted Core execution.
+    ///
+    /// The wire request intentionally does not carry a Core `AgentRun` lease,
+    /// compatibility digest, or a machine-local path.  A Worker may only
+    /// enter the Runtime Fleet after the trusted lease/dispatch path supplies
+    /// those values.  Keeping this conversion explicit prevents callers from
+    /// deriving a Fleet lease from `task_id`, `attempt`, or an untrusted
+    /// Worker payload.
+    pub fn bind_to_fleet(
+        &self,
+        context: WorkerFleetExecutionContext,
+    ) -> Result<WorkerFleetExecutionRequest, WorkerFleetBindingError> {
+        context.validate()?;
+        Ok(WorkerFleetExecutionRequest {
+            task: self.clone(),
+            agent_run_id: context.agent_run_id,
+            execution_epoch: context.execution_epoch,
+            camp_id: context.camp_id,
+            agent_id: context.agent_id,
+            workspace_key: context.workspace_key,
+            runtime_compatibility_digest: context.runtime_compatibility_digest,
+            lease_token: context.lease_token,
+        })
+    }
+}
+
+/// Trusted Core-side execution identity needed before a Worker can acquire an
+/// existing Runtime Fleet lease.  None of these fields are accepted from a
+/// remote task payload; they come from the Core command/lease transaction.
+/// In particular, `workspace_key` is an opaque identifier, never a path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkerFleetExecutionContext {
+    pub agent_run_id: String,
+    pub execution_epoch: i64,
+    pub camp_id: String,
+    pub agent_id: String,
+    pub workspace_key: WorkerWorkspaceId,
+    pub runtime_compatibility_digest: String,
+    pub lease_token: String,
+}
+
+impl WorkerFleetExecutionContext {
+    fn validate(&self) -> Result<(), WorkerFleetBindingError> {
+        if self.execution_epoch <= 0 {
+            return Err(WorkerFleetBindingError::ExecutionEpochInvalid);
+        }
+        validate_opaque_identity(&self.agent_run_id, 256)
+            .then_some(())
+            .ok_or(WorkerFleetBindingError::AgentRunIdentityInvalid)?;
+        validate_opaque_identity(&self.camp_id, 256)
+            .then_some(())
+            .ok_or(WorkerFleetBindingError::CampIdentityInvalid)?;
+        validate_opaque_identity(&self.agent_id, 256)
+            .then_some(())
+            .ok_or(WorkerFleetBindingError::AgentIdentityInvalid)?;
+        validate_opaque_identity(&self.runtime_compatibility_digest, 512)
+            .then_some(())
+            .ok_or(WorkerFleetBindingError::CompatibilityDigestInvalid)?;
+        validate_opaque_identity(&self.lease_token, 512)
+            .then_some(())
+            .ok_or(WorkerFleetBindingError::LeaseTokenInvalid)?;
+        Ok(())
+    }
+}
+
+/// The minimum typed request a future Worker Runtime adapter must hand to the
+/// existing Core Runtime Fleet.  It has no executable path, shell text, or
+/// mutable workspace root.  The Fleet integration is deliberately a separate
+/// port because constructing a real Host also needs the local, admitted
+/// runtime configuration and Core-owned event/receipt sinks.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkerFleetExecutionRequest {
+    pub task: WorkerExecutionRequest,
+    pub agent_run_id: String,
+    pub execution_epoch: i64,
+    pub camp_id: String,
+    pub agent_id: String,
+    pub workspace_key: WorkerWorkspaceId,
+    pub runtime_compatibility_digest: String,
+    pub lease_token: String,
+}
+
+impl WorkerFleetExecutionRequest {
+    pub fn adapter_kind(&self) -> AdapterKind {
+        match self.task.agent_kind {
+            CanonicalWorkerAgentKind::CodexCli => AdapterKind::CodexCli,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerFleetBindingError {
+    AgentRunIdentityInvalid,
+    ExecutionEpochInvalid,
+    CampIdentityInvalid,
+    AgentIdentityInvalid,
+    CompatibilityDigestInvalid,
+    LeaseTokenInvalid,
+}
+
+impl std::fmt::Display for WorkerFleetBindingError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::AgentRunIdentityInvalid => "agent_run_identity_invalid",
+            Self::ExecutionEpochInvalid => "execution_epoch_invalid",
+            Self::CampIdentityInvalid => "camp_identity_invalid",
+            Self::AgentIdentityInvalid => "agent_identity_invalid",
+            Self::CompatibilityDigestInvalid => "runtime_compatibility_digest_invalid",
+            Self::LeaseTokenInvalid => "lease_token_invalid",
+        })
+    }
+}
+
+impl std::error::Error for WorkerFleetBindingError {}
+
+fn validate_opaque_identity(value: &str, max_len: usize) -> bool {
+    !value.trim().is_empty()
+        && value.trim() == value
+        && value.len() <= max_len
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.chars().any(char::is_control)
+}
+
+/// Port implemented by the Worker process once it has a local Runtime Fleet
+/// owner and the Core lease/event sinks.  This intentionally carries a typed
+/// Fleet request rather than a `Command`, executable path, or cwd.  The
+/// current repository has no Worker process entrypoint that can satisfy all
+/// of those inputs, so no implementation is provided here yet.
+pub trait WorkerRuntimeFleetPort {
+    type WorkspaceBinding: Clone + Send + Sync + 'static;
+    type Error;
+
+    fn execute_fleet<'a>(
+        &'a mut self,
+        request: &'a WorkerFleetExecutionRequest,
+        binding: Self::WorkspaceBinding,
+    ) -> WorkerRuntimeFuture<'a, Result<(), Self::Error>>;
+
+    fn cancel_fleet<'a>(
+        &'a mut self,
+        task_id: &'a str,
+    ) -> WorkerRuntimeFuture<'a, Result<(), Self::Error>>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -382,6 +527,18 @@ mod tests {
         }
     }
 
+    fn fleet_context() -> WorkerFleetExecutionContext {
+        WorkerFleetExecutionContext {
+            agent_run_id: "run-1".into(),
+            execution_epoch: 7,
+            camp_id: "camp-1".into(),
+            agent_id: "agent-1".into(),
+            workspace_key: WorkerWorkspaceId::parse("main").unwrap(),
+            runtime_compatibility_digest: "sha256:fixture".into(),
+            lease_token: "lease-1".into(),
+        }
+    }
+
     #[test]
     fn typed_request_rejects_writes_unknown_agents_and_path_like_workspace_ids() {
         let mut write = task();
@@ -401,6 +558,29 @@ mod tests {
         assert_eq!(
             WorkerExecutionRequest::try_from(path),
             Err(WorkerBridgeError::InvalidWorkspaceId)
+        );
+    }
+
+    #[test]
+    fn fleet_binding_requires_trusted_opaque_execution_context() {
+        let request = WorkerExecutionRequest::try_from(task()).unwrap();
+        let bound = request.bind_to_fleet(fleet_context()).unwrap();
+        assert_eq!(bound.adapter_kind(), AdapterKind::CodexCli);
+        assert_eq!(bound.agent_run_id, "run-1");
+        assert_eq!(bound.execution_epoch, 7);
+        assert_eq!(bound.workspace_key.as_str(), "main");
+
+        let mut invalid = fleet_context();
+        invalid.lease_token = "/tmp/lease".into();
+        assert_eq!(
+            request.bind_to_fleet(invalid),
+            Err(WorkerFleetBindingError::LeaseTokenInvalid)
+        );
+        let mut invalid = fleet_context();
+        invalid.execution_epoch = 0;
+        assert_eq!(
+            request.bind_to_fleet(invalid),
+            Err(WorkerFleetBindingError::ExecutionEpochInvalid)
         );
     }
 

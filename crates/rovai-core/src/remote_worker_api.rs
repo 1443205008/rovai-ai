@@ -15,13 +15,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::remote_worker::{
-    validate_envelope, EventCursor, RemoteTaskPermission, RemoteTaskRequest, WorkerEnvelope,
-    WorkerHeartbeat, WorkerRegistration,
+    EventCursor, RemoteTaskPermission, RemoteTaskRequest, WorkerEnvelope, WorkerHeartbeat,
+    WorkerRegistration, validate_envelope,
 };
 use crate::remote_worker_registry::{
-    WorkerHeartbeatAck, WorkerRecord, WorkerRegistrationOutcome, WorkerRegistrationResponse,
-    WorkerRegistry, WorkerRegistryError, DEFAULT_HEARTBEAT_INTERVAL_MS,
-    DEFAULT_HEARTBEAT_TIMEOUT_MS,
+    DEFAULT_HEARTBEAT_INTERVAL_MS, DEFAULT_HEARTBEAT_TIMEOUT_MS, WorkerHeartbeatAck, WorkerRecord,
+    WorkerRegistrationOutcome, WorkerRegistrationResponse, WorkerRegistry, WorkerRegistryError,
 };
 
 pub use crate::remote_worker_registry::{
@@ -514,8 +513,8 @@ pub type HeartbeatApiResponse = WorkerHeartbeatAck;
 mod tests {
     use super::*;
     use crate::remote_worker::{
-        AgentCapability, WorkerCapabilities, WorkerStatus, WorkspaceCapability,
-        REMOTE_WORKER_PROTOCOL_VERSION,
+        AgentCapability, REMOTE_WORKER_PROTOCOL_VERSION, WorkerCapabilities, WorkerStatus,
+        WorkspaceCapability,
     };
 
     fn registration() -> WorkerRegistration {
@@ -682,7 +681,10 @@ mod tests {
         .unwrap();
         let acknowledged = api.task_queue_snapshot("worker-api").unwrap();
         assert_eq!(acknowledged.acknowledged, 1);
-        assert_eq!(acknowledged.tasks[0].state, WorkerTaskHistoryState::Acknowledged);
+        assert_eq!(
+            acknowledged.tasks[0].state,
+            WorkerTaskHistoryState::Acknowledged
+        );
         assert!(!acknowledged.truncated);
     }
 

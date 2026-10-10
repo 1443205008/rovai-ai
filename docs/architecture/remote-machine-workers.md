@@ -31,6 +31,14 @@ remote filesystem path.
 
 The portable wire types live in `rovai_core::remote_worker`.
 
+The transport type layer lives in `rovai_core::remote_worker_transport`. It
+validates bounded opaque registration nonces, credential IDs, and lease tokens
+before they reach an adapter. `AuthenticatedEnvelope::fixture` is deliberately
+an in-memory proof fixture: it hashes the lease token into a test proof without
+putting the token or any credential material in the serialized envelope. This
+module opens no network connection, runs no shell, accepts no absolute path,
+and is not a production authentication handshake.
+
 - Registration advertises a stable `worker_id`, machine name, labels, platform,
   capacity, installed Agents, models, and named workspace allowlists.
 - Heartbeats carry status, running task IDs, load, and an observation timestamp.
