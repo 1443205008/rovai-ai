@@ -43,6 +43,17 @@ The portable wire types live in `rovai_core::remote_worker`.
   events. Raw credentials, arbitrary absolute paths, and shell text are not
   protocol fields.
 
+## Current implementation status
+
+The durable queue module (`remote_task_queue`) is currently a queue-owned persistence
+seam and test fixture only. It has no enrolled Core migration, authenticated Worker
+transport, or correlated Domain Command handler. Its terminal observations therefore
+remain in the queue’s own tables; they must not be treated as `AgentRun` state, and
+no queue event is allowed to best-effort overwrite `agent_run` or `event_log`. A
+future integration must bind `task_id + attempt + execution_epoch + lease_token`
+through the existing Core command transaction before claiming the M5/M6 rollout
+steps below.
+
 ## Rollout
 
 1. M1: ship the versioned types, validation, and registry persistence.
