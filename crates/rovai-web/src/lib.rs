@@ -238,6 +238,12 @@ fn routes(state: WebState) -> Router {
         .route("/files", post(resources::files))
         .route("/files/bytes", post(resources::binary))
         .route("/attachments", post(resources::attachment))
+        // Read-only machine capability/health/history views.  The M3 queue is
+        // a bounded transport fixture; the response advertises that execution
+        // is unavailable until a real Worker Runtime is enrolled.
+        .route("/workers", get(workers::list))
+        .route("/workers/{worker_id}", get(workers::show))
+        .route("/workers/{worker_id}/tasks", get(workers::history))
         // These routes are intentionally nested in the same middleware layer
         // as every other business API.  Until machine credential pairing is
         // implemented, only an authenticated Host session may use this
